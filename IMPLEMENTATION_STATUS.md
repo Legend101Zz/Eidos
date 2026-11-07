@@ -182,9 +182,15 @@ These are separate commits in the journey merge:
 - MCP: the official SDK client is verified over stdio and streamable HTTP. The named external hosts remain untested.
 - Live provider: `scripts/qualify/live_provider_check.py` is ready for the controller (command above).
 
+## Round 4 (2026-11-07)
+
+- **Live receipt #3:** 8/8 pass. The Anthropic adapter is qualified for development, lab-free.
+- **Adversarial review (two read-only passes):** 11 confirmed findings, all fixed with regression tests, including one critical: sealed labels could be bound into candidate jobs. Several inferred issues were also fixed. Open items are recorded in `docs/dev-runs/adversarial-review-2026-11-07.md`.
+- **macOS owner qualification kit:** ready, and its Linux dry run passes every step.
+- **Verified:** unit + integration + MCP + reporting 96 passed; components 59 passed; import contracts 5/5; ruff clean.
+
 ## Next concrete action
 
-1. `eidos-v0.2.0` is tagged on `37bd0c5` (all five CI jobs green). The controller should check CI on the current head.
-2. The controller runs live receipt #3 (`scripts/qualify/live_provider_check.py`, same caps).
-3. Then lab-free real-LLM runs on D02 and D12 (`scripts/qualify/live_bundle_investigation.py`). Record them as lab-free real-LLM development runs, not autonomous Eidos lab runs.
-4. Open gaps that need hardware or clients: macOS researcher machine and Lima VM, CUDA/MPS, external MCP hosts, sleep/suspend.
+1. The controller confirms CI is green on the current head, then cut `eidos-v0.3.0` there.
+2. The owner decides whether to run `scripts/qualify/macos_owner_kit.sh` and `scripts/qualify/live_bundle_investigation.py` on their Mac.
+3. Remaining v1 gaps need hardware, clients or keys, or are listed as open review items. See ACCEPTANCE_MATRIX §D.
