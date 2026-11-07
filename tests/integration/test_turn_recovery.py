@@ -123,3 +123,27 @@ def test_late_decision_after_steering_is_saved_unapplied(lab):
     d = env.run(acts.decide, {**base, "slot": 0})
     assert not d["accepted"] and d["reason"] == "stale-revision"
     assert lab.q(lab.admin, "list_jobs", {"investigation_id": inv}, project=pid) == []
+
+
+def test_offline_replay_uses_recorded_horizon_and_never_executes(lab):
+    from eidos.investigator.replay import evaluate_turn, load_recorded_turn
+    from eidos.investigator.runtime import FIXTURE_POLICIES, FixtureRuntime
+    pid, inv, acts = setup(lab)
+    env = ActivityEnvironment()
+    b = env.run(acts.begin_turn, {"investigation_id": inv, "project_id": pid, "index": 1})
+    base = {"turn_id": b["turn_id"], "project_id": pid, "investigation_id": inv}
+    env.run(acts.build_context, base)
+    d = env.run(acts.decide, {**base, "slot": 0})
+    env.run(acts.execute_decision, {**base, "decision_id": d["decision_id"]})
+    env.run(acts.complete_turn, {**base, "stop_reason": "calls-exhausted"})
+    # Later evidence must not leak into an evaluation of turn 1.
+    lab.cmd(lab.admin, "record_note", {"investigation_id": inv, "text": "FUTURE-ONLY NOTE"}, project=pid)
+    reader = ShimClient(lab, lab.principal(f"eval-{pid}", ["reader"], [pid]))
+    rec = load_recorded_turn(reader, pid, b["turn_id"])
+    assert "FUTURE-ONLY" not in json.dumps(rec["source"]) and rec["source"]["jobs"] == []
+    out = evaluate_turn(reader, pid, b["turn_id"], FixtureRuntime(FIXTURE_POLICIES["conclude-immediately"],
+                        policy_name="conclude-immediately"), context_policy="context-policy/minimal-1")
+    assert out["executed"] is False and not out["same_calls_as_recorded"] and out["outcome"].startswith("unknown")
+    with pytest.raises(LabError):  # the evaluation principal cannot resubmit production commands
+        reader.command("run_component", {"component_ref": "test.echo@1.0.0"}, project=pid)
+    assert len(lab.q(lab.admin, "list_jobs", {"investigation_id": inv}, project=pid)) == 1

@@ -69,7 +69,9 @@ class InvestigatorActivities:
                               project=p)
         catalog = self.inv.query("search_components", {"limit": 100}, project=p)["components"]
         packed = pack(view, catalog)
-        src = self.inv.upload(p, data=json.dumps(view, sort_keys=True, default=str).encode(), media_type="application/json",
+        # The source manifest includes the catalog snapshot so offline replays see exactly what was
+        # installed at the horizon, not components published later.
+        src = self.inv.upload(p, data=json.dumps({**view, "catalog": catalog}, sort_keys=True, default=str).encode(), media_type="application/json",
                               schema="investigation-view/1", role="context", name=f"source-{a['turn_id']}",
                               key=f"src:{a['turn_id']}")
         ctx_art = self.inv.upload(p, data=packed["text"].encode(), media_type="text/plain", schema="packed-context/1",
