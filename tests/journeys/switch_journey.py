@@ -807,6 +807,10 @@ def step7(j: Journey, a: argparse.Namespace) -> None:
         admitted = [e["subject"] for e in events if e["type"] == "job.admitted" and e["subject"] in inv_ids]
         j.check("exactly one job.admitted event per job", len(admitted) == len(set(admitted)) == len(inv_jobs),
                 admitted=len(admitted), distinct=len(set(admitted)))
+        n_note_calls = len([x for x in accepted_calls if x[2]["tool"] == "record_note"])
+        notes = j.query("list_records", {"kind": "note", "parent_id": inv, "limit": 200})
+        j.check("every record_note call produced exactly one note (re-executed calls returned the existing receipt)",
+                len(notes) == n_note_calls, notes=len(notes), calls=n_note_calls)
         keys = [x[2]["command_key"] for x in accepted_calls]
         j.check("persisted command keys are unique", len(keys) == len(set(keys)))
         bud = j.query("budgets", {"investigation_id": inv, "entries": True})
