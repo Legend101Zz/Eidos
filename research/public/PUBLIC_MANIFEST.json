@@ -1,0 +1,366 @@
+{
+  "created_utc": "2026-11-07T16:59:16.102630+00:00",
+  "draft_or_unqualified": [
+    "native upstream benchmark execution",
+    "hosted Linux installation/runtime",
+    "Eidos and external agent integrations",
+    "final task admission",
+    "hostile-code isolation",
+    "confirmatory inference"
+  ],
+  "files": {
+    "ANSWER_FORMAT.md": {
+      "bytes": 6955,
+      "sha256": "f64a0536fd8d18e1710a46ff04ca53142053fe770d01118de1e4d20f03bf654d"
+    },
+    "BUILDER_HANDOFF.txt": {
+      "bytes": 4823,
+      "sha256": "c14d58f329db83594ce4e0e80b0853bce441681e955342d6407a55a964199963"
+    },
+    "PUBLIC_RUBRIC.md": {
+      "bytes": 4540,
+      "sha256": "f714e0e1237b154be040fa5c183b732d8846d40ae893bc3ec986898eaacdf969"
+    },
+    "QUALIFICATION_SUMMARY.md": {
+      "bytes": 9940,
+      "sha256": "8faa7190b4dd512ee3e48dfe1d9e2c1f25289d26fd83eff6527bc5c92fe562c2"
+    },
+    "STUDY_PROTOCOL.md": {
+      "bytes": 18760,
+      "sha256": "1722b378c4c8f864a283a0a02e357315f8023e77d336f530f7b844bec136fa84"
+    },
+    "TASK_INTERFACE.md": {
+      "bytes": 8546,
+      "sha256": "92fa5171df7685ac17b57dab051eeeb904f7e02d92e96b2836b69acb3c4fd4e7"
+    },
+    "TASK_SELECTION_PUBLIC.csv": {
+      "bytes": 11215,
+      "sha256": "34623bc51f3ff09599ef63ae9fcd6b80de98bae7fc7766935394a61c008cc84b"
+    },
+    "development/NOTICES.md": {
+      "bytes": 5342,
+      "sha256": "6af42d3d1adf8a373dc472277ec6a9e73032a1a4632123b43c22ed6bcfbac443"
+    },
+    "development/README.md": {
+      "bytes": 7397,
+      "sha256": "130207ffcd2384780912f3da39e3bd3cc9f68162d84fa4090844aaf12de68eec"
+    },
+    "development/agent_project.py": {
+      "bytes": 3457,
+      "sha256": "083f6227c61a7aeeb623fb614693e399bb5e7d1b0fdffb639c4da463e1301561"
+    },
+    "development/analyze_results.py": {
+      "bytes": 4014,
+      "sha256": "5ed4e84a7ac0dbd792fe183fd8cb7599f08c3646a6fa96c73d3ae7ef0b0155d4"
+    },
+    "development/audit_upstream.py": {
+      "bytes": 2859,
+      "sha256": "75d64f94059e3e123e3f2c0fea3c2228f0525f670ef6a411b3521f401cee14c9"
+    },
+    "development/check_analysis_and_answer.py": {
+      "bytes": 6597,
+      "sha256": "b035b64df918020cb0828a3ca597cbdcbccb835d8725421e0367d8bc5c0281ea"
+    },
+    "development/check_bundles.py": {
+      "bytes": 2979,
+      "sha256": "fa8bd69dad7cb7ad3ad2853e5fe21ef443a8ec62dc7ee1f50e9a011faccf36aa"
+    },
+    "development/data.py": {
+      "bytes": 3616,
+      "sha256": "e38b63389716ba3bb49f5df2940ac26a8a418441e174fabadf7f4c5ef517e435"
+    },
+    "development/fresh_check.py": {
+      "bytes": 743,
+      "sha256": "893365b67a57799b89cfc02d594b0375f0cc947d8f1728b759978588aee681e5"
+    },
+    "development/grade.py": {
+      "bytes": 2402,
+      "sha256": "938c7bc9c98819cb737cf1f04c69548bea7db8bacb8d2e1df936b821ac8359f4"
+    },
+    "development/instrument.py": {
+      "bytes": 675,
+      "sha256": "3dfbfd395d760d7396d919d8d156a89f7c1aa3758229665327aaf83901b3f9c0"
+    },
+    "development/lifecycle.py": {
+      "bytes": 5277,
+      "sha256": "b25c24e124fe493dee475f98b4286ba8767282e23534a6218dba03d2ec08d1e4"
+    },
+    "development/package_task.py": {
+      "bytes": 3429,
+      "sha256": "e9f4d5558fb5fbb4bf7968895e52b66224d02fbb7d1aa212419d141075c85d81"
+    },
+    "development/prepare.py": {
+      "bytes": 1087,
+      "sha256": "55eec1dc53a224d395b61e19048730c68c2782d7898dcd18488258c48d1c0902"
+    },
+    "development/project.py": {
+      "bytes": 4498,
+      "sha256": "a11ec33cea1e28b545d506da2397a3bafc4e7abd2fe59917a499592959093d6c"
+    },
+    "development/qualification/bundle-checks.json": {
+      "bytes": 2111,
+      "sha256": "c3825aa995e91ebae39cb5f337e23e1d3184bef19190704c506da3d8ff56b50b"
+    },
+    "development/qualification/calibrate_intervals.py": {
+      "bytes": 6991,
+      "sha256": "2882e37312cbdba2bcd943892d6020da0651fc63a945ed2a8fbfa4ec8389b7aa"
+    },
+    "development/qualification/development-v0.1-partial-results.json": {
+      "bytes": 7475,
+      "sha256": "71d1ccf7febfeb59be54f3849da6f2bf2fffe9fa85743b23b00c891dec4b6755"
+    },
+    "development/qualification/historical-v0.3-results.json": {
+      "bytes": 20597,
+      "sha256": "6e5174951019ba9842251a064cb171c8b9fe2be01a24f8e4ec96d184c6a06774"
+    },
+    "development/qualification/initial-charter-receipt.json": {
+      "bytes": 324,
+      "sha256": "fbda8adc956e38a37e623967eaaf92fa4803c0f9a6be646fc985bb84e5232648"
+    },
+    "development/qualification/interval-calibration.json": {
+      "bytes": 12590,
+      "sha256": "e51433436f227b78d87b25d9800068acccd9f30dc277cfdad1f9b4cb3fab7865"
+    },
+    "development/qualification/private-review-aggregate.json": {
+      "bytes": 1514,
+      "sha256": "810aa8955cf33ead71968de9941083ec8b9cb37b497a3a8252bdcc73702f2cb4"
+    },
+    "development/qualification/qualification-amendment-0.2.json": {
+      "bytes": 498,
+      "sha256": "7dd1cf01516b7582267d84668958ee0ecc9657c929eaf8cac36320c2d4e930ec"
+    },
+    "development/qualification/qualification-amendment-0.3.json": {
+      "bytes": 317,
+      "sha256": "5aedf74ac8755b399011cd2f97a1a40003eb7a88f2f7574815f6aac8e9978652"
+    },
+    "development/qualification/qualification-amendment-0.4.json": {
+      "bytes": 830,
+      "sha256": "eafdfb5c83b73b5299a64196b95f2a2b52f4c1d43d7c04d74bd46197e9e7cbd4"
+    },
+    "development/qualification/qualification-plan-0.1.json": {
+      "bytes": 1657,
+      "sha256": "23f826ed77f9674170f452bd64f047ad13b4ae042a0881d70ae501ff7299cf8c"
+    },
+    "development/qualification/release-review.json": {
+      "bytes": 2444,
+      "sha256": "2ee929f46918a07a76f5cce42bbe32647ef9289a0d391907c77d455029d40f22"
+    },
+    "development/qualification/results.json": {
+      "bytes": 21155,
+      "sha256": "224cb1c069d8544ef0ac028067962b75ac0377e1e30e710f1b4566650ecb1567"
+    },
+    "development/qualification/review-record.json": {
+      "bytes": 756,
+      "sha256": "63838f312f8a900d66f28ed99df5712817627652cd48d38a2d05732c758ebac5"
+    },
+    "development/qualification/upstream-fixtures.json": {
+      "bytes": 915,
+      "sha256": "3d81f5feed973a275cff89d76048c01a95420e1e526e67ca8442b70fcadab0d2"
+    },
+    "development/qualify.py": {
+      "bytes": 4997,
+      "sha256": "97285b2b17c4fc59a5ed04df92e613ed9137fcf1efbef58433e751e8a9ad9b84"
+    },
+    "development/requirements.lock": {
+      "bytes": 734,
+      "sha256": "be1d27623dd05e7d6c630152f4d3c4850786238b28530e9f2a88124027ecec41"
+    },
+    "development/tasks/D01.json": {
+      "bytes": 1459,
+      "sha256": "2564f09fc0691187657aab224133a820463aa316c9c06267afb9f93cfce65fd1"
+    },
+    "development/tasks/D02.json": {
+      "bytes": 1468,
+      "sha256": "3c9a711f13104bad3f6898cf321fc0e4232d281bfecda51f464739140fd923eb"
+    },
+    "development/tasks/D03.json": {
+      "bytes": 1493,
+      "sha256": "f1e93db6a6fa19f7739b8fd7a3c979bf95d919533105b9d8064df9e76aa9e4c9"
+    },
+    "development/tasks/D04.json": {
+      "bytes": 1485,
+      "sha256": "84fba4d9dcd4feab010fa4cceb06277b05babaa3e06c557879527e3baf539f07"
+    },
+    "development/tasks/D05.json": {
+      "bytes": 1447,
+      "sha256": "1cd921592d3193d14b7417383fbd1ac8ce108fa5c5bb5934f415acaed760bded"
+    },
+    "development/tasks/D06.json": {
+      "bytes": 1450,
+      "sha256": "0c08421a8dee089def80e1c91168771834cafad557167d6b21d8db2f9326f5e6"
+    },
+    "development/tasks/D07.json": {
+      "bytes": 1492,
+      "sha256": "7d46955b42b1ec00bdd3d0fc931badcc01c19340c2e7c5cb20f5150a506d6b10"
+    },
+    "development/tasks/D08.json": {
+      "bytes": 1467,
+      "sha256": "69b31bbc44087659562d6b3a941fa479fb39b66f5552c5a226f9b2286f43b730"
+    },
+    "development/tasks/D09.json": {
+      "bytes": 1494,
+      "sha256": "51ccccccf0babb24dd125dbdbbec1be58402beec68acda4229914d2050a0c5d2"
+    },
+    "development/tasks/D10.json": {
+      "bytes": 1460,
+      "sha256": "166ca22fc991d151d8b039210aa13d586bc1977f6105baab9552de1ec7ae8cbd"
+    },
+    "development/tasks/D11.json": {
+      "bytes": 1474,
+      "sha256": "28d7cfd51f48d0cddfeae7425130e21a5233a9710ec6d333be65d064dc4c3a08"
+    },
+    "development/tasks/D12.json": {
+      "bytes": 1494,
+      "sha256": "ed301cfef3148067f57e7a115a8e75aaa183f28b933acd07c975cb5893812a77"
+    },
+    "development/tasks/D13.json": {
+      "bytes": 1511,
+      "sha256": "35a9c216d09b96860b1c98f557e0996d8b069b091b5430431035907a0ec59b25"
+    },
+    "development/tasks/D14.json": {
+      "bytes": 1495,
+      "sha256": "0545739d8212a8435a62d10b332576a6c6c1ed18749d03bb292575eb90e79bb3"
+    },
+    "development/validate_answer.py": {
+      "bytes": 7614,
+      "sha256": "a22da0fc4fa56d555fc46f97eb1958f1c270b97449c23b76aabe9fdb84f01c4c"
+    }
+  },
+  "historical_private_commitments": [
+    {
+      "status": "original local candidate snapshot; preserved, superseded for current candidate preparation",
+      "value": "050ee0c5b53b6aeee3dcbf8d6d7324b481e65118c73e37c999fb6b6c33a2e12d"
+    }
+  ],
+  "interface_versions": {
+    "answer": "eidos-answer/0.2",
+    "bundle": "eidos-task-bundle/0.1",
+    "study_charter": "draft-0.3",
+    "task": "eidos-task/0.2"
+  },
+  "manifest_self_hash": "excluded; archive checksum supplied separately",
+  "migration": "regenerate old public IDs/predictions; answer 0.2 adds hashes and strict records; earlier drafts unpublished",
+  "private_manifest_commitment": {
+    "algorithm": "SHA256(ASCII eidos-candidate-suite-v0.2 + one zero byte + 32-byte seal-nonce.bin + exact canonical PRIVATE_MANIFEST.json bytes)",
+    "status": "candidate-v0.2 integrity only; final selection not frozen",
+    "value": "489dd95adb7c84457c6d4a58b238399448e7b64c396ed24daf29cb02fcb2d699"
+  },
+  "publication_identity": "source commit recorded after commit in delivery receipt; no self-referential commit field or hash",
+  "publication_target": {
+    "branch": "research/public-handoff",
+    "directory": "research/public/",
+    "repository": "https://github.com/Legend101Zz/Eidos"
+  },
+  "qualified_tasks": [
+    {
+      "id": "D01",
+      "resource_profile": "cpu-development",
+      "restricted_investigator_bundle": true,
+      "state": "reference-qualified on documented macOS arm64 CPU scope"
+    },
+    {
+      "id": "D02",
+      "resource_profile": "cpu-development",
+      "restricted_investigator_bundle": true,
+      "state": "reference-qualified on documented macOS arm64 CPU scope"
+    },
+    {
+      "id": "D03",
+      "resource_profile": "cpu-development",
+      "restricted_investigator_bundle": false,
+      "state": "reference-qualified on documented macOS arm64 CPU scope"
+    },
+    {
+      "id": "D04",
+      "resource_profile": "cpu-development",
+      "restricted_investigator_bundle": false,
+      "state": "reference-qualified on documented macOS arm64 CPU scope"
+    },
+    {
+      "id": "D05",
+      "resource_profile": "cpu-development",
+      "restricted_investigator_bundle": false,
+      "state": "reference-qualified on documented macOS arm64 CPU scope"
+    },
+    {
+      "id": "D06",
+      "resource_profile": "cpu-development",
+      "restricted_investigator_bundle": false,
+      "state": "reference-qualified on documented macOS arm64 CPU scope"
+    },
+    {
+      "id": "D07",
+      "resource_profile": "cpu-development",
+      "restricted_investigator_bundle": false,
+      "state": "reference-qualified on documented macOS arm64 CPU scope"
+    },
+    {
+      "id": "D08",
+      "resource_profile": "cpu-development",
+      "restricted_investigator_bundle": false,
+      "state": "reference-qualified on documented macOS arm64 CPU scope"
+    },
+    {
+      "id": "D09",
+      "resource_profile": "cpu-development",
+      "restricted_investigator_bundle": false,
+      "state": "reference-qualified on documented macOS arm64 CPU scope"
+    },
+    {
+      "id": "D10",
+      "resource_profile": "cpu-development",
+      "restricted_investigator_bundle": false,
+      "state": "reference-qualified on documented macOS arm64 CPU scope"
+    },
+    {
+      "id": "D11",
+      "resource_profile": "cpu-development",
+      "restricted_investigator_bundle": false,
+      "state": "reference-qualified on documented macOS arm64 CPU scope"
+    },
+    {
+      "id": "D12",
+      "resource_profile": "cpu-development",
+      "restricted_investigator_bundle": true,
+      "state": "reference-qualified on documented macOS arm64 CPU scope"
+    },
+    {
+      "id": "D13",
+      "resource_profile": "cpu-development",
+      "restricted_investigator_bundle": false,
+      "state": "reference-qualified on documented macOS arm64 CPU scope"
+    },
+    {
+      "id": "D14",
+      "resource_profile": "cpu-development",
+      "restricted_investigator_bundle": false,
+      "state": "reference-qualified on documented macOS arm64 CPU scope"
+    }
+  ],
+  "release_id": "research-public-v0.1.0",
+  "resource_profiles": {
+    "cpu-development": {
+      "device": "cpu",
+      "disk_gib_planning_estimate": 4,
+      "gpu_required": false,
+      "installed_environment_gib_observed_approx": 1,
+      "limits_enforced": "subprocess timeouts and configured torch threads only; RAM/disk planning estimates not enforced",
+      "model_api_required": false,
+      "python": "3.12",
+      "ram_gib_planning_estimate": 2,
+      "reference_call_timeout_seconds": 120,
+      "threads": 1,
+      "torch": "2.15.0"
+    }
+  },
+  "review": {
+    "archive_member_verification": true,
+    "explicit_allowlist": true,
+    "manual_public_content_review": true,
+    "private_file_exported": false,
+    "security_and_cloud_access_certified": false,
+    "source_and_contract_review": "separate research agents and lead integration; not independent human scientific adjudication"
+  },
+  "schema_version": "eidos-public-manifest/0.2",
+  "study_status": "practical arm margin approved; exact shared model snapshot, campaign ceiling, final selection/admission and calibrated analysis pending"
+}

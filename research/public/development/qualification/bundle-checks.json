@@ -1,0 +1,45 @@
+{
+  "scope": "trusted local development packaging only; no sandbox isolation guarantee",
+  "cases": [
+    {
+      "task": "D01",
+      "baseline_predictions_match": true,
+      "fresh_process_inference": true,
+      "bundle_allowlist": true,
+      "test_labels_excluded": true
+    },
+    {
+      "task": "D02",
+      "baseline_predictions_match": true,
+      "fresh_process_inference": true,
+      "bundle_allowlist": true,
+      "test_labels_excluded": true
+    },
+    {
+      "task": "D12",
+      "baseline_predictions_match": true,
+      "fresh_process_inference": true,
+      "bundle_allowlist": true,
+      "test_labels_excluded": true
+    }
+  ],
+  "overflow_metric_rejected": true,
+  "failed_qualification_bar_rejected": true,
+  "source_hashes": {
+    "analyze_results.py": "5ed4e84a7ac0dbd792fe183fd8cb7599f08c3646a6fa96c73d3ae7ef0b0155d4",
+    "check_analysis_and_answer.py": "b035b64df918020cb0828a3ca597cbdcbccb835d8725421e0367d8bc5c0281ea",
+    "fresh_check.py": "893365b67a57799b89cfc02d594b0375f0cc947d8f1728b759978588aee681e5",
+    "check_bundles.py": "fa8bd69dad7cb7ad3ad2853e5fe21ef443a8ec62dc7ee1f50e9a011faccf36aa",
+    "lifecycle.py": "b25c24e124fe493dee475f98b4286ba8767282e23534a6218dba03d2ec08d1e4",
+    "agent_project.py": "083f6227c61a7aeeb623fb614693e399bb5e7d1b0fdffb639c4da463e1301561",
+    "validate_answer.py": "a22da0fc4fa56d555fc46f97eb1958f1c270b97449c23b76aabe9fdb84f01c4c",
+    "package_task.py": "e9f4d5558fb5fbb4bf7968895e52b66224d02fbb7d1aa212419d141075c85d81",
+    "instrument.py": "3dfbfd395d760d7396d919d8d156a89f7c1aa3758229665327aaf83901b3f9c0",
+    "audit_upstream.py": "75d64f94059e3e123e3f2c0fea3c2228f0525f670ef6a411b3521f401cee14c9",
+    "prepare.py": "55eec1dc53a224d395b61e19048730c68c2782d7898dcd18488258c48d1c0902",
+    "qualify.py": "97285b2b17c4fc59a5ed04df92e613ed9137fcf1efbef58433e751e8a9ad9b84",
+    "data.py": "e38b63389716ba3bb49f5df2940ac26a8a418441e174fabadf7f4c5ef517e435",
+    "grade.py": "938c7bc9c98819cb737cf1f04c69548bea7db8bacb8d2e1df936b821ac8359f4",
+    "project.py": "a11ec33cea1e28b545d506da2397a3bafc4e7abd2fe59917a499592959093d6c"
+  }
+}

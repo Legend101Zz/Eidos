@@ -1,0 +1,20 @@
+{
+  "status": "self-reviewed preparation; no external reviewer or preregistration",
+  "reviewed_contracts": [
+    "four controlled arms and primary contrast",
+    "explicit undecided scientific margins/provider/budget",
+    "project/family clustering and exposure history",
+    "no private identities/reference files in export",
+    "separate evidence levels for source review, fixtures, system integration and final study"
+  ],
+  "supplementary_checks": {
+    "analysis_known_controls": 4,
+    "answer_structure_controls": 4
+  },
+  "remaining_review": [
+    "independent scientific/grader reviewer",
+    "statistical interval coverage/power under final hierarchy",
+    "cloud filesystem/credential access audit",
+    "Eidos and baseline integration"
+  ]
+}

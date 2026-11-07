@@ -1,0 +1,7 @@
+{
+  "at": "2026-11-07T16:34:47.953481+00:00",
+  "reason": "correct receipt metadata: constant/last-value baseline executes zero training steps; expose actual examples and simulator output count",
+  "exposure": "v0.2 results known",
+  "acceptance_thresholds_changed": false,
+  "model_numeric_behavior_changed": false
+}
