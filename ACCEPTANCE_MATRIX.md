@@ -53,7 +53,7 @@ Paths are relative to the repository root. Verification commands are listed in
 |---|---|---|
 | Client disconnects after start → same command key returns same receipt | `test_command_path.py`, `tests/mcp/test_mcp_live.py` | runtime-verified |
 | LLM timeout after possible charge → request ID + possible spend recorded | `tests/unit/test_runtime_accounting.py` | not-started |
-| Investigator dies during training → reattach via handle | journey | not-started |
+| Investigator dies during training → reattach via handle | `tests/ops/runner_reattach.sh` (runner killed mid-job; same attempt finished, 2026-11-07) | runtime-verified (runner crash); investigator crash in journey |
 | Node preempted / rank lost | single-node: process kill + reconcile | not-started; distributed unqualified |
 | Duplicate/reordered/stale completion → epoch + unique publication key | `test_command_path.py::test_fencing...` | runtime-verified |
 | Storage/DB lag → verify staged content before publish | `tests/integration/test_artifacts.py` | not-started |
