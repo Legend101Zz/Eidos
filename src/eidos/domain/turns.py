@@ -22,7 +22,8 @@ EFFECT_TOOLS = {
     "launch_trial": "launch_trial",
     "plan_branch": "plan_branch",
     "launch_branch": "launch_branch",
-    "author_component": "publish_component",
+    "author_component": "validate_component",  # composite: upload source bundle, then validate
+    "publish_component": "publish_component",
     "bind_component": "bind_component",
     "retire_component": "retire_component",
     "file_claim": "file_claim",

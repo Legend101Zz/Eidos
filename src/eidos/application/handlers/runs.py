@@ -29,7 +29,7 @@ def admit_job(ctx: Ctx, *, kind: str, lock: dict, investigation_id: str | None, 
         check_exploration_allowed(ctx, investigation_id)
     jid = job_id or f"job_{uuid.uuid4().hex[:16]}"
     lock = {**lock, "limits": {"wall_seconds": wall_seconds, "max_output_bytes": int(lock.get("max_output_bytes", 512 << 20)),
-                               **(lock.get("limits") or {})}, "job_id": jid}
+                               **(lock.get("limits") or {})}, "job_id": jid, "project_id": ctx.project_id}
     from eidos_wire import canonical_json, sha256_bytes
     digest = "sha256:" + sha256_bytes(canonical_json(lock).encode())
     budget_scope = scope or (inv_scope(investigation_id) if investigation_id else f"project:{ctx.project_id}")

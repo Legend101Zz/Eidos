@@ -129,7 +129,8 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
         return {"started": False, "reason": f"investigation is {inv.status}"}
     last = ctx.tx.last_turn(inv.id)
     if last and last["status"] == "open":
-        return {"started": False, "reason": "another turn is open", "turn_id": last["id"]}
+        # A turn left open by a terminated child is resumed, never duplicated.
+        return {"started": True, "resumed": True, "turn_id": last["id"], "spec": last["spec"]}
     seq = (last["seq"] + 1) if last else 1
     cfg = inv.body["investigator"]
     if seq > int(cfg.get("max_turns", 40)):
@@ -288,3 +289,32 @@ def ensure_budget_left(ctx: Ctx, scope: str, dim: str, amount: float) -> None:
     b = ctx.tx.budgets(scope).get(dim)
     if b and b["reserved"] + b["used"] + amount > b["limit_amount"]:
         raise BudgetExhausted(f"{dim} budget exhausted for {scope}", details={"scope": scope, **b})
+
+
+@command("record_decision_receipts", "turn")
+def record_decision_receipts(ctx: Ctx, p: dict) -> dict:
+    """Store the ordered receipts of an accepted decision's calls (audit + next-slot context)."""
+    dec = ctx.tx.get_decision(p["decision_id"])
+    if not dec or not dec["accepted"]:
+        raise Invalid("receipts can only be recorded for an accepted decision")
+    rec = ctx.tx.put_record("decision_receipts", dec["id"], ctx.project_id,
+                            {"turn_id": dec["turn_id"], "receipts": p.get("receipts", [])},
+                            created_by=ctx.principal.id, status="recorded")
+    return {"decision_id": dec["id"], "revision": rec.revision}
+
+
+@command("record_note", "propose")
+def record_note(ctx: Ctx, p: dict) -> dict:
+    """Investigation notebook entry: hypotheses, disconfirming predictions, observations with
+    artifact references. Summaries are views; numbers should cite ledger rows or artifacts."""
+    inv_id = p.get("investigation_id")
+    if inv_id:
+        ctx.tx.require("investigation", inv_id)
+    nid = f"note_{uuid.uuid4().hex[:12]}"
+    body = {k: p.get(k) for k in ("investigation_id", "kind", "text", "hypotheses", "evidence_refs", "prediction",
+                                  "falsifier", "status")}
+    body["text"] = str(body.get("text") or "")[:4000]
+    ctx.tx.put_record("note", nid, ctx.project_id, body, created_by=ctx.principal.id, status=p.get("status") or "open",
+                      parent_id=inv_id)
+    ctx.event("note.recorded", nid, {"kind": p.get("kind")}, investigation_id=inv_id)
+    return {"note_id": nid}
