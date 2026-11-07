@@ -170,6 +170,9 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
 def record_turn_context(ctx: Ctx, p: dict) -> dict:
     """Store the exact packed context and authorized source manifest used for this turn."""
     _turn(ctx, p["turn_id"])
+    existing = ctx.tx.get_record("turn_context", p["turn_id"])
+    if existing is not None:  # idempotent per turn: a retried build never replaces or conflicts
+        return {"turn_id": p["turn_id"], "revision": existing.revision, "existing": True}
     body = {k: p.get(k) for k in ("context_artifact_id", "source_manifest_digest", "source_manifest_artifact_id",
                                   "policy", "selections", "omissions", "truncations", "catalog_snapshot_digest",
                                   "horizon", "chars")}

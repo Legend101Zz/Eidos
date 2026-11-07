@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextvars
 import functools
+import hashlib
 import json
 import tempfile
 import threading
@@ -102,22 +103,26 @@ class InvestigatorActivities:
             return {"context_artifact_id": turn["context"]["context_artifact_id"], "reused": True}
         view = self.inv.query("investigation_view", {"investigation_id": a["investigation_id"], "horizon": turn["horizon"]},
                               project=p)
-        catalog = self.inv.query("search_components", {"limit": 100}, project=p)["components"]
+        view["budgets"] = turn["spec"].get("budgets")  # immutable snapshot taken at begin_turn
+        catalog = self.inv.query("search_components", {"limit": 100, "as_of_horizon": turn["horizon"]}, project=p)["components"]
         packed = pack(view, catalog)
         # The source manifest includes the catalog snapshot so offline replays see exactly what was
         # installed at the horizon, not components published later.
-        src = self.inv.upload(p, data=json.dumps({**view, "catalog": catalog}, sort_keys=True, default=str).encode(), media_type="application/json",
+        src_bytes = json.dumps({**view, "catalog": catalog}, sort_keys=True, default=str).encode()
+        digest = hashlib.sha256(src_bytes + packed["text"].encode()).hexdigest()[:24]
+        src = self.inv.upload(p, data=src_bytes, media_type="application/json",
                               schema="investigation-view/1", role="context", name=f"source-{a['turn_id']}",
-                              key=f"src:{a['turn_id']}")
+                              key=f"src:{a['turn_id']}:{digest}")
         ctx_art = self.inv.upload(p, data=packed["text"].encode(), media_type="text/plain", schema="packed-context/1",
-                                  role="context", name=f"context-{a['turn_id']}", key=f"ctx:{a['turn_id']}")
+                                  role="context", name=f"context-{a['turn_id']}", key=f"ctx:{a['turn_id']}:{digest}")
         self.wf.command("record_turn_context", {
             "turn_id": a["turn_id"], "context_artifact_id": ctx_art["result"]["artifact_id"],
             "source_manifest_artifact_id": src["result"]["artifact_id"],
             "source_manifest_digest": packed["source_manifest_digest"], "policy": packed["policy"],
             "selections": packed["selections"], "omissions": packed["omissions"], "truncations": packed["truncations"],
-            "horizon": turn["horizon"], "chars": packed["chars"]}, project=p, key=f"ctxrec:{a['turn_id']}")
-        return {"context_artifact_id": ctx_art["result"]["artifact_id"], "chars": packed["chars"]}
+            "horizon": turn["horizon"], "chars": packed["chars"]}, project=p, key=f"ctxrec:{a['turn_id']}:{digest}")
+        rec = self.wf.query("get_turn", {"turn_id": a["turn_id"]}, project=p)["context"]  # first write wins
+        return {"context_artifact_id": rec["context_artifact_id"], "chars": rec.get("chars")}
 
     def _turn_so_far(self, p: str, turn: dict) -> list[dict]:
         out = []

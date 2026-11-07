@@ -171,3 +171,33 @@ def test_in_turn_model_budget_is_reserved_before_each_decision_and_released(lab)
     assert turn["result"]["released_model_reservations"]["model_tokens"] == 100_000
     b2 = lab.q(lab.admin, "budgets", {"investigation_id": inv}, project=pid)["budgets"]["model_tokens"]
     assert b2["reserved"] == 1e6 - 150_000 and b2["used"] > 0  # only the test fill remains reserved
+
+
+def test_context_build_retry_after_new_evidence_is_idempotent(lab):
+    """Retrying build_context after the ledger moved on must neither conflict nor change the snapshot."""
+    pid, inv, acts = setup(lab)
+    env = ActivityEnvironment()
+    b = env.run(acts.begin_turn, {"investigation_id": inv, "project_id": pid, "index": 1})
+    base = {"turn_id": b["turn_id"], "project_id": pid, "investigation_id": inv}
+    first = env.run(acts.build_context, base)
+    # New evidence and a budget change after the horizon, then a forced rebuild (as after a crash).
+    lab.cmd(lab.admin, "record_note", {"investigation_id": inv, "text": "late"}, project=pid)
+    with lab.ledger.transaction() as tx:
+        tx.project_id = pid
+        tx.record_usage(f"inv:{inv}", "model_tokens", 5, "late-usage")
+    orig = acts.wf.query
+    calls = {"n": 0}
+
+    def first_read_hides_context(name, params=None, **k):
+        out = orig(name, params, **k)
+        if name == "get_turn":
+            calls["n"] += 1
+            if calls["n"] == 1:  # force the rebuild path once
+                out = {**out, "context": None}
+        return out
+    acts.wf.query = first_read_hides_context
+    try:
+        second = env.run(acts.build_context, base)
+    finally:
+        acts.wf.query = orig
+    assert second["context_artifact_id"] == first["context_artifact_id"]

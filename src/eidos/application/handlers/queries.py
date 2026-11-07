@@ -131,7 +131,13 @@ def search_components(ctx: Ctx, p: dict) -> dict:
     cap = p.get("capability")
     eff = p.get("effect")
     rows = []
+    cutoff = None
+    if p.get("as_of_horizon") is not None:  # catalog snapshot as of a ledger horizon
+        cutoff = ctx.tx.event_time(int(p["as_of_horizon"]))
+    published = {r.id: r.created_at for r in ctx.tx.list_records(ctx.project_id, "component_release", limit=5000)}
     for r in catalog(ctx, include_inactive=bool(p.get("include_inactive"))):
+        if cutoff is not None and published.get(r["ref"]) and published[r["ref"]] > cutoff:
+            continue
         m = r["manifest"]
         hay = " ".join([r["ref"], m.get("implements", ""), " ".join(m.get("scientific_effects", [])),
                         str(m.get("summary", "")), m.get("kind", "")]).lower()

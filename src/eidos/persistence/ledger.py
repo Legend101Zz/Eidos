@@ -269,6 +269,10 @@ class LedgerTx:
             p["ts"] = types
         return self._all(sql + " ORDER BY seq LIMIT :l", **p)
 
+    def event_time(self, seq: int):
+        row = self._one("SELECT created_at FROM events WHERE seq <= :s ORDER BY seq DESC LIMIT 1", s=seq)
+        return row["created_at"] if row else None
+
     def horizon(self) -> int:
         row = self._one("SELECT last_seq AS h FROM event_counter WHERE id = 1")
         return int(row["h"]) if row else 0
