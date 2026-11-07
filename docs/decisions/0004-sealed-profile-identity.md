@@ -7,3 +7,5 @@ Status: accepted (2026-11-07)
 **Why.** In the build sandbox the candidate user could not read a root-owned interpreter; forcing it broke execution, while namespace isolation alone passed all access probes. Reporting the identity control truthfully keeps plans that require it unsatisfiable rather than silently weakened.
 
 **Reversal.** Make separate-identity default-required once installers place project environments where the candidate identity can read them.
+
+**Update (2026-11-07).** With an interpreter under `/opt/eidos` (world-readable), the candidate user runs the probes and `separate-identity` passes together with all six access controls (`tests/integration/test_isolation_probes.py::test_distinct_candidate_identity_with_world_readable_interpreter`).

@@ -7,7 +7,7 @@ Eidos runs entirely on your own machine. It does not need a cloud account, an OC
 | Profile | Status |
 |---|---|
 | Linux x86_64, CPU | Runtime-verified in the hosted build sandbox (Ubuntu 24.04, Python 3.12, PostgreSQL 16, Temporal 1.32.2). That is a build environment, not a researcher machine. |
-| `linux:bwrap-sealed` isolation | Runtime-verified with hostile probes. A distinct candidate identity is reported per run. |
+| `linux:bwrap-sealed` isolation | Runtime-verified with hostile probes. When the lab runs as root with the `eidos-cand` user, candidate code runs as that distinct OS identity if it can execute the project interpreter. Provision sealed-evaluation environments under a world-readable prefix (e.g. `UV_PYTHON_INSTALL_DIR=/opt/eidos/python uv python install 3.12`, venv under `/opt/eidos/envs/`, `chmod -R a+rX`); `separate-identity` then passes (verified). |
 | macOS (arm64/x86_64) host-native `dev:same-user` | **Unqualified.** The code paths exist; no macOS run has been performed. |
 | macOS `macos:lima-vm-sealed` | **Not implemented/qualified.** Plans that require sealed execution cannot be admitted on macOS. |
 | CUDA / MPS devices | Discovered and reported. **Unqualified.** Exact restore across devices is never claimed. |

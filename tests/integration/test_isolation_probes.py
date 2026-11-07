@@ -3,6 +3,7 @@ they would not be measuring anything."""
 
 from __future__ import annotations
 
+import os
 import sys
 
 import pytest
@@ -53,3 +54,31 @@ def test_probe_detects_labels_exposed_through_a_bound_directory(tmp_path):
     """Misconfiguration (labels inside the project root, which is bound read-only) is caught."""
     r = _probe(tmp_path, "linux:bwrap-sealed", cwd=tmp_path)
     assert r["controls"]["no-label-read"] == "failed"
+
+
+CAND_PY = os.environ.get("EIDOS_CANDIDATE_PYTHON", "/opt/eidos/envs/sealed-py312/bin/python")
+
+
+@pytest.mark.skipif(not (bwrap_available() and os.path.exists(CAND_PY)), reason="no candidate-readable interpreter")
+def test_distinct_candidate_identity_with_world_readable_interpreter(tmp_path):
+    """With an interpreter the candidate OS user can execute (e.g. under /opt), the sealed profile
+    runs candidate code as that user and the separate-identity control passes."""
+    from eidos.runtime.launcher import candidate_uid
+    from eidos.runtime.runner import python_prefixes
+    if candidate_uid(CAND_PY) is None:
+        pytest.skip("candidate user absent or cannot run the interpreter")
+    import pathlib
+    import tempfile
+    tmp_path = pathlib.Path(tempfile.mkdtemp(dir="/tmp"))  # every parent must be traversable by the candidate
+    os.chmod(tmp_path, 0o755)
+    secret = tmp_path / "secret.token"
+    secret.write_text("t")
+    proj = tmp_path / "project"
+    proj.mkdir()
+    spec = LaunchSpec(argv=[CAND_PY], cwd=str(proj), attempt_dir=str(tmp_path / "attempt"), profile="linux:bwrap-sealed",
+                      python_prefixes=python_prefixes(CAND_PY))
+    r = run_probes(spec, label_path=str(secret), credential_path=str(secret), host_write_path=str(tmp_path / "hw"),
+                   api_port=1, net_host="127.0.0.1", net_port=1)
+    assert r["controls"]["separate-identity"] == "passed", r
+    for c in SEALED_CONTROLS:
+        assert r["controls"][c] == "passed", (c, r)
