@@ -41,7 +41,10 @@ def boot_id() -> str:
 def proc_start_time(pid: int) -> str | None:
     try:
         stat = Path(f"/proc/{pid}/stat").read_text()
-        return stat.rsplit(")", 1)[1].split()[19]
+        fields = stat.rsplit(")", 1)[1].split()
+        if fields[0] in ("Z", "X"):  # zombie/dead: the process no longer runs
+            return None
+        return fields[19]
     except (OSError, IndexError):
         if sys.platform == "darwin":  # pragma: no cover - macOS fallback
             try:
@@ -176,7 +179,9 @@ def launch(spec: LaunchSpec) -> ProcessHandle:
         inner = spec.argv
         env = {k: v for k, v in os.environ.items() if not k.startswith("EIDOS_")}  # never leak lab credentials
         env.update(spec.env)
-    wrapper = ["/bin/sh", "-c", '"$@"; echo $? > "$0"', exit_file, *inner]
+    # The wrapper ignores SIGUSR1 (the checkpoint-and-stop signal is for the worker, which installs
+    # its own handler) so it survives to record the exit status.
+    wrapper = ["/bin/sh", "-c", 'trap "" USR1; "$@"; echo $? > "$0"', exit_file, *inner]
     preexec = None
     ids = candidate_uid(spec.argv[0]) if spec.profile == "linux:bwrap-sealed" else None
     if ids:

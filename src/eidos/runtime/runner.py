@@ -102,7 +102,8 @@ class AttemptRunner:
         att = next((a for a in job["attempts"] if a["id"] == job["current_attempt"]), None)
         if att and att["status"] == "running" and att["backend_handle"].get("pid"):
             h = ProcessHandle.from_dict(att["backend_handle"])
-            if h.alive() or h.exit_code() is not None:
+            finished = (Path(h.attempt_dir) / "staging" / OutputManifest.FILENAME).exists()
+            if h.alive() or h.exit_code() is not None or finished:
                 ctx = {"job_id": job_id, "attempt_id": att["id"], "epoch": att["epoch"], "lock": job["lock"],
                        "attempt_dir": h.attempt_dir, "reattached": True, "started": time.time()}
                 return self._supervise(project, ctx, h, heartbeat, cancelled)
@@ -233,6 +234,8 @@ class AttemptRunner:
             if not h.alive() and h.exit_code() is None:
                 time.sleep(0.2)
                 if h.exit_code() is None:
+                    if (Path(ctx["attempt_dir"]) / "staging" / OutputManifest.FILENAME).exists():
+                        return self._collect(project, ctx, h)  # worker finished; only its wrapper died
                     return self._finish(project, ctx, "failed", {}, {"category": "lost",
                                         "message": "process vanished without an exit status"})
             now = time.time()
@@ -300,7 +303,7 @@ class AttemptRunner:
             md["outputs"] = [dict(o.__dict__) for o in outputs]
             self.client.command("publish_outputs", {"job_id": ctx["job_id"], "attempt_id": ctx["attempt_id"],
                                 "epoch": ctx["epoch"], "manifest": md}, project=project, key=f"publish:{ctx['attempt_id']}")
-        if ctx.get("stop_requested") and man.status == "succeeded":
+        if (ctx.get("stop_requested") or (man.receipt or {}).get("stopped_early")) and man.status == "succeeded":
             receipt = {**(man.receipt or {}), "stopped_by_policy": "checkpoint-and-stop"}
             return self._finish(project, ctx, "cancelled", receipt, None)
         return self._finish(project, ctx, man.status, man.receipt, man.error, final=man.status == "failed")
