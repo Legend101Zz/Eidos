@@ -897,7 +897,19 @@ def render_doc(rec: dict, command: str) -> str:
                   f"* final: {rec.get('investigation_final', {}).get('status')} after "
                   f"{len(rec.get('investigation_final', {}).get('turns', []))} turns; budget ledger: "
                   f"`{json.dumps((rec.get('budget_after_investigation') or {}).get('budgets'))}`"]
-    lines += ["", "## Notes and defects recorded by the run", ""]
+    lines += ["", "## Lab defects found by the journey and fixed on `task/switch-journey`", "",
+              "| file | observed failure | fix |", "|---|---|---|",
+              "| `src/eidos/domain/resolver.py` | `train` refused to run without `parent_checkpoint` (missing input) | mirrors the lead's "
+              "`optional_inputs` change; the journey's staging moves `parent_checkpoint` to `optional_inputs` until the manifest does |",
+              "| `src/eidos/application/handlers/runs.py` | `no binding for required capability pytorch.adapter/1` for every project-env component "
+              "(also `target.source/1`, `lab.domain.*`) | environment-provided capabilities are recorded in the lock instead of resolved as releases |",
+              "| `src/eidos/application/handlers/queries.py` | `compare_trials` never marked branch siblings as sharing training history "
+              "(`lock.config.branch` has no `parent`) | read `independence_unit` from the branch record |",
+              "| `src/eidos/orchestration/activities.py` | `AttributeError: CompletedProcess has no attribute status` in `assess_plan`; plans stuck in "
+              "`awaiting-assessment` | read the `OutputManifest` from staging |",
+              "| `src/eidos/investigator/activities.py`, `orchestration/workflows.py` | SIGKILL of the investigator-worker left the turn open for the "
+              "600 s start-to-close timeout | investigator activities heartbeat every 5 s; TurnWorkflow sets a 30 s heartbeat timeout |",
+              "", "## Notes and defects recorded by the run", ""]
     lines += [f"* {n}" for n in rec.get("notes", [])] + [f"* DEFECT: {d}" for d in rec.get("defects", [])]
     bad = [(k2, c["label"]) for k2, v in rec["steps"].items() for c in v["checks"] if not c["ok"]]
     lines += ["", "## Failed checks", ""] + ([f"* step {k2}: {lab}" for k2, lab in bad] or ["none"])

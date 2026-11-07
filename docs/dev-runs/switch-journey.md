@@ -1,6 +1,6 @@
 # Switch-order journey: dev run
 
-Run: 2026-11-07T18:40:28, project `sj8`, lab API http://127.0.0.1:8865. Full record (every job id, artifact id, receipt metric, timing): `journey-run.json` (path given by `--out`; default `/workspace/.eidos-dev/h1/journey-run.json`).
+Run: 2026-11-07T18:47:02, project `journey77222`, lab API http://127.0.0.1:8865. Full record (every job id, artifact id, receipt metric, timing): `journey-run.json` (path given by `--out`; default `/workspace/.eidos-dev/h1/journey-run.json`).
 
 Rerun: `EIDOS_HOME=<lab> python tests/journeys/switch_journey.py`
 
@@ -10,14 +10,14 @@ Step 7 is **fixture-only**: a deterministic scripted policy decides every turn, 
 
 | step | title | status | seconds | checks ok/total |
 |---|---|---|---|---|
-| 1 | project, environments, built-in components, conflict and absent-phase detection | pass | 25.66 | 19/19 |
-| 2 | charter before exploration; override rejection; exposure-informed amendment | pass | 0.14 | 8/8 |
-| 2b | exposure-informed charter amendment preserving both rules | pass | 0.04 | 6/6 |
-| 3 | train/evaluate/reproduce, branches, edits, learning rule, architecture change, data generation | pass | 44.66 | 44/44 |
-| 4 | fresh-process behaviour check and export; wrong builder refused | pass | 7.7 | 8/8 |
-| 5 | qualification, promotion, claim, plan, assessment, withdrawal and support | pass | 21.02 | 35/35 |
-| 6 | lab.pairs.by_group reused unchanged on the image project (second project/environment) | pass | 15.41 | 11/11 |
-| 7 | FIXTURE-ONLY autonomous investigation (scripted policy, no LLM): loop, kill, recovery, reattach | pass | 167.08 | 18/18 |
+| 1 | project, environments, built-in components, conflict and absent-phase detection | pass | 26.32 | 19/19 |
+| 2 | charter before exploration; override rejection; exposure-informed amendment | pass | 0.11 | 8/8 |
+| 2b | exposure-informed charter amendment preserving both rules | pass | 0.03 | 6/6 |
+| 3 | train/evaluate/reproduce, branches, edits, learning rule, architecture change, data generation | pass | 44.58 | 44/44 |
+| 4 | fresh-process behaviour check and export; wrong builder refused | pass | 7.63 | 8/8 |
+| 5 | qualification, promotion, claim, plan, assessment, withdrawal and support | pass | 20.98 | 35/35 |
+| 6 | lab.pairs.by_group reused unchanged on the image project (second project/environment) | pass | 15.57 | 11/11 |
+| 7 | FIXTURE-ONLY autonomous investigation (scripted policy, no LLM): loop, kill, recovery, reattach | pass | 164.9 | 18/18 |
 
 ## Key numbers
 
@@ -37,17 +37,27 @@ Step 7 is **fixture-only**: a deterministic scripted policy decides every turn, 
 
 * outcome **inconclusive**, conformance **conformant**; paired both-correct effect 0.6452 (95% CI 0.5484 to 0.7421, 3 independent seeds, 12000 pairs per arm).
 * guardrails: paired-report/1:reference-accuracy violated (change -0.0277, CI -0.0643 to 0.0089)
-* assessment id `assess_bff063b9422dd391a37ed678`
+* assessment id `assess_f06c4334a1d7e1e1fc6f6874`
 
 ## Withdrawal drill
 
-* withdrawal `withdrawal:eidos.assessors.paired-ci@1.0.0:1`: affected assessments ['assess_bff063b9422dd391a37ed678'], suspended approvals ['approval:eidos.assessors.paired-ci@1.0.0'], reassessment requests ['reassess:assess_bff063b9422dd391a37ed678:withdrawal:eidos.assessors.paired-ci@1.0.0:1']
+* withdrawal `withdrawal:eidos.assessors.paired-ci@1.0.0:1`: affected assessments ['assess_f06c4334a1d7e1e1fc6f6874'], suspended approvals ['approval:eidos.assessors.paired-ci@1.0.0'], reassessment requests ['reassess:assess_f06c4334a1d7e1e1fc6f6874:withdrawal:eidos.assessors.paired-ci@1.0.0:1']
 * support after: `supported-with-affected-justifications`
 
 ## Investigator kill (fixture-only investigation)
 
-* SIGKILL pid 5288 at turn_inv-sj8-76942_1 right after job(s) ['job_6807661a709e403e'] were admitted (turn status after kill: [['turn_inv-sj8-76942_1', 'open']]); supervisor restarted the worker as pid 6674.
-* final: concluded after 11 turns; budget ledger: `{"compute_seconds": {"limit_amount": 2400.0, "reserved": 0.0, "uncertain": 0.0, "used": 11.904}, "model_tokens": {"limit_amount": 500000.0, "reserved": 0.0, "uncertain": 0.0, "used": 24984.0}, "trials": {"limit_amount": 24.0, "reserved": 0.0, "uncertain": 0.0, "used": 8.0}, "turns": {"limit_amount": 30.0, "reserved": 0.0, "uncertain": 0.0, "used": 11.0}}`
+* SIGKILL pid 6674 at turn_inv-journey77222-77337_1 right after job(s) ['job_111b126a36754eb5'] were admitted (turn status after kill: [['turn_inv-journey77222-77337_1', 'open']]); supervisor restarted the worker as pid 8716.
+* final: concluded after 11 turns; budget ledger: `{"compute_seconds": {"limit_amount": 2400.0, "reserved": 0.0, "uncertain": 0.0, "used": 11.399}, "model_tokens": {"limit_amount": 500000.0, "reserved": 0.0, "uncertain": 0.0, "used": 25010.0}, "trials": {"limit_amount": 24.0, "reserved": 0.0, "uncertain": 0.0, "used": 8.0}, "turns": {"limit_amount": 30.0, "reserved": 0.0, "uncertain": 0.0, "used": 11.0}}`
+
+## Lab defects found by the journey and fixed on `task/switch-journey`
+
+| file | observed failure | fix |
+|---|---|---|
+| `src/eidos/domain/resolver.py` | `train` refused to run without `parent_checkpoint` (missing input) | mirrors the lead's `optional_inputs` change; the journey's staging moves `parent_checkpoint` to `optional_inputs` until the manifest does |
+| `src/eidos/application/handlers/runs.py` | `no binding for required capability pytorch.adapter/1` for every project-env component (also `target.source/1`, `lab.domain.*`) | environment-provided capabilities are recorded in the lock instead of resolved as releases |
+| `src/eidos/application/handlers/queries.py` | `compare_trials` never marked branch siblings as sharing training history (`lock.config.branch` has no `parent`) | read `independence_unit` from the branch record |
+| `src/eidos/orchestration/activities.py` | `AttributeError: CompletedProcess has no attribute status` in `assess_plan`; plans stuck in `awaiting-assessment` | read the `OutputManifest` from staging |
+| `src/eidos/investigator/activities.py`, `orchestration/workflows.py` | SIGKILL of the investigator-worker left the turn open for the 600 s start-to-close timeout | investigator activities heartbeat every 5 s; TurnWorkflow sets a 30 s heartbeat timeout |
 
 ## Notes and defects recorded by the run
 
