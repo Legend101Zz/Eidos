@@ -1,6 +1,6 @@
 {
   "id": "eidos.project.command",
-  "release": "1.0.1",
+  "release": "1.0.2",
   "implements": "project-command/1",
   "kind": "artifact-op",
   "entry": "project_command:run",

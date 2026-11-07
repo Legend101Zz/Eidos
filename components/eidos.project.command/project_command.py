@@ -33,7 +33,11 @@ def run(inputs, config, *, reader, writer, context):
             if work.resolve() not in target.parents:
                 raise ValueError("source bundle path escapes the working directory: %r" % rel)
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(text)
+            if isinstance(text, dict) and "base64" in text:
+                import base64
+                target.write_bytes(base64.b64decode(text["base64"]))
+            else:
+                target.write_text(text)
         source = "candidate-bundle:" + inputs["source"].artifact_id
     else:
         _copy_project(os.getcwd(), work, set(files.values()))

@@ -208,10 +208,16 @@ def artifact_download(project: str, artifact_id: str, dest: Path):
 # -- components -------------------------------------------------------------------------------
 
 def bundle_dir(directory: Path) -> bytes:
-    files = {}
+    """Immutable source bundle: text files verbatim, binary files (e.g. fixture checkpoints) base64."""
+    import base64
+    files: dict[str, Any] = {}
     for p in sorted(directory.rglob("*")):
-        if p.is_file() and "__pycache__" not in p.parts and not p.name.endswith(".pyc"):
-            files[str(p.relative_to(directory))] = p.read_text()
+        if p.is_file() and not p.is_symlink() and "__pycache__" not in p.parts and not p.name.endswith(".pyc"):
+            data = p.read_bytes()
+            try:
+                files[str(p.relative_to(directory))] = data.decode("utf-8")
+            except UnicodeDecodeError:
+                files[str(p.relative_to(directory))] = {"base64": base64.b64encode(data).decode()}
     return json.dumps({"files": files}, sort_keys=True).encode()
 
 

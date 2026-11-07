@@ -85,6 +85,14 @@ def resolve_lock(ctx: Ctx, p: dict, *, extra_config: dict | None = None) -> dict
         target = {**target, "manifest": man}
     env_name = p.get("environment") or target["environment"]["name"]
     env = env_for(ctx, env_name)
+    missing_adapter = [c for c in env_caps if c.startswith("pytorch.adapter/")
+                       and not (env.get("adapter") or (p.get("config") or {}).get("adapter"))]
+    if missing_adapter:
+        from eidos.domain.errors import ResolutionError
+        raise ResolutionError(f"{p['component_ref']} needs a project model adapter, but environment {env_name!r} "
+                              "declares none and the run config names none",
+                              details={"consumer": p["component_ref"], "capability": missing_adapter[0]},
+                              next_action="Register the environment with --adapter module:ATTR or pass config.adapter.")
     inputs = _inputs(ctx, p.get("inputs") or {})
     prof = get_profile(ctx)
     adapters = [r for r in cat if r["status"] == "active" and "adapter" in r["manifest"]["implements"]]

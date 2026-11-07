@@ -89,3 +89,17 @@ extension state, weight-edit independence, wrong-builder detection, the handoff 
 through the second model, qualification-runner against the assessor's suite with a broken and a blind
 assessor, and the end-to-end switch replication: both-correct 0.2625 unedited and 0.844 after zeroing
 the recorder weight) and then every manifest's fixtures through `python -m eidos_worker.validate`.
+
+
+## Fixture data for the PyTorch components (clean checkouts)
+
+The torch components' author fixtures read small checkpoints under `fixtures/data/`. These files are
+generated, and not versioned (`*.ckpt` is git-ignored). Regenerate them before `lab component install`:
+
+```bash
+PYTHONPATH=packages/eidos-wire/src:packages/eidos-worker-sdk/src:packages/eidos-pytorch/src \
+    $TORCH_PY components/build_fixtures.py
+```
+
+Source bundles carry binary files as base64 entries. A missing fixture file is reported as
+*skipped*, not passed.

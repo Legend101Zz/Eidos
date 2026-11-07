@@ -147,7 +147,11 @@ def export_answer(client: Any, project: str, *, task_id: str, run_id: str, out: 
         for rel, text in files.items():
             p = (cdir / rel)
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(text)
+            if isinstance(text, dict) and "base64" in text:
+                import base64
+                p.write_bytes(base64.b64decode(text["base64"]))
+            else:
+                p.write_text(text)
         model = next(o for o in job["outputs"] if o["role"] == "model-export")
         client.download(project, model["artifact_id"], cdir / "model.pt")
         if test_inputs is not None:

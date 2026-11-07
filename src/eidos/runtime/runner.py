@@ -57,7 +57,11 @@ def materialize_bundle(bundle_path: str, dest: Path) -> Path:
         if root not in target.parents or Path(rel).is_absolute():
             raise StoreError(f"bundle path escapes the source directory: {rel!r}")
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content)
+        if isinstance(content, dict) and "base64" in content:
+            import base64
+            target.write_bytes(base64.b64decode(content["base64"]))
+        else:
+            target.write_text(content)
     return dest
 
 
