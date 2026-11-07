@@ -68,6 +68,14 @@ def create_app(service: CommandService, *, relay: Any = None, maintenance_flag: 
     async def domain_error(_: Request, exc: DomainError):
         return JSONResponse(status_code=exc.http_status, content={"error": exc.to_dict()})
 
+    from eidos.runtime.artifacts import DiskPressure, StoreError
+
+    @app.exception_handler(StoreError)
+    async def store_error(_: Request, exc: StoreError):
+        code = "DISK_PRESSURE" if isinstance(exc, DiskPressure) else "STORE_ERROR"
+        return JSONResponse(status_code=507 if code == "DISK_PRESSURE" else 422, content={"error": {
+            "code": code, "message": str(exc), "next_action": "Free disk space or raise the reserve; committed evidence is unaffected."}})
+
     @app.middleware("http")
     async def limit_body(request: Request, call_next):
         writes = request.url.path.startswith("/v1/commands") or (
