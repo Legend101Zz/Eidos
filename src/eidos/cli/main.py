@@ -98,8 +98,36 @@ def project_create(project: str, budget: list[str] = typer.Option([], help="dime
         out(c.command("create_project", {"project_id": project, "budgets": {k: float(v) for k, v in _kv(budget).items()}},
                       key=f"create-project:{project}"))
         _register_lab_env(c, project)
+        if builtins:
+            installed = []
+            for d in builtin_component_dirs(lab_env_only=True):
+                r = install_component(c, project, d, env="lab")
+                installed.append({"ref": r.get("component_ref"), "validation": r.get("validation", "passed")})
+            out({"builtin_components": installed,
+                 "note": "project-environment components (eidos.pytorch.*, eidos.project.command, scorers) are installed "
+                         "with `lab component install <project> <dir> --env default` after `lab project register-env`"})
     except LabError as exc:
         fail(exc)
+
+
+LAB_ENV_COMPONENTS = ("eidos.assessors.paired-ci", "eidos.qualification-runner", "eidos.templates.improves-under-budget",
+                      "lab.pairs.by_group")
+
+
+def builtin_component_dirs(*, lab_env_only: bool = False) -> list[Path]:
+    """Built-in components shipped in the wheel (or the repository checkout)."""
+    import eidos
+    for root in (Path(eidos.__file__).parent / "_components", Path(eidos.__file__).parents[2] / "components"):
+        if root.is_dir():
+            dirs = sorted(p for p in root.iterdir() if (p / "eidos-component.json").exists())
+            return [d for d in dirs if not lab_env_only or d.name in LAB_ENV_COMPONENTS]
+    return []
+
+
+@component_app.command("builtins")
+def component_builtins():
+    """List the directories of the built-in components shipped with this installation."""
+    out([str(p) for p in builtin_component_dirs()])
 
 
 def _register_lab_env(c: LabClient, project: str) -> None:

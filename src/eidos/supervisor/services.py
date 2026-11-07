@@ -164,9 +164,10 @@ def install_temporal(cfg: LabConfig, source: str | None = None) -> str:
 
 
 def temporal_config_yaml(cfg: LabConfig, user: str, password: str) -> str:
+    # Compact block: base..base+8 (gRPC, membership, HTTP). Lab instances need disjoint 9-port ranges.
     b = cfg.temporal_port
-    svc = {"frontend": (b, b + 100, b + 10), "history": (b + 1, b + 101, None), "matching": (b + 2, b + 102, None),
-           "worker": (b + 3, b + 103, None)}
+    svc = {"frontend": (b, b + 4, b + 8), "history": (b + 1, b + 5, None), "matching": (b + 2, b + 6, None),
+           "worker": (b + 3, b + 7, None)}
     services = ""
     for name, (grpc, member, http) in svc.items():
         services += f"  {name}:\n    rpc:\n      grpcPort: {grpc}\n      membershipPort: {member}\n      bindOnLocalHost: true\n"

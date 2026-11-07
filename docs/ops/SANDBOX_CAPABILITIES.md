@@ -51,7 +51,7 @@ worker 7239, plus membership 6933–6939 and HTTP 7243. The controller's helper 
 allocate Temporal ports 7234 and 7235, which collide with a stock lead server on 7233.
 Eidos therefore generates Temporal configs from a **base port** with all internal service
 ports derived from it (frontend = base, other services in a disjoint range). Helper slots
-must use base ports far apart from each other (see `eidos.ops.temporal_config`).
+must use disjoint 9-port blocks: the generated config uses base..base+8 (`eidos.supervisor.services.temporal_config_yaml`).
 
 ## Implications for verification
 
