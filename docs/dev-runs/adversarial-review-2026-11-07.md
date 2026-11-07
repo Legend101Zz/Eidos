@@ -28,13 +28,21 @@ Two read-only reviewer passes covered invariants (a) single write path, (b) idem
 - **Fenced or orphaned attempts report their compute:** they finish through the normal path instead of disappearing.
 - **project.command:** `returncode` is in the job receipt.
 
-## Open (recorded, not fixed)
+## Previously open, now fixed (round 5, operator items 1–8)
 
-- **No in-turn model-budget gate:** `begin_turn` is the only gate. Unbudgeted dimensions record no usage rows.
-- **Events may be skipped:** sequence gaps under concurrent transactions can let `horizon()`/cursor readers miss a late-committed lower seq.
-- **`build_context` retry:** it can conflict if live budget or job fields change between upload and record. The catalog snapshot is not horizon-pinned.
-- **`dev:same-user` reach:** candidate code can read lab secrets under this profile, by design. Investigator-authored code defaults to it.
-- **Assessor isolation:** the assessor runs approved release code unsandboxed in the worker environment, and prediction files have no size cap.
-- **Exposure records:** generic record reads (`get_record`, `list_records`, `investigation_view`) of assessments and evidence-arm receipts record none.
-- **Idle polling:** an idle-poll wake starts a model turn even when nothing changed.
-- **Not exercised:** no end-to-end sealed run with a distinct candidate identity on a host where it applies, and no live Temporal timeout/retry exercise of items A5/A7/A9–A11.
+| Item | Status | Evidence |
+|---|---|---|
+| Candidate code defaulted to same-user and could read lab secrets | **Fixed.** Jobs and component builds default to the strongest profile the lab has (bubblewrap on Linux). A weaker profile needs an explicit `isolation_waiver`, which is pinned in the lock, carried into the plan's realized conditions and recorded in the assessment (`isolation_waivers`). | `test_isolation_policy.py`. Live: a default job ran `linux:bwrap-sealed`, and its launcher probe failed to read the real `admin.token` (`no-credential-read: passed`). Torch training runs under the default. |
+| Assessor ran unsandboxed | **Fixed.** The assessment release runs through the launcher in bubblewrap where available. It has read-only access to the release, evidence and lab interpreter, write access to its own staging only, no secrets or environment, and an evidence size cap. Its probes and profile are recorded as `assessor_isolation` in the assessment. | `test_assessor_sandbox.py` |
+| No in-turn model-budget check | **Fixed.** Each decision's maximum envelope is reserved before any request. `BUDGET_EXHAUSTED` ends the slot with no model call. Usage settles against the reservation on success and failure; leaked reservations are released at turn completion; unbudgeted usage is still written as entries. | `test_turn_recovery.py::test_in_turn_model_budget...`. Live run: 0 tokens left reserved after the investigation. |
+| Event-sequence gaps | **Fixed (gap-free).** Sequence numbers come from a counter row locked until commit (migration 0003), so sequence order is commit order and `horizon()` is the last committed seq. Consumers need no gap tolerance. | `test_event_sequence.py`: it failed before the fix and passes now. |
+| `build_context` retry conflicts | **Fixed.** Inputs are horizon-pure: budgets from the immutable turn spec and the catalog as of the horizon. Keys derive from the content digest, and the turn context is first-write-wins. | `test_turn_recovery.py::test_context_build_retry...` |
+| Generic reads recorded no exposure | **Fixed.** `get_record`, `list_records`, `record_history`, `get_job`, `list_jobs` and `investigation_view` record exposures for assessment, qualification, evidence-plan and reassessment records and for confirmation-arm job receipts. | `test_review_findings_b.py::test_generic_reads...` |
+| Idle poll started a model turn | **Fixed.** A quiet timeout runs `check_news` (a ledger query, no model). A turn starts only on a wake, news since the last horizon, or `max_idle_turn_seconds` (6 h). The change is version-guarded with `workflow.patched`. | `test_workflows.py::test_idle_polls_without_news...` (plus frozen-history replay) |
+| Component tests only local | **Fixed (pending CI confirmation).** A `components` CI job runs all 59 tests with zero skips allowed. | `.github/workflows/ci.yml`, `scripts/ci/components.sh` |
+
+## Still open
+
+- **macOS** has no sealed profile, so candidate code there runs same-user. This is recorded as `strongest_available: dev:same-user` with a note in every lock. The Lima VM profile is not implemented.
+- **Distinct candidate identity** requires a candidate-readable interpreter (e.g. under /opt). Otherwise `separate-identity` reports failed.
+- **Live Temporal timeout/retry semantics** for the inferred items A5/A7/A9–A11 are covered by unit/integration tests with fakes, not by a long-running live timeout exercise.

@@ -82,7 +82,7 @@ Closed since v0.1.0; each item names its evidence:
 - **All 14 public development cards:** reference smoke through Eidos jobs plus reference-assisted builder checks; `qualify.py` 27/27. Evidence: `docs/dev-runs/research-cards.md`.
 
 Still open:
-- **Adversarial review open items:** see `docs/dev-runs/adversarial-review-2026-11-07.md` (in-turn budget gate, event sequence gaps, `build_context` retry pinning, dev-profile secret reach, assessor sandboxing, exposure on generic reads, idle-poll turns).
+- **Adversarial review:** all listed open items are fixed (round 5). What remains is platform-bound: macOS has no sealed profile, and a distinct candidate identity needs a readable interpreter. See `docs/dev-runs/adversarial-review-2026-11-07.md`.
 - **macOS:** an owner-run qualification kit is ready (`scripts/qualify/macos_owner_kit.sh`, `docs/ops/MACOS_OWNER_QUALIFICATION.md`). Its Linux dry run passes every step; the owner decides whether to run it.
 - **Real LLM providers:** a script is ready for the controller (`scripts/qualify/live_provider_check.py`).
 - **Not qualified:** macOS on a researcher machine (a runner smoke job exists), Lima VM, CUDA/MPS, and external MCP hosts (Claude Code/Desktop, Codex). The official SDK client is verified over stdio and HTTP.

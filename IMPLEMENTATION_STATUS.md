@@ -189,8 +189,20 @@ These are separate commits in the journey merge:
 - **macOS owner qualification kit:** ready, and its Linux dry run passes every step.
 - **Verified:** unit + integration + MCP + reporting 96 passed; components 59 passed; import contracts 5/5; ruff clean.
 
+## Round 5 (2026-11-07): operator items 1–8, all closed
+
+- **Strongest-available isolation by default:** weaker profiles need a recorded waiver. Proven live with the real admin token unreadable.
+- **Sandboxed assessor:** its realized isolation is recorded in the assessment.
+- **In-turn model-budget reservation:** settled on every path, with leaked reservations released.
+- **Gap-free commit-ordered event sequence:** migration 0003.
+- **Idempotent context snapshots.**
+- **Exposure on all evaluation-revealing reads.**
+- **Idle polls without model turns.**
+- **Component tests in CI.**
+- **Verified:** unit + integration + MCP + reporting 104 passed; workflow tests incl. stress and two frozen histories 7 passed; components 59 passed locally (CI job added); ruff clean; import contracts 5/5. A live D02 fixture investigation on the upgraded lab concluded with 0 tokens left reserved.
+
 ## Next concrete action
 
-1. The controller confirms CI is green on the current head, then cut `eidos-v0.3.0` there.
-2. The owner decides whether to run `scripts/qualify/macos_owner_kit.sh` and `scripts/qualify/live_bundle_investigation.py` on their Mac.
-3. Remaining v1 gaps need hardware, clients or keys, or are listed as open review items. See ACCEPTANCE_MATRIX §D.
+1. The controller confirms CI is green (now six jobs, including `components`) on the current head. Then tag `eidos-v0.4.0` there.
+2. Owner-gated: macOS kit, lab-free real-LLM D02/D12 runs.
+3. Remaining v1 gaps need hardware, clients or keys. See ACCEPTANCE_MATRIX §D.
