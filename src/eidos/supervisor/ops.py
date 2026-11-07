@@ -194,7 +194,8 @@ def doctor(cfg: LabConfig) -> list[dict[str, Any]]:
     add("sealed-profile:bwrap", bwrap_available(), "linux:bwrap-sealed " + ("available" if bwrap_available() else
         "unavailable — plans requiring sealed execution cannot be admitted"), level="warn")
     add("sealed-profile:separate-identity", candidate_uid() is not None,
-        "distinct candidate OS user" if candidate_uid() else "no distinct candidate user (separate-identity control will fail)",
+        "distinct candidate OS user exists; whether it can run each project interpreter is checked at launch and "
+        "reported per receipt" if candidate_uid() else "no distinct candidate user (separate-identity control will fail)",
         level="warn")
     if sys.platform == "darwin":
         add("sealed-profile:lima-vm", False, "macOS Lima VM profile is not qualified in this release", level="warn")
