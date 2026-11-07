@@ -1,0 +1,32 @@
+{
+  "schema": "eidos-private-review-public-safe/0.2",
+  "status": "candidate preparation verified; final admission blocked",
+  "candidate_revision": "0.2",
+  "private_candidates": 5,
+  "candidate_commitment": "489dd95adb7c84457c6d4a58b238399448e7b64c396ed24daf29cb02fcb2d699",
+  "commitment_algorithm": "SHA256(ASCII eidos-candidate-suite-v0.2 + one zero byte + 32-byte seal-nonce.bin + exact canonical PRIVATE_MANIFEST.json bytes)",
+  "scope": "integrity commitment only; not final selection, external preregistration, autonomous-agent evidence or OS isolation",
+  "original_suite_preserved": true,
+  "validation": {
+    "affected_reference_comparisons_rerun": 6,
+    "unchanged_reference_comparisons_rescored": 9,
+    "affected_artifacts_reproduced_in_fresh_interpreter": 12,
+    "standalone_baseline_scaffolds": 5,
+    "malformed_numeric_controls_rejected": 20,
+    "valid_numeric_controls_passed": 5,
+    "comparative_system_runs": 0,
+    "paid_calls": 0,
+    "GPUs_used": 0,
+    "max_concurrent_compute_processes": 1,
+    "thread_cap": 2
+  },
+  "remaining_gates": [
+    "exact shared model snapshot/settings",
+    "research campaign ceiling",
+    "final inventory/selection and task bars",
+    "analysis freeze",
+    "real evaluator/cloud isolation and resource enforcement",
+    "four-arm integration and human adjudication"
+  ],
+  "margin_decision": "approved +10 percentage points; 95% interval lower bound must exceed +10 points; approval recorded after candidate seal, before any comparative outcomes"
+}

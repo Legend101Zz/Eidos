@@ -1,0 +1,76 @@
+EIDOS PUBLIC RESEARCH HANDOFF — research-public-v0.1.0 — 7 November 2026
+
+Repository: https://github.com/Legend101Zz/Eidos
+Branch: research/public-handoff
+Import only: research/public/ at the exact source commit supplied with delivery.
+Release identity is PUBLIC_MANIFEST.json.release_id. The manifest deliberately
+has no self-referential source commit. Obtain the immutable SHA from the local
+controller's delivery receipt or git rev-parse of the fetched release commit.
+Do not merge this whole research branch into the implementation branch.
+
+This first public release resumes earlier local-only preparation. It includes
+14 capability cards across 8 correlated project clusters; 27 numerical reference
+cases; lifecycle checks; and three restricted investigator bundles: D01 custom
+model import/export, D02 functioning digit-classifier improvement, D12 qualified
+constructed null/inconclusive behavior. All are development exercises.
+
+Task interface: eidos-task/0.2. Common answer: eidos-answer/0.2.
+Breaking changes from unpublished drafts: regenerate all inputs/predictions
+because public IDs changed; update required answer hashes/typed records and
+confidence outcome. Never mix old IDs with new grades. No prior remote release
+is superseded. Further releases must preserve this history and declare migration.
+
+First commands from research/public/development/:
+  python3.12 -m venv .venv
+  .venv/bin/python -m pip install -r requirements.lock
+  .venv/bin/python check_bundles.py --out /tmp/eidos-smoke-NEW
+  .venv/bin/python check_analysis_and_answer.py
+  .venv/bin/python package_task.py --task D02 --out /tmp/eidos-D02-NEW
+  .venv/bin/python /tmp/eidos-D02-NEW/project.py train --inputs /tmp/eidos-D02-NEW --out /tmp/eidos-baseline-NEW --seed 11
+
+Give an autonomous investigator ONLY the generated task bundle and common
+contracts. Parent development project.py/data.py, qualification records and
+reference tables expose solutions and test labels. The builder may use them
+for engineering, but record reference-assisted repairs separately. Other cards
+have reference execution, not restricted investigator bundles. Run the full
+qualify.py collection for relevant contract changes; do not run all tasks on
+every code edit. Store regression outputs outside the immutable source tree.
+
+Execution profile: Python 3.12, macOS arm64 CPU, one training thread, no GPU or
+model API needed. Reserve about 2 GiB RAM and 4 GiB disk as planning estimates;
+installed environment was about 1 GiB. Linux/hosted wheels and Eidos integration
+are not yet qualified. Dependency lock is an exact installed version snapshot,
+not a wheel-hash lock. Failed installation leaves that profile unqualified.
+
+The four arms remain ordinary coding agent, agent+library/method, external agent
+through Eidos MCP, and internal investigator. Primary comparison is arm 4 vs 2.
+The user approved +10 percentage points with 95% interval lower bound above
++10 points as the practical superiority rule. MiniMax or Codex models are
+permitted options; exact shared snapshot/settings and bounded campaign resources
+remain unresolved. No comparative campaign is authorized by this package. The
+$200 implementation allocation is not research spend authorization.
+
+Implement common task inputs and answer exports without requiring baselines to
+mimic Eidos's internal ledger. Preserve charter/exposure history. Keep the
+label-owning grader independent of candidate code and Eidos self-assessment.
+This package verifies authored references and numerical/structural controls,
+not autonomous research, Eidos correctness, causal superiority, final statistical
+power or hostile-code isolation. See QUALIFICATION_SUMMARY for evidence limits.
+
+Private evaluation candidates and audit traces are held separately. Do not
+request/mount the research host, SSD, private storage or evaluator credentials.
+A separate chat is not OS isolation; cloud denial has not been audited here.
+The opaque commitment in PUBLIC_MANIFEST is an integrity record, not access
+control or external preregistration. Final selection and admission remain open.
+
+Forwardable message for the existing managed session:
+"Import only research/public/ from the exact delivered research-public-v0.1.0
+commit on research/public-handoff. Start with D01/D02/D12 smoke bundles and the
+0.2 task/answer contracts. The 14-card broader collection is public development;
+reference-assisted work must be labeled. Do not access private research storage
+or treat reference checks as a final comparative result. Continue the existing
+implementation session; do not restart it."
+
+No cross-chat message was sent by the researcher. Repository publication is the
+transfer mechanism. Release history: v0.1.0 first reviewed public delivery;
+earlier local drafts and failed/amended qualification records remain historical.

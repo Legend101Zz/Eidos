@@ -1,0 +1,42 @@
+{
+  "schema_version": "eidos-task/0.2",
+  "id": "D05",
+  "title": "Improve a seasonal forecasting baseline",
+  "project": "forecast",
+  "role": "public_development",
+  "capabilities": "improvement",
+  "qualification_acceptance": "Reduce series-held-out RMSE by at least .5",
+  "min_reference_gain": 0.5,
+  "seeds": [
+    11,
+    23,
+    37
+  ],
+  "dataset_seed": 20261107,
+  "permitted_operations": [
+    "edit project code",
+    "change model/weights/loss/optimizer",
+    "derive train-only features",
+    "use provided simulator where specified",
+    "create instruments"
+  ],
+  "forbidden_operations": [
+    "use test labels for search",
+    "change scorer or evaluation inputs",
+    "external paid calls"
+  ],
+  "limits": {
+    "device": "cpu",
+    "threads": 1,
+    "reference_timeout_seconds": 120,
+    "research_budget": "UNDECIDED; reference timeout is not investigator budget",
+    "ram_gib_planning_estimate": 2,
+    "disk_gib_planning_estimate": 4,
+    "estimates_enforced": false
+  },
+  "artifact_contract": "project.py + model.pt + inference recipe + predictions.npz + common answer JSON",
+  "split_policy": "dataset() split before transformations; same family cards correlated",
+  "qualification_status": "reference-qualified on CPU in documented scope; Eidos integration unqualified",
+  "qualification_receipt": "../qualification/results.json",
+  "card_scope": "reference capability card; not a complete final-admission manifest"
+}

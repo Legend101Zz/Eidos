@@ -1,0 +1,28 @@
+[
+  {
+    "source": "MLGym house price",
+    "fixture": "raw price RMSE is sqrt(5000) on [100,200] versus [100,100]",
+    "passed": true,
+    "scope": "numeric function only; no official dataset or container"
+  },
+  {
+    "source": "MLGym CIFAR10",
+    "fixture": "accuracy and row-count rejection",
+    "passed": true,
+    "scope": "fabricated labels; no CIFAR task execution"
+  },
+  {
+    "source": "AIRS SICK",
+    "fixture": "reverse ranks -1; constant predictor yields nonfinite score",
+    "passed": true,
+    "adaptation_requirement": "reject nonfinite metrics; do not credit as zero silently"
+  },
+  {
+    "source": "AIRS solar",
+    "fixture": "partial prediction NaNs excluded from scoring by upstream valid_mask",
+    "passed": true,
+    "ordinary_mae": 75.6,
+    "partial_nan_mae": 0.0,
+    "adaptation_requirement": "fix denominator from labels; reject candidate NaNs; label as adapted benchmark"
+  }
+]

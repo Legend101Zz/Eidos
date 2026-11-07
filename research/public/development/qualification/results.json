@@ -1,0 +1,871 @@
+{
+  "status": "development reference qualification only",
+  "environment": {
+    "python": "3.12.8 (main, Dec  3 2024, 18:42:41) [Clang 16.0.0 (clang-1600.0.26.4)]",
+    "platform": "macOS-26.3.1-arm64-arm-64bit",
+    "torch": "2.15.0",
+    "device": "cpu",
+    "threads": 1
+  },
+  "reference_results": [
+    {
+      "metric": "accuracy",
+      "baseline": 0.8333333333333334,
+      "candidate": 0.8333333333333334,
+      "gain": 0.0,
+      "n": 30,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "iris",
+      "seed": 11,
+      "qualification_bar": 0,
+      "reference_pass": true
+    },
+    {
+      "metric": "accuracy",
+      "baseline": 0.9,
+      "candidate": 0.9,
+      "gain": 0.0,
+      "n": 30,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "iris",
+      "seed": 23,
+      "qualification_bar": 0,
+      "reference_pass": true
+    },
+    {
+      "metric": "accuracy",
+      "baseline": 0.8333333333333334,
+      "candidate": 0.8333333333333334,
+      "gain": 0.0,
+      "n": 30,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "iris",
+      "seed": 37,
+      "qualification_bar": 0,
+      "reference_pass": true
+    },
+    {
+      "metric": "accuracy",
+      "baseline": 0.8583333333333333,
+      "candidate": 0.9777777777777777,
+      "gain": 0.11944444444444446,
+      "n": 360,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "digits",
+      "seed": 11,
+      "qualification_bar": 0.02,
+      "reference_pass": true
+    },
+    {
+      "metric": "accuracy",
+      "baseline": 0.8444444444444444,
+      "candidate": 0.9833333333333333,
+      "gain": 0.13888888888888884,
+      "n": 360,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "digits",
+      "seed": 23,
+      "qualification_bar": 0.02,
+      "reference_pass": true
+    },
+    {
+      "metric": "accuracy",
+      "baseline": 0.8166666666666667,
+      "candidate": 0.9805555555555555,
+      "gain": 0.16388888888888886,
+      "n": 360,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "digits",
+      "seed": 37,
+      "qualification_bar": 0.02,
+      "reference_pass": true
+    },
+    {
+      "metric": "accuracy",
+      "baseline": 0.6916666666666667,
+      "candidate": 0.9472222222222222,
+      "gain": 0.25555555555555554,
+      "n": 360,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "digits_shift",
+      "seed": 11,
+      "qualification_bar": 0.01,
+      "reference_pass": true
+    },
+    {
+      "metric": "accuracy",
+      "baseline": 0.6916666666666667,
+      "candidate": 0.95,
+      "gain": 0.2583333333333333,
+      "n": 360,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "digits_shift",
+      "seed": 23,
+      "qualification_bar": 0.01,
+      "reference_pass": true
+    },
+    {
+      "metric": "accuracy",
+      "baseline": 0.7361111111111112,
+      "candidate": 0.9472222222222222,
+      "gain": 0.21111111111111103,
+      "n": 360,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "digits_shift",
+      "seed": 37,
+      "qualification_bar": 0.01,
+      "reference_pass": true
+    },
+    {
+      "metric": "rmse",
+      "baseline": 2.1139446806967794,
+      "candidate": 0.5067705895416678,
+      "gain": 1.6071740911551116,
+      "n": 512,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "conditioning",
+      "seed": 11,
+      "qualification_bar": 0.5,
+      "reference_pass": true
+    },
+    {
+      "metric": "rmse",
+      "baseline": 2.1239877022462643,
+      "candidate": 0.8219767863889431,
+      "gain": 1.3020109158573212,
+      "n": 512,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "conditioning",
+      "seed": 23,
+      "qualification_bar": 0.5,
+      "reference_pass": true
+    },
+    {
+      "metric": "rmse",
+      "baseline": 2.1081905506374516,
+      "candidate": 0.5029962615580548,
+      "gain": 1.6051942890793969,
+      "n": 512,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "conditioning",
+      "seed": 37,
+      "qualification_bar": 0.5,
+      "reference_pass": true
+    },
+    {
+      "metric": "rmse",
+      "baseline": 0.9403627732780733,
+      "candidate": 0.022705006698637967,
+      "gain": 0.9176577665794353,
+      "n": 512,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "forecast",
+      "seed": 11,
+      "qualification_bar": 0.5,
+      "reference_pass": true
+    },
+    {
+      "metric": "rmse",
+      "baseline": 0.9403627732780733,
+      "candidate": 0.021846910616294474,
+      "gain": 0.9185158626617788,
+      "n": 512,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "forecast",
+      "seed": 23,
+      "qualification_bar": 0.5,
+      "reference_pass": true
+    },
+    {
+      "metric": "rmse",
+      "baseline": 0.9403627732780733,
+      "candidate": 0.022177270483934565,
+      "gain": 0.9181855027941387,
+      "n": 512,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "forecast",
+      "seed": 37,
+      "qualification_bar": 0.5,
+      "reference_pass": true
+    },
+    {
+      "metric": "accuracy",
+      "baseline": 0.50390625,
+      "candidate": 1.0,
+      "gain": 0.49609375,
+      "n": 512,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "order",
+      "seed": 11,
+      "qualification_bar": 0.3,
+      "reference_pass": true
+    },
+    {
+      "metric": "accuracy",
+      "baseline": 0.5,
+      "candidate": 1.0,
+      "gain": 0.5,
+      "n": 512,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "order",
+      "seed": 23,
+      "qualification_bar": 0.3,
+      "reference_pass": true
+    },
+    {
+      "metric": "accuracy",
+      "baseline": 0.505859375,
+      "candidate": 1.0,
+      "gain": 0.494140625,
+      "n": 512,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "order",
+      "seed": 37,
+      "qualification_bar": 0.3,
+      "reference_pass": true
+    },
+    {
+      "metric": "accuracy",
+      "baseline": 0.03333333333333333,
+      "candidate": 0.8333333333333334,
+      "gain": 0.8,
+      "n": 30,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "weights",
+      "seed": 11,
+      "qualification_bar": 0.5,
+      "reference_pass": true
+    },
+    {
+      "metric": "accuracy",
+      "baseline": 0.0,
+      "candidate": 0.9,
+      "gain": 0.9,
+      "n": 30,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "weights",
+      "seed": 23,
+      "qualification_bar": 0.5,
+      "reference_pass": true
+    },
+    {
+      "metric": "accuracy",
+      "baseline": 0.03333333333333333,
+      "candidate": 0.8333333333333334,
+      "gain": 0.8,
+      "n": 30,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "weights",
+      "seed": 37,
+      "qualification_bar": 0.5,
+      "reference_pass": true
+    },
+    {
+      "metric": "accuracy",
+      "baseline": 0.513671875,
+      "candidate": 1.0,
+      "gain": 0.486328125,
+      "n": 512,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "synthetic",
+      "seed": 11,
+      "qualification_bar": 0.1,
+      "reference_pass": true
+    },
+    {
+      "metric": "accuracy",
+      "baseline": 0.513671875,
+      "candidate": 0.990234375,
+      "gain": 0.4765625,
+      "n": 512,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "synthetic",
+      "seed": 23,
+      "qualification_bar": 0.1,
+      "reference_pass": true
+    },
+    {
+      "metric": "accuracy",
+      "baseline": 0.513671875,
+      "candidate": 1.0,
+      "gain": 0.486328125,
+      "n": 512,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "synthetic",
+      "seed": 37,
+      "qualification_bar": 0.1,
+      "reference_pass": true
+    },
+    {
+      "metric": "accuracy",
+      "baseline": 0.5,
+      "candidate": 0.5,
+      "gain": 0.0,
+      "n": 512,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "null",
+      "seed": 11,
+      "qualification_bar": 0,
+      "reference_pass": true
+    },
+    {
+      "metric": "accuracy",
+      "baseline": 0.5,
+      "candidate": 0.5,
+      "gain": 0.0,
+      "n": 512,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "null",
+      "seed": 23,
+      "qualification_bar": 0,
+      "reference_pass": true
+    },
+    {
+      "metric": "accuracy",
+      "baseline": 0.5,
+      "candidate": 0.5,
+      "gain": 0.0,
+      "n": 512,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification",
+      "project": "null",
+      "seed": 37,
+      "qualification_bar": 0,
+      "reference_pass": true
+    }
+  ],
+  "input_grader_checks": [
+    {
+      "check": "fresh process export",
+      "project": "iris",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "nan",
+      "project": "iris",
+      "passed": true
+    },
+    {
+      "check": "inf",
+      "project": "iris",
+      "passed": true
+    },
+    {
+      "check": "short",
+      "project": "iris",
+      "passed": true
+    },
+    {
+      "check": "duplicate",
+      "project": "iris",
+      "passed": true
+    },
+    {
+      "check": "wrong_ids",
+      "project": "iris",
+      "passed": true
+    },
+    {
+      "check": "matrix",
+      "project": "iris",
+      "passed": true
+    },
+    {
+      "check": "invalid_class",
+      "project": "iris",
+      "passed": true
+    },
+    {
+      "check": "fractional_class",
+      "project": "iris",
+      "passed": true
+    },
+    {
+      "check": "fresh process export",
+      "project": "digits",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "nan",
+      "project": "digits",
+      "passed": true
+    },
+    {
+      "check": "inf",
+      "project": "digits",
+      "passed": true
+    },
+    {
+      "check": "short",
+      "project": "digits",
+      "passed": true
+    },
+    {
+      "check": "duplicate",
+      "project": "digits",
+      "passed": true
+    },
+    {
+      "check": "wrong_ids",
+      "project": "digits",
+      "passed": true
+    },
+    {
+      "check": "matrix",
+      "project": "digits",
+      "passed": true
+    },
+    {
+      "check": "invalid_class",
+      "project": "digits",
+      "passed": true
+    },
+    {
+      "check": "fractional_class",
+      "project": "digits",
+      "passed": true
+    },
+    {
+      "check": "fresh process export",
+      "project": "digits_shift",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "nan",
+      "project": "digits_shift",
+      "passed": true
+    },
+    {
+      "check": "inf",
+      "project": "digits_shift",
+      "passed": true
+    },
+    {
+      "check": "short",
+      "project": "digits_shift",
+      "passed": true
+    },
+    {
+      "check": "duplicate",
+      "project": "digits_shift",
+      "passed": true
+    },
+    {
+      "check": "wrong_ids",
+      "project": "digits_shift",
+      "passed": true
+    },
+    {
+      "check": "matrix",
+      "project": "digits_shift",
+      "passed": true
+    },
+    {
+      "check": "invalid_class",
+      "project": "digits_shift",
+      "passed": true
+    },
+    {
+      "check": "fractional_class",
+      "project": "digits_shift",
+      "passed": true
+    },
+    {
+      "check": "fresh process export",
+      "project": "conditioning",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "nan",
+      "project": "conditioning",
+      "passed": true
+    },
+    {
+      "check": "inf",
+      "project": "conditioning",
+      "passed": true
+    },
+    {
+      "check": "short",
+      "project": "conditioning",
+      "passed": true
+    },
+    {
+      "check": "duplicate",
+      "project": "conditioning",
+      "passed": true
+    },
+    {
+      "check": "wrong_ids",
+      "project": "conditioning",
+      "passed": true
+    },
+    {
+      "check": "matrix",
+      "project": "conditioning",
+      "passed": true
+    },
+    {
+      "check": "fresh process export",
+      "project": "forecast",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "nan",
+      "project": "forecast",
+      "passed": true
+    },
+    {
+      "check": "inf",
+      "project": "forecast",
+      "passed": true
+    },
+    {
+      "check": "short",
+      "project": "forecast",
+      "passed": true
+    },
+    {
+      "check": "duplicate",
+      "project": "forecast",
+      "passed": true
+    },
+    {
+      "check": "wrong_ids",
+      "project": "forecast",
+      "passed": true
+    },
+    {
+      "check": "matrix",
+      "project": "forecast",
+      "passed": true
+    },
+    {
+      "check": "fresh process export",
+      "project": "order",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "nan",
+      "project": "order",
+      "passed": true
+    },
+    {
+      "check": "inf",
+      "project": "order",
+      "passed": true
+    },
+    {
+      "check": "short",
+      "project": "order",
+      "passed": true
+    },
+    {
+      "check": "duplicate",
+      "project": "order",
+      "passed": true
+    },
+    {
+      "check": "wrong_ids",
+      "project": "order",
+      "passed": true
+    },
+    {
+      "check": "matrix",
+      "project": "order",
+      "passed": true
+    },
+    {
+      "check": "invalid_class",
+      "project": "order",
+      "passed": true
+    },
+    {
+      "check": "fractional_class",
+      "project": "order",
+      "passed": true
+    },
+    {
+      "check": "fresh process export",
+      "project": "weights",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "nan",
+      "project": "weights",
+      "passed": true
+    },
+    {
+      "check": "inf",
+      "project": "weights",
+      "passed": true
+    },
+    {
+      "check": "short",
+      "project": "weights",
+      "passed": true
+    },
+    {
+      "check": "duplicate",
+      "project": "weights",
+      "passed": true
+    },
+    {
+      "check": "wrong_ids",
+      "project": "weights",
+      "passed": true
+    },
+    {
+      "check": "matrix",
+      "project": "weights",
+      "passed": true
+    },
+    {
+      "check": "invalid_class",
+      "project": "weights",
+      "passed": true
+    },
+    {
+      "check": "fractional_class",
+      "project": "weights",
+      "passed": true
+    },
+    {
+      "check": "fresh process export",
+      "project": "synthetic",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "nan",
+      "project": "synthetic",
+      "passed": true
+    },
+    {
+      "check": "inf",
+      "project": "synthetic",
+      "passed": true
+    },
+    {
+      "check": "short",
+      "project": "synthetic",
+      "passed": true
+    },
+    {
+      "check": "duplicate",
+      "project": "synthetic",
+      "passed": true
+    },
+    {
+      "check": "wrong_ids",
+      "project": "synthetic",
+      "passed": true
+    },
+    {
+      "check": "matrix",
+      "project": "synthetic",
+      "passed": true
+    },
+    {
+      "check": "invalid_class",
+      "project": "synthetic",
+      "passed": true
+    },
+    {
+      "check": "fractional_class",
+      "project": "synthetic",
+      "passed": true
+    },
+    {
+      "check": "fresh process export",
+      "project": "null",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "nan",
+      "project": "null",
+      "passed": true
+    },
+    {
+      "check": "inf",
+      "project": "null",
+      "passed": true
+    },
+    {
+      "check": "short",
+      "project": "null",
+      "passed": true
+    },
+    {
+      "check": "duplicate",
+      "project": "null",
+      "passed": true
+    },
+    {
+      "check": "wrong_ids",
+      "project": "null",
+      "passed": true
+    },
+    {
+      "check": "matrix",
+      "project": "null",
+      "passed": true
+    },
+    {
+      "check": "invalid_class",
+      "project": "null",
+      "passed": true
+    },
+    {
+      "check": "fractional_class",
+      "project": "null",
+      "passed": true
+    }
+  ],
+  "instruments": [
+    {
+      "instrument_version": "error-slices/1",
+      "scope": "validation association only",
+      "bins": [
+        {
+          "bin": 0,
+          "n": 90,
+          "mean_error": 0.07777777777777778
+        },
+        {
+          "bin": 1,
+          "n": 89,
+          "mean_error": 0.06741573033707865
+        },
+        {
+          "bin": 2,
+          "n": 90,
+          "mean_error": 0.05555555555555555
+        },
+        {
+          "bin": 3,
+          "n": 90,
+          "mean_error": 0.022222222222222223
+        }
+      ],
+      "mean_error": 0.055710306406685235,
+      "project": "digits"
+    },
+    {
+      "instrument_version": "error-slices/1",
+      "scope": "validation association only",
+      "bins": [
+        {
+          "bin": 0,
+          "n": 64,
+          "mean_error": 0.018566145678050816
+        },
+        {
+          "bin": 1,
+          "n": 64,
+          "mean_error": 0.016555233814870007
+        },
+        {
+          "bin": 2,
+          "n": 64,
+          "mean_error": 0.021475562462001108
+        },
+        {
+          "bin": 3,
+          "n": 64,
+          "mean_error": 0.020255444571375847
+        }
+      ],
+      "mean_error": 0.019213096631574444,
+      "project": "forecast"
+    }
+  ],
+  "lifecycle": [
+    {
+      "seed": 11,
+      "fresh_process_exact_restore": true,
+      "actual_exit_17_recovery": true,
+      "branch_parent_unchanged": true,
+      "branch_differs": true,
+      "missing_rng_optimizer_detected": true,
+      "scope": "CPU single-process training fixture; no distributed, MPS, fencing, sandbox or Eidos claims"
+    },
+    {
+      "seed": 23,
+      "fresh_process_exact_restore": true,
+      "actual_exit_17_recovery": true,
+      "branch_parent_unchanged": true,
+      "branch_differs": true,
+      "missing_rng_optimizer_detected": true,
+      "scope": "CPU single-process training fixture; no distributed, MPS, fencing, sandbox or Eidos claims"
+    },
+    {
+      "seed": 37,
+      "fresh_process_exact_restore": true,
+      "actual_exit_17_recovery": true,
+      "branch_parent_unchanged": true,
+      "branch_differs": true,
+      "missing_rng_optimizer_detected": true,
+      "scope": "CPU single-process training fixture; no distributed, MPS, fencing, sandbox or Eidos claims"
+    }
+  ],
+  "elapsed_seconds": 59.10634741699323,
+  "source_hashes": {
+    "analyze_results.py": "5ed4e84a7ac0dbd792fe183fd8cb7599f08c3646a6fa96c73d3ae7ef0b0155d4",
+    "check_analysis_and_answer.py": "b035b64df918020cb0828a3ca597cbdcbccb835d8725421e0367d8bc5c0281ea",
+    "fresh_check.py": "893365b67a57799b89cfc02d594b0375f0cc947d8f1728b759978588aee681e5",
+    "check_bundles.py": "fa8bd69dad7cb7ad3ad2853e5fe21ef443a8ec62dc7ee1f50e9a011faccf36aa",
+    "lifecycle.py": "b25c24e124fe493dee475f98b4286ba8767282e23534a6218dba03d2ec08d1e4",
+    "agent_project.py": "083f6227c61a7aeeb623fb614693e399bb5e7d1b0fdffb639c4da463e1301561",
+    "validate_answer.py": "a22da0fc4fa56d555fc46f97eb1958f1c270b97449c23b76aabe9fdb84f01c4c",
+    "package_task.py": "e9f4d5558fb5fbb4bf7968895e52b66224d02fbb7d1aa212419d141075c85d81",
+    "instrument.py": "3dfbfd395d760d7396d919d8d156a89f7c1aa3758229665327aaf83901b3f9c0",
+    "audit_upstream.py": "75d64f94059e3e123e3f2c0fea3c2228f0525f670ef6a411b3521f401cee14c9",
+    "prepare.py": "55eec1dc53a224d395b61e19048730c68c2782d7898dcd18488258c48d1c0902",
+    "qualify.py": "97285b2b17c4fc59a5ed04df92e613ed9137fcf1efbef58433e751e8a9ad9b84",
+    "data.py": "e38b63389716ba3bb49f5df2940ac26a8a418441e174fabadf7f4c5ef517e435",
+    "grade.py": "938c7bc9c98819cb737cf1f04c69548bea7db8bacb8d2e1df936b821ac8359f4",
+    "project.py": "a11ec33cea1e28b545d506da2397a3bafc4e7abd2fe59917a499592959093d6c"
+  },
+  "limitations": [
+    "no Eidos integration",
+    "no LLM investigation",
+    "no hostile-code isolation",
+    "no estimated stochastic false-positive rate or power",
+    "small public development datasets; no contamination claim"
+  ]
+}
