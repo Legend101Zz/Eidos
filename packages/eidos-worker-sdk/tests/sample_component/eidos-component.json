@@ -1,0 +1,5 @@
+{"id": "lab.pairs.by_group", "release": "1.2.0", "implements": "paired-report/1",
+ "kind": "artifact-op", "entry": "pair_tools:run",
+ "input": {"predictions": "labeled-binary-pairs/1"}, "output": {"report": "grouped-pair-counts/1"},
+ "scientific_effects": ["observe"],
+ "controls": ["fixtures/ok.json", "fixtures/bad-config.json", "fixtures/missing.json", "method-card.md"]}
