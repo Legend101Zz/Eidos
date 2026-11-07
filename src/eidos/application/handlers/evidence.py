@@ -162,7 +162,8 @@ def _admit_step(ctx: Ctx, plan, arm: dict, step: dict, inputs: dict, scope, inv_
     req = plan.body.get("required_isolation") or {}
     run = {"component_ref": spec.get("component_ref") or spec.get("component"), "inputs": inputs,
            "config": spec.get("config") or {}, "environment": spec.get("environment"), "seed": spec.get("seed"),
-           "isolation_profile": req.get("profile", spec.get("isolation_profile"))}
+           "isolation_profile": req.get("profile", spec.get("isolation_profile")),
+           "isolation_waiver": req.get("waiver")}
     lock = resolve_lock(ctx, run)
     lock.update({"plan_id": plan.id, "plan_digest": plan.digest, "arm": arm["id"], "arm_role": arm["role"],
                  "step": step["id"], "cluster": step.get("cluster"), "required_isolation": req})
@@ -262,6 +263,7 @@ def _realized(ctx: Ctx, plan) -> dict:
                if pr and "launcher" in (pr.get("scopes") or [])
                and (not sealed_needed or "sealed:read" in (pr.get("scopes") or []))}
     blocked = (plan.body["launch"].get("blocked") or {})
+    waivers: list[dict] = []
     for arm_id, jids in arm_jobs(plan.body).items():
         statuses, receipt = [], {}
         for jid in jids:
@@ -278,9 +280,15 @@ def _realized(ctx: Ctx, plan) -> dict:
                 iso_findings.extend({**f, "arm": arm_id, "job": jid} for f in verdict["findings"])
         arm_blocked = [k for k in blocked if k.startswith(arm_id + "/")]
         ok = statuses and all(st == "succeeded" for st in statuses) and not arm_blocked
+        choices = [ctx.tx.get_job(j)["lock"].get("isolation_choice") for j in jids]
+        waived = [c for c in choices if c and c.get("waiver")]
+        if waived:
+            waivers.append({"arm": arm_id, "waivers": sorted({w["waiver"] for w in waived}),
+                            "profiles": sorted({w["profile"] for w in waived})})
         arms[arm_id] = {"status": "succeeded" if ok else "incomplete", "receipt": receipt, "jobs": dict(zip(jids, statuses, strict=True)),
-                        "blocked_steps": arm_blocked}
-    return {"arms": arms, "isolation_ok": iso_ok, "isolation_findings": iso_findings}
+                        "blocked_steps": arm_blocked,
+                        "isolation_profiles": sorted({(c or {}).get("profile", "unknown") for c in choices})}
+    return {"arms": arms, "isolation_ok": iso_ok, "isolation_findings": iso_findings, "isolation_waivers": waivers}
 
 
 @command("submit_assessment", "assess")
@@ -320,6 +328,7 @@ def submit_assessment(ctx: Ctx, p: dict) -> dict:
         deps.append(job["lock"]["component"]["ref"])
     for ids in evidence_set.values():
         deps.extend(ids)
+    result["isolation_waivers"] = realized.get("isolation_waivers", [])  # always visible in the assessment
     result.update({"plan_id": plan.id, "claim_ref": plan.body["claim_ref"], "dependencies": sorted(set(deps)),
                    "assessed_by": ctx.principal.id, "realized": {k: {"status": v["status"]} for k, v in realized["arms"].items()}})
     ctx.tx.put_record("assessment", aid, ctx.project_id, result, created_by=ctx.principal.id, status=result["outcome"],

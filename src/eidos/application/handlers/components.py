@@ -81,7 +81,10 @@ def validate_component(ctx: Ctx, p: dict) -> dict:
             "inputs": {"bundle": {"artifact_id": art["id"], "digest": art["digest"], "schema": BUNDLE_SCHEMA}},
             "outputs": {"validation_report": "component-validation-report/1"},
             "environment": env, "config": {}, "ports": {}, "grants": [],
-            "isolation_profile": p.get("isolation_profile", "dev:same-user")}
+            "isolation_profile": None}
+    from eidos.application.handlers.runs import choose_profile
+    lock["isolation_choice"] = choose_profile(ctx, p.get("isolation_profile"), p.get("isolation_waiver"))
+    lock["isolation_profile"] = lock["isolation_choice"]["profile"]
     job = admit_job(ctx, kind="build", lock=lock, investigation_id=p.get("investigation_id"), purpose="build",
                     wall_seconds=int(p.get("wall_seconds", 300)), charter_check=False)
     return {"job_id": job, "component_ref": man.ref}

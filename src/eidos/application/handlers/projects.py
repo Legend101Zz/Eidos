@@ -41,7 +41,7 @@ def create_project(ctx: Ctx, p: dict) -> dict:
     ctx.tx.project_id = pid
     policy = {"auto_freeze_approved_templates": bool(p.get("auto_freeze_approved_templates", False)),
               "data_egress": p.get("data_egress", "authorized-context-only"),
-              "default_isolation_profile": "dev:same-user"}
+              "default_isolation_profile": "strongest-available"}
     ctx.tx.put_record("profile", profile_id(pid), pid,
                       {"bindings": {}, "defaults": {}, "environments": {}, "policy": policy},
                       created_by=ctx.principal.id, status="active")

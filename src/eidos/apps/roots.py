@@ -52,7 +52,8 @@ def run_api(cfg: LabConfig) -> None:
                 loop.call_soon_threadsafe(self.relay.notify)
 
     notifier = Notifier()
-    service = CommandService(ledger, store, settings={"max_upload_bytes": 4 << 30, "lab_root": str(cfg.root)}, notifier=notifier)
+    service = CommandService(ledger, store, settings={"max_upload_bytes": 4 << 30, "lab_root": str(cfg.root),
+                                                      "sealed_available": cfg.sealed_available}, notifier=notifier)
     loop = None
 
     async def main():

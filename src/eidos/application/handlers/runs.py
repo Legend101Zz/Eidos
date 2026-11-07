@@ -79,6 +79,27 @@ def _env_provided(cap: str, cat: list[dict]) -> bool:
     return not any(r["status"] == "active" and r["manifest"]["implements"] == cap for r in cat)
 
 
+def strongest_profile(ctx: Ctx) -> str:
+    return "linux:bwrap-sealed" if ctx.settings.get("sealed_available") else "dev:same-user"
+
+
+def choose_profile(ctx: Ctx, requested: str | None, waiver: str | None) -> dict:
+    """Candidate code runs under the strongest profile the lab has unless a weaker one is requested
+    explicitly with a recorded reason (visible in the lock, the plan's realized conditions and the
+    assessment)."""
+    strongest = strongest_profile(ctx)
+    profile = requested or strongest
+    if profile not in PROFILES:
+        raise Invalid(f"unknown isolation profile {profile!r}", details={"available": sorted(PROFILES)})
+    weaker = profile == "dev:same-user" and strongest != "dev:same-user"
+    if weaker and not (waiver and str(waiver).strip()):
+        raise Invalid("same-user execution is weaker than the available sealed profile; give an isolation_waiver "
+                      "reason to request it explicitly", details={"strongest_available": strongest})
+    return {"profile": profile, "requested": requested, "strongest_available": strongest, "explicit": bool(requested),
+            "waiver": str(waiver)[:500] if weaker else None, "requested_by": ctx.principal.id,
+            "note": None if strongest != "dev:same-user" else "no sealed profile on this platform; same-user is the strongest"}
+
+
 def _bind_extensions(ctx: Ctx, lock: dict, env: dict) -> None:
     """Resolve ``config.extensions`` entries naming published training-extension releases.
 
@@ -167,10 +188,10 @@ def resolve_lock(ctx: Ctx, p: dict, *, extra_config: dict | None = None) -> dict
     lock["inputs"] = {k: {**lock["inputs"][k], "media_type": v["media_type"], "size": v["size"], "role": v["role"]}
                       for k, v in inputs.items()}
     lock["environment"] = env
-    profile_name = p.get("isolation_profile") or prof.body.get("policy", {}).get("default_isolation_profile", "dev:same-user")
-    if profile_name not in PROFILES:
-        raise Invalid(f"unknown isolation profile {profile_name!r}", details={"available": sorted(PROFILES)})
+    choice = choose_profile(ctx, p.get("isolation_profile"), p.get("isolation_waiver"))
+    profile_name = choice["profile"]
     lock["isolation_profile"] = profile_name
+    lock["isolation_choice"] = choice
     lock["seed"] = p.get("seed")
     # Derived data inherits the most restrictive input class.
     order = ("project", "restricted", "sealed-labels")
