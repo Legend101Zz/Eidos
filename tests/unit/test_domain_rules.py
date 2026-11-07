@@ -302,3 +302,13 @@ def test_command_key_stable_and_decision_validation():
         turns.validate_decision({"calls": [{"tool": "drop_database", "args": {}}]}, max_calls=4)
     with pytest.raises(PayloadTooLarge):
         turns.check_payload({"x": "a" * 200_000})
+
+
+def test_any_schema_input_port_accepts_any_artifact_schema():
+    target = rel("cmd@1.0.0", "project-command/1", optional_inputs={"extra_a": "*"})
+    lock = resolver.resolve_invocation(target=target, catalog=[target], profile={}, overrides={},
+                                       inputs={"extra_a": {"artifact_id": "a", "digest": "d", "schema": "prediction-array/1"}},
+                                       config={}, grants=set(), installed={})
+    assert lock["inputs"]["extra_a"]["schema"] == "prediction-array/1"
+    from eidos_wire import parse_manifest
+    parse_manifest({**target["manifest"], "input": {"x": "*"}})

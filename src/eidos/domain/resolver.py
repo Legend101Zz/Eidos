@@ -161,7 +161,7 @@ def resolve_invocation(
             raise ResolutionError(f"missing input '{port}' ({schema}) for {consumer}",
                                   details={"consumer": consumer, "port": port, "schema": schema})
         have = art.get("schema")
-        if have != schema:
+        if schema != "*" and have != schema:
             adapters_avail = [a["ref"] for a in (adapters or [])
                               if (a["manifest"].get("input") or {}) and have in a["manifest"]["input"].values()
                               and schema in (a["manifest"].get("output") or {}).values()]

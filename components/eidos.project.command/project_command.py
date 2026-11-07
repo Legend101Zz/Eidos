@@ -39,6 +39,12 @@ def run(inputs, config, *, reader, writer, context):
             else:
                 target.write_text(text)
         source = "candidate-bundle:" + inputs["source"].artifact_id
+    elif config.get("copy") is not None:  # explicit allowlist of project files
+        for name in config["copy"]:
+            src = Path(os.getcwd()) / name
+            if "/" in name or not src.is_file() or src.is_symlink():
+                raise ValueError("copy entry must be a plain project file: %r" % name)
+            shutil.copyfile(src, work / name)
     else:
         _copy_project(os.getcwd(), work, set(files.values()))
     for port, name in files.items():
@@ -61,7 +67,7 @@ def run(inputs, config, *, reader, writer, context):
     elapsed = time.time() - started
     (out / "command-stdout.txt").write_text(proc.stdout[-200000:])
     (out / "command-stderr.txt").write_text(proc.stderr[-200000:])
-    if proc.returncode != 0:
+    if proc.returncode != 0 and not config.get("allow_nonzero_exit"):
         raise RuntimeError("project command failed (exit %d): %s" % (proc.returncode, proc.stderr[-2000:]))
     staged, metrics = [], {}
     for p in sorted(out.rglob("*")):

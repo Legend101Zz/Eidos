@@ -161,3 +161,47 @@ async def test_recorded_histories_replay_on_current_code():
     for f in files:
         await replayer.replay_workflow(WorkflowHistory.from_json(f.stem, json.loads(f.read_text())))
     _ = (ASSESSOR_QUEUE, WorkflowFailureError)
+
+
+async def test_stress_many_turns_bounded_histories_and_oversized_results(env):
+    """16 turns (EIDOS_STRESS_TURNS) with frequent rollover; every run's history stays below its limit; an activity
+    result far above the workflow envelope is reduced by `bounded()` instead of failing tasks."""
+    from eidos.investigator.activities import bounded
+
+    class Big(FakeInvestigator):
+        @activity.defn(name="decide")
+        async def decide(self, a: dict) -> dict:
+            huge = {"accepted": True, "decision_id": f"{a['turn_id']}-d{a['slot']}", "n_calls": 1,
+                    "control": {"action": "wait_for_jobs"}, "reason": "x" * 3_000_000}
+            return bounded(huge)
+
+        def acts(self):
+            return [self.begin_turn, self.build_context, self.decide, self.execute_decision, self.complete_turn]
+
+    fake = Big(stop_after=int(os.environ.get("EIDOS_STRESS_TURNS", "16")))
+    wid = f"inv-stress-{uuid.uuid4().hex[:6]}"
+    import asyncio
+    async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
+            Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=fake.acts()):
+        h = await env.client.start_workflow(
+            InvestigationWorkflow.run, {"investigation_id": wid, "project_id": "p", "turns_per_run": 4,
+                                        "idle_poll_seconds": 1, "history_limit": 400}, id=wid, task_queue=WORKFLOW_QUEUE)
+        for _ in range(200):
+            await asyncio.sleep(0.15)
+            try:
+                await h.signal("wake", 1)
+            except Exception:
+                break
+        result = await h.result()
+    assert result["status"] == "finished" and fake.turns == int(os.environ.get("EIDOS_STRESS_TURNS", "16"))
+    # Walk the run chain and check each history stayed bounded.
+    lengths, run_id = [], h.first_execution_run_id
+    from temporalio.api.enums.v1 import EventType
+    while run_id:
+        hist = await env.client.get_workflow_handle(wid, run_id=run_id).fetch_history()
+        lengths.append(len(hist.events))
+        last = hist.events[-1]
+        run_id = (last.workflow_execution_continued_as_new_event_attributes.new_execution_run_id
+                  if last.event_type == EventType.EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW else None)
+    # Each run may exceed the soft limit only by what one in-flight turn adds (signals during a child).
+    assert len(lengths) >= fake.turns // 4 and max(lengths) < 400 + 120, lengths

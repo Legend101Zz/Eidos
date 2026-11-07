@@ -89,7 +89,12 @@ class InvestigationWorkflow:
             if not res.get("started") or reason in WAIT_REASONS or reason == "error":
                 self._status = f"waiting ({reason})"
                 try:
-                    await workflow.wait_condition(lambda seen=seen: self._wakes > seen, timeout=timedelta(seconds=idle))
+                    # Signals add history while waiting; leave the wait (and roll over at the loop top)
+                    # once the history crosses its limit, so a wake storm cannot grow it unboundedly.
+                    await workflow.wait_condition(
+                        lambda seen=seen: self._wakes > seen
+                        or workflow.info().get_current_history_length() > history_limit,
+                        timeout=timedelta(seconds=idle))
                 except TimeoutError:
                     pass
 

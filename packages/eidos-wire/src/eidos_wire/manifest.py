@@ -120,7 +120,8 @@ def parse_manifest(data: Dict[str, Any]) -> ComponentManifest:
     for key in ("input", "output"):
         val = data.get(key, {})
         if not isinstance(val, dict) or not all(
-            isinstance(k, str) and isinstance(v, str) and _CAPABILITY.match(v) for k, v in val.items()
+            isinstance(k, str) and isinstance(v, str) and (_CAPABILITY.match(v) or (key == "input" and v == "*"))
+            for k, v in val.items()
         ):
             problems.append(f"'{key}' must map port names to 'schema/MAJOR' identifiers")
     effects = need("scientific_effects", list, "list of effects")
