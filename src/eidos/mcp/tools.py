@@ -103,7 +103,7 @@ TOOLS: tuple[Tool, ...] = (
          (P("text", "s", "Free-text filter."), P("capability", "s", "Capability the release implements."),
           P("effect", "s", "Scientific effect declared by the release."),
           P("include_inactive", "b", "Include retired/withdrawn releases."),
-          P("cursor", "s", "Opaque cursor from a previous page's next_cursor."), P("limit", "i")),
+          P("cursor", "i", "next_cursor from the previous page."), P("limit", "i")),
          grant="project:read"),
     Tool("describe_component", "query", "describe_component",
          "Full release record for a component ref: manifest/contract, approvals and qualifications.",
