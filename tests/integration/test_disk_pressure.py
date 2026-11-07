@@ -8,8 +8,9 @@ pytestmark = pytest.mark.pg
 
 
 def test_upload_refused_under_disk_pressure_and_existing_evidence_intact(lab):
-    from eidos.api.app import create_app
     from test_command_path import project
+
+    from eidos.api.app import create_app
     pid = project(lab)
     app = create_app(lab.svc)
     c = TestClient(app)

@@ -1,0 +1,18 @@
+{
+  "id": "eidos.project.command",
+  "release": "1.0.1",
+  "implements": "project-command/1",
+  "kind": "artifact-op",
+  "entry": "project_command:run",
+  "summary": "Whole-trainer escape hatch: run an ordinary project CLI (argv array, no shell) in a private working copy of the project, optionally replacing project files from a candidate source bundle; stage every file it writes.",
+  "scientific_effects": ["change-weights"],
+  "optional_inputs": {"source": "source-bundle/1", "train": "task-array/1", "validation": "task-array/1",
+                      "test_inputs": "task-array/1", "task": "task-manifest/1", "model": "model-file/1"},
+  "output": {"receipt": "project-receipt/1"},
+  "reads": ["project files", "declared inputs"],
+  "writes": ["output:*"],
+  "isolation": "private-copy",
+  "card": "method-card.md",
+  "controls": [],
+  "receipt": ["argv", "returncode", "outputs", "metrics", "source"]
+}

@@ -118,7 +118,7 @@ forbidden_modules = [
 [[tool.importlinter.contracts]]
 name = "CLI, MCP and reporting cannot touch persistence or bypass commands"
 type = "forbidden"
-source_modules = ["eidos.cli", "eidos.mcp", "eidos.reporting"]
+source_modules = ["eidos.cli", "eidos.mcp", "eidos.reporting", "eidos.tasks"]
 forbidden_modules = ["eidos.persistence", "eidos.orchestration", "sqlalchemy", "psycopg", "temporalio"]
 
 [[tool.importlinter.contracts]]

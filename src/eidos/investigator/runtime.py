@@ -115,7 +115,11 @@ def build_runtime(config: dict[str, Any]) -> InvestigatorRuntime:
         name = config.get("policy", "conclude-immediately")
         if name not in FIXTURE_POLICIES:
             import importlib
-            importlib.import_module("eidos.investigator.fixture_policies")
+            for mod in ("eidos.investigator.task_policies", "eidos.investigator.fixture_policies"):
+                try:
+                    importlib.import_module(mod)
+                except ModuleNotFoundError:
+                    pass
         return FixtureRuntime(FIXTURE_POLICIES[name], policy_name=name)
     if kind == "pydantic-ai":
         from eidos.investigator.pydantic_ai_runtime import PydanticAIRuntime

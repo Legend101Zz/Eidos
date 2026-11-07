@@ -52,6 +52,10 @@ def pack(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int
     if steer:
         lines.append("## Operator steering (most recent last)")
         lines += [f"- [{s['by']}] {s['instruction']}" for s in steer[-5:]]
+    if inv.get("inputs"):
+        lines.append("Declared input artifacts (port -> artifact id): " + json.dumps(inv["inputs"], sort_keys=True))
+    if inv.get("task"):
+        lines.append("Task: " + json.dumps(inv["task"], sort_keys=True)[:2000])
     if inv.get("notes"):
         lines.append(f"Notes: {inv['notes']}")
     lines.append("## Budget (exploration scope)")

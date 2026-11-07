@@ -327,11 +327,13 @@ def charter_show(project: str, charter_id: str, history: bool = False):
 def inv_start(project: str, question: str = typer.Option(...), charter: str = None, model_artifact: str = None,
               environment: str = "default", limit: list[str] = typer.Option([], help="dimension=value"),
               runtime: str = "fixture", model: str = None, policy: str = None, max_turns: int = 40,
-              investigation_id: str = None, key: str = None):
+              investigation_id: str = None, key: str = None,
+              input_artifact: list[str] = typer.Option([], "--input", help="declared input port=artifact_id")):
     inv = {"runtime": runtime, "model": model, "max_turns": max_turns}
     if policy:
         inv["settings"] = {"policy": policy}
     payload = {"question": question, "charter_id": charter, "model_artifact_id": model_artifact, "environment": environment,
+               "inputs": _kv(input_artifact),
                "limits": {k: float(v) for k, v in _kv(limit).items()}, "investigator": inv,
                "investigation_id": investigation_id}
     try:
@@ -469,6 +471,44 @@ def export(project: str, checkpoint: str = typer.Option(...), behavior_job: str 
             rec = c.query("get_record", {"kind": "export", "id": r["result"]["export_id"]}, project=project)
             (dest / "eidos-export.json").write_text(json.dumps(rec, indent=2, default=str))
         out(r)
+    except LabError as exc:
+        fail(exc)
+
+
+task_app = typer.Typer(no_args_is_help=True, help="External task bundles (eidos-task-bundle/0.1) and common answers")
+app.add_typer(task_app, name="task")
+
+
+@task_app.command("import")
+def task_import(project: str, bundle: Path, python: str = typer.Option(..., help="interpreter with the bundle's lock installed"),
+                record: Path = typer.Option(None, help="write the import record here")):
+    """Verify a task bundle's hashes and register it (inputs, environment, exploration-only charter)."""
+    from eidos.tasks.bundle import import_bundle
+    try:
+        r = import_bundle(client(), project, bundle, python=python)
+    except LabError as exc:
+        fail(exc)
+    if record:
+        record.write_text(json.dumps(r, indent=2, sort_keys=True, default=str))
+    out({k: r[k] for k in ("task_id", "artifacts", "charter_id", "bundle")})
+
+
+@task_app.command("answer")
+def task_answer(project: str, task_id: str = typer.Option(...), run_id: str = typer.Option(...),
+                out_dir: Path = typer.Option(...), python: str = typer.Option(...),
+                test_inputs: Path = typer.Option(None), candidate_job: str = typer.Option(None),
+                baseline_score_job: str = None, candidate_score_job: str = None,
+                status: str = typer.Option(...), claim_type: str = typer.Option(...), claim: str = typer.Option(...),
+                scope: str = typer.Option(...), investigation: str = None,
+                run_label: str = typer.Option(..., help="e.g. 'fixture-provider run' or 'builder-assisted run'"),
+                validator: Path = typer.Option(None, help="path to the release's validate_answer.py")):
+    """Export an eidos-answer/0.2 submission (candidate inference on test inputs in a separate process)."""
+    from eidos.tasks.bundle import export_answer
+    try:
+        out(export_answer(client(), project, task_id=task_id, run_id=run_id, out=out_dir, python=python,
+                          test_inputs=test_inputs, candidate_job=candidate_job, baseline_score_job=baseline_score_job,
+                          candidate_score_job=candidate_score_job, status=status, claim_type=claim_type, claim=claim,
+                          scope=scope, investigation_id=investigation, run_label=run_label, validator=validator))
     except LabError as exc:
         fail(exc)
 

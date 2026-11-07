@@ -151,9 +151,12 @@ def resolve_invocation(
     if missing_grants:
         raise ResolutionError(f"{consumer} requests grants that are not held: {missing_grants}",
                               details={"consumer": consumer, "missing_grants": missing_grants})
-    # Input contract checks.
-    for port, schema in (man.get("input") or {}).items():
+    # Input contract checks. ``optional_inputs`` ports may be absent (recorded as absent in the lock).
+    optional_in = man.get("optional_inputs") or {}
+    for port, schema in {**(man.get("input") or {}), **optional_in}.items():
         art = inputs.get(port)
+        if art is None and port in optional_in:
+            continue
         if art is None:
             raise ResolutionError(f"missing input '{port}' ({schema}) for {consumer}",
                                   details={"consumer": consumer, "port": port, "schema": schema})
@@ -166,7 +169,7 @@ def resolve_invocation(
                 f"input '{port}' of {consumer} needs {schema}, artifact provides {have}",
                 details={"consumer": consumer, "port": port, "required_contract": schema,
                          "available_contract": have, "approved_adapters": adapters_avail})
-    extra = sorted(set(inputs) - set(man.get("input") or {}))
+    extra = sorted(set(inputs) - set(man.get("input") or {}) - set(optional_in))
     if extra:
         raise ResolutionError(f"unexpected inputs {extra} for {consumer}", details={"consumer": consumer})
     # Port bindings with cycle detection.

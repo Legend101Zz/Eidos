@@ -45,7 +45,8 @@ def start_investigation(ctx: Ctx, p: dict) -> dict:
     body = {"question": p["question"], "model_artifact_id": p.get("model_artifact_id"),
             "environment": p.get("environment", "default"), "charter_ref": None, "limits": limits,
             "investigator": investigator, "steering": [], "confirmation_envelope": p.get("confirmation_envelope", {}),
-            "notes": p.get("notes", "")}
+            "notes": p.get("notes", ""), "inputs": dict(p.get("inputs") or {}),
+            "task": p.get("task")}
     charter_id = p.get("charter_id")
     if charter_id:
         ch = ctx.tx.require("charter", charter_id)
