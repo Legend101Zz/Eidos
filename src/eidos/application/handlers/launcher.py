@@ -136,7 +136,10 @@ def publish_outputs(ctx: Ctx, p: dict) -> dict:
         meta = {}
         if out.role == "checkpoint":
             ck = dict(checkpoints.get(out.slot) or {})
-            ck.setdefault("complete", True)
+            # A checkpoint from a failed run is branchable only if its receipt vouches for it.
+            ck.setdefault("complete", man.status == "succeeded")
+            if man.status != "succeeded":
+                ck["partial_from_failed_attempt"] = True
             if branch:
                 parent = ctx.tx.get_artifact(job["lock"]["inputs"]["parent_checkpoint"]["artifact_id"])
                 ck["trajectory_id"] = (parent["meta"].get("checkpoint") or {}).get("trajectory_id", parent["id"])

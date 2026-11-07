@@ -1,6 +1,6 @@
 {
   "id": "eidos.pytorch.train",
-  "release": "1.1.1",
+  "release": "1.2.0",
   "implements": "pytorch-train/1",
   "kind": "artifact-op",
   "entry": "eidos_train.train:run",

@@ -263,6 +263,13 @@ def run(inputs, config, *, reader, writer, context):
     branch = config.get("branch")
     scratch = str(context.scratch_dir)
     ckpt_dir = os.path.join(scratch, "checkpoints")
+    # Worker-death recovery: the launcher provides a job-private directory that persists across
+    # attempts. Periodic checkpoints go there; a new attempt resumes from the latest committed one.
+    resume_port = context.invocation.ports.get("resume.dir/1")
+    resume_dir = resume_port.get("path") if isinstance(resume_port, Mapping) else None
+    resumed_from_attempt = None
+    if resume_dir and int(config.get("checkpoint_every", 0)) > 0:
+        ckpt_dir = resume_dir
 
     session = Session(adapter, config, build_cfg, bpu)
     session.meta.data.update(
@@ -313,6 +320,16 @@ def run(inputs, config, *, reader, writer, context):
         }
     elif branch:
         raise ContractError("config.branch needs the parent_checkpoint input")
+    if resume_dir and int(config.get("checkpoint_every", 0)) > 0:
+        prior = sorted(p for p in os.listdir(resume_dir) if p.startswith("step-") and p.endswith(".ckpt"))
+        for name in reversed(prior):  # newest checkpoint that loads as complete
+            try:
+                load_checkpoint(os.path.join(resume_dir, name))
+            except Exception:  # noqa: BLE001 - a torn file from the dead attempt is skipped
+                continue
+            plan_extra["resume_from"] = os.path.join(resume_dir, name)
+            resumed_from_attempt = name
+            break
 
     def batch_fn_for(stream_seed: int):
         if callable(getattr(adapter, "train", None)):
@@ -324,6 +341,9 @@ def run(inputs, config, *, reader, writer, context):
     stream_seed = int(session.meta.data["stream_seed"])
     ctx = _train_once(session, steps, seed, plan_extra, ckpt_dir, context, batch_fn_for(stream_seed))
     context.record("stopped_early", bool(ctx.receipt.get("stopped_early")))
+    if resumed_from_attempt:
+        context.record("resumed_after_worker_death", {"checkpoint": resumed_from_attempt,
+                                                      "restore_class": "exact (same environment, CPU)"})
     final_state = load_checkpoint(ctx.checkpoints[-1])
     final_fp = state_fingerprint(final_state["entries"])
 

@@ -185,11 +185,15 @@ class AttemptRunner:
                 ports.setdefault("extension.source/1", {"paths": []})["paths"].append(str(p))
             else:
                 ports[f"{name}.source/1"] = {"path": str(p)}
+        # Job-private directory that persists across attempts (resume after worker death).
+        resume = self.root / "jobs" / ctx["job_id"] / "resume"
+        resume.mkdir(parents=True, exist_ok=True)
+        ports["resume.dir/1"] = {"path": str(resume)}
         comp = dict(lock["component"])
         comp["source_dir"] = str(source) if source else None
         pythonpath = os.pathsep.join(SDK_PATHS + ([str(source)] if source else []))
         if sealed and candidate_uid(python):
-            for d in (adir, staging, scratch):
+            for d in (adir, staging, scratch, resume):
                 shutil.chown(d, CANDIDATE_USER, CANDIDATE_USER)
             if adir.parent.exists():
                 os.chmod(adir.parent, 0o755)
@@ -207,7 +211,7 @@ class AttemptRunner:
             argv = [python, "-m", "eidos_worker.run", str(adir / "invocation.json")]
         return LaunchSpec(argv=argv, cwd=env["project_root"], attempt_dir=str(adir),
                           env={"PYTHONPATH": pythonpath, "PYTHONHASHSEED": "0"},
-                          profile=profile, readonly=readonly, writable=[str(staging), str(scratch)],
+                          profile=profile, readonly=readonly, writable=[str(staging), str(scratch), str(resume)],
                           python_prefixes=python_prefixes(python) if sealed else [])
 
     def _isolation_receipt(self, spec: LaunchSpec, profile: str) -> dict:

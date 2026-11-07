@@ -103,6 +103,11 @@ def execute(invocation: Invocation) -> OutputManifest:
     if writer is not None:
         if status == "succeeded":
             outputs = writer.entries
+        else:
+            # Atomically staged checkpoints written before the failure are citable partial results.
+            outputs = [e for e in writer.entries if e.role == "checkpoint"]
+            if outputs:
+                receipt["partial_outputs"] = [e.slot for e in outputs]
         if ctx is not None:
             ctx.close()
             try:
