@@ -111,6 +111,23 @@ ANTHROPIC_API_KEY=... PYTHONPATH=src:packages/eidos-wire/src \
 - Caps: at most 24 requests (the scenario budgets sum to 21) and 4,096 output tokens per request; temperature unset.
 - Pass means the decision has calls or a control, every call has its required args, and the args are listed in the receipt.
 
+### Lab-free real-LLM investigation driver (for the controller; capped)
+
+`scripts/qualify/live_bundle_investigation.py` drives one generated task bundle with the real runtime port, `context-policy/1` and decision validation. It executes a restricted tool set locally: the bundle's own CLI, the validation scorer, authored candidate files, notes and conclude. It does **not** use the ledger, Temporal or isolation, so its records are labelled "lab-free real-LLM development run".
+- The investigator sees only the bundle and the two generic components. Test inputs and labels are never used.
+- Caps: `--max-requests` (hard limit 60), `--max-turns`, 4,096 output tokens per request, temperature unset.
+- Dry-run here via `replay:` scripted decisions on D02. Baseline plus scorer ran and concluded, with validation accuracy 0.838.
+
+```bash
+cd research/public/development && PY=<release env python> && $PY package_task.py --task D02 --out /tmp/eidos-D02 && cd -
+$PY -m pip install -r scripts/qualify/requirements-live.txt      # adds pydantic-ai-slim/anthropic; no lock pins change
+ANTHROPIC_API_KEY=... PYTHONPATH=src:packages/eidos-wire/src $PY scripts/qualify/live_bundle_investigation.py \
+  --bundle /tmp/eidos-D02 --python $PY --out /tmp/eidos-live-D02.json --model anthropic:claude-sonnet-5-5 \
+  --max-requests 40 --max-turns 8        # repeat with D12 for the null case
+```
+
+Expected cost per bundle: at most 40 requests, each roughly 3–8k input and ≤ 4k output tokens.
+
 ## Builder interventions log (distinct from autonomous investigator behaviour)
 
 - 2026-11-07, D02 development run: the builder-authored component `eidos.project.command@1.0.0` staged with an invalid role, so all baseline jobs failed. The fixture investigator correctly concluded "no successful runs". The builder fixed the defect and released 1.0.1. Both runs remain in the ledger.
