@@ -212,7 +212,8 @@ TOOLS: tuple[Tool, ...] = (
          "Plan a child trial from an immutable parent checkpoint with explicit migration, stream policy "
          "and restore class. Returns a trial id for launch_branch.",
          (P("parent_checkpoint_id", "s", required=True), P("intervention", "o"), P("migration", "o"),
-          P("stream_policy", "o"), P("restore_class", "s"), *_RUN),
+          P("stream_policy", "s", "paired | independent (independent needs an explicit seed)"),
+          P("new_state", "a"), P("additional_budget", "o"), P("claimed_restore_class", "s"), *_RUN),
          grant="plan"),
     Tool("launch_branch", "command", "launch_branch", "Admit a planned branch trial.",
          (P("trial_id", "s", required=True),), grant="spend_compute"),

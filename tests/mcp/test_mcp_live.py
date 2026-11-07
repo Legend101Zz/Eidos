@@ -10,10 +10,10 @@ import uuid
 from pathlib import Path
 
 import pytest
-from mcp import Client, StdioServerParameters
 
 from eidos.client import LabClient
 from eidos.settings import LabConfig
+from mcp import Client, StdioServerParameters
 
 pytestmark = pytest.mark.live
 SRC = str(Path(__file__).resolve().parents[2] / "src")

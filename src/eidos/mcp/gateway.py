@@ -53,7 +53,7 @@ def failure_from(exc: Exception) -> ToolFailure:
                        "by the adapter itself.")
 
 
-_JSON_TYPES = {"string": str, "integer": int, "number": (int, float), "boolean": bool, "object": dict,
+_JSON_TYPES: dict[str, type | tuple[type, ...]] = {"string": str, "integer": int, "number": (int, float), "boolean": bool, "object": dict,
                "array": list}
 
 
@@ -71,9 +71,7 @@ def validate_args(tool: Tool, args: dict[str, Any]) -> None:
         want = _JSON_TYPES[props[k]["type"]]
         if v is None:
             continue
-        if isinstance(v, bool) and props[k]["type"] in ("integer", "number"):
-            problems.append(f"'{k}' must be {props[k]['type']}")
-        elif not isinstance(v, want):
+        if (isinstance(v, bool) and props[k]["type"] in ("integer", "number")) or not isinstance(v, want):
             problems.append(f"'{k}' must be {props[k]['type']}")
     ck = args.get("command_key")
     if isinstance(ck, str) and len(ck) > 200:
@@ -97,7 +95,7 @@ def call_tool(client: Any, name: str, args: dict[str, Any]) -> dict[str, Any]:
         if name == "get_study_charter" and payload.pop("history", False):
             return _wrap(client.query("record_history", {"kind": "charter", "id": payload["id"]}, project=project))
         if tool.kind == "artifact_access":
-            return _artifact_access(client, project, payload)
+            return _artifact_access(client, project or "", payload)
         payload.pop("history", None)
         return _wrap(client.query(tool.target, payload, project=project))
     except ToolFailure:

@@ -14,12 +14,11 @@ import httpx
 import httpx2
 import pytest
 import uvicorn
-from mcp import Client, StdioServerParameters
+from fake_client import FakeLab
 from mcp.client.streamable_http import streamable_http_client
 
 from eidos.mcp.server import http_app
-
-from fake_client import FakeLab
+from mcp import Client, StdioServerParameters
 
 HERE = Path(__file__).parent
 SRC = str(HERE.parents[1] / "src")
@@ -79,9 +78,9 @@ def test_http_rejects_missing_or_bad_token_and_foreign_origin(http_server):
 async def test_http_acts_with_callers_token(http_server, mode):
     lab, url = http_server
     lab.tokens["other-token"] = "bob"
-    async with httpx2.AsyncClient(headers={"authorization": "Bearer other-token"}) as h:
-        async with Client(streamable_http_client(url, http_client=h), mode=mode) as c:
-            assert c.protocol_version == ("2026-07-28" if mode == "auto" else "2025-11-25")
-            r = await c.call_tool("get_investigation", {"project": "p", "investigation_id": "i1"})
-            assert not r.is_error
+    async with (httpx2.AsyncClient(headers={"authorization": "Bearer other-token"}) as h,
+                Client(streamable_http_client(url, http_client=h), mode=mode) as c):
+        assert c.protocol_version == ("2026-07-28" if mode == "auto" else "2025-11-25")
+        r = await c.call_tool("get_investigation", {"project": "p", "investigation_id": "i1"})
+        assert not r.is_error
     assert lab.calls and all(call[5] == "other-token" for call in lab.calls)

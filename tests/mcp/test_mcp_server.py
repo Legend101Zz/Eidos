@@ -8,13 +8,12 @@ import inspect
 import json
 
 import pytest
-from mcp import Client
+from fake_client import FakeLab
 from mcp.shared.exceptions import MCPError
 
 from eidos.mcp.server import Credentials, build_server
 from eidos.mcp.tools import TOOLS
-
-from fake_client import FakeLab
+from mcp import Client
 
 EXPECTED = {
     "list_components", "describe_component", "validate_component", "publish_component", "bind_component",
