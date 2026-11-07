@@ -129,7 +129,8 @@ class TurnWorkflow:
                             stop = "invalid-proposals"  # waits like other wait reasons; no hot loop
                             break
                         continue  # the next slot sees why the proposal was refused
-                    stop = "stale-revision" if d.get("reason") == "stale-revision" else "error"
+                    stop = {"stale-revision": "stale-revision", "budget-exhausted": "budget-exhausted"}.get(
+                        d.get("reason"), "error")
                     break
                 invalid_run = 0
                 if d.get("n_calls"):

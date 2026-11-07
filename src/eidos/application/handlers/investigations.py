@@ -238,16 +238,45 @@ def _check_component_contracts(ctx: Ctx, calls: list[dict]) -> None:
                               "config_schema": schema})
 
 
-def _charge_model_usage(ctx: Ctx, inv_id: str, usage: dict, *, ref: str) -> None:
+def _charge_model_usage(ctx: Ctx, inv_id: str, usage: dict, *, ref: str, reserved: dict | None = None) -> None:
+    """Settle actual model usage against any per-decision reservation. Usage entries are written
+    even for dimensions without a budget row, so unbudgeted spend is still on the ledger."""
     scope = inv_scope(inv_id)
-    budgets = ctx.tx.budgets(scope)
+    reserved = reserved or {}
     uncertain = bool(usage.get("uncertain"))
     detail = {k: usage.get(k) for k in ("provider", "model", "request_ids", "calls")}
-    tokens = float(usage.get("input_tokens", 0)) + float(usage.get("output_tokens", 0))
-    if tokens and "model_tokens" in budgets:
-        ctx.tx.record_usage(scope, "model_tokens", tokens, ref, uncertain=uncertain, detail=detail)
-    if usage.get("usd") and "model_usd" in budgets:
-        ctx.tx.record_usage(scope, "model_usd", float(usage["usd"]), ref, uncertain=uncertain, detail=detail)
+    tokens = float(usage.get("input_tokens", 0) or 0) + float(usage.get("output_tokens", 0) or 0)
+    usd = float(usage.get("usd") or 0)
+    for dim, actual in (("model_tokens", tokens), ("model_usd", usd)):
+        if actual or reserved.get(dim):
+            ctx.tx.settle(scope, dim, reserved=float(reserved.get(dim, 0)), actual=actual, ref=ref,
+                          uncertain=uncertain, detail=detail)
+
+
+@command("reserve_model_budget", "turn")
+def reserve_model_budget(ctx: Ctx, p: dict) -> dict:
+    """Reserve one decision's maximum model envelope before its requests are sent. Raises
+    BUDGET_EXHAUSTED (no model call) when the investigation's remaining budget cannot cover it."""
+    turn = _turn(ctx, p["turn_id"])
+    scope = inv_scope(turn["investigation_id"])
+    budgets = ctx.tx.budgets(scope)
+    out = {}
+    for dim, amount in (p.get("estimate") or {}).items():
+        if dim in ("model_tokens", "model_usd") and dim in budgets and float(amount) > 0:
+            ctx.tx.reserve(scope, dim, float(amount), f"model:{p['turn_id']}:{p.get('slot')}:{p.get('attempt')}")
+            out[dim] = float(amount)
+    return {"reserved": out, "reservation_ref": f"model:{p['turn_id']}:{p.get('slot')}:{p.get('attempt')}"}
+
+
+def release_turn_model_reservations(ctx: Ctx, turn: dict) -> dict:
+    """Release model reservations of a turn that were never settled (e.g. the activity died)."""
+    scope = inv_scope(turn["investigation_id"])
+    released = {}
+    for dim, left in ctx.tx.open_reservations(scope, f"model:{turn['id']}:").items():
+        if left > 0:
+            ctx.tx.settle(scope, dim, reserved=left, actual=0, ref=f"model:{turn['id']}:release")
+            released[dim] = left
+    return released
 
 
 @command("record_model_usage", "turn")
@@ -255,7 +284,8 @@ def record_model_usage(ctx: Ctx, p: dict) -> dict:
     """Record model usage that is not attached to an accepted decision (failed/timeout calls).
     A timeout after possible charge is recorded as possible usage with its request ID."""
     turn = _turn(ctx, p["turn_id"])
-    _charge_model_usage(ctx, turn["investigation_id"], p.get("usage") or {}, ref=f"usage:{p['turn_id']}")
+    _charge_model_usage(ctx, turn["investigation_id"], p.get("usage") or {},
+                        ref=p.get("reservation_ref") or f"usage:{p['turn_id']}", reserved=p.get("reserved"))
     ctx.event("model.usage", p["turn_id"], {"usage": p.get("usage")}, investigation_id=turn["investigation_id"])
     return {"recorded": True}
 
@@ -271,6 +301,7 @@ def complete_turn(ctx: Ctx, p: dict) -> dict:
     status = "cancelled" if reason == "cancelled" else ("failed" if reason == "error" else "completed")
     result = {"stop_reason": reason, "summary": str(p.get("summary", ""))[:4000], "receipts": p.get("receipts", []),
               "unfinished_handles": p.get("unfinished_handles", []), "control": p.get("control")}
+    result["released_model_reservations"] = release_turn_model_reservations(ctx, turn)
     ctx.tx.update_turn(turn["id"], status=status, result=result)
     inv_id = turn["investigation_id"]
     budgets = ctx.tx.budgets(inv_scope(inv_id))

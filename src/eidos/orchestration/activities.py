@@ -113,7 +113,13 @@ class AssessorActivities:
         import os
         import time as _time
 
-        from eidos.runtime.launcher import LaunchSpec, bwrap_available, launch, profile_config_digest, run_probes
+        from eidos.runtime.launcher import (
+            LaunchSpec,
+            bwrap_available,
+            launch,
+            profile_config_digest,
+            run_probes,
+        )
         from eidos.runtime.runner import SDK_PATHS, materialize_bundle, python_prefixes
         from eidos_wire import OutputManifest
         from eidos_worker.testing import make_invocation, read_output_json

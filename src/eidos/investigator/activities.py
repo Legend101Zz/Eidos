@@ -153,6 +153,22 @@ class InvestigatorActivities:
         cfg = {**turn["spec"]["runtime"].get("settings", {}), "runtime": turn["spec"]["runtime"]["runtime"],
                "model": turn["spec"]["runtime"].get("model"), **self.runtime_overrides}
         runtime = build_runtime(cfg)
+        # Reserve this decision's maximum envelope before any request (checked inside the turn,
+        # not only between turns). Failure paths settle the reservation via record_model_usage.
+        est_tokens = float(cfg.get("max_tokens_per_decision", 120_000))
+        price = cfg.get("price_per_mtok") or {}
+        estimate = {"model_tokens": est_tokens}
+        if price:
+            estimate["model_usd"] = est_tokens * max(price.values()) / 1e6
+        try:
+            rr = self.wf.command("reserve_model_budget", {"turn_id": a["turn_id"], "slot": a["slot"],
+                                 "attempt": activity.info().attempt, "estimate": estimate}, project=p,
+                                 key=f"reserve:{a['turn_id']}:{a['slot']}:{activity.info().attempt}")["result"]
+            reserved, reservation_ref = rr["reserved"], rr.get("reservation_ref")
+        except LabError as exc:
+            if exc.code == "BUDGET_EXHAUSTED":
+                return {"accepted": False, "reason": "budget-exhausted", "n_calls": 0}
+            raise
         req = DecisionRequest(turn_id=a["turn_id"], slot=a["slot"], context=context_text,
                               turn_so_far=self._turn_so_far(p, turn), limits=turn["spec"]["limits"], settings=cfg,
                               read_tools=self._read_tools(p), view=view)
@@ -161,11 +177,14 @@ class InvestigatorActivities:
             res = runtime.decide(req)
         except ModelCallFailed as exc:
             self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": {**exc.possible_usage, "uncertain": True,
-                            "error": str(exc)[:500]}}, project=p, key=f"usage-fail:{a['turn_id']}:{a['slot']}:{attempt}")
+                            "error": str(exc)[:500]}, "reserved": reserved,
+                            "reservation_ref": reservation_ref}, project=p,
+                            key=f"usage-fail:{a['turn_id']}:{a['slot']}:{attempt}")
             raise ApplicationError(str(exc), type="MODEL_CALL_FAILED", non_retryable=not exc.retryable) from exc
         # Spend is the first durable write: a crash before acceptance must not lose billed requests.
-        self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": res.usage}, project=p,
-                        key=f"usage:{a['turn_id']}:{a['slot']}:{attempt}")
+        self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": res.usage, "reserved": reserved,
+                                                      "reservation_ref": reservation_ref},
+                        project=p, key=f"usage:{a['turn_id']}:{a['slot']}:{attempt}")
         resp = self.inv.upload(p, data=json.dumps(res.raw_response, default=str, sort_keys=True).encode(),
                                media_type="application/json", schema="model-response/1", role="context",
                                name=f"response-{a['turn_id']}-{a['slot']}-{attempt}",

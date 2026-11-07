@@ -147,3 +147,27 @@ def test_offline_replay_uses_recorded_horizon_and_never_executes(lab):
     with pytest.raises(LabError):  # the evaluation principal cannot resubmit production commands
         reader.command("run_component", {"component_ref": "test.echo@1.0.0"}, project=pid)
     assert len(lab.q(lab.admin, "list_jobs", {"investigation_id": inv}, project=pid)) == 1
+
+
+def test_in_turn_model_budget_is_reserved_before_each_decision_and_released(lab):
+    pid, inv, acts = setup(lab)
+    env = ActivityEnvironment()
+    b = env.run(acts.begin_turn, {"investigation_id": inv, "project_id": pid, "index": 1})
+    base = {"turn_id": b["turn_id"], "project_id": pid, "investigation_id": inv}
+    env.run(acts.build_context, base)
+    # Leave room for one reservation (default envelope 120k tokens) but not two.
+    with lab.ledger.transaction() as tx:
+        tx.project_id = pid
+        tx.reserve(f"inv:{inv}", "model_tokens", 1e6 - 150_000, "test:fill")
+    d0 = env.run(acts.decide, {**base, "slot": 0})
+    assert d0["accepted"]
+    with lab.ledger.transaction() as tx:  # simulate a reservation leaked by a dead activity
+        tx.project_id = pid
+        tx.reserve(f"inv:{inv}", "model_tokens", 100_000, f"model:{b['turn_id']}:9:1")
+    d1 = env.run(acts.decide, {**base, "slot": 1})
+    assert not d1["accepted"] and d1["reason"] == "budget-exhausted"  # no model call without budget
+    env.run(acts.complete_turn, {**base, "stop_reason": "budget-exhausted"})
+    turn = lab.q(lab.admin, "get_turn", {"turn_id": b["turn_id"]}, project=pid)
+    assert turn["result"]["released_model_reservations"]["model_tokens"] == 100_000
+    b2 = lab.q(lab.admin, "budgets", {"investigation_id": inv}, project=pid)["budgets"]["model_tokens"]
+    assert b2["reserved"] == 1e6 - 150_000 and b2["used"] > 0  # only the test fill remains reserved

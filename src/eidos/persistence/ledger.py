@@ -35,6 +35,10 @@ def _default(o: Any):
     raise TypeError(type(o))
 
 
+def _like_prefix(prefix: str) -> str:
+    return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+
 def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:20]}"
 
@@ -417,6 +421,23 @@ class LedgerTx:
     def record_usage(self, scope: str, dimension: str, amount: float, ref: str, *, uncertain: bool = False,
                      detail: dict | None = None) -> None:
         self.settle(scope, dimension, reserved=0, actual=amount, ref=ref, uncertain=uncertain, detail=detail)
+
+    def open_reservations(self, scope: str, ref_prefix: str) -> dict[str, float]:
+        """Per dimension: amount reserved under refs with this prefix minus what was settled
+        (released or charged) under the same refs."""
+        rows = self._all("SELECT dimension, ref, kind, amount FROM budget_entries WHERE scope_id=:s AND ref LIKE :p",
+                         s=scope, p=_like_prefix(ref_prefix))
+        res, done = {}, {}
+        for r in rows:
+            amt = float(r["amount"])
+            if r["kind"] == "reserve":
+                res[(r["dimension"], r["ref"])] = res.get((r["dimension"], r["ref"]), 0.0) + amt
+            elif r["kind"] in ("release", "usage", "possible-usage"):
+                done[(r["dimension"], r["ref"])] = done.get((r["dimension"], r["ref"]), 0.0) + amt
+        out: dict[str, float] = {}
+        for (dim, ref), amt in res.items():
+            out[dim] = out.get(dim, 0.0) + max(0.0, amt - done.get((dim, ref), 0.0))
+        return out
 
     def budget_entries(self, scope: str) -> list[dict]:
         return self._all("SELECT * FROM budget_entries WHERE scope_id=:s ORDER BY id", s=scope)
