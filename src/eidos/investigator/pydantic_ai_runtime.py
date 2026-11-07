@@ -121,8 +121,11 @@ class PydanticAIRuntime:
         prompt = req.context + "\n\n## This turn so far\n" + json.dumps(req.turn_so_far, default=str)[:20000]
         limits = UsageLimits(request_limit=int(self.config.get("max_requests_per_decision", 6)),
                              total_tokens_limit=int(self.config.get("max_tokens_per_decision", 120_000)))
+        settings = {}
+        if self.config.get("max_output_tokens"):
+            settings["max_tokens"] = int(self.config["max_output_tokens"])  # temperature deliberately unset
         try:
-            result = agent.run_sync(prompt, usage_limits=limits)
+            result = agent.run_sync(prompt, usage_limits=limits, model_settings=settings or None)
         except UsageLimitExceeded as exc:
             raise ModelCallFailed(f"usage limit: {exc}", retryable=False,
                                   possible_usage={"provider": self._provider(), "model": self.config.get("model")}) from exc
@@ -133,17 +136,25 @@ class PydanticAIRuntime:
             raise ModelCallFailed(f"{type(exc).__name__}: {exc}"[:500], retryable=True,
                                   possible_usage={"provider": self._provider(), "model": self.config.get("model"),
                                                   "request_ids": [request_id] if request_id else []}) from exc
-        u = result.usage()
+        u = result.usage
+        from pydantic_ai.messages import ModelResponse
+        responses = [m for m in result.all_messages() if isinstance(m, ModelResponse)]
+        served = sorted({r.model_name for r in responses if r.model_name})
+        request_ids = [r.provider_response_id for r in responses if r.provider_response_id]
         usage = {"provider": self._provider(), "model": self.config.get("model"), "input_tokens": u.input_tokens or 0,
-                 "output_tokens": u.output_tokens or 0, "calls": u.requests, "request_ids": []}
+                 "output_tokens": u.output_tokens or 0, "calls": u.requests, "request_ids": request_ids,
+                 "served_models": served,
+                 "per_request": [{"model": r.model_name, "input_tokens": r.usage.input_tokens,
+                                  "output_tokens": r.usage.output_tokens, "finish_reason": r.finish_reason}
+                                 for r in responses]}
         price = self.config.get("price_per_mtok")  # {"input": x, "output": y} recorded by the operator
         if price:
             usage["usd"] = (usage["input_tokens"] * price["input"] + usage["output_tokens"] * price["output"]) / 1e6
         raw = json.loads(result.all_messages_json())
-        settings = {"runtime": "pydantic-ai", "model": self.config.get("model"),
-                    "resolved_model": getattr(agent.model, "model_name", None) if hasattr(agent, "model") else None,
-                    "output_retries": int(self.config.get("output_retries", 1)), "transport_retries": 0}
-        return DecisionResult(result.output.model_dump(exclude_none=True), usage, raw, settings, PROMPT_REVISION)
+        model_settings = {"runtime": "pydantic-ai", "model": self.config.get("model"), "served_models": served,
+                          "max_output_tokens": self.config.get("max_output_tokens"), "temperature": "provider default",
+                          "output_retries": int(self.config.get("output_retries", 1)), "transport_retries": 0}
+        return DecisionResult(result.output.model_dump(exclude_none=True), usage, raw, model_settings, PROMPT_REVISION)
 
     def _provider(self) -> str:
         return (self.config.get("model") or "unknown").split(":", 1)[0]

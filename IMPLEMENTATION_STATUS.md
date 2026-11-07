@@ -63,7 +63,19 @@ export EIDOS_HOME=/workspace/.eidos-dev/lead/lab   # lead lab
 | Anthropic `claude-sonnet-5-5` through `PydanticAIRuntime` (`model: anthropic:claude-sonnet-5-5`, `max_retries=0`) | ≤ 24 | 4,096 output; ≤ 60k input | Decision-schema conformance on D02/D12 bundles, timeout/possible-spend accounting, worker kill after an accepted decision |
 | One OpenAI-compatible endpoint (`openai-compatible:<model>`, `base_url`) | ≤ 10 | 2,048 output | Adapter compatibility and error mapping |
 
-Command (operator side, key in the environment of the investigator-worker only):
+**Standalone check (no PostgreSQL/Temporal/lab):** `scripts/qualify/live_provider_check.py`.
+- Hard caps: at most 24 requests in total and 4,096 output tokens per request; temperature is not set.
+- The key is read only from `ANTHROPIC_API_KEY`.
+- It prints a JSON receipt with the served model id, per-request usage and request ids, schema conformance, and the timeout, request-limit and unknown-model failure cases.
+- It was dry-run here against Pydantic AI's `TestModel` only.
+
+```bash
+python3.12 -m venv /tmp/eidos-live && /tmp/eidos-live/bin/pip install -r scripts/qualify/requirements-live.txt
+ANTHROPIC_API_KEY=... PYTHONPATH=src:packages/eidos-wire/src \
+  /tmp/eidos-live/bin/python scripts/qualify/live_provider_check.py --model anthropic:claude-sonnet-5-5 > live-receipt.json
+```
+
+Full-lab command (key in the investigator-worker's environment only):
 `lab investigate start <project> --runtime pydantic-ai --model anthropic:claude-sonnet-5-5 --limit model_tokens=600000 --limit turns=8 ...`
 
 ## Builder interventions log (distinct from autonomous investigator behaviour)
