@@ -27,7 +27,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 sys.path.insert(0, str(HERE))
 
-from journey_lib import Blocked, Journey, LabError  # noqa: E402
+from journey_lib import Blocked, Journey  # noqa: E402
 from staging import stage_component  # noqa: E402
 
 ADAPTER = "eidos_adapter:ADAPTER"
@@ -175,7 +175,7 @@ def step2(j: Journey, a: argparse.Namespace) -> None:
 
 def step2b_amend(j: Journey, a: argparse.Namespace) -> None:
     """Amendment after an exposure (run after step 3 has produced evaluation results that were seen)."""
-    with j.step("2b", "exposure-informed charter amendment preserving both rules") as st:
+    with j.step("2b", "exposure-informed charter amendment preserving both rules"):
         c = j.S.get("charter") or j.rec.get("charter")
         if not c:
             raise Blocked("no charter")
@@ -834,7 +834,6 @@ def step7(j: Journey, a: argparse.Namespace) -> None:
             if idx is not None and idx + 1 < len(seqs):
                 nxt = j.query("get_turn", {"turn_id": seqs[idx + 1]["id"]})
                 view = j.download_json(nxt["context"]["source_manifest_artifact_id"])
-                crashed_jobs = [x[2] for x in accepted_calls if x[0] == kturn]
                 killed_turn_jobs = {jb["id"] for jb in view["jobs"]}
                 kt = next(t for t in turns if t["id"] == kturn)
                 rr = j.query("get_record", {"kind": "decision_receipts", "id": next(d["id"] for d in kt["decisions"] if d["accepted"])})
@@ -854,6 +853,57 @@ def step7(j: Journey, a: argparse.Namespace) -> None:
 STEPS = [("1", step1), ("2", step2), ("3", step3), ("2b", step2b_amend), ("4", step4), ("5", step5), ("6", step6), ("7", step7)]
 
 
+def render_doc(rec: dict, command: str) -> str:
+    import datetime
+    lines = ["# Switch-order journey: dev run", "",
+             f"Run: {datetime.datetime.fromtimestamp(rec['started']).isoformat(timespec='seconds')}, project `{rec['project']}`, "
+             f"lab API {rec['api_url']}. Full record (every job id, artifact id, receipt metric, timing): `journey-run.json` "
+             "(path given by `--out`; default `/workspace/.eidos-dev/h1/journey-run.json`).", "",
+             f"Rerun: `{command}`", "",
+             "Step 7 is **fixture-only**: a deterministic scripted policy decides every turn, so it validates the loop's "
+             "mechanics (admission, charging, crash recovery, reconstruction, reattach), not any model's behaviour.", "",
+             "## Steps", "", "| step | title | status | seconds | checks ok/total |", "|---|---|---|---|---|"]
+    for k, v in rec["steps"].items():
+        ok = sum(1 for c in v["checks"] if c["ok"])
+        lines.append(f"| {k} | {v['title']} | {v['status']} | {v.get('seconds')} | {ok}/{len(v['checks'])} |")
+    lines += ["", "## Key numbers", ""]
+    n3 = rec["steps"].get("3", {}).get("numbers", {})
+    lines += ["| quantity | value |", "|---|---|"]
+    for key in ("both_correct_unedited_45", "reference_accuracy_unedited_45", "both_correct_edited_45",
+                "reference_accuracy_edited_45", "both_correct_unedited_180", "both_correct_edited_180",
+                "reference_accuracy_edited_180", "both_correct_arch_change_90", "no_change_fingerprint"):
+        if key in n3:
+            lines.append(f"| {key} | {n3[key]} |")
+    a = rec.get("assessment")
+    if a:
+        eff = a.get("effect") or {}
+        lines += ["", "## Assessment (charter rule `early-repair` pinned at revision 1, not retuned)", "",
+                  f"* outcome **{a['outcome']}**, conformance **{a['conformance']}**; paired both-correct effect "
+                  f"{eff.get('estimate'):.4f} (95% CI {eff.get('ci_low'):.4f} to {eff.get('ci_high'):.4f}, "
+                  f"{eff.get('independent_units')} independent seeds, {eff.get('units')} pairs per arm).",
+                  "* guardrails: " + "; ".join(f"{g['metric']} {g['status']} (change {g.get('estimate'):.4f}, CI "
+                                              f"{g.get('ci_low'):.4f} to {g.get('ci_high'):.4f})" for g in a.get("guardrails") or []),
+                  f"* assessment id `{a['id']}`"]
+    w = rec.get("withdrawal")
+    if w:
+        lines += ["", "## Withdrawal drill", "", f"* withdrawal `{w['withdrawal_id']}`: affected assessments "
+                  f"{w['affected_assessments']}, suspended approvals {w['suspended_approvals']}, reassessment requests "
+                  f"{w['reassessment_requests']}", f"* support after: `{(rec.get('claim_support_after_withdrawal') or {}).get('status')}`"]
+    k = rec.get("kill")
+    if k:
+        lines += ["", "## Investigator kill (fixture-only investigation)", "",
+                  f"* SIGKILL pid {k['pid']} at {k['killed_turn']} right after job(s) {k['jobs_at_kill']} were admitted "
+                  f"(turn status after kill: {k['turns_after_kill']}); supervisor restarted the worker as pid {k['new_pid']}.",
+                  f"* final: {rec.get('investigation_final', {}).get('status')} after "
+                  f"{len(rec.get('investigation_final', {}).get('turns', []))} turns; budget ledger: "
+                  f"`{json.dumps((rec.get('budget_after_investigation') or {}).get('budgets'))}`"]
+    lines += ["", "## Notes and defects recorded by the run", ""]
+    lines += [f"* {n}" for n in rec.get("notes", [])] + [f"* DEFECT: {d}" for d in rec.get("defects", [])]
+    bad = [(k2, c["label"]) for k2, v in rec["steps"].items() for c in v["checks"] if not c["ok"]]
+    lines += ["", "## Failed checks", ""] + ([f"* step {k2}: {lab}" for k2, lab in bad] or ["none"])
+    return "\n".join(lines) + "\n"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project", default=f"switch{int(time.time()) % 100000}")
@@ -862,8 +912,14 @@ def main() -> int:
                                                              "/workspace/.eidos-dev/h1/envs/py312/bin/python"))
     ap.add_argument("--out", default="/workspace/.eidos-dev/h1/journey-run.json")
     ap.add_argument("--workdir", default="/workspace/.eidos-dev/h1/journey-work")
+    ap.add_argument("--doc", default="", help="also write a markdown summary of the record to this path")
+    ap.add_argument("--render-only", action="store_true", help="render --doc from an existing --out record and exit")
     ap.add_argument("--resume", action="store_true", help="reuse an existing project and its saved state")
     a = ap.parse_args()
+    if a.render_only:
+        rec = json.loads(Path(a.out).read_text())
+        Path(a.doc).write_text(render_doc(rec, "EIDOS_HOME=<lab> python tests/journeys/switch_journey.py"))
+        return 0
     Path(a.workdir).mkdir(parents=True, exist_ok=True)
     os.chdir(REPO)
     j = Journey(a.project, Path(a.out))
@@ -876,6 +932,9 @@ def main() -> int:
             fn(j, a)
             state_file.write_text(json.dumps(j.S, default=str))
     j.save()
+    if a.doc:
+        Path(a.doc).parent.mkdir(parents=True, exist_ok=True)
+        Path(a.doc).write_text(render_doc(j.rec, "EIDOS_HOME=<lab> python tests/journeys/switch_journey.py"))
     bad = [k for k, v in j.rec["steps"].items() if v["status"] != "pass"]
     print("\nSUMMARY", {k: v["status"] for k, v in j.rec["steps"].items()}, "->", a.out)
     return 1 if bad else 0
