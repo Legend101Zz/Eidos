@@ -187,7 +187,8 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
     existing = ctx.tx.accepted_decision(turn["id"], slot)
     did = f"dec_{uuid.uuid4().hex[:16]}"
     usage = p.get("usage") or {}
-    _charge_model_usage(ctx, turn["investigation_id"], usage, ref=did)
+    if not p.get("usage_recorded"):  # recorded earlier by record_model_usage (first durable write)
+        _charge_model_usage(ctx, turn["investigation_id"], usage, ref=did)
     if existing:
         ctx.tx.insert_decision(did, turn["id"], slot, False, {"proposal": p.get("proposal"), "reason": "slot-taken",
                                                                "usage": usage})

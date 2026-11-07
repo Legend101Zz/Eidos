@@ -163,13 +163,16 @@ class InvestigatorActivities:
             self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": {**exc.possible_usage, "uncertain": True,
                             "error": str(exc)[:500]}}, project=p, key=f"usage-fail:{a['turn_id']}:{a['slot']}:{attempt}")
             raise ApplicationError(str(exc), type="MODEL_CALL_FAILED", non_retryable=not exc.retryable) from exc
+        # Spend is the first durable write: a crash before acceptance must not lose billed requests.
+        self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": res.usage}, project=p,
+                        key=f"usage:{a['turn_id']}:{a['slot']}:{attempt}")
         resp = self.inv.upload(p, data=json.dumps(res.raw_response, default=str, sort_keys=True).encode(),
                                media_type="application/json", schema="model-response/1", role="context",
                                name=f"response-{a['turn_id']}-{a['slot']}-{attempt}",
                                key=f"resp:{a['turn_id']}:{a['slot']}:{attempt}")
         try:
             r = self.wf.command("accept_decision", {"turn_id": a["turn_id"], "slot": a["slot"], "proposal": res.proposal,
-                                "usage": res.usage, "model_settings": res.model_settings,
+                                "usage": res.usage, "usage_recorded": True, "model_settings": res.model_settings,
                                 "prompt_revision": res.prompt_revision,
                                 "response_artifact_id": resp["result"]["artifact_id"]},
                                 project=p, key=f"accept:{a['turn_id']}:{a['slot']}:{attempt}")["result"]

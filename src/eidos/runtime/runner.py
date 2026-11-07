@@ -151,9 +151,15 @@ class AttemptRunner:
                             "epoch": ctx["epoch"], "receipt": receipt}, project=project,
                             key=f"iso:{ctx['attempt_id']}")
         h = launch(spec)
-        self.client.command("record_attempt_handle", {"job_id": job_id, "attempt_id": ctx["attempt_id"],
-                            "epoch": ctx["epoch"], "backend_handle": h.to_dict()}, project=project,
-                            key=f"handle:{ctx['attempt_id']}")
+        try:
+            self.client.command("record_attempt_handle", {"job_id": job_id, "attempt_id": ctx["attempt_id"],
+                                "epoch": ctx["epoch"], "backend_handle": h.to_dict()}, project=project,
+                                key=f"handle:{ctx['attempt_id']}")
+        except LabError as exc:
+            if exc.code != "FENCED":
+                raise
+            h.terminate()  # never leave an unsupervised process; its elapsed time is still reported
+            return self._finish(project, ctx, "cancelled", {}, {"category": "fenced", "message": str(exc)[:300]})
         return self._supervise(project, ctx, h, heartbeat, cancelled)
 
     # -------------------------------------------------------------------------------------
@@ -275,7 +281,8 @@ class AttemptRunner:
                 except LabError as exc:
                     if exc.code == "FENCED":
                         h.terminate()
-                        return {"job_status": "fenced", "attempt_id": ctx["attempt_id"]}
+                        return self._finish(project, ctx, "cancelled", {}, {"category": "fenced",
+                                            "message": "attempt superseded; process terminated"})
             if cancelled():
                 h.terminate()
                 return self._finish(project, ctx, "cancelled", {}, None)
