@@ -143,7 +143,8 @@ def search_components(ctx: Ctx, p: dict) -> dict:
             continue
         rows.append({"ref": r["ref"], "implements": m["implements"], "kind": m["kind"], "status": r["status"],
                      "effects": m["scientific_effects"], "summary": str(m.get("summary", ""))[:200],
-                     "input": m.get("input"), "output": m.get("output"), "qualification": r.get("qualification")})
+                     "input": m.get("input"), "output": m.get("output"), "qualification": r.get("qualification"),
+                     **({"config_schema": m["config_schema"]} if m.get("config_schema") else {})})
     start = int(p.get("cursor") or 0)
     limit = min(int(p.get("limit", 20)), 100)
     page = rows[start:start + limit]

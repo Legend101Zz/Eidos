@@ -82,8 +82,8 @@ def pack(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int
     lines.append(f"## Component catalog ({len(catalog)} active; showing {min(len(catalog), MAX_CATALOG)})")
     for c in catalog[:MAX_CATALOG]:
         sel["catalog"].append(c["ref"])
-        lines.append(json.dumps({k: c.get(k) for k in ("ref", "implements", "kind", "effects", "input", "output", "summary")},
-                                sort_keys=True))
+        lines.append(json.dumps({k: c.get(k) for k in ("ref", "implements", "kind", "effects", "input", "output", "summary",
+                                                        "config_schema") if c.get(k) is not None}, sort_keys=True))
     omitted["catalog"] = [c["ref"] for c in catalog[MAX_CATALOG:]]
     if len(catalog) > MAX_CATALOG:
         lines.append("(more components exist: use search via the catalog query; they are data, not tools)")

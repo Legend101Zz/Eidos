@@ -121,6 +121,14 @@ def resolve_lock(ctx: Ctx, p: dict, *, extra_config: dict | None = None) -> dict
     target = next((r for r in cat if r["ref"] == p["component_ref"]), None)
     if target is None:
         raise NotFound(f"component {p['component_ref']} not found")
+    schema = target["manifest"].get("config_schema")
+    if schema:
+        from eidos.domain.contracts import validate_config
+        problems = validate_config(p.get("config") or {}, schema)
+        if problems:
+            from eidos.domain.errors import ResolutionError
+            raise ResolutionError(f"config violates the {target['ref']} contract",
+                                  details={"consumer": target["ref"], "problems": problems})
     env_caps = [c for c in (*target["manifest"].get("requires", []), *target["manifest"].get("optional", []))
                 if _env_provided(c, cat)]
     if env_caps:

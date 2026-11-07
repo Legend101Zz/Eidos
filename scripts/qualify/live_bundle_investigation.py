@@ -37,6 +37,28 @@ import tempfile
 import time
 from pathlib import Path
 
+_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _contract(component_dir: str) -> dict:
+    """Config contract + summary from the shipped manifest (the same one the lab enforces)."""
+    m = json.loads((_ROOT / "components" / component_dir / "eidos-component.json").read_text())
+    return {"ref": f"{m['id']}@{m['release']}", "summary": m.get("summary", ""), "config_schema": m.get("config_schema")}
+
+
+def contract_problems(calls: list, catalog: list) -> list:
+    from eidos.domain.contracts import validate_config
+    by_id = {c["ref"].split("@")[0]: c for c in catalog}
+    out = []
+    for i, c in enumerate(calls):
+        if c["tool"] in ("run_component", "plan_trial"):
+            entry = by_id.get(str(c["args"].get("component_ref", "")).split("@")[0])
+            if entry is None:
+                out.append(f"call {i}: unknown component {c['args'].get('component_ref')!r}")
+            elif entry.get("config_schema"):
+                out += [f"call {i}: {p}" for p in validate_config(c["args"].get("config") or {}, entry["config_schema"])]
+    return out
+
 HARD_MAX_REQUESTS = 60
 SCORE = r"""
 import json, sys, numpy as np
@@ -155,11 +177,11 @@ class LocalLab:
             "jobs": self.jobs[-25:], "claims": [], "events": [], "budgets": {}}
 
 
+_PC = _contract("eidos.project.command")
 CATALOG = [
-    {"ref": "eidos.project.command@1.0.3", "implements": "project-command/1", "kind": "artifact-op",
+    {"ref": _PC["ref"], "implements": "project-command/1", "kind": "artifact-op", "config_schema": _PC["config_schema"],
      "effects": ["change-weights"], "input": {}, "output": {},
-     "summary": "run the project's own CLI. config: argv (array; 'python' = project interpreter; {work},{out},{seed}), "
-                "files {port: filename}, seed. inputs: train/validation/task artifact ids, optional source (authored files)."},
+     "summary": _PC["summary"] + " inputs: train/validation/task artifact ids, optional source (authored files)."},
     {"ref": "eidos.task.score-classification@1.0.0", "implements": "classification-score/1", "kind": "artifact-op",
      "effects": ["observe"], "input": {"predictions": "prediction-array/1", "reference": "task-array/1"}, "output": {},
      "summary": "validation accuracy: inputs predictions=<validation_predictions artifact>, reference=art_validation."},
@@ -233,6 +255,9 @@ def main() -> int:
                       "proposal": res.proposal})
         try:
             d = validate_decision(res.proposal, max_calls=6)
+            problems = contract_problems(d["calls"], CATALOG)
+            if problems:
+                raise ValueError("; ".join(problems[:5]))
         except Exception as exc:  # unaccepted decision: recorded, no effects
             entry["accepted"] = False
             entry["validation_error"] = str(exc)[:500]

@@ -208,6 +208,7 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
         return {"accepted": False, "decision_id": did, "reason": "stale-revision", "observed_revision": inv.revision}
     try:
         decision = turn_rules.validate_decision(p.get("proposal") or {}, max_calls=turn["spec"]["limits"]["max_calls"])
+        _check_component_contracts(ctx, decision["calls"])
     except Invalid as exc:
         ctx.tx.insert_decision(did, turn["id"], slot, False, {"proposal": p.get("proposal"), "reason": "invalid",
                                                                "error": exc.to_dict()})
@@ -219,6 +220,25 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
     ctx.event("decision.accepted", did, {"turn_id": turn["id"], "slot": slot, "calls": [c["tool"] for c in calls],
                                          "control": decision["control"]}, investigation_id=inv.id)
     return {"accepted": True, "decision_id": did, "calls": calls, "control": decision["control"]}
+
+
+def _check_component_contracts(ctx: Ctx, calls: list[dict]) -> None:
+    """A decision is accepted only if each component invocation satisfies that release's declared
+    configuration contract (so accepted means runnable, not merely well-formed)."""
+    from eidos.domain.contracts import validate_config
+    for i, c in enumerate(calls):
+        if c["tool"] not in ("run_component", "plan_trial", "plan_branch"):
+            continue
+        rel = ctx.tx.get_record("component_release", c["args"].get("component_ref", ""))
+        if rel is None:
+            raise Invalid(f"call {i}: unknown component {c['args'].get('component_ref')!r}",
+                          details={"call": i, "tool": c["tool"]})
+        schema = rel.body["manifest"].get("config_schema")
+        if schema:
+            problems = validate_config(c["args"].get("config") or {}, schema)
+            if problems:
+                raise Invalid(f"call {i}: config violates {rel.id} contract", details={"call": i, "problems": problems,
+                              "config_schema": schema})
 
 
 def _charge_model_usage(ctx: Ctx, inv_id: str, usage: dict, *, ref: str) -> None:

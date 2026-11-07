@@ -123,6 +123,8 @@ class InvestigatorActivities:
         out = []
         for d in turn["decisions"]:
             if not d["accepted"]:
+                if (d["body"] or {}).get("reason") == "invalid":  # feedback: why the last proposal was refused
+                    out.append({"slot": d["slot"], "rejected": True, "error": d["body"].get("error")})
                 continue
             try:
                 rec = self.wf.query("get_record", {"kind": "decision_receipts", "id": d["id"]}, project=p)["body"]["receipts"]

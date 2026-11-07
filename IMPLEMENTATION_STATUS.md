@@ -18,7 +18,7 @@ Updated 2026-11-07 by the lead session, on branch `build/eidos-local-v1`.
 | Temporal workflows (coordinator with Continue-As-New, bounded turns, independent jobs, assessment) | runtime-verified on the **regular Temporal Server 1.32.2 + PostgreSQL**. Rollover, retries and recorded-history replay are tested on the dev server (tests only). |
 | Runner/launcher | Reattach-safe handles: pid + start time + boot id, exit file. dev profile and **linux:bwrap-sealed** profile runtime-verified, with hostile probes. |
 | Investigator | context-policy/1, fixture runtime, recovery activities, offline turn replay. Fixture-only. |
-| Pydantic AI adapter | implemented. One real-provider qualification run (receipt #1) found four defects, now fixed; receipt #2 pending. |
+| Pydantic AI adapter | Implemented. Two real-provider qualification runs: receipt #1 found four defects, fixed; receipt #2 passed 7/8, and its read-tool loop is fixed. Receipt #3 pending. |
 | Supervisor | init, start, stop, status, doctor, logs, backup, restore and upgrade runtime-verified on Linux. Restore was done into a fresh directory on new ports with re-enrolled credentials. |
 | MCP adapter (stdio + loopback HTTP, 34 tools, resources) | runtime-verified with the SDK client. External clients (Claude Code/Desktop, Codex) **not exercised**. |
 | HTML reports | implemented, tested with a fake client and smoke-tested on a live lab |
@@ -100,12 +100,32 @@ Full-lab command (key in the investigator-worker's environment only):
   - Failure classification: 4xx not-found, invalid-request and auth errors are not retryable; timeouts, connection errors, 429 and 5xx are.
   - The request budget is stated in the prompt (default 8). Hitting it is a bounded no-effect decision with its usage reported.
 
-### Receipt #2 (to run after CI is green on the fix commit; same caps)
+### Receipt #2 (controller-run, run id `live-1794082625`, source `37bd0c5`)
+
+- **Usage:** 11 requests, 41,696 input and 4,326 output tokens, USD 0.13.
+- **Passed:**
+  - All four conformance decisions were valid and executable, with populated args, one request each. The strict-mode `dict` warning is gone.
+  - timeout: retryable.
+  - unknown model (404): not retryable.
+  - request-limit scenario: decided in one request.
+- **Failed: read-tools.** The model used all 6 requests on `tool_call` and never decided; usage was counted correctly.
+- **Smaller finding:** one decision proposed `argv ["train"]`, which is not runnable.
+- **Fixes (general, this commit):**
+  - The last request of a decision is reserved and made **without read tools** over the same history, so a tool loop must end in a decision. Unit test `test_tool_loop_gets_a_tool_free_final_request_and_decides`.
+  - Read-tool errors and "unavailable" results now carry an explicit "no further evidence; do not re-query" note.
+  - New component configuration contracts (`config_schema`, `src/eidos/domain/contracts.py`):
+    - shown in the catalog and in the context;
+    - enforced when a decision is accepted, so a refused proposal is fed back to the next slot within the same turn;
+    - enforced again at resolution;
+    - used by both live scripts.
+  - `eidos.project.command` 1.0.4 declares that argv's first item is `python` or an absolute executable.
+
+### Receipt #3 (to run after CI is green on the fix commit; same caps)
 
 ```bash
 python3.12 -m venv /tmp/eidos-live && /tmp/eidos-live/bin/pip install -r scripts/qualify/requirements-live.txt
 ANTHROPIC_API_KEY=... PYTHONPATH=src:packages/eidos-wire/src \
-  /tmp/eidos-live/bin/python scripts/qualify/live_provider_check.py --model anthropic:claude-sonnet-5-5 > live-receipt-2.json
+  /tmp/eidos-live/bin/python scripts/qualify/live_provider_check.py --model anthropic:claude-sonnet-5-5 > live-receipt-3.json
 ```
 
 - Caps: at most 24 requests (the scenario budgets sum to 21) and 4,096 output tokens per request; temperature unset.
@@ -151,7 +171,7 @@ These are separate commits in the journey merge:
 
 ## Next concrete action
 
-1. The controller checks CI on head `d7c5e99`: relocked `uv.lock`, and a single run per commit. Tag `eidos-v0.2.0` only once lint-and-unit, integration, fresh-install, worker-compat and macOS are all green on one SHA.
-2. The controller runs live receipt #2 (`scripts/qualify/live_provider_check.py`, same caps).
+1. `eidos-v0.2.0` is tagged on `37bd0c5` (all five CI jobs green). The controller should check CI on the current head.
+2. The controller runs live receipt #3 (`scripts/qualify/live_provider_check.py`, same caps).
 3. Then lab-free real-LLM runs on D02 and D12 (`scripts/qualify/live_bundle_investigation.py`). Record them as lab-free real-LLM development runs, not autonomous Eidos lab runs.
 4. Open gaps that need hardware or clients: macOS researcher machine and Lima VM, CUDA/MPS, external MCP hosts, sleep/suspend.

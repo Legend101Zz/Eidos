@@ -320,3 +320,15 @@ def test_decision_with_empty_args_is_not_executable():
     assert e.value.details["missing"] == ["component_ref"]
     ok = turns.validate_decision({"calls": [{"tool": "run_component", "args": {"component_ref": "a@1.0.0"}}]}, max_calls=4)
     assert ok["calls"][0]["args"]["component_ref"] == "a@1.0.0"
+
+
+def test_component_config_contract():
+    from eidos.domain.contracts import validate_config
+    schema = {"type": "object", "required": ["argv"], "properties": {
+        "argv": {"type": "array", "minItems": 2, "items": {"type": "string"}, "firstItemPattern": r"^(python|/.+)$"},
+        "seed": {"type": "integer", "minimum": 0}}}
+    assert validate_config({"argv": ["python", "project.py", "train"]}, schema) == []
+    assert validate_config({"argv": ["train"]}, schema)  # the live-receipt case: not runnable
+    assert validate_config({}, schema) == ["config.argv: required"]
+    assert validate_config({"argv": ["python", 3]}, schema) == ["config.argv[1]: expected string, got int"]
+    assert validate_config({"argv": ["python", "x"], "seed": -1}, schema)

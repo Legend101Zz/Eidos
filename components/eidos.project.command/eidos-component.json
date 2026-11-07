@@ -1,10 +1,10 @@
 {
   "id": "eidos.project.command",
-  "release": "1.0.3",
+  "release": "1.0.4",
   "implements": "project-command/1",
   "kind": "artifact-op",
   "entry": "project_command:run",
-  "summary": "Whole-trainer escape hatch: run an ordinary project CLI (argv array, no shell) in a private working copy of the project, optionally replacing project files from a candidate source bundle; stage every file it writes.",
+  "summary": "Whole-trainer escape hatch: run an ordinary project CLI (argv array, no shell) in a private working copy of the project, optionally replacing project files from a candidate source bundle; stage every file it writes. config.argv is an argument array whose first item is 'python' (the project interpreter) or an absolute executable, e.g. [\"python\", \"project.py\", \"train\", \"--inputs\", \"{work}\", \"--out\", \"{out}\", \"--seed\", \"{seed}\"].",
   "scientific_effects": [
     "change-weights"
   ],
@@ -39,5 +39,41 @@
     "outputs",
     "metrics",
     "source"
-  ]
+  ],
+  "config_schema": {
+    "type": "object",
+    "required": [
+      "argv"
+    ],
+    "properties": {
+      "argv": {
+        "type": "array",
+        "minItems": 2,
+        "items": {
+          "type": "string"
+        },
+        "firstItemPattern": "^(python|/.+)$"
+      },
+      "files": {
+        "type": "object"
+      },
+      "seed": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "copy": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "allow_nonzero_exit": {
+        "type": "boolean"
+      },
+      "timeout_seconds": {
+        "type": "number",
+        "minimum": 1
+      }
+    }
+  }
 }

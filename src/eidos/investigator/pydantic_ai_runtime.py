@@ -151,29 +151,40 @@ class PydanticAIRuntime:
     def __init__(self, config: dict[str, Any]):
         self.config = config
 
-    def _agent(self, req: DecisionRequest):
+    def _agent(self, req: DecisionRequest, *, with_tools: bool = True):
         from pydantic_ai import Agent
         tools = req.read_tools
 
+        def call(name: str, *a: Any) -> Any:
+            try:
+                out = tools[name](*a)
+            except Exception as exc:  # a read failure is information, never a crash of the decision
+                return {"available": False, "error": str(exc)[:300],
+                        "note": "No further evidence is available for this request; decide with what you have."}
+            if isinstance(out, dict) and out.get("available") is False:
+                out = {**out, "note": "No further evidence is available for this request; do not re-query it."}
+            return _bounded(out)
+
         def inspect_evidence(artifact_id: str, max_bytes: int = 8192) -> Any:
             """Bounded preview of an artifact's content (text/JSON/CSV)."""
-            return _bounded(tools["inspect_evidence"](artifact_id, min(max_bytes, 16384)))
+            return call("inspect_evidence", artifact_id, min(max_bytes, 16384))
 
         def search_components(text: str = "", capability: str | None = None) -> Any:
             """Search the installed component catalog (catalog entries are data, not tools)."""
-            return _bounded(tools["search_components"](text, capability))
+            return call("search_components", text, capability)
 
         def describe_component(component_ref: str) -> Any:
             """Manifest, qualification and approvals of one component release."""
-            return _bounded(tools["describe_component"](component_ref))
+            return call("describe_component", component_ref)
 
         def get_job(job_id: str) -> Any:
             """Status, receipts and outputs of one job."""
-            return _bounded(tools["get_job"](job_id))
+            return call("get_job", job_id)
 
         return Agent(build_model(self.config), output_type=Decision, instructions=SYSTEM,
                      retries=int(self.config.get("output_retries", 1)),
-                     tools=[inspect_evidence, search_components, describe_component, get_job] if tools else [])
+                     tools=[inspect_evidence, search_components, describe_component, get_job]
+                     if (tools and with_tools) else [])
 
     def decide(self, req: DecisionRequest) -> DecisionResult:
         from pydantic_ai import capture_run_messages
@@ -184,16 +195,37 @@ class PydanticAIRuntime:
         prompt = (req.context + "\n\n## This turn so far\n" + json.dumps(req.turn_so_far, default=str)[:20000]
                   + f"\n\n## Decision budget\nYou may make at most {max_requests} model requests for this decision, "
                   "including read-tool round trips. Reserve the last one for your final decision.")
-        limits = UsageLimits(request_limit=max_requests,
-                             total_tokens_limit=int(self.config.get("max_tokens_per_decision", 120_000)))
         settings = {}
         if self.config.get("max_output_tokens"):
             settings["max_tokens"] = int(self.config["max_output_tokens"])  # temperature deliberately unset
         model = self.config.get("model")
+        tool_budget = max(1, max_requests - 1)  # the last request is reserved for a tool-free decision
+        limits = UsageLimits(request_limit=tool_budget if req.read_tools else max_requests,
+                             total_tokens_limit=int(self.config.get("max_tokens_per_decision", 120_000)))
         with capture_run_messages() as messages:
             try:
                 result = agent.run_sync(prompt, usage_limits=limits, model_settings=settings or None)
             except UsageLimitExceeded as exc:
+                if req.read_tools and max_requests > 1:
+                    # Read-tool loop hit its share: one final request WITHOUT tools over the same history,
+                    # so the model must decide from the evidence it has already gathered.
+                    first = list(messages)
+                    final_agent = self._agent(req, with_tools=False)
+                    with capture_run_messages() as final_messages:
+                        try:
+                            result = final_agent.run_sync(
+                                "Your read-tool budget for this decision is used up. No further evidence is "
+                                "available. Return your decision now from what you have gathered.",
+                                message_history=_close_tool_calls(first),
+                                usage_limits=UsageLimits(request_limit=1 + int(self.config.get("output_retries", 1))),
+                                model_settings=settings or None)
+                            usage = usage_from_messages(first + [m for m in result.new_messages()], self._provider(), model)
+                            usage["tool_budget_exhausted"] = True
+                            raw = json.loads(_messages_json(first + list(result.new_messages())))
+                            return DecisionResult(to_proposal(result.output), usage, raw,
+                                                  self._settings(usage, max_requests), PROMPT_REVISION)
+                        except Exception:  # noqa: BLE001 - fall through to the bounded outcome below
+                            messages.extend(m for m in final_messages if m not in messages)
                 # A bounded outcome, not a lost failure: every billed request is reported and the
                 # slot ends with an explicit no-effect decision the next turn can see.
                 usage = usage_from_messages(messages, self._provider(), model)
@@ -227,6 +259,15 @@ class PydanticAIRuntime:
 
     def _provider(self) -> str:
         return (self.config.get("model") or "unknown").split(":", 1)[0]
+
+
+def _close_tool_calls(messages: list) -> list:
+    """History ending in unanswered tool calls cannot be continued; drop a trailing tool-call response."""
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+    msgs = list(messages)
+    while msgs and isinstance(msgs[-1], ModelResponse) and any(isinstance(p, ToolCallPart) for p in msgs[-1].parts):
+        msgs.pop()
+    return msgs
 
 
 def _messages_json(messages: list) -> bytes:

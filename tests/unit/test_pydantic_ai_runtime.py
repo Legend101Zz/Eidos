@@ -78,6 +78,22 @@ def test_provider_error_maps_to_retryable_failure_with_possible_spend():
     assert e.value.retryable and e.value.possible_usage["provider"] == "anthropic"
 
 
+def test_tool_loop_gets_a_tool_free_final_request_and_decides():
+    def fn(messages, info: AgentInfo):
+        if info.function_tools:  # keeps reading while tools are offered (the receipt-#2 behaviour)
+            return ModelResponse(parts=[ToolCallPart("get_job", {"job_id": "x"})])
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {
+            "rationale": "decide from gathered evidence",
+            "calls": [{"tool": "record_note", "args_json": json.dumps({"text": "job x still running"})}]})])
+
+    tools = {"get_job": lambda j: {"available": False}, "inspect_evidence": lambda a, m=8192: {},
+             "search_components": lambda t="", c=None: {}, "describe_component": lambda r: {}}
+    rt = PydanticAIRuntime({"_model_object": FunctionModel(fn), "model": "function:test", "max_requests_per_decision": 4})
+    res = rt.decide(req(tools))
+    assert res.usage["tool_budget_exhausted"] and res.usage["calls"] == 4  # 3 tool rounds + 1 forced decision
+    assert validate_decision(res.proposal, max_calls=4)["calls"][0]["tool"] == "record_note"
+
+
 def test_request_budget_is_a_bounded_outcome_with_usage_counted():
     def fn(messages, info: AgentInfo):
         return ModelResponse(parts=[ToolCallPart("get_job", {"job_id": "x"})])
@@ -86,7 +102,7 @@ def test_request_budget_is_a_bounded_outcome_with_usage_counted():
              "search_components": lambda t="", c=None: {}, "describe_component": lambda r: {}}
     rt = PydanticAIRuntime({"_model_object": FunctionModel(fn), "model": "function:test", "max_requests_per_decision": 3})
     res = rt.decide(req(tools))
-    assert res.proposal["calls"] == [] and res.usage["calls"] == 3 and res.usage["limit_reached"]
+    assert res.proposal["calls"] == [] and res.usage["calls"] >= 3 and res.usage["limit_reached"]
     assert validate_decision(res.proposal, max_calls=4)["control"]["action"] == "wait_for_jobs"
 
 

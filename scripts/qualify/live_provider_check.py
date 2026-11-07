@@ -21,6 +21,29 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _contract(component_dir: str) -> dict:
+    """Config contract + summary from the shipped manifest (the same one the lab enforces)."""
+    m = json.loads((_ROOT / "components" / component_dir / "eidos-component.json").read_text())
+    return {"ref": f"{m['id']}@{m['release']}", "summary": m.get("summary", ""), "config_schema": m.get("config_schema")}
+
+
+def contract_problems(calls: list, catalog: list) -> list:
+    from eidos.domain.contracts import validate_config
+    by_id = {c["ref"].split("@")[0]: c for c in catalog}
+    out = []
+    for i, c in enumerate(calls):
+        if c["tool"] in ("run_component", "plan_trial"):
+            entry = by_id.get(str(c["args"].get("component_ref", "")).split("@")[0])
+            if entry is None:
+                out.append(f"call {i}: unknown component {c['args'].get('component_ref')!r}")
+            elif entry.get("config_schema"):
+                out += [f"call {i}: {p}" for p in validate_config(c["args"].get("config") or {}, entry["config_schema"])]
+    return out
 
 MAX_TOTAL_REQUESTS = 24
 MAX_OUTPUT_TOKENS = 4096
@@ -42,10 +65,10 @@ def _view(jobs=None, catalog_size=6, steering=None):
 
 
 def _catalog(n):
+    pc = _contract("eidos.project.command")
     base = [
-        {"ref": "eidos.project.command@1.0.2", "implements": "project-command/1", "kind": "artifact-op",
-         "effects": ["change-weights"], "input": {}, "output": {"receipt": "project-receipt/1"},
-         "summary": "run an ordinary project CLI (argv array) on declared inputs; optional candidate source bundle"},
+        {"ref": pc["ref"], "implements": "project-command/1", "kind": "artifact-op", "config_schema": pc["config_schema"],
+         "effects": ["change-weights"], "input": {}, "output": {"receipt": "project-receipt/1"}, "summary": pc["summary"]},
         {"ref": "eidos.task.score-classification@1.0.0", "implements": "classification-score/1", "kind": "artifact-op",
          "effects": ["observe"], "input": {"predictions": "prediction-array/1", "reference": "task-array/1"},
          "output": {"report": "classification-report/1"}, "summary": "validation accuracy with per-example correctness"},
@@ -57,7 +80,7 @@ def _catalog(n):
 
 
 def _job(i, acc=None, error=None):
-    return {"id": f"job_{i}", "component": "eidos.project.command@1.0.2", "purpose": "reproduction",
+    return {"id": f"job_{i}", "component": "eidos.project.command@1.0.4", "purpose": "reproduction",
             "status": "failed" if error else "succeeded", "inputs": {"train": "art_train"},
             "config": {"argv": ["python", "project.py", "train", "--inputs", "{work}", "--out", "{out}", "--seed", str(11 + i)]},
             "receipt": {"metrics": {"accuracy": acc}} if acc is not None else None, "error": error,
@@ -111,7 +134,10 @@ def main() -> int:
             try:
                 d = validate_decision(res.proposal, max_calls=6)  # rejects calls missing required args
                 entry["schema_valid"] = True
-                entry["executable"] = True
+                problems = contract_problems(d["calls"], _catalog(catalog_n))
+                entry["executable"] = not problems
+                if problems:
+                    entry["contract_problems"] = problems[:10]
                 entry["tools"] = [c["tool"] for c in d["calls"]]
                 entry["calls"] = [{"tool": c["tool"], "args": json.dumps(c["args"], sort_keys=True)[:600]} for c in d["calls"]]
                 entry["control"] = d["control"]
@@ -124,7 +150,8 @@ def main() -> int:
                           "possible_usage": exc.possible_usage})
         entry["seconds"] = round(time.time() - t0, 2)
         if expect == "valid-decision":
-            entry["pass"] = entry.get("outcome") == "decision" and bool(entry.get("schema_valid")) and bool(entry.get("calls") or entry.get("control"))
+            entry["pass"] = (entry.get("outcome") == "decision" and bool(entry.get("schema_valid"))
+                             and bool(entry.get("executable")) and bool(entry.get("calls") or entry.get("control")))
         elif expect == "bounded-or-decision":
             entry["pass"] = entry.get("outcome") in ("decision", "bounded-no-decision") and bool(entry.get("schema_valid"))
         else:

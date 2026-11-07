@@ -120,6 +120,8 @@ class TurnWorkflow:
                                                     start_to_close_timeout=timedelta(seconds=int(b.get("model_timeout", 300))),
                                                     heartbeat_timeout=HB, retry_policy=MODEL)
                 if not d.get("accepted"):
+                    if d.get("reason") == "invalid":
+                        continue  # the next slot sees why the proposal was refused (bounded by max_model_calls)
                     stop = "stale-revision" if d.get("reason") == "stale-revision" else "error"
                     break
                 if d.get("n_calls"):
