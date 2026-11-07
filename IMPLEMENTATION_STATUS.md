@@ -18,7 +18,7 @@ Updated 2026-11-07 by the lead session, on branch `build/eidos-local-v1`.
 | Temporal workflows (coordinator with Continue-As-New, bounded turns, independent jobs, assessment) | runtime-verified on the **regular Temporal Server 1.32.2 + PostgreSQL**. Rollover, retries and recorded-history replay are tested on the dev server (tests only). |
 | Runner/launcher | Reattach-safe handles: pid + start time + boot id, exit file. dev profile and **linux:bwrap-sealed** profile runtime-verified, with hostile probes. |
 | Investigator | context-policy/1, fixture runtime, recovery activities, offline turn replay. Fixture-only. |
-| Pydantic AI adapter | Implemented. Two real-provider qualification runs: receipt #1 found four defects, fixed; receipt #2 passed 7/8, and its read-tool loop is fixed. Receipt #3 pending. |
+| Pydantic AI adapter | **Anthropic qualified (development, lab-free):** receipt #3 passed 8/8 after the fixes from receipts #1 and #2. OpenAI-compatible endpoints are unqualified. |
 | Supervisor | init, start, stop, status, doctor, logs, backup, restore and upgrade runtime-verified on Linux. Restore was done into a fresh directory on new ports with re-enrolled credentials. |
 | MCP adapter (stdio + loopback HTTP, 34 tools, resources) | runtime-verified with the SDK client. External clients (Claude Code/Desktop, Codex) **not exercised**. |
 | HTML reports | implemented, tested with a fake client and smoke-tested on a live lab |
@@ -120,7 +120,20 @@ Full-lab command (key in the investigator-worker's environment only):
     - used by both live scripts.
   - `eidos.project.command` 1.0.4 declares that argv's first item is `python` or an absolute executable.
 
-### Receipt #3 (to run after CI is green on the fix commit; same caps)
+### Receipt #3 (controller-run, run id `live-1794083519`, source `55fd0e2`): **8/8 pass**
+
+- **Usage:** 11 requests, 46,863 input and 6,499 output tokens, USD 0.16. Served `claude-sonnet-5-5`, transport retries off.
+- **Conformance:** all four decisions were valid and executable with full argv contracts. Examples:
+  - project CLI with `{seed}`, a timeout and `allow_nonzero_exit`;
+  - a `python -c` diagnostic;
+  - a scorer call plus a retrain.
+- **read-tools:** 5 tool rounds, then the tool-free final request gave a valid, executable decision.
+- **request-limit:** valid in 1 request.
+- **timeout:** retryable. **404:** not retryable.
+- **Staging note from the controller:** the script reads `components/*/eidos-component.json`, so stage `components/` alongside `src/`, `packages/eidos-wire/src` and `scripts/qualify/`.
+- **Status:** the Anthropic path through the Pydantic AI adapter is qualified for development, lab-free. OpenAI-compatible endpoints are still unqualified.
+
+### Re-run command (same caps)
 
 ```bash
 python3.12 -m venv /tmp/eidos-live && /tmp/eidos-live/bin/pip install -r scripts/qualify/requirements-live.txt
