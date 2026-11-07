@@ -15,8 +15,10 @@ SEALED_CONTROLS = (
     "no-network-egress",
     "no-control-socket",
     "no-scorer-capability",
-    "separate-identity",
 )
+# Reported by every sealed receipt; required only when a plan lists it explicitly ("distinct
+# service identities where supported").
+OPTIONAL_CONTROLS = ("separate-identity",)
 
 PROFILES: dict[str, dict[str, Any]] = {
     "dev:same-user": {
@@ -25,7 +27,7 @@ PROFILES: dict[str, dict[str, Any]] = {
         "platforms": ("linux", "darwin"),
     },
     "linux:bwrap-sealed": {
-        "controls": SEALED_CONTROLS,
+        "controls": SEALED_CONTROLS + OPTIONAL_CONTROLS,
         "summary": "bubblewrap namespaces, read-only inputs, no network, separate scorer process",
         "platforms": ("linux",),
     },

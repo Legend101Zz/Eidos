@@ -168,7 +168,7 @@ class AttemptRunner:
         comp = dict(lock["component"])
         comp["source_dir"] = str(source) if source else None
         pythonpath = os.pathsep.join(SDK_PATHS + ([str(source)] if source else []))
-        if sealed and candidate_uid():
+        if sealed and candidate_uid(python):
             for d in (adir, staging, scratch):
                 shutil.chown(d, CANDIDATE_USER, CANDIDATE_USER)
             if adir.parent.exists():
@@ -182,6 +182,8 @@ class AttemptRunner:
                              config=lock.get("config") or {}, staging_dir=str(staging), scratch_dir=str(scratch),
                              limits=lock.get("limits") or {}, ports=ports, seed=lock.get("seed"))
             inv.write(adir / "invocation.json")
+            os.chmod(adir / "invocation.json", 0o444)
+            readonly.append(str(adir / "invocation.json"))
             argv = [python, "-m", "eidos_worker.run", str(adir / "invocation.json")]
         return LaunchSpec(argv=argv, cwd=env["project_root"], attempt_dir=str(adir),
                           env={"PYTHONPATH": pythonpath, "PYTHONHASHSEED": "0"},

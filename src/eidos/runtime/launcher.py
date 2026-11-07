@@ -103,14 +103,24 @@ class LaunchSpec:
     python_prefixes: list[str] = field(default_factory=list)
 
 
-def candidate_uid() -> tuple[int, int] | None:
+_CAND_OK: dict[str, bool] = {}
+
+
+def candidate_uid(python: str | None = None) -> tuple[int, int] | None:
+    """The distinct candidate identity, if it exists *and* can run the project interpreter."""
     if os.geteuid() != 0:
         return None
     try:
         pw = pwd.getpwnam(CANDIDATE_USER)
-        return pw.pw_uid, pw.pw_gid
     except KeyError:
         return None
+    if python:
+        if python not in _CAND_OK:
+            r = subprocess.run(["runuser", "-u", CANDIDATE_USER, "--", python, "-I", "-c", "pass"], capture_output=True)
+            _CAND_OK[python] = r.returncode == 0
+        if not _CAND_OK[python]:
+            return None
+    return pw.pw_uid, pw.pw_gid
 
 
 def bwrap_available() -> bool:
@@ -156,9 +166,10 @@ def launch(spec: LaunchSpec) -> ProcessHandle:
         env.update(spec.env)
     wrapper = ["/bin/sh", "-c", '"$@"; echo $? > "$0"', exit_file, *inner]
     preexec = None
-    ids = candidate_uid() if spec.profile == "linux:bwrap-sealed" else None
+    ids = candidate_uid(spec.argv[0]) if spec.profile == "linux:bwrap-sealed" else None
     if ids:
         uid, gid = ids
+        os.chown(adir, uid, gid)
 
         def preexec():  # pragma: no cover - runs in the child
             os.setgroups([])
@@ -227,7 +238,7 @@ def run_probes(spec: LaunchSpec, *, label_path: str, credential_path: str, host_
     for key in ("no-label-read", "no-credential-read", "no-host-write", "no-network-egress", "no-control-socket",
                 "no-scorer-capability"):
         controls[key] = "passed" if out.get(key) else "failed"
-    ids = candidate_uid() if spec.profile == "linux:bwrap-sealed" else None
+    ids = candidate_uid(python) if spec.profile == "linux:bwrap-sealed" else None
     controls["separate-identity"] = "passed" if ids and ids[0] != os.geteuid() else "failed"
     if not out.get("computation"):
         controls["permitted-computation"] = "failed"
