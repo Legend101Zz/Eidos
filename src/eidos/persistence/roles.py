@@ -113,3 +113,9 @@ def apply_grants(roles: DbRoles) -> None:
             f"GRANT SELECT (id, kind, display, project_ids, scopes, attributes, created_at, expires_at, revoked_at) "
             f"ON ledger.principals TO {r}")
     eng.dispose()
+
+
+def roles_from_config(cfg) -> DbRoles:
+    """Ledger roles for a lab installation (``eidos.settings.LabConfig``)."""
+    s = cfg.db_secrets()
+    return DbRoles("127.0.0.1", cfg.pg_port, cfg.db_name, cfg.db_prefix, s["migrator"], s["writer"], s["reader"])

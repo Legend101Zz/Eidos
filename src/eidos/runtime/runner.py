@@ -143,6 +143,8 @@ class AttemptRunner:
         source = None
         if st.get("bundle"):
             source = materialize_bundle(st["bundle"]["path"], adir / "source")
+        elif lock["component"].get("kind") == "build":
+            source = materialize_bundle(st["inputs"]["bundle"]["path"], adir / "source")
         profile = lock.get("isolation_profile", "dev:same-user")
         sealed = profile == "linux:bwrap-sealed"
         inputs: dict[str, InputBinding] = {}
