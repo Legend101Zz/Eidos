@@ -1,0 +1,2 @@
+{"name": "bad", "inputs": {"predictions": {"text": "g\n1\n", "media_type": "text/csv"}}, "config": {},
+ "expect": {"status": "failed", "error_category": "user-code"}}
