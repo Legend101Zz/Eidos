@@ -1,0 +1,52 @@
+{
+  "name": "ties-and-groups",
+  "author_test": true,
+  "inputs": {
+    "predictions": {
+      "text": "pair_id,reference_logit,variant_logit,reference_label,variant_label,gap\n0,0.0,0.0,0,0,a\n1,0.0,0.0,1,1,b\n",
+      "media_type": "text/csv"
+    }
+  },
+  "config": {
+    "group_by": "gap"
+  },
+  "expect": {
+    "status": "succeeded",
+    "receipt": {
+      "group_counts": {
+        "a": 1,
+        "b": 1
+      }
+    },
+    "outputs": {
+      "report": {
+        "json": {
+          "group_by": "gap",
+          "overall": {
+            "pairs": 2,
+            "reference_correct": 1,
+            "both_correct": 1,
+            "reference_accuracy": 0.5,
+            "both_correct_rate": 0.5
+          },
+          "by_group": {
+            "a": {
+              "pairs": 1,
+              "reference_correct": 1,
+              "both_correct": 1,
+              "reference_accuracy": 1.0,
+              "both_correct_rate": 1.0
+            },
+            "b": {
+              "pairs": 1,
+              "reference_correct": 0,
+              "both_correct": 0,
+              "reference_accuracy": 0.0,
+              "both_correct_rate": 0.0
+            }
+          }
+        }
+      }
+    }
+  }
+}

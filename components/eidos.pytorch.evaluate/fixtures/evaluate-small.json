@@ -1,0 +1,30 @@
+{
+  "name": "evaluate-small",
+  "author_test": true,
+  "inputs": {
+    "checkpoint": {
+      "file": "fixtures/data/parent-ordered-step20.ckpt",
+      "media_type": "application/octet-stream"
+    }
+  },
+  "config": {
+    "adapter": "eidos_adapter:ADAPTER",
+    "python_path": [
+      "fixtures/selftest"
+    ],
+    "evaluation": {
+      "split": "test",
+      "data_seed": 5,
+      "pairs": 50
+    }
+  },
+  "expect": {
+    "status": "succeeded",
+    "receipt": {
+      "rows": 50,
+      "split": "test",
+      "cluster": "5",
+      "input_checkpoint_step": 20
+    }
+  }
+}

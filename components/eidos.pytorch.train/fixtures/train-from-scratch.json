@@ -1,0 +1,25 @@
+{
+  "name": "train-from-scratch",
+  "author_test": true,
+  "inputs": {},
+  "config": {
+    "adapter": "eidos_adapter:ADAPTER",
+    "python_path": [
+      "fixtures/selftest"
+    ],
+    "builder": "OrderedSwitchNet",
+    "steps": 8,
+    "seed": 3,
+    "checkpoint_every": 4
+  },
+  "expect": {
+    "status": "succeeded",
+    "receipt": {
+      "end_step": 8,
+      "updates": 8,
+      "examples": 800,
+      "restore_class": "exact",
+      "resumed_from_step": null
+    }
+  }
+}

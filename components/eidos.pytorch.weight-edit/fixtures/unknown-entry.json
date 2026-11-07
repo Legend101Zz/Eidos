@@ -1,0 +1,22 @@
+{
+  "name": "unknown-entry",
+  "author_test": true,
+  "inputs": {
+    "checkpoint": {
+      "file": "fixtures/data/parent-ordered-step20.ckpt",
+      "media_type": "application/octet-stream"
+    }
+  },
+  "config": {
+    "edits": [
+      {
+        "entry": "readout.nothing",
+        "value": 0.0
+      }
+    ]
+  },
+  "expect": {
+    "status": "failed",
+    "error_category": "contract"
+  }
+}

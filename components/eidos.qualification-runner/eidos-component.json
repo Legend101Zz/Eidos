@@ -1,0 +1,46 @@
+{
+  "id": "eidos.qualification-runner",
+  "release": "1.0.0",
+  "implements": "qualification-runner/1",
+  "kind": "artifact-op",
+  "entry": "qualification_runner.run:run",
+  "scientific_effects": [
+    "observe"
+  ],
+  "input": {},
+  "output": {
+    "qualification_results": "qualification-results/1"
+  },
+  "requires": [
+    "artifact.writer/1",
+    "target.source/1",
+    "lab.domain.qualification/1"
+  ],
+  "optional": [],
+  "reads": [
+    "config.suite",
+    "target.source"
+  ],
+  "writes": [
+    "output:qualification_results"
+  ],
+  "isolation": "immutable-artifacts",
+  "card": "method-card.md",
+  "controls": [
+    "fixtures/runs-assessor-controls.json"
+  ],
+  "receipt": [
+    "target",
+    "controls",
+    "invalid_runs",
+    "metrics"
+  ],
+  "cost": {
+    "cpu_seconds": "controls x repetitions x target runtime"
+  },
+  "python": ">=3.11",
+  "dependencies": [
+    "eidos-lab"
+  ],
+  "license": "Apache-2.0"
+}
