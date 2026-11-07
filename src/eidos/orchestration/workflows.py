@@ -89,15 +89,28 @@ class InvestigationWorkflow:
                 return {"status": "finished", "reason": reason, "turn_counter": counter}
             if not res.get("started") or reason in WAIT_REASONS or reason == "error":
                 self._status = f"waiting ({reason})"
-                try:
-                    # Signals add history while waiting; leave the wait (and roll over at the loop top)
-                    # once the history crosses its limit, so a wake storm cannot grow it unboundedly.
-                    await workflow.wait_condition(
-                        lambda seen=seen: self._wakes > seen
-                        or workflow.info().get_current_history_length() > history_limit,
-                        timeout=timedelta(seconds=idle))
-                except TimeoutError:
-                    pass
+                waited_since = workflow.now()
+                max_idle = int(a.get("max_idle_turn_seconds", 6 * 3600))
+                while True:
+                    try:
+                        # Signals add history while waiting; leave the wait (and roll over at the loop
+                        # top) once the history crosses its limit, so a wake storm cannot grow it.
+                        await workflow.wait_condition(
+                            lambda seen=seen: self._wakes > seen
+                            or workflow.info().get_current_history_length() > history_limit,
+                            timeout=timedelta(seconds=idle))
+                        break
+                    except TimeoutError:
+                        pass
+                    if not workflow.patched("idle-poll-needs-news-v1"):
+                        break  # histories recorded before this change started a turn on every timeout
+                    # A quiet poll costs no model call: start a turn only if something happened.
+                    news = await workflow.execute_activity(
+                        "check_news", {"investigation_id": inv, "project_id": a["project_id"]},
+                        task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
+                    if news.get("news") or (workflow.now() - waited_since).total_seconds() > max_idle \
+                            or workflow.info().get_current_history_length() > history_limit:
+                        break
 
 
 @workflow.defn(name="TurnWorkflow")

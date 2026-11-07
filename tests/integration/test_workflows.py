@@ -70,8 +70,13 @@ class FakeInvestigator:
         self.completed.append(a)
         return {"status": "completed"}
 
+    @activity.defn(name="check_news")
+    async def check_news(self, a: dict) -> dict:
+        return {"news": True}
+
     def acts(self):
-        return [self.begin_turn, self.build_context, self.decide, self.execute_decision, self.complete_turn]
+        return [self.begin_turn, self.build_context, self.decide, self.execute_decision, self.complete_turn,
+                self.check_news]
 
 
 async def test_coordinator_rolls_over_and_carries_counters(env):
@@ -176,7 +181,8 @@ async def test_stress_many_turns_bounded_histories_and_oversized_results(env):
             return bounded(huge)
 
         def acts(self):
-            return [self.begin_turn, self.build_context, self.decide, self.execute_decision, self.complete_turn]
+            return [self.begin_turn, self.build_context, self.decide, self.execute_decision, self.complete_turn,
+                    self.check_news]
 
     fake = Big(stop_after=int(os.environ.get("EIDOS_STRESS_TURNS", "16")))
     wid = f"inv-stress-{uuid.uuid4().hex[:6]}"
@@ -272,3 +278,26 @@ async def test_inflight_turn_with_invalid_proposal_replays_after_upgrade(env):
         r = await env.client.execute_workflow(TurnWorkflow.run, {"investigation_id": "i", "project_id": "p", "index": 2},
                                               id=f"t-{uuid.uuid4().hex[:6]}", task_queue=WORKFLOW_QUEUE)
     assert r["stop_reason"] == "invalid-proposals"
+
+
+async def test_idle_polls_without_news_spend_no_model_turns(env):
+    import asyncio
+    fake = FakeInvestigator(stop_after=3)
+    checks = {"n": 0}
+
+    @activity.defn(name="check_news")
+    async def check_news(a: dict) -> dict:
+        checks["n"] += 1
+        return {"news": False}
+
+    wid = f"inv-idle-{uuid.uuid4().hex[:6]}"
+    async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
+            Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=[*fake.acts()[:-1], check_news]):
+        h = await env.client.start_workflow(InvestigationWorkflow.run, {"investigation_id": wid, "project_id": "p",
+                                            "idle_poll_seconds": 1}, id=wid, task_queue=WORKFLOW_QUEUE)
+        await asyncio.sleep(5)
+        assert fake.turns == 1 and checks["n"] >= 2  # quiet polls checked the ledger, no new turn
+        await h.signal("wake", 1)
+        await asyncio.sleep(2)
+        assert fake.turns == 2  # a wake starts a turn
+        await h.terminate()
