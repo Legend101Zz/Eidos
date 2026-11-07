@@ -232,11 +232,13 @@ def compare_trials(ctx: Ctx, p: dict) -> dict:
         if not job or job["project_id"] != ctx.project_id:
             raise NotFound(f"job {jid} not found")
         receipt = (job.get("terminal") or {}).get("receipt", {})
-        branch = (job["lock"].get("config") or {}).get("branch")
+        branch_rec = ctx.tx.get_record("branch", f"branch:{job['trial_id']}") if job["trial_id"] else None
+        branch = branch_rec.body if branch_rec else (job["lock"].get("config") or {}).get("branch")
         rows.append({"job_id": jid, "status": job["status"], "component": job["lock"]["component"]["ref"],
                      "metrics": receipt.get("metrics", {}), "realized": {k: receipt.get(k) for k in
                                                                           ("examples", "steps", "device", "seconds")},
-                     "independence_unit": (receipt.get("independence_unit") or (branch or {}).get("parent", {}).get("trajectory_id")
+                     "independence_unit": (receipt.get("independence_unit") or (branch or {}).get("independence_unit")
+                                           or (branch or {}).get("parent", {}).get("trajectory_id")
                                            or job["trial_id"])})
     units = [r["independence_unit"] for r in rows]
     _expose(ctx, p.get("investigation_id"), "comparison:" + ",".join(p.get("job_ids", [])), {"jobs": p.get("job_ids")})
