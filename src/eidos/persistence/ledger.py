@@ -224,10 +224,14 @@ class LedgerTx:
     # -- events and outbox -----------------------------------------------------------------
     def append_event(self, project_id: str, etype: str, subject: str | None, body: dict,
                      investigation_id: str | None = None) -> int:
-        row = self._one("INSERT INTO events(project_id, investigation_id, type, subject, body, command_id)"
-                        " VALUES (:p,:i,:t,:s,CAST(:b AS jsonb),:c) RETURNING seq",
-                        p=project_id, i=investigation_id, t=etype, s=subject, b=_j(body), c=self.command_id)
-        return row["seq"]
+        # Gap-free, commit-ordered sequence: the counter row stays locked until this transaction
+        # commits, so no reader can observe seq N+1 while seq N is still uncommitted.
+        seq = self._one("UPDATE event_counter SET last_seq = last_seq + 1 WHERE id = 1 RETURNING last_seq")["last_seq"]
+        self.c.execute(text("INSERT INTO events(seq, project_id, investigation_id, type, subject, body, command_id)"
+                            " VALUES (:q,:p,:i,:t,:s,CAST(:b AS jsonb),:c)"),
+                       {"q": seq, "p": project_id, "i": investigation_id, "t": etype, "s": subject, "b": _j(body),
+                        "c": self.command_id})
+        return seq
 
     def enqueue(self, topic: str, dedupe_key: str, payload: dict, event_seq: int | None = None) -> None:
         self.c.execute(text("INSERT INTO outbox(event_seq, topic, dedupe_key, payload) VALUES (:e,:t,:k,CAST(:p AS jsonb))"
@@ -262,8 +266,8 @@ class LedgerTx:
         return self._all(sql + " ORDER BY seq LIMIT :l", **p)
 
     def horizon(self) -> int:
-        row = self._one("SELECT COALESCE(max(seq),0) AS h FROM events")
-        return int(row["h"])
+        row = self._one("SELECT last_seq AS h FROM event_counter WHERE id = 1")
+        return int(row["h"]) if row else 0
 
     # -- jobs and attempts -----------------------------------------------------------------
     def insert_job(self, job: dict) -> None:

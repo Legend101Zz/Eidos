@@ -24,7 +24,7 @@ from sqlalchemy.engine import URL
 
 APPEND_ONLY = ("records", "events", "budget_entries", "lineage", "publications", "exposures", "decisions",
                "artifacts", "projects")
-MUTABLE = ("principals", "commands", "heads", "outbox", "jobs", "attempts", "budgets", "turns")
+MUTABLE = ("principals", "commands", "heads", "outbox", "jobs", "attempts", "budgets", "turns", "event_counter")
 MIGRATIONS = Path(__file__).parent / "migrations"
 
 
