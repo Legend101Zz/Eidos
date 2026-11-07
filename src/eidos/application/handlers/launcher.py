@@ -101,7 +101,9 @@ def heartbeat_attempt(ctx: Ctx, p: dict) -> dict:
     att = ctx.tx.get_attempt(p["attempt_id"])
     usage = {**(att["usage"] or {}), "progress": p.get("progress")}
     ctx.tx.update_attempt(p["attempt_id"], lease_expires_at=lease, usage=usage)
-    return {"ok": True, "cancel_requested": job["cancel_requested"]}
+    control = ctx.tx.get_record("job_control", job["id"]) if job["cancel_requested"] else None
+    return {"ok": True, "cancel_requested": job["cancel_requested"],
+            "stop_policy": control.body["stop_policy"] if control else ("cancel" if job["cancel_requested"] else None)}
 
 
 @command("publish_outputs", "launcher")

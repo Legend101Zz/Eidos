@@ -18,9 +18,12 @@ from pathlib import Path
 from eidos.settings import LabConfig
 
 TEMPORAL_VERSION = "1.32.2"
-TEMPORAL_RELEASES = {
-    ("linux", "amd64"): ("https://github.com/temporalio/temporal/releases/download/v1.32.2/temporal_1.32.2_linux_amd64.tar.gz",
-                         "6260f110b6853d2d7f8daa31793d1fac44096077e3b058dc3482de6ac50bc543"),
+_REL = "https://github.com/temporalio/temporal/releases/download/v1.32.2/temporal_1.32.2_{}.tar.gz"
+TEMPORAL_RELEASES = {  # sha256 of each pinned release asset (verified by download, 2026-11-07)
+    ("linux", "amd64"): (_REL.format("linux_amd64"), "6260f110b6853d2d7f8daa31793d1fac44096077e3b058dc3482de6ac50bc543"),
+    ("linux", "arm64"): (_REL.format("linux_arm64"), "1ab69870cc9f12bdc8c98fa169904cf2b2909258d5026c3088843d8e0613228f"),
+    ("darwin", "arm64"): (_REL.format("darwin_arm64"), "6c34c8ac087da20234ad90568e9485703af876de6e1be4aa26b6d9fba408b2f0"),
+    ("darwin", "amd64"): (_REL.format("darwin_amd64"), "2fa008b1460c5a3daccc0237d8b233ee9a16825865f7757ad1347faf4a2a3ade"),
 }
 PG_MIN_MAJOR = 14
 
@@ -143,9 +146,9 @@ def install_temporal(cfg: LabConfig, source: str | None = None) -> str:
             shutil.copy2(Path(source, name), dest / name)
         return str(dest)
     key = temporal_platform()
-    url = TEMPORAL_RELEASES.get(key, (None,))[0] or (
-        f"https://github.com/temporalio/temporal/releases/download/v{TEMPORAL_VERSION}/"
-        f"temporal_{TEMPORAL_VERSION}_{key[0]}_{key[1]}.tar.gz")
+    if key not in TEMPORAL_RELEASES:
+        raise ServiceError(f"no pinned Temporal server release for {key}; pass --temporal-source with qualified binaries")
+    url = TEMPORAL_RELEASES[key][0]
     dest.mkdir(parents=True, exist_ok=True)
     tgz = dest.parent / "server.tgz"
     if not tgz.exists():

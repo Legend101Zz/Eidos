@@ -30,6 +30,11 @@ def boot_id() -> str:
     try:
         return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
     except OSError:
+        if sys.platform == "darwin":  # boot time identifies the boot on macOS
+            try:
+                return subprocess.run(["sysctl", "-n", "kern.boottime"], capture_output=True, text=True).stdout.strip() or "unknown"
+            except OSError:
+                return "unknown"
         return "unknown"
 
 
@@ -73,6 +78,13 @@ class ProcessHandle:
             return int(Path(self.exit_file).read_text().strip())
         except (OSError, ValueError):
             return None
+
+    def signal_group(self, sig: int) -> None:
+        if self.alive():
+            try:
+                os.killpg(self.pid, sig)
+            except ProcessLookupError:
+                pass
 
     def terminate(self, grace: float = 5.0) -> None:
         if not self.alive():

@@ -140,6 +140,7 @@ def train_loop(
     seed: Optional[int] = None,
     deterministic: bool = False,
     device: Optional[str] = None,
+    should_stop: Optional[Callable[[], bool]] = None,
 ) -> TrainResult:
     """Train until ``steps`` total updates (absolute, so a resumed run continues to the same target).
 
@@ -212,6 +213,7 @@ def train_loop(
         os.makedirs(checkpoint_dir, exist_ok=True)
         checkpoints.append(save_checkpoint(state, os.path.join(checkpoint_dir, f"step-{step:08d}.ckpt")))
 
+    stopped_early = False
     while step < steps:
         group = [batch_fn(cursor + i) for i in range(batches_per_update)]
         cursor += batches_per_update
@@ -252,7 +254,12 @@ def train_loop(
             evaluations.append({"step": step, "result": evaluate(model, step)})
         if checkpoint_every and step % checkpoint_every == 0:
             checkpoint()
-    if checkpoint_at_end and not (checkpoints and checkpoints[-1].endswith(f"step-{step:08d}.ckpt")):
+        if should_stop is not None and should_stop():
+            # checkpoint-and-stop: leave only at a committed optimizer-step boundary.
+            stopped_early = True
+            break
+    if (checkpoint_at_end or stopped_early) and checkpoint_dir is not None and not (
+            checkpoints and checkpoints[-1].endswith(f"step-{step:08d}.ckpt")):
         checkpoint()
     receipt: Dict[str, Any] = {
         "start_step": start_step,
@@ -266,6 +273,8 @@ def train_loop(
         "final_loss": final_loss,
         "evaluations": evaluations,
         "adapter_capabilities": caps["optional"],
+        "target_steps": steps,
+        "stopped_early": stopped_early,
         **peak_memory(),
     }
     return TrainResult(model, optimizer, scheduler, step, receipt, checkpoints)

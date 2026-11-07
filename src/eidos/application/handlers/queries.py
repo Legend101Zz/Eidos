@@ -258,11 +258,14 @@ def budgets(ctx: Ctx, p: dict) -> dict:
 def assessment_inputs(ctx: Ctx, p: dict) -> dict:
     """What the assessor may read: the frozen plan, each arm's receipts and output artifacts."""
     plan = ctx.tx.require("evidence_plan", p["plan_id"])
+    from eidos.application.handlers.evidence import arm_jobs
     arms = {}
-    for arm_id, jid in plan.body.get("launch", {}).get("jobs", {}).items():
-        job = ctx.tx.get_job(jid)
-        arms[arm_id] = {"job_id": jid, "status": job["status"], "receipt": (job.get("terminal") or {}).get("receipt", {}),
-                        "outputs": [_jsonable(o) for o in ctx.tx.publications(jid)]}
+    for arm_id, jids in arm_jobs(plan.body).items():
+        jobs = [ctx.tx.get_job(j) for j in jids]
+        statuses = [j["status"] for j in jobs]
+        arms[arm_id] = {"job_ids": jids, "status": "succeeded" if statuses and all(x == "succeeded" for x in statuses)
+                        else "incomplete", "receipts": [(j.get("terminal") or {}).get("receipt", {}) for j in jobs],
+                        "outputs": [_jsonable(o) for j in jids for o in ctx.tx.publications(j)]}
     return {"plan_id": plan.id, "plan_digest": plan.digest, "plan": plan.body, "arms": arms}
 
 

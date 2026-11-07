@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 
 from eidos.application.handlers.investigations import confirm_scope, inv_scope
@@ -124,6 +125,94 @@ def freeze_evidence_plan(ctx: Ctx, p: dict) -> dict:
     return {"plan_id": plan.id, "revision": rec.revision, "plan_digest": rec.digest}
 
 
+def _pipeline_steps(arm: dict) -> list[dict]:
+    """Normalize an arm into executable steps. ``run`` = one step; ``runs[].jobs[]`` = per-seed
+    pipelines whose inputs may reference earlier steps as ``"<step-id>.<slot>"``."""
+    if arm.get("run"):
+        return [{"key": f"{arm['id']}/run", "id": "run", "spec": arm["run"], "cluster": None}]
+    steps = []
+    for r in arm.get("runs") or []:
+        for j in r.get("jobs") or []:
+            steps.append({"key": f"{arm['id']}/{j['id']}", "id": j["id"], "spec": j, "cluster": r.get("cluster")})
+    if not steps:
+        raise Invalid(f"arm {arm['id']} has no run specification")
+    return steps
+
+
+def arm_jobs(plan_body: dict) -> dict[str, list[str]]:
+    jobs = (plan_body.get("launch") or {}).get("jobs") or {}
+    return {k: (v if isinstance(v, list) else [v]) for k, v in jobs.items()}
+
+
+def _refs(step: dict, arm_steps: dict[str, dict]) -> dict[str, tuple[str, str]]:
+    """Map input ports to (step key, slot) for inputs that reference earlier pipeline steps."""
+    out = {}
+    for port, val in (step["spec"].get("inputs") or {}).items():
+        if not isinstance(val, str):
+            continue
+        for sid in sorted(arm_steps, key=len, reverse=True):
+            if val.startswith(sid + "."):
+                out[port] = (arm_steps[sid]["key"], val[len(sid) + 1:])
+                break
+    return out
+
+
+def _admit_step(ctx: Ctx, plan, arm: dict, step: dict, inputs: dict, scope, inv_id) -> str:
+    spec = step["spec"]
+    req = plan.body.get("required_isolation") or {}
+    run = {"component_ref": spec.get("component_ref") or spec.get("component"), "inputs": inputs,
+           "config": spec.get("config") or {}, "environment": spec.get("environment"), "seed": spec.get("seed"),
+           "isolation_profile": req.get("profile", spec.get("isolation_profile"))}
+    lock = resolve_lock(ctx, run)
+    lock.update({"plan_id": plan.id, "plan_digest": plan.digest, "arm": arm["id"], "arm_role": arm["role"],
+                 "step": step["id"], "cluster": step.get("cluster"), "required_isolation": req})
+    return admit_job(ctx, kind="evidence-arm", lock=lock, investigation_id=inv_id, purpose="confirmation",
+                     wall_seconds=int(spec.get("wall_seconds", 900)), charter_check=False, scope=scope)
+
+
+def _advance(ctx: Ctx, plan, launch: dict) -> dict:
+    """Admit every pending step whose referenced steps succeeded; block those whose did not."""
+    inv_id = plan.body.get("investigation_id")
+    scope = launch.get("scope")
+    progressed = True
+    while progressed:
+        progressed = False
+        for arm in plan.body["arms"]:
+            steps = _pipeline_steps(arm)
+            by_id = {s["id"]: s for s in steps}
+            for st in steps:
+                if st["key"] in launch["steps"] or st["key"] in launch["blocked"]:
+                    continue
+                refs = _refs(st, by_id)
+                ready, blocked, inputs = True, None, dict(st["spec"].get("inputs") or {})
+                for port, (dep_key, slot) in refs.items():
+                    if dep_key in launch["blocked"]:
+                        blocked = f"depends on blocked step {dep_key}"
+                        break
+                    jid = launch["steps"].get(dep_key)
+                    job = ctx.tx.get_job(jid) if jid else None
+                    if not job or job["status"] not in ("succeeded", "failed", "cancelled", "pruned"):
+                        ready = False
+                        continue
+                    if job["status"] != "succeeded":
+                        blocked = f"predecessor {dep_key} ended {job['status']}"
+                        break
+                    pub = next((x for x in ctx.tx.publications(jid) if x["slot"] == slot), None)
+                    if pub is None:
+                        blocked = f"predecessor {dep_key} published no '{slot}'"
+                        break
+                    inputs[port] = pub["artifact_id"]
+                if blocked:
+                    launch["blocked"][st["key"]] = blocked
+                    progressed = True
+                elif ready:
+                    jid = _admit_step(ctx, plan, arm, st, inputs, scope, inv_id)
+                    launch["steps"][st["key"]] = jid
+                    launch["jobs"].setdefault(arm["id"], []).append(jid)
+                    progressed = True
+    return launch
+
+
 @command("launch_evidence_plan", "spend_compute")
 def launch_evidence_plan(ctx: Ctx, p: dict) -> dict:
     plan = ctx.tx.require("evidence_plan", p["plan_id"], lock=True)
@@ -133,28 +222,31 @@ def launch_evidence_plan(ctx: Ctx, p: dict) -> dict:
     scope = None
     if inv_id:
         scope = confirm_scope(inv_id) if ctx.tx.budgets(confirm_scope(inv_id)) else inv_scope(inv_id)
-    req = plan.body.get("required_isolation") or {}
-    jobs = {}
     for arm in plan.body["arms"]:
-        run = arm.get("run")
-        if not run:
-            raise Invalid(f"arm {arm['id']} has no run specification")
-        lock = resolve_lock(ctx, {**run, "isolation_profile": req.get("profile", run.get("isolation_profile"))})
-        lock.update({"plan_id": plan.id, "plan_digest": plan.digest, "arm": arm["id"], "arm_role": arm["role"],
-                     "required_isolation": req})
-        jobs[arm["id"]] = admit_job(ctx, kind="evidence-arm", lock=lock, investigation_id=inv_id, purpose="confirmation",
-                                    wall_seconds=int(run.get("wall_seconds", 900)), charter_check=False, scope=scope)
-    body = {**plan.body, "launch": {"jobs": jobs, "by": ctx.principal.id}}
+        _pipeline_steps(arm)  # validate shape before admitting anything
+    launch = _advance(ctx, plan, {"jobs": {}, "steps": {}, "blocked": {}, "scope": scope, "by": ctx.principal.id})
+    body = {**plan.body, "launch": launch}
     rec = ctx.tx.put_record("evidence_plan", plan.id, ctx.project_id, body, created_by=ctx.principal.id, status="executing")
-    return {"plan_id": plan.id, "revision": rec.revision, "jobs": jobs}
+    return {"plan_id": plan.id, "revision": rec.revision, "jobs": launch["jobs"], "pending_steps":
+            sum(len(_pipeline_steps(a)) for a in plan.body["arms"]) - len(launch["steps"]) - len(launch["blocked"])}
 
 
 def maybe_request_assessment(ctx: Ctx, plan_id: str) -> None:
-    plan = ctx.tx.get_record("evidence_plan", plan_id)
+    """Called when an evidence-arm job ends: advance pipelines; request assessment when done."""
+    plan = ctx.tx.get_record("evidence_plan", plan_id, lock=True)
     if not plan or plan.status != "executing":
         return
-    jobs = [ctx.tx.get_job(j) for j in plan.body["launch"]["jobs"].values()]
-    if all(j["status"] in ("succeeded", "failed", "cancelled") for j in jobs):
+    launch = plan.body["launch"]
+    if "steps" in launch:
+        launch = _advance(ctx, plan, json.loads(json.dumps(launch)))
+        if launch != plan.body["launch"]:
+            plan = ctx.tx.put_record("evidence_plan", plan.id, ctx.project_id, {**plan.body, "launch": launch},
+                                     created_by=ctx.principal.id, status="executing")
+        total = sum(len(_pipeline_steps(a)) for a in plan.body["arms"])
+        if len(launch["steps"]) + len(launch["blocked"]) < total:
+            return
+    jobs = [ctx.tx.get_job(j) for js in arm_jobs(plan.body).values() for j in js]
+    if all(j["status"] in ("succeeded", "failed", "cancelled", "pruned") for j in jobs):
         ctx.tx.set_status("evidence_plan", plan_id, "awaiting-assessment")
         ctx.tx.enqueue("assessment.request", f"assess:{plan_id}:{plan.revision}",
                        {"plan_id": plan_id, "project_id": ctx.project_id})
@@ -166,16 +258,22 @@ def _realized(ctx: Ctx, plan) -> dict:
                                    ctx.tx.list_records(ctx.project_id, "isolation_receipt")]
                if pr and "launcher" in (pr.get("scopes") or [])}
     req = plan.body.get("required_isolation") or {}
-    for arm_id, jid in plan.body["launch"]["jobs"].items():
-        job = ctx.tx.get_job(jid)
-        receipt = (job.get("terminal") or {}).get("receipt", {}) if job else {}
-        att_receipt = ctx.tx.get_record("isolation_receipt", job["current_attempt"]) if job and job["current_attempt"] else None
-        verdict = isolation.evaluate_receipt(req, att_receipt.body if att_receipt else None, trusted_launchers=trusted)
-        if not verdict["ok"]:
-            iso_ok = False
-            iso_findings.extend({**f, "arm": arm_id} for f in verdict["findings"])
-        arms[arm_id] = {"status": job["status"] if job else "missing", "receipt": receipt,
-                        "isolation": att_receipt.body if att_receipt else None}
+    blocked = (plan.body["launch"].get("blocked") or {})
+    for arm_id, jids in arm_jobs(plan.body).items():
+        statuses, receipt = [], {}
+        for jid in jids:
+            job = ctx.tx.get_job(jid)
+            statuses.append(job["status"] if job else "missing")
+            receipt = (job.get("terminal") or {}).get("receipt", {}) if job else {}
+            att_receipt = ctx.tx.get_record("isolation_receipt", job["current_attempt"]) if job and job["current_attempt"] else None
+            verdict = isolation.evaluate_receipt(req, att_receipt.body if att_receipt else None, trusted_launchers=trusted)
+            if not verdict["ok"]:
+                iso_ok = False
+                iso_findings.extend({**f, "arm": arm_id, "job": jid} for f in verdict["findings"])
+        arm_blocked = [k for k in blocked if k.startswith(arm_id + "/")]
+        ok = statuses and all(st == "succeeded" for st in statuses) and not arm_blocked
+        arms[arm_id] = {"status": "succeeded" if ok else "incomplete", "receipt": receipt, "jobs": dict(zip(jids, statuses, strict=True)),
+                        "blocked_steps": arm_blocked}
     return {"arms": arms, "isolation_ok": iso_ok, "isolation_findings": iso_findings}
 
 
@@ -223,8 +321,9 @@ def submit_assessment(ctx: Ctx, p: dict) -> dict:
     for ids in evidence_set.values():
         for art in ids:
             ctx.tx.add_lineage(ctx.project_id, art, aid, "evaluated-by")
-    for jid in plan.body["launch"]["jobs"].values():
-        ctx.tx.add_lineage(ctx.project_id, jid, aid, "assessed-in")
+    for jids in arm_jobs(plan.body).values():
+        for jid in jids:
+            ctx.tx.add_lineage(ctx.project_id, jid, aid, "assessed-in")
     ctx.tx.set_status("evidence_plan", plan.id, "assessed", labels={"assessment": aid})
     claim_id = plan.body["claim_ref"]["id"]
     ctx.tx.put_record("justification", f"just:{aid}", ctx.project_id,

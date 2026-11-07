@@ -106,6 +106,18 @@ class AttemptRunner:
                 ctx = {"job_id": job_id, "attempt_id": att["id"], "epoch": att["epoch"], "lock": job["lock"],
                        "attempt_dir": h.attempt_dir, "reattached": True, "started": time.time()}
                 return self._supervise(project, ctx, h, heartbeat, cancelled)
+            # The recorded process is gone without an exit status (machine restart, power loss, kill):
+            # reconcile it as lost, with the elapsed time it may have consumed, before a new fenced attempt.
+            from datetime import datetime
+            try:
+                started = datetime.fromisoformat(str(att["started_at"])).timestamp()
+            except ValueError:
+                started = time.time()
+            self.client.command("finish_attempt", {"job_id": job_id, "attempt_id": att["id"], "epoch": att["epoch"],
+                                "status": "lost", "error": {"category": "lost", "message":
+                                "process handle dead without exit status (pid/start-time/boot-id check)"},
+                                "usage": {"compute_seconds": round(max(0.0, time.time() - started), 3), "uncertain": True}},
+                                project=project, key=f"lost:{att['id']}")
         st = self.client.command("start_attempt", {"job_id": job_id, "lease_seconds": 120}, project=project,
                                  key=f"start:{job_id}:{activity_attempt}")["result"]
         if not st.get("run"):
@@ -167,8 +179,11 @@ class AttemptRunner:
         ports = {k: v for k, v in (lock.get("ports") or {}).items()}
         for name, b in (lock.get("extra_bundles") or {}).items():
             p = materialize_bundle(self.store.path_for(b["digest"]), adir / f"source-{name}")
-            ports[f"{name}.source/1"] = {"path": str(p)}
             readonly.append(str(p))
+            if name.startswith("ext-"):  # published training-extension releases pinned in the lock
+                ports.setdefault("extension.source/1", {"paths": []})["paths"].append(str(p))
+            else:
+                ports[f"{name}.source/1"] = {"path": str(p)}
         comp = dict(lock["component"])
         comp["source_dir"] = str(source) if source else None
         pythonpath = os.pathsep.join(SDK_PATHS + ([str(source)] if source else []))
@@ -228,7 +243,16 @@ class AttemptRunner:
                     hb = self.client.command("heartbeat_attempt", {"job_id": ctx["job_id"], "attempt_id": ctx["attempt_id"],
                                              "epoch": ctx["epoch"], "progress": {"elapsed": now - started}},
                                              project=project)["result"]
-                    if hb.get("cancel_requested"):
+                    if hb.get("cancel_requested") and hb.get("stop_policy") == "checkpoint-and-stop":
+                        if not ctx.get("stop_signalled"):
+                            ctx["stop_signalled"] = now
+                            ctx["stop_requested"] = True
+                            h.signal_group(__import__("signal").SIGUSR1)
+                        elif now - ctx["stop_signalled"] > float(ctx["lock"].get("limits", {}).get("stop_grace_seconds", 120)):
+                            h.terminate()
+                            return self._finish(project, ctx, "cancelled", {}, {"category": "stop-grace-exceeded",
+                                                "message": "worker did not checkpoint within the grace period"})
+                    elif hb.get("cancel_requested"):
                         h.terminate()
                         return self._finish(project, ctx, "cancelled", {}, None)
                 except LabError as exc:
@@ -276,6 +300,9 @@ class AttemptRunner:
             md["outputs"] = [dict(o.__dict__) for o in outputs]
             self.client.command("publish_outputs", {"job_id": ctx["job_id"], "attempt_id": ctx["attempt_id"],
                                 "epoch": ctx["epoch"], "manifest": md}, project=project, key=f"publish:{ctx['attempt_id']}")
+        if ctx.get("stop_requested") and man.status == "succeeded":
+            receipt = {**(man.receipt or {}), "stopped_by_policy": "checkpoint-and-stop"}
+            return self._finish(project, ctx, "cancelled", receipt, None)
         return self._finish(project, ctx, man.status, man.receipt, man.error, final=man.status == "failed")
 
     def _collect_build(self, project: str, ctx: dict, adir: Path) -> dict:

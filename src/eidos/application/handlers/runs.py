@@ -72,6 +72,50 @@ def _env_provided(cap: str, cat: list[dict]) -> bool:
     return not any(r["status"] == "active" and r["manifest"]["implements"] == cap for r in cat)
 
 
+def _bind_extensions(ctx: Ctx, lock: dict, env: dict) -> None:
+    """Resolve ``config.extensions`` entries naming published training-extension releases.
+
+    Each such entry is pinned by release digest in the lock, its source bundle is mounted by the
+    launcher (``extension.source/1``), and hook phases/writers are validated before admission.
+    Entries given only as ``spec`` (author's own importable code) are kept as-is and recorded as
+    unpinned in the lock.
+    """
+    exts = (lock.get("config") or {}).get("extensions") or []
+    if not exts:
+        return
+    from eidos_wire.manifest import PHASES
+    resolved, records, bundles = [], [], {}
+    for i, ext in enumerate(exts):
+        ref = ext.get("component_ref") if isinstance(ext, dict) else None
+        if not ref:
+            resolved.append(ext)
+            records.append({"spec": ext.get("spec") if isinstance(ext, dict) else ext, "pinned": False})
+            continue
+        rel = ctx.tx.require("component_release", ref)
+        man = rel.body["manifest"]
+        if rel.status != "active":
+            raise Invalid(f"training extension {ref} is {rel.status}; new runs cannot bind it")
+        if man["kind"] != "training-extension":
+            raise Invalid(f"{ref} is a {man['kind']}, not a training-extension")
+        entry = {"spec": man["entry"], "name": ext.get("name") or man["id"].split(".")[-1],
+                 "config": ext.get("config") or {}, "phases": ext.get("phases") or man.get("phases", [])}
+        resolved.append(entry)
+        records.append({"ref": ref, "digest": rel.body["digest"], "phases": entry["phases"], "pinned": True})
+        bundles[f"ext-{i}"] = {"artifact_id": rel.body["bundle_artifact_id"], "digest": rel.body["bundle_digest"]}
+    adapter_phases = list(env.get("phases") or PHASES)
+    res.order_hooks([{"ref": r.get("ref") or r.get("spec"), "manifest": {
+        "phases": r.get("phases") or [], "writes": (ctx.tx.require("component_release", r["ref"]).body["manifest"].get("writes", [])
+                                                    if r.get("ref") else []),
+        "compose": (ctx.tx.require("component_release", r["ref"]).body["manifest"].get("compose", []) if r.get("ref") else [])}}
+        for r in records if r.get("phases")], adapter_phases)
+    lock["config"] = {**lock["config"], "extensions": resolved}
+    lock["extensions"] = records
+    lock["extra_bundles"] = {**(lock.get("extra_bundles") or {}), **bundles}
+    from eidos_wire import canonical_json, sha256_bytes
+    lock.pop("digest", None)
+    lock["digest"] = "sha256:" + sha256_bytes(canonical_json(lock).encode())
+
+
 def resolve_lock(ctx: Ctx, p: dict, *, extra_config: dict | None = None) -> dict:
     cat = catalog(ctx, include_inactive=True)
     target = next((r for r in cat if r["ref"] == p["component_ref"]), None)
@@ -102,6 +146,7 @@ def resolve_lock(ctx: Ctx, p: dict, *, extra_config: dict | None = None) -> dict
         grants=set(ctx.principal.scopes) | set(p.get("grants") or []), installed=env.get("installed") or {},
         adapters=adapters)
     lock["ports"] = {**lock["ports"], **{c: {"environment_provided": True} for c in env_caps}}
+    _bind_extensions(ctx, lock, env)
     rel = ctx.tx.require("component_release", target["ref"])
     lock["component"]["bundle"] = {"artifact_id": rel.body["bundle_artifact_id"], "digest": rel.body["bundle_digest"]}
     lock["inputs"] = {k: {**lock["inputs"][k], "media_type": v["media_type"], "size": v["size"], "role": v["role"]}
@@ -167,6 +212,13 @@ def launch_trial(ctx: Ctx, p: dict) -> dict:
     return {"job_id": jid, "trial_id": tr.id, "lock_digest": lock["digest"]}
 
 
+def record_stop_policy(ctx: Ctx, job_id: str, policy: str) -> None:
+    """How a running job should stop: ``cancel`` (terminate) or ``checkpoint-and-stop`` (signal the
+    worker to checkpoint at its next safe boundary, then publish what it has)."""
+    ctx.tx.put_record("job_control", job_id, ctx.project_id, {"stop_policy": policy, "by": ctx.principal.id},
+                      created_by=ctx.principal.id, status=policy)
+
+
 @command("cancel_run", "control")
 def cancel_run(ctx: Ctx, p: dict) -> dict:
     """Request cancellation of an admitted experiment. The receipt means the request is committed;
@@ -176,11 +228,15 @@ def cancel_run(ctx: Ctx, p: dict) -> dict:
         raise NotFound(f"job {p['job_id']} not found")
     if job["status"] in ("succeeded", "failed", "cancelled", "pruned"):
         return {"job_id": job["id"], "status": job["status"], "already_terminal": True}
+    policy = p.get("policy", "cancel")
+    if policy not in ("cancel", "checkpoint-and-stop"):
+        raise Invalid("policy must be cancel or checkpoint-and-stop")
+    record_stop_policy(ctx, job["id"], policy)
     if job["status"] == "admitted" and not job["current_attempt"]:
         ctx.tx.update_job(job["id"], cancel_requested=True)
     else:
         ctx.tx.update_job(job["id"], cancel_requested=True, status="cancel-requested")
-    ctx.tx.enqueue("job.cancel", f"cancel:{job['id']}", {"job_id": job["id"], "policy": p.get("policy", "cancel")})
+    ctx.tx.enqueue("job.cancel", f"cancel:{job['id']}", {"job_id": job["id"], "policy": policy})
     ctx.event("job.cancel_requested", job["id"], {"by": ctx.principal.id}, investigation_id=job["investigation_id"])
     return {"job_id": job["id"], "status": "cancel-requested"}
 

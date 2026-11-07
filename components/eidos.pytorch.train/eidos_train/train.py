@@ -229,6 +229,8 @@ def _train_once(
         "deterministic": True,
         **plan_extra,
     }
+    if callable(getattr(run, "stop_requested", None)) and not callable(getattr(session.adapter, "train", None)):
+        plan["should_stop"] = run.stop_requested
     run_training(session.adapter, plan, ctx, batch_fn)
     if not ctx.checkpoints:
         raise ContractError("training produced no checkpoint")
@@ -321,6 +323,7 @@ def run(inputs, config, *, reader, writer, context):
 
     stream_seed = int(session.meta.data["stream_seed"])
     ctx = _train_once(session, steps, seed, plan_extra, ckpt_dir, context, batch_fn_for(stream_seed))
+    context.record("stopped_early", bool(ctx.receipt.get("stopped_early")))
     final_state = load_checkpoint(ctx.checkpoints[-1])
     final_fp = state_fingerprint(final_state["entries"])
 

@@ -96,6 +96,8 @@ def _set_state(ctx: Ctx, p: dict, status: str, etype: str) -> dict:
     if status in ("paused", "stopped") and policy != "drain":
         for job in ctx.tx.list_jobs(ctx.project_id, investigation_id=inv.id,
                                     statuses=["admitted", "queued", "running"]):
+            from eidos.application.handlers.runs import record_stop_policy
+            record_stop_policy(ctx, job["id"], policy)
             ctx.tx.update_job(job["id"], cancel_requested=True)
             ctx.tx.enqueue("job.cancel", f"cancel:{job['id']}", {"job_id": job["id"], "policy": policy})
             affected.append(job["id"])

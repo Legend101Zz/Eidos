@@ -161,7 +161,10 @@ class JobWorkflow:
 
     @workflow.signal(name="cancel")
     def cancel(self, policy: str = "cancel") -> None:
-        self._cancel = True
+        # checkpoint-and-stop is delivered to the worker through the lab (heartbeat response), so the
+        # attempt can checkpoint and publish; only a hard cancel interrupts the activity.
+        if policy != "checkpoint-and-stop":
+            self._cancel = True
 
     @workflow.run
     async def run(self, a: dict[str, Any]) -> dict[str, Any]:

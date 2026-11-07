@@ -1,6 +1,6 @@
 [project]
 name = "eidos-worker-sdk"
-version = "1.0.0"
+version = "1.1.0"
 description = "Eidos worker-sdk (standard library only; never installs or upgrades torch)"
 requires-python = ">=3.9"
 dependencies = ["eidos-wire>=1,<2"]

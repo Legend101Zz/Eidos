@@ -79,6 +79,11 @@ def execute(invocation: Invocation) -> OutputManifest:
     status, error = "succeeded", None
     try:
         ctx = RunContext(invocation)
+        try:  # checkpoint-and-stop protocol: the launcher sends SIGUSR1 to the process group
+            import signal as _signal
+            _signal.signal(_signal.SIGUSR1, lambda *_: ctx.request_stop())
+        except (AttributeError, ValueError):  # no SIGUSR1 (Windows) or not the main thread
+            pass
         writer = ArtifactWriter(staging, invocation.limits)
         reader = ArtifactReader(invocation.inputs)
         _prepare_path(invocation)

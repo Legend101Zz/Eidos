@@ -50,6 +50,7 @@ class RunContext:
         self.limits = dict(invocation.limits)
         self.config = invocation.config
         self.receipt: Dict[str, Any] = {}
+        self._stop = False
         self.scratch_dir.mkdir(parents=True, exist_ok=True)
         self.log_path = Path(invocation.staging_dir) / LOG_RELPATH
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -65,6 +66,13 @@ class RunContext:
             if not isinstance(port, dict) or "url" not in port or "token" not in port:
                 raise ContractError(f"port {MODEL_PORT} must be an object with 'url' and 'token'")
             self.model = ModelClient(port["url"], port["token"])
+
+    def request_stop(self) -> None:
+        """Set by the runner's stop signal (SIGUSR1): checkpoint at the next safe boundary and return."""
+        self._stop = True
+
+    def stop_requested(self) -> bool:
+        return self._stop
 
     def record(self, key: str, value: Any) -> None:
         try:
