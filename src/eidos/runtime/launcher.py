@@ -235,9 +235,12 @@ def run_probes(spec: LaunchSpec, *, label_path: str, credential_path: str, host_
         err = (Path(probe_spec.attempt_dir) / "stderr.log").read_text()[-2000:] if (Path(probe_spec.attempt_dir) / "stderr.log").exists() else ""
         return {"probe_error": err or "probe produced no result", "controls": {}}
     controls: dict[str, str] = {}
-    for key in ("no-label-read", "no-credential-read", "no-host-write", "no-network-egress", "no-control-socket",
-                "no-scorer-capability"):
+    for key in ("no-label-read", "no-credential-read", "no-network-egress", "no-control-socket", "no-scorer-capability"):
         controls[key] = "passed" if out.get(key) else "failed"
+    # Judge host writes from the host side: a write into the sandbox's private tmpfs is not one.
+    host_file = Path(host_write_path)
+    controls["no-host-write"] = "failed" if host_file.exists() else "passed"
+    host_file.unlink(missing_ok=True)
     ids = candidate_uid(python) if spec.profile == "linux:bwrap-sealed" else None
     controls["separate-identity"] = "passed" if ids and ids[0] != os.geteuid() else "failed"
     if not out.get("computation"):
