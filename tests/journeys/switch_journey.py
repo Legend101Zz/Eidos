@@ -420,7 +420,217 @@ def step4(j: Journey, a: argparse.Namespace) -> None:
         st["numbers"]["max_abs_diff_wrong_builder"] = br.get("max_abs_diff")
 
 
-STEPS = [("1", step1), ("2", step2), ("3", step3), ("2b", step2b_amend), ("4", step4)]
+# =================================================================================================
+# step 5 - qualification, promotion, claim, plan, assessment, withdrawal
+# =================================================================================================
+
+def poll(fn, timeout=240.0, every=1.0):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        v = fn()
+        if v:
+            return v
+        time.sleep(every)
+    return None
+
+
+def qualify(j: Journey, label: str, suite_id: str, ref: str, runner: str = RUNNER):
+    before = len(j.query("list_records", {"kind": "qualification", "parent_id": ref, "limit": 500}))
+    q = j.cmd_result("qualify_protocol", {"suite_id": suite_id, "release_ref": ref, "runner_ref": runner,
+                                          "wall_seconds": 600})
+    job = j.wait_job(q["job_id"])
+    j.record_job(f"qualify:{label}", job)
+    j.check(f"qualification job {label} executed", job["status"] == "succeeded",
+            error=(job.get("terminal") or {}).get("error"))
+    recs = poll(lambda: (lambda r: r if len(r) > before else None)(
+        j.query("list_records", {"kind": "qualification", "parent_id": ref, "limit": 500, "summary": False})))
+    if not recs:
+        return None
+    return recs[0] if len(recs) == 1 else sorted(recs, key=lambda r: r["created_at"])[-1]
+
+
+def seed_arm_inputs(j: Journey, seed: int) -> dict:
+    """Checkpoints (unedited, edited) for a seed; seed 41 reuses step 3's step-45 pair."""
+    if seed == 41:
+        return {"baseline": j.S["ck45"], "candidate": j.S["edit45"]}
+    t = j.run(f"train:seed{seed}-45", TRAIN, config={"adapter": ADAPTER, "builder": "OrderedSwitchNet", "steps": 45,
+                                                       "seed": seed})
+    e = j.run(f"edit:seed{seed}-45", EDIT, inputs={"checkpoint": t["out"]["checkpoint"]}, config=EDIT_CFG)
+    return {"baseline": t["out"]["checkpoint"], "candidate": e["out"]["checkpoint"]}
+
+
+def step5(j: Journey, a: argparse.Namespace) -> None:
+    with j.step("5", "qualification, promotion, claim, plan, assessment, withdrawal and support") as st:
+        c = j.S.get("charter")
+        if not c or not j.S.get("edit45"):
+            raise Blocked("needs the charter (step 2) and the edited checkpoint (step 3)")
+        suite = json.loads((REPO / "components/eidos.assessors.paired-ci/controls/suite.json").read_text())
+        # ---- promotion without qualification is rejected ----------------------------------------------
+        j.expect_error("promotion with no qualification receipt is rejected", "promote_protocol",
+                       {"release_ref": ASSESSOR, "scope": ["improves"], "note": "signature alone"}, "QUALIFICATION_MISSING")
+        sid = j.cmd_result("register_control_suite", {"suite": suite, "suite_id": "suite:paired-ci-author"})
+        j.S["assessor_suite"] = sid
+        # ---- a failing qualification: planted control replaced by an identical-arms (blind) input -----------
+        blind = json.loads(json.dumps(suite))
+        null_in = next(x for x in blind["controls"] if x["id"] == "null-identical-arms")["input"]
+        next(x for x in blind["controls"] if x["id"] == "planted-large-effect")["input"] = null_in
+        bsid = j.cmd_result("register_control_suite", {"suite": blind, "suite_id": "suite:paired-ci-blind-planted"})
+        rq = qualify(j, "assessor-blind-suite", bsid["suite_id"], ASSESSOR)
+        j.check("qualification against a suite whose planted control carries no effect does not pass",
+                rq is not None and rq["body"]["status"] != "passed", status=rq and rq["body"]["status"])
+        j.expect_error("promotion with a failed qualification is rejected", "promote_protocol",
+                       {"release_ref": ASSESSOR, "scope": ["improves"]}, "QUALIFICATION_MISSING")
+        # ---- the real suite -----------------------------------------------------------------------------
+        rq = qualify(j, "assessor", sid["suite_id"], ASSESSOR)
+        j.check("assessor qualification receipt passed (planted effect detected, nulls silent)",
+                rq is not None and rq["body"]["status"] == "passed",
+                status=rq and rq["body"]["status"], per_control=rq and [(x["control"], x["status"]) for x in rq["body"]["per_control"]])
+        j.check("the suite is flagged as an author suite, not independent", rq is not None and
+                "not independent" in json.dumps(rq["body"].get("control_origin")))
+        if not rq or rq["body"]["status"] != "passed":
+            raise Blocked("assessor not qualified")
+        j.rec["qualification_assessor"] = {"id": rq["id"], "suite_digest": rq["body"]["suite_digest"]}
+        ap = j.cmd_result("promote_protocol", {"release_ref": ASSESSOR, "scope": ["improves"],
+                                                "note": "author suite only; not an independent qualification"})
+        j.check("assessor promoted after the passing receipt", bool(ap.get("approval_id")), **ap)
+        # ---- template qualification (journey runner; author suite) -------------------------------------------
+        base_req = {"claim": {"kind": "improves", "statement": "qualification control"}, "success_rule_id": "early-repair",
+                    "assessor": {"ref": ASSESSOR}, "seeds": {"count": 3, "start": 41}, "evaluation": EVAL_CFG["evaluation"],
+                    "common_train": {"adapter": ADAPTER, "builder": "OrderedSwitchNet", "steps": 45},
+                    "common_evaluate": {"adapter": ADAPTER}, "budget": {"steps": 45}}
+        planted = {**base_req, "baseline": {"description": "unedited"},
+                   "candidate": {"description": "silence recorder", "post": [{"component": "eidos.pytorch.weight-edit",
+                                                                              "config": EDIT_CFG}]}}
+        null = {**base_req, "baseline": {"description": "unedited"}, "candidate": {"description": "identical"}}
+        tsuite = {"target": {"kind": "template", "ref": TEMPLATE}, "scope": ["improves"],
+                  "origin": {"authored_by": "the switch journey (same author as the run): author suite, not independent",
+                             "committed_before_run": True},
+                  "controls": [
+                      {"id": "planted-distinct-candidate", "type": "planted", "deterministic": True, "repetitions": 1,
+                       "expected_outcome": "distinct-arms-planned", "input": {"inputs": {"request": planted}}},
+                      {"id": "null-identical-recipes", "type": "null", "deterministic": True, "repetitions": 1,
+                       "expected_outcome": "identical-arms", "input": {"inputs": {"request": null}}},
+                      {"id": "null-smuggled-threshold", "type": "null", "deterministic": True, "repetitions": 1,
+                       "expected_outcome": "refused", "expect_refusal": True,
+                       "input": {"inputs": {"request": {**planted, "min_effect": 0.0}}}}]}
+        j.expect_error("promotion of the template without qualification is rejected", "promote_protocol",
+                       {"release_ref": TEMPLATE, "scope": ["improves"]}, "QUALIFICATION_MISSING")
+        tsid = j.cmd_result("register_control_suite", {"suite": tsuite, "suite_id": "suite:template-author"})
+        tq = qualify(j, "template", tsid["suite_id"], TEMPLATE, runner="journey.template-qualifier@1.0.0")
+        j.check("template qualification receipt passed", tq is not None and tq["body"]["status"] == "passed",
+                status=tq and tq["body"]["status"], per_control=tq and tq["body"]["per_control"])
+        if tq and tq["body"]["status"] == "passed":
+            tp = j.cmd_result("promote_protocol", {"release_ref": TEMPLATE, "scope": ["improves"],
+                                                    "note": "author suite only"})
+            j.check("template promoted after the passing receipt", bool(tp.get("approval_id")))
+        j.rec["qualification_template"] = tq and {"id": tq["id"], "status": tq["body"]["status"]}
+
+        # ---- claim + plan from the template against the pinned charter --------------------------------------
+        claim = j.cmd_result("file_claim", {
+            "statement": "Silencing the recorder weight improves paired both-correct accuracy of OrderedSwitchNet at step 45 "
+                         "without costing reference accuracy",
+            "kind": "improves", "scope": {"builder": "OrderedSwitchNet", "step": 45, "seeds": [41, 53, 67]},
+            "alternatives": ["gain is specific to the seeds tested", "reference accuracy drops"]})
+        j.S["claim"] = claim["claim_id"]
+        request = {**base_req, "claim": {"kind": "improves", "statement": "silence recorder weight"},
+                   "seeds": [41, 53, 67], "baseline": {"description": "unedited step-45 model"},
+                   "candidate": planted["candidate"]}
+        up = j.client.upload(j.project, data=json.dumps(request).encode(), media_type="application/json",
+                             schema="plan-request/1", role="input", name="plan-request")
+        tj = j.run("plan:template-expand", TEMPLATE, inputs={"request": up["result"]["artifact_id"]}, config={})
+        j.check("template expanded the request into a draft with no open obligations",
+                tj["receipt"].get("open_obligations") == [] and tj["receipt"].get("jobs_planned") == 15,
+                receipt={k: tj["receipt"].get(k) for k in (
+                    "arms", "seeds", "jobs_planned", "open_obligations")})
+        draft = j.download_json(tj["out"]["draft"])
+        pd = j.cmd_result("draft_evidence_plan", {"claim_id": claim["claim_id"], "charter_id": c["charter_id"],
+                                                   "charter_revision": 1, "template_ref": TEMPLATE, "draft": draft,
+                                                   "plan_id": f"plan:{j.project}"})
+        j.S["plan"] = pd["plan_id"]
+        j.check("plan compiled against charter revision 1 with the rule copied from the charter",
+                pd["success_rule_ref"] == "charter:order-study@1#early-repair", **{k: pd[k] for k in ("success_rule_ref", "obligations")})
+        # seeded checkpoints; arms resolved to one evaluate run per (arm, seed)
+        arms = []
+        for seed in (41, 53, 67):
+            ckpts = seed_arm_inputs(j, seed)
+            for role in ("baseline", "candidate"):
+                arms.append({"id": f"{role}-s{seed}", "role": role, "seed": seed, "run": {
+                    "component_ref": EVALUATE, "inputs": {"checkpoint": ckpts[role]}, "wall_seconds": 600,
+                    "config": {**EVAL_CFG, "evaluation": {**EVAL_CFG["evaluation"], "cluster": str(seed)}}}})
+        j.expect_error("resolving obligations cannot change the charter threshold", "resolve_plan_obligations",
+                       {"plan_id": pd["plan_id"], "updates": {"min_effect": 0.0}}, "THRESHOLD_OVERRIDE")
+        rp = j.cmd_result("resolve_plan_obligations", {"plan_id": pd["plan_id"], "updates": {"arms": arms}})
+        j.note("template draft arms are multi-job pipelines (train+edit+evaluate); launch_evidence_plan runs one component per "
+               "arm, so arms were resolved to one evaluate run per (arm, seed) over the checkpoints trained in advance")
+        j.check("plan has no open obligations", rp["obligations"] == [], obligations=rp["obligations"])
+        fp = j.cmd_result("freeze_evidence_plan", {"plan_id": pd["plan_id"]})
+        j.check("plan frozen", bool(fp.get("plan_digest")), plan_digest=fp.get("plan_digest"))
+        lp = j.cmd_result("launch_evidence_plan", {"plan_id": pd["plan_id"]})
+        j.rec["evidence_jobs"] = lp["jobs"]
+        for arm_id, jid in lp["jobs"].items():
+            jb = j.wait_job(jid)
+            j.record_job(f"evidence:{arm_id}", jb)
+        j.check("all evidence arms succeeded", all(j.rec["jobs"][f"evidence:{k}"]["status"] == "succeeded" for k in lp["jobs"]))
+        asm = poll(lambda: (lambda r: r[0] if r else None)(
+            j.query("list_records", {"kind": "assessment", "parent_id": claim["claim_id"], "limit": 5, "summary": False})), 300)
+        j.check("AssessmentWorkflow produced an assessment", asm is not None)
+        if not asm:
+            raise Blocked("no assessment")
+        body = asm["body"]
+        ev = body.get("evaluation") or {}
+        j.rec["assessment"] = {"id": asm["id"], "outcome": body["outcome"], "conformance": body["conformance"],
+                               "findings": body["findings"], "effect": ev.get("effect"), "guardrails": ev.get("guardrails"),
+                               "units_by_role": ev.get("units_by_role"), "clusters": ev.get("clusters")}
+        st["numbers"].update(assessment_outcome=body["outcome"], conformance=body["conformance"],
+                             effect=(ev.get("effect") or {}).get("estimate"),
+                             ci=[(ev.get("effect") or {}).get("ci_low"), (ev.get("effect") or {}).get("ci_high")],
+                             guardrails=[(g["metric"], g["status"], g.get("estimate")) for g in ev.get("guardrails", [])])
+        j.check("assessment pinned the committed success rule (no tuning)", body["success_rule_ref"] == "charter:order-study@1#early-repair")
+        j.check("outcome and conformance are recorded honestly (any of the three outcomes is legitimate)",
+                body["outcome"] in ("protocol-passed", "protocol-failed", "inconclusive") and
+                body["conformance"] in ("conformant", "deviated", "incomplete"),
+                outcome=body["outcome"], conformance=body["conformance"])
+        j.S["assessment"] = asm["id"]
+
+        # ---- withdrawal: affected support, suspended approval, reassessment; alternate justification --------
+        alt = j.cmd_result("add_justification", {
+            "claim_id": claim["claim_id"], "kind": "direct-measurement",
+            "requires": [j.rec["jobs"]["eval:unedited-45"]["id"], j.rec["jobs"]["eval:edited-45"]["id"]],
+            "note": "seed-41 paired evaluations of the unedited and edited checkpoints; independent of the assessor"})
+        before = j.query("get_claim", {"claim_id": claim["claim_id"]})
+        j.check("before withdrawal the claim is supported", before["support"]["status"] == "supported", support=before["support"]["status"])
+        w = j.cmd_result("withdraw_component", {"component_ref": ASSESSOR, "severity": "scientific", "condition": {},
+                                                 "defect": "journey drill: pretend the paired-ci cluster handling was wrong"})
+        j.rec["withdrawal"] = w
+        j.check("withdrawal marks the assessment affected", asm["id"] in w["affected_assessments"], affected=w["affected_assessments"])
+        j.check("withdrawal suspends the assessor's approval", f"approval:{ASSESSOR}" in w["suspended_approvals"],
+                suspended=w["suspended_approvals"])
+        j.check("withdrawal queues a reassessment request", len(w["reassessment_requests"]) == 1, requests=w["reassessment_requests"])
+        rr = j.query("get_record", {"kind": "reassessment_request", "id": w["reassessment_requests"][0]})
+        j.check("reassessment request is queued against the assessment", rr["status"] == "queued" and rr["body"]["assessment_id"] == asm["id"])
+        after = j.query("get_claim", {"claim_id": claim["claim_id"]})
+        per = {x["id"]: x for x in after["support"]["justifications"]}
+        j.check("assessment-based justification is affected", per[f"just:{asm['id']}"]["status"] == "affected")
+        j.check("unaffected alternate justification keeps the claim supported", per[alt["justification_id"]]["status"] == "intact" and
+                after["support"]["status"] == "supported-with-affected-justifications", support=after["support"]["status"])
+        asm_after = j.query("get_assessment", {"assessment_id": asm["id"]})
+        j.check("the original assessment is kept, labelled affected (history appended, not rewritten)",
+                asm_after["health"] == "affected" and asm_after["body"]["outcome"] == body["outcome"], health=asm_after["health"])
+        j.expect_error("a new plan cannot be frozen on the withdrawn/suspended assessor", "freeze_evidence_plan",
+                       {"plan_id": _second_plan(j, c)}, "QUALIFICATION_MISSING")
+        j.rec["claim_support_after_withdrawal"] = after["support"]
+
+
+def _second_plan(j: Journey, c: dict) -> str:
+    plan = j.query("get_record", {"kind": "evidence_plan", "id": j.S["plan"]})["body"]
+    draft = {"success_rule_id": "early-repair", "assessor": {"ref": ASSESSOR}, "arms": plan["arms"],
+             "analysis_unit": "pair", "cluster_by": "seed", "seed_policy": plan["seed_policy"]}
+    r = j.cmd_result("draft_evidence_plan", {"claim_id": j.S["claim"], "charter_id": c["charter_id"], "charter_revision": 1,
+                                              "template_ref": TEMPLATE, "draft": draft, "plan_id": f"plan2:{j.project}"})
+    return r["plan_id"]
+
+
+STEPS = [("1", step1), ("2", step2), ("3", step3), ("2b", step2b_amend), ("4", step4), ("5", step5)]
 
 
 def main() -> int:
