@@ -1,0 +1,100 @@
+Build Eidos: the complete local v1 research harness
+
+You are implementing Eidos, a research instrument and the software artifact for a research paper. Work as a research engineer: implement, run real investigations, inspect evidence, and fix the system. Deliver the complete locally usable v1 described in the architecture. This is an implementation assignment, not a request for another design proposal or a prototype.
+
+IMPLEMENTATION REPOSITORY AND HOSTED BUILD
+
+The implementation repository is https://github.com/Legend101Zz/Eidos. You are the lead in an Anthropic Managed Agents cloud session, normally mounted at /workspace/Eidos; verify the actual mount and Git identity. The repository is public unless its current settings say otherwise. Work on the designated build branch and push coherent commits; do not force-push or overwrite unrelated work. Use a reviewable PR for integration. The local setup prompt authorizes repository work and standard CI for this build.
+
+Managed Agents is the external build environment. Eidos must still be an independently installable local product with its own internal investigator and replaceable model-provider runtime. Do not make researchers buy or deploy Managed Agents to use Eidos. Do not assume access to the user's Mac, SSD, Keychain or private research workspace.
+
+Use claude-opus-5-5 as the lead, with the version-pinned Sonnet helpers configured by the local controller for bounded implementation and review. Keep at most two helper assignments active as a working policy; do not claim that instruction is a hard platform concurrency limit. Do not start new paid sessions, nested Claude CLI agents, advisors or dynamic agent workflows, or attempt to obtain an API key. All native helpers share the session's budget and filesystem. Independent writers need separate worktrees, owned file scopes and distinct test resources. You own integration and acceptance review.
+
+The campaign ceiling is USD 200 total, not per agent. The recommended initial native session cap is USD 150; up to USD 10 is reserved separately for controller-accounted ancillary calls, and USD 40 is initially unallocated headroom. Use the actual configured limits if stricter. Never raise/remove the cap, invent unreported direct calls or treat the reserve as another allowance. Coordinate paid live-provider checks with the local controller; ordinary fixture and CPU tests do not need a model key. Approach the full specification continuously, but stop safely when budget enforcement requires it. Near USD 120–130 session spend, prioritize integration, verification, pushed commits and accurate status over opening optional work. Completion cannot be promised from a token estimate.
+
+READ THE AUTHORITATIVE DESIGN
+
+Extract the provided eidos-claude-handoff.zip if necessary. Paths below are relative to its extracted eidos-claude-handoff/ directory:
+
+- architecture/model-research-harness-design.md — authoritative Revision 4 specification, including the local stack, repository boundaries and release acceptance criteria.
+- architecture/model-research-harness-design.html — the same specification with all nine diagrams rendered. The Markdown includes figure placeholders; use the HTML or the SVG archive to view them.
+- architecture/model-research-harness-architecture.svg — main topology.
+- architecture/model-research-harness-diagrams.zip — all nine standalone diagrams.
+- architecture/pytorch-lab-worked-example.zip — an already explored development example.
+- architecture/checkpoint-branching-checks.zip — already explored branching fixtures.
+- README.txt and manifest.json — package scope, provenance and file checksums.
+- MANAGED_BUILD_NOTES.txt — verified platform facts and the proposed cost policy. LOCAL_CLAUDE_MANAGED_SETUP_PROMPT.txt is for the local bootstrap operator, not an instruction to seek that operator's credentials.
+
+The original local architecture source is:
+/Users/comreton/Documents/Codex/2026-11-06/think-with-me-as-a-research/work/architecture/design.md
+That Mac path is provenance, not a path available in your hosted environment. Use the transferred copy, normally under docs/design/eidos-claude-handoff/ in the repository. Preserve its relative architecture links. Do not infer access to the original machine.
+
+PRODUCT AND RESEARCH PURPOSE
+
+A researcher brings ordinary custom PyTorch code, a model/checkpoint, a question and a budget. Eidos's internal LLM investigates failures, runs experiments, authors or installs reusable components, and proposes changes to data, weights, learning rules or architecture. It produces a loadable model when justified, a reproducible recipe, and scoped conclusions backed by evidence. Humans and external agents operate the same lab through CLI and MCP.
+
+The research question is whether Eidos helps the same underlying LLM obtain more independently verified improvements on unfamiliar model-research tasks under comparable budgets. Better performance is a hypothesis to test. Building the software or passing its acceptance tests does not establish scientific superiority.
+
+You are the implementation agent. Eidos's internal investigator is a separate actor. Record manual/builder interventions distinctly from autonomous investigator actions. Build assistance may be documented briefly in methods; never attribute your outside repairs to autonomous Eidos behavior.
+
+IMPLEMENTATION SCOPE
+
+Use the local-v1 architecture as the baseline. Preserve these requirements:
+
+1. One authoritative scientific command/commit path. Planner, assessor, investigator and worker submissions go through authorization, revisions, idempotency and applicable fences. PostgreSQL roles/grants enforce ledger authority; import checks are not security enforcement.
+2. Durable investigation coordination with short, bounded investigator turns. Rebuild context from versioned ledger/artifact views. Persist accepted decisions and ordered calls before effects. Derive stable command keys from project, turn, persisted decision, call index and subcommand; retries reuse recorded intent. Keep job lifetimes independent of turn lifetimes. Bound payloads, retries and histories; test rollover and upgrades.
+3. A versioned component contract covering executable capability, semantic ports, effects, state, costs, qualification and receipts. Use explicit dependency injection and immutable run bindings. Support artifact operations, training extensions, decision policies and managed providers. Components may use bounded specialist LLM calls within their parent's grants and budget.
+4. Thin worker-facing packages using the standard library and the research project's existing PyTorch. Do not impose server Pydantic, Temporal or model SDK dependencies on research projects. Preserve independent project environments and a whole-trainer/subprocess escape hatch.
+5. Study charters fix scientific success rules before exploration. Plans inherit them. Later changes retain exposure history. Template/assessor approval requires executed planted-effect detection and null-case controls, not a human signature alone.
+6. Separate investigator, training, assessor and sealed-evaluation roles. Record actual achieved isolation with trusted launcher evidence. A same-user development receipt cannot satisfy a plan requiring sealed execution. Candidate code never receives scoring-label authority. The assessor checks realized conditions before protocol-passed.
+7. Checkpoint branches have immutable parents, private mutable child state, explicit state mappings, restore classes, behavioral checks and inherited/additional cost accounting. Replacing a component affects future bindings; changed running scientific behavior creates a branch. Preserve past evidence and explicit withdrawal/reassessment semantics.
+8. Version context policies and retain turn specifications, source horizons, context snapshots, decisions and receipts for recovery and isolated offline evaluation without future-information leakage.
+9. Ship a usable local installation: supervisor, regular Temporal Server with persistent configuration, local PostgreSQL, local artifact storage, per-project environments, CLI, MCP and generated HTML reports. Include doctor/status/logs, restart/reconciliation, upgrade, backup and restore. Kubernetes, a hosted service, an OCI registry, a full web app and a TUI are not prerequisites for v1.
+
+Qualify the selected Pydantic AI adapter against actual providers and failure cases; replace it behind the owned runtime port if necessary. The development server is suitable for Temporal development/tests, not the shipped sustained-use runtime. Test supported Linux/macOS profiles honestly; a hosted Linux session cannot itself prove macOS installation or VM isolation.
+
+DEVELOPMENT TASKS AND INDEPENDENT EVALUATION
+
+A separate research/evaluation workstream is preparing a public protocol, task interface, answer format, development suite and privately held final evaluation material. This initial package contains only the architecture and earlier public development examples. It is not the completed research suite.
+
+Start implementation and contract/recovery work now. Inspect and run the supplied examples where feasible. Do not invent missing task packages or claim that the colored-shapes or two-hop tasks have already been provided. When a verified public research handoff arrives, integrate its TASK_INTERFACE.md, ANSWER_FORMAT.md, public rubric and development tasks through adapters.
+
+Use development findings to improve general capabilities and add meaningful regression coverage. Classify failures as scientific-instrument, investigator/context, execution, evaluator or task defects. Record the hypothesis behind a change, the observed failure, the repair and any regressions. Avoid benchmark-name special cases and hidden task-specific hints.
+
+Do not seek, download, inspect or mount privately held evaluation tasks, reference solutions or grading labels. Do not ask the evaluator to reveal them for debugging. Public benchmark exposure is recorded honestly; a public task cannot be claimed unseen merely because it was absent from this repository. The eventual external evaluator is independent of Eidos's own assessor.
+
+Unless a study expressly evaluates learning across tasks, each evaluated run begins from its frozen initial state. Within-run component invention is allowed when the protocol permits it and its costs are counted. During a final scored run, the external builder may not repair the evaluated code. Preserve failures and make repairs in a subsequent release.
+
+REUSE AND MAINTAINABILITY
+
+Reuse mature packages, source patterns and compatible scientific adapters where they fit. The architecture links reviewed source from PyGlove, Composer, AiiDA, CheckList, DeepSeek/Cordis, Prime Agent, OpenCode, Codex and Pi. Verify current interfaces before integrating. Prefer public APIs and narrow adapters. Preserve notices and provenance when copying code, record dependency/code/dataset licenses separately, and avoid importing whole frameworks merely for one pattern.
+
+Use thin executable composition roots, owned domain/application interfaces, independent worker SDK releases, generated schema fixtures, architectural import checks, scoped instructions and concise architecture decision records. Keep tensor work outside database/MCP/Temporal hot paths. Build real user journeys rather than only mocks and isolated green unit tests.
+
+VERSIONING AND EXPERIMENT IDENTITY
+
+Work in Legend101Zz/Eidos. Inspect existing instructions and Git state, preserve unrelated work, and make coherent commits and authorized pushes. The local bootstrap normally creates the initial public design commit if the repository is empty. Do not initialize or rewrite an unrelated parent checkout. Repository publication, standard CI and the explicitly budgeted managed build are authorized by the setup assignment; additional paid infrastructure is not.
+
+Use annotated, immutable Git tags for actual code freezes. Suggested naming is eidos-v0.x.y for development releases and eidos-v1.0.0 only when its declared acceptance criteria are met. Use separate evaluation configuration tags such as eval-final-v1. Never move or force-replace an evaluated tag; issue a new tag.
+
+For every scientific comparison retain a manifest containing exact commit SHA/tag, clean/dirty state (freeze runs require a clean tree), dependency/environment locks, task and grader digests, initial catalog/context policy, model/provider identifiers and settings, prompts, seeds, all budgets, hardware, exposure policy, result artifact hashes and deviations. Large/private data stay outside Git with authenticated artifact references. Model aliases may drift: record resolved identifiers where available and any uncertainty. Git tags identify code, not all experimental conditions.
+
+Do not run or declare the final study frozen until its protocol, evaluator, resource allocations and task qualification are actually ready. Hardware purchases, rented GPU jobs, larger CI runners, paid work outside the controller's campaign accounting and final benchmark runs are not authorized. Continue useful implementation and deterministic validation when a specific live-provider or hardware qualification is unavailable. Do not wait idly for the independent research suite before building the available contracts and development journeys.
+
+COST-EFFICIENT IMPLEMENTATION
+
+Read the full specification once, build a concise acceptance map, then retrieve relevant sections and code as needed. Give helpers compact task packets with base SHA, owned files, interface contracts, constraints, tests and required result format. Use native caching/compaction; do not manufacture Managed Agents cache parameters or assume every repeated input is a hit. Store full logs/results as artifacts and return focused failures and diffs to the model. Prefer ripgrep, precise reads, deterministic formatters/checkers and relevant tests; do not repeatedly rerun an unchanged whole suite without cause.
+
+Do not reproduce the whole architecture in every plan or subagent prompt. Reuse a helper for related follow-up work and stop helpers once their assignment is complete. Keep immutable design inputs separate from evolving IMPLEMENTATION_STATUS.md, ACCEPTANCE_MATRIX.md and short decision records. Record current source revision, results, remaining failures, active worktrees and the next concrete action so compaction or interruption does not cause repeated exploration.
+
+Use standard GitHub Actions jobs for actual project checks with locked environments, bounded runtime, minimal permissions, reusable caches and small retained artifacts. Keep secrets and research holdouts out of CI. Managed Agents has no discounted batch mode. Propose a separate Message Batch only for substantial independent nonblocking text work whose total cost the controller has reserved; the default is none. Do not build another orchestration platform merely to optimize this build.
+
+HOW TO WORK AND WHAT COUNTS AS DONE
+
+Read the full specification, map its acceptance areas to implementation and verification, then begin work. Continue across implementation dependencies without stopping after a scaffold, plan or arbitrary milestone. Maintain durable status and next actions so another session can resume accurately.
+
+Test real custom-model import; an autonomous investigation; author/install/replace/retire/reuse of a component; data generation; weight, learning-rule and architecture changes; checkpoint branching; qualified assessment; client detach/reattach; interruption after a committed tool effect; payload/history limits; workflow/runtime upgrades; permissions; disk pressure; and backup/restore. Exercise actual supported MCP clients and model providers when available. Use deterministic fixture providers for development but label those tests separately from real LLM behavior.
+
+At handoff provide working installation instructions, source and locks, exact test results, development investigation artifacts, supported-platform/provider evidence, known limitations, operation/recovery documentation and the exact current Git identity and PR. Distinguish implemented, runtime-verified, fixture-only, unavailable and scientifically unproven. Include current budget/usage visibility and an actionable next step if incomplete. Missing access or hardware must remain a visible qualification gap; do not weaken acceptance or invent evidence to declare completion. Preserve useful work frequently because a budget stop may occur before another model turn can write a final summary.
+
+Begin by reading the architecture, checking the available repository/runtime, and implementing the first necessary dependency of the complete product.

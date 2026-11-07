@@ -1,0 +1,73 @@
+{
+  "format": "eidos-public-builder-handoff/2",
+  "created_utc": "2026-11-07T16:31:51.481786+00:00",
+  "architecture_revision": 4,
+  "implementation_repository": "https://github.com/Legend101Zz/Eidos",
+  "builder_platform": "Anthropic Managed Agents; not deployed by this package",
+  "campaign_budget_usd": 200,
+  "proposed_initial_session_cap_usd": 150,
+  "proposed_ancillary_cap_usd": 10,
+  "proposed_unallocated_reserve_usd": 40,
+  "native_cap_allows_in_flight_overshoot": true,
+  "contains_private_evaluation_material": false,
+  "contains_credential_values": false,
+  "research_suite_status": "separate workstream; not included",
+  "is_external_preregistration": false,
+  "files": [
+    {
+      "path": "README.txt",
+      "sha256": "d9717507e5034f587cda562d2dcd218d03d61412348d187f03617f526fa6a2be",
+      "bytes": 3946
+    },
+    {
+      "path": "LOCAL_CLAUDE_MANAGED_SETUP_PROMPT.txt",
+      "sha256": "c6aeece6c93f73bb88ed290d8a7dd4f66f57b8c0c1c3db9fdfb4a25e67e75831",
+      "bytes": 17879
+    },
+    {
+      "path": "CLAUDE_BUILD_PROMPT.txt",
+      "sha256": "4063ecd1dcb39e7178b65c64c6a9855e442e7bef7c06c311a503f751b44f8a5d",
+      "bytes": 16738
+    },
+    {
+      "path": "MANAGED_BUILD_NOTES.txt",
+      "sha256": "114359f88eeee94346b92d5ab50bd11b2ff63328f394f2e6f8bcb49c34d7f549",
+      "bytes": 5732
+    },
+    {
+      "path": "architecture/model-research-harness-design.md",
+      "sha256": "b83282743eb2d44b56a7c789bab8f495b18d24de0823c6a80f87c1c838960672",
+      "bytes": 136230
+    },
+    {
+      "path": "architecture/model-research-harness-design.html",
+      "sha256": "078bacfef9660d88fb38f4a61c9f8fee3b6d08b6bc69aa40a95c1ac628ff7f1f",
+      "bytes": 484598
+    },
+    {
+      "path": "architecture/model-research-harness-architecture.svg",
+      "sha256": "7349dc0a269d16ddcc9204b699c55af88d6d77f9e8bc9523e02b1be1f2cdd12b",
+      "bytes": 19341
+    },
+    {
+      "path": "architecture/model-research-harness-architecture.png",
+      "sha256": "c67422fdd31953fd1fc6dd6d4afc7bdfab6740df7806128639661673fb1e5763",
+      "bytes": 199110
+    },
+    {
+      "path": "architecture/model-research-harness-diagrams.zip",
+      "sha256": "3e6a62781cfd31b39c521203271d8d08f1a279a7daebaf5abf65709bcc2a59e1",
+      "bytes": 19336
+    },
+    {
+      "path": "architecture/pytorch-lab-worked-example.zip",
+      "sha256": "b294ea50cf0ec42f35a1b81225ef7b287c3daa23fccbe8a9ce7bb137b392c161",
+      "bytes": 29658
+    },
+    {
+      "path": "architecture/checkpoint-branching-checks.zip",
+      "sha256": "714607ce7c5ec4e96c539ec31e1329b574701e133814d06e548f9c7d1a6889e4",
+      "bytes": 6534
+    }
+  ]
+}

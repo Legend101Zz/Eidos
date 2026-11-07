@@ -1,0 +1,57 @@
+Eidos managed build: verified facts and proposed operating policy
+Prepared 2026-11-07. Recheck live documentation/account capabilities at launch.
+
+These notes describe the external builder, not a revision of Eidos's product architecture. No paid session has been launched by preparing this handoff. Credential values have not been read or tested.
+
+VERIFIED FROM PRIMARY DOCUMENTATION
+
+Models and costs
+The current model IDs include claude-opus-5-5 and claude-sonnet-5-5. Standard prices per million tokens are:
+                       input  output  5m cache write  1h cache write  cache read
+Opus 5.5               $4     $20     $5              $8              $0.20
+Sonnet 5.5             $2     $10     $2.50           $4              $0.10
+Managed session runtime costs $0.08 per running session-hour. Native sessions have no Batch API mode; batch discounts do not apply to them. Premium speed and some geographic settings cost extra. Verify current prices rather than treating this snapshot as a permanent quote.
+https://platform.claude.com/docs/en/about-claude/pricing
+https://platform.claude.com/docs/en/models/opus-5-5/overview
+
+Hosted operation and caching
+Managed Agents supplies cloud tool execution, persisted sessions/events, caching and compaction. The documented beta header is managed-agents-2026-04-01. A managed cloud session is different from keeping a local Claude Code process alive.
+https://platform.claude.com/docs/en/managed-agents/overview
+
+Budgets
+A budget must be attached at session creation. max_list_cost.amount is a positive string of US cents. The budget covers all threads in that session; it is not a per-helper allowance. Enforcement happens between requests, so in-flight requests/tools can overshoot. budget_reached leaves the session idle. Usage events carry cumulative totals rather than independent charge increments. Direct API calls and separate sessions need separate campaign accounting.
+https://platform.claude.com/docs/en/managed-agents/budgets
+https://platform.claude.com/docs/en/managed-agents/secure-deployment
+
+Subagents
+The documented multiagent_20261001 configuration supports predefined, version-pinned helpers. Some capabilities default to enabled. Agents have separate context histories but share the sandbox/filesystem. A fixed list of helper definitions is not evidence of an enforced thread count.
+https://platform.claude.com/docs/en/managed-agents/multiagent-orchestration
+https://platform.claude.com/docs/en/managed-agents/session-threads
+https://platform.claude.com/docs/en/managed-agents/agent-setup
+
+GitHub
+A github_repository session resource can carry an authorization_token for clone/push and a checkout branch/commit. It supports a mount_path under /workspace. Without authentication, public cloning works but push does not. Token permissions and any GitHub MCP authentication must also be configured correctly.
+https://platform.claude.com/docs/en/managed-agents/github
+https://platform.claude.com/docs/en/managed-agents/vaults
+
+Batch processing and direct-call caching
+Message Batches offers a 50% discount for independent asynchronous Messages requests; unfinished requests expire after 24 hours. This is useful when latency is acceptable, not for replacing a sequential code/tool loop. Prompt caching has write costs and requires reusable prefixes. Savings must be measured from usage; cache hits inside batches are not guaranteed.
+https://platform.claude.com/docs/en/build-with-claude/batch-processing
+https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+
+Execution limits and CI
+The cloud sandbox reference currently describes Ubuntu, up to 8 GB memory and 10 GB disk, with PostgreSQL installed but not started. Verify actual permissions/capacity before claiming a supported Eidos deployment. GitHub documents free standard-hosted-runner compute for public repositories; larger runners and storage are billed separately.
+https://platform.claude.com/docs/en/managed-agents/cloud-sandboxes-reference
+https://docs.github.com/en/billing/concepts/product-billing/github-actions
+
+OUR PROPOSED POLICY, NOT A VENDOR GUARANTEE
+
+Use an Opus lead with at most two active Sonnet helper assignments; disable unneeded spawning/workflows/advisors. Read the full specification once in the lead, delegate narrow task packets, keep test output compact and use worktrees for independent writers. Actual thread-limit enforcement must be checked, not assumed.
+
+Start with a shared $150 native cap, at most $10 separately accounted ancillary work, and $40 unallocated reserve. Reduce these amounts if the account's available balance or conservative outstanding-cost estimate requires it. Do not simply set a $200 session cap and assume the total cannot exceed $200. Further continuation needs settled accounting and enough remaining headroom. A prompt alone cannot guarantee an exact billing ceiling.
+
+Default optional Batch API use to zero. Implementing a second batch orchestration system can consume more budget than it saves on a single build. Use it only for an actual independent workload large enough to justify it. Never batch the private research evaluation as an incidental builder task.
+
+Optimize for verified product progress per dollar: deterministic tooling, reuse, focused tests, context selection, clean delegation and durable checkpoint commits. Do not optimize by weakening scientific controls or claiming unrun tests passed. There is no verified basis for promising the entire specified production-level harness can be completed for $200.
+
+The controller and prompts still require runtime qualification. This package is a prepared execution handoff, not a working managed deployment or proof that the user's credentials have the necessary access.

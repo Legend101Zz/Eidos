@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.uv-cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Local Eidos dev state, logs and artifacts (never commit)
+.eidos-dev/
+*.log
+artifacts/local/
+
+# Secrets and local config
+.env
+.env.*
+*.pem
+*.key
+
+# Large model / data files
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

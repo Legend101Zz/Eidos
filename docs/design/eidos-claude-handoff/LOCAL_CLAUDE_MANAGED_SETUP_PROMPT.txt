@@ -1,0 +1,107 @@
+Set up and launch Eidos development in Claude Managed Agents
+
+You are running in local Claude Code on my Mac. Set up an Anthropic-hosted Managed Agents session to plan, implement, test and deliver Eidos in https://github.com/Legend101Zz/Eidos. Do the setup and start the actual remote implementation; a plan or a script that has never been run is insufficient. I authorize this implementation campaign, repository commits/pushes/PRs and standard GitHub Actions CI within the scope and spending rules below. Do not ask again for routine steps already authorized here.
+
+The total implementation spending ceiling is USD 200 across this campaign, including paid setup calls, all managed sessions/subagents, paid provider smoke tests and optional batch jobs. It is not USD 200 per agent or session. This authorization excludes paid GPU rentals, larger GitHub runners, unrelated infrastructure and the eventual paper evaluation. Aim for the complete specified product. If the budget or access prevents completion, preserve verified work and report exactly what remains; do not reduce acceptance criteria or label a scaffold complete.
+
+INPUTS AND BOUNDARIES
+
+Repository: https://github.com/Legend101Zz/Eidos
+Local handoff directory:
+/Users/comreton/Documents/Codex/2026-11-06/think-with-me-as-a-research/outputs/eidos-claude-handoff/
+Original rendered architecture:
+/Users/comreton/Documents/Codex/2026-11-06/think-with-me-as-a-research/outputs/model-research-harness-design.html
+
+Read this handoff's README.txt, MANAGED_BUILD_NOTES.txt, CLAUDE_BUILD_PROMPT.txt, manifest.json and architecture/model-research-harness-design.md. Use the HTML to inspect the nine diagrams. The architecture is Revision 4, complete local-machine v1. Keep it authoritative. Managed Agents is our BUILD environment, not a new required runtime for Eidos. Eidos's own bounded internal investigator, CLI/MCP, local services, component contracts and scientific controls must remain intact.
+
+Use only this allowlisted handoff plus later explicitly public research exports. Do not upload the parent workspace, another Codex chat, the Desktop, private evaluation tasks or reference graders. The GitHub repository was public when this handoff was prepared; recheck visibility and contents before publication. Inspect existing instructions and Git state. Preserve all unrelated work and never force-push.
+
+The hosted agent does not need my local SSD. Use only a small local bootstrap checkout and control-state directory if required; do not install the product stack, train models or create large environments on the Mac for this build. Put builds, project environments and development computation in the managed sandbox or standard CI. The separate Codex research workstream may use a dedicated external-SSD directory, but that is outside your scope and access.
+
+CREDENTIALS: LOCAL CONTROL PLANE ONLY
+
+I already stored credentials in macOS Keychain under my current account:
+- service anthropic_api_key
+- service github_pat_claude
+
+Retrieve them inside a local helper process, using security find-generic-password with the current account and service, capturing stdout in memory. Never run a command that prints the returned secret into the Claude transcript. Use a subprocess argument list, captured output and redacted error handling; disable shell tracing and HTTP body/header debug logging. Do not echo, serialize, commit or upload secrets. Never put a token in a command argument, clone URL, generated prompt, status file or Git remote. An OS Keychain access dialog may require my interaction; that is distinct from asking for authorization again.
+
+Use the Anthropic key only in the local controller/SDK process. Do not place it in the hosted agent's environment, vault, repository or GitHub Actions secrets. Native agent inference does not need the agent to possess this key. A cloud agent with a general API key could create separately billed work outside its session budget.
+
+Use the GitHub PAT through the official managed github_repository resource's authorization_token field for authenticated clone/push. Pass the value directly from memory into the SDK request; redact request logging. Mount only Legend101Zz/Eidos, preferably at /workspace/Eidos. The GitHub guide documents this mechanism; do not invent a credential-in-URL workaround. Verify effective repo permissions, including workflow changes if needed, without displaying the credential. Prefer existing least-privilege permissions; do not broaden an account token or alter unrelated repository settings. Configure GitHub MCP authentication separately through the supported mechanism only if needed for PR operations; granting clone/push does not justify assuming every MCP request is authenticated. Reuse official vault support when appropriate, never raw secrets in agent instructions.
+
+CURRENT API PREFLIGHT
+
+Read the official sources in MANAGED_BUILD_NOTES.txt and check the current installed Anthropic SDK/API schema before implementation. Models and beta APIs can change. Pin the SDK version used by the local controller and record the actual agent/environment versions and served model identities.
+
+Desired lead model: claude-opus-5-5. Use it for planning, architectural integration, difficult debugging and final acceptance review. Use claude-sonnet-5-5 for bounded implementation/review assignments. Verify both are available to this account. Do not silently replace the lead with a different model or remove a budget to make an API request succeed.
+
+The documented beta header at handoff time is managed-agents-2026-04-01. Agent setup accepts a model object with an effort object; validate the exact schema instead of mixing Messages API fields into Managed Agents. Start at medium effort, using higher effort for specific hard decisions if supported and justified. Avoid premium fast mode. Do not add a geographic pricing premium unless the account requires it. Keep model geo settings compatible across agents.
+
+Use an Anthropic-managed cloud environment, not a self-hosted sandbox, local background Claude process or ordinary Claude Code process mislabeled as cloud execution. Verify the environment, repository mount, process/network capabilities and cost controls before the first user event starts inference. The documented cloud sandbox has limited RAM/disk: use CPU development fixtures and small dependency sets, avoid unnecessary CUDA wheels, large datasets and duplicate environments. Confirm actual capacity and ability to run PostgreSQL and Temporal; defer unsupported host-level qualification honestly to CI or a qualified target machine.
+
+ONE ACCOUNTED CAMPAIGN
+
+Implement a small, deterministic controller around the official SDK/CLI, not another LLM orchestration platform. It should create/reuse resources, launch, inspect status/usage, fetch events, interrupt and resume the exact session. Keep its state under a dedicated local application-state directory, with restrictive permissions. Save secret-free resource IDs, config hashes, source revision, session URL, latest event cursor, ledger of cumulative spend, outstanding reservations and the next safe action. Do not repeatedly send transcripts to an LLM just to poll status.
+
+Recommended allocation, subject to a stricter account balance or validated cost bound:
+- USD 150 initial native Managed Agents session cap, shared by the lead and every helper.
+- At most USD 10 for all separately billed setup/provider checks/optional batch requests combined. Zero is the default for optional batches.
+- USD 40 unallocated reserve for in-flight cost and a deliberately reconciled continuation. This reserve is not another agent's spending allowance.
+
+The documented create-session budget fragment is:
+  budget={"type": "limit", "max_list_cost": {"amount": "15000", "currency": "USD"}}
+The amount is a STRING in US CENTS. Attach the budget when creating the session; read it back and verify it before starting work. Never create an unbudgeted inference session. Native budgets stop new requests between calls; in-flight calls and resulting tools can exceed the cap. Therefore USD 150 is a launch policy with headroom, not proof of an exact USD 200 invoice stop.
+
+Before launch, estimate the maximum outstanding cost supported by the actual configuration: possible concurrent requests, context/output bounds, model/cache-write prices, and tool/runtime tail. Prefer documented enforceable controls. A request to use two helpers is not itself an enforced concurrency limit. If the API lacks a hard limit, state that residual risk, reduce concurrency/cap conservatively, and never advertise a mathematical hard-stop guarantee. Use a dedicated workspace limit as defense in depth only if already available or safely configurable for this campaign; do not change shared account limits. Account for taxes/credits/billing differences when translating available funds into usable spend.
+
+Use cumulative session usage as the authoritative session total; do not sum cumulative event snapshots or add token estimates again to a total that already includes them. Keep direct Messages/Batches charges and other sessions separate and then aggregate the campaign. Reserve worst-case direct-call cost before submitting, not just after receiving results. A timeout is not proof that an API request had no effect: reconcile existing IDs/events before repeating creation or sending work. Prefer supported idempotency; never invent API idempotency guarantees.
+
+Do not automatically remove/raise a native budget, spawn a fresh funded session after budget_reached, launch scheduled deployments, or loop “continue” indefinitely. A continuation within the already authorized USD 200 can be made without a new permission request only after usage has settled, every outstanding job is counted, and sufficient headroom remains for its worst-case tail. Persist that decision. If the local controller is closed, the existing cloud session retains its native cap; it does not gain permission to spend the reserve itself. Stop new optional scope near USD 120–130 of the initial session allocation and prioritize integration, tests, commits and a useful handoff.
+
+BOUNDED NATIVE SUBAGENTS
+
+Create version-pinned native helper definitions with focused system prompts. Use an Opus lead and at most two active Sonnet helper assignments as the working policy. Delegate only independent tasks large enough to benefit; sequential work stays with its owner. No helpers for tiny edits or ceremonial reviews. Opus retains responsibility for invariants and final integration.
+
+Configure predefined agents explicitly. Disable inline agent creation, self-cloning, dynamic workflows and the optional advisor unless a later, costed need is established. Disable delegation on helpers. Verify all relevant defaults: the current multiagent_20261001 configuration enables some capabilities unless explicitly disabled. Do not assume two predefined agent definitions prevents spawning more than two threads.
+
+All managed subagents share a sandbox/filesystem. Give each writing assignment a dedicated Git worktree/branch and declared file ownership; read-only review can share a checkout. Never let agents concurrently change one Git index or the same files. The lead integrates and runs cross-boundary checks. Allocate distinct service ports, database names and artifact roots for concurrent tests. Keep worktrees small and clean up only integrated task worktrees.
+
+Each assignment gets the objective, exact base SHA, relevant interfaces/files, non-negotiable invariants, allowed edits, focused validation and a concise return format. Helpers report changed files, commit SHA, checks and unresolved risks. Reuse a helper thread for closely related follow-up work. Do not copy the entire architecture, repository, transcript and CI logs into every delegation. Store detailed artifacts in files and reference them.
+
+TOKEN AND DEVELOPMENT EFFICIENCY
+
+Managed Agents has built-in caching and compaction. Keep stable instructions stable; give the lead the design once and subsequently retrieve relevant sections and diffs. Do not invent cache_control or cache-TTL fields for the Managed Agents API. Record observed cache-read/write usage and use that to assess savings. A large context window is capacity, not a target.
+
+For separately controlled Messages requests, use documented prompt caching only when the same prefix will be reused. Choose TTL from actual reuse intervals and compare write/read cost; do not warm caches blindly. Batch API discounts do not apply to managed sessions. Default to no batch setup. If a sufficiently large, independent, nonblocking text workload arises, the controller may submit a tightly budgeted Message Batch inside the ancillary allowance. It must not contain private evaluation data. Keep the interactive edit/run/debug loop native; a batch is not a remotely executing coding agent. Retain batch IDs, custom IDs, reservations and downloaded results; reconcile partial failures without blindly resubmitting successful requests.
+
+Use ripgrep, precise file reads, diffs, compact failure summaries, deterministic formatters/type checkers and meaningful focused tests before broad checks. Save full logs to artifacts; feed the model the relevant failure and enough context to diagnose it. Reuse mature packages through narrow interfaces and check licenses. Do not spend the implementation budget re-researching the entire architecture or generating repetitive plans. Write concise decisions and maintain a current acceptance matrix.
+
+GITHUB AND CONTINUOUS INTEGRATION
+
+Inspect the repository before writing. If it is still empty, create a small initial main commit containing the reviewed public handoff, README and ignore rules so the cloud mount has a real branch to check out. Preserve the handoff directory structure and hashes, for example under docs/design/eidos-claude-handoff/. Never include local controller state or credentials. Perform subsequent implementation on a named build branch with coherent pushed commits and a reviewable PR; do not rewrite main or evaluated tags. Follow existing contributor rules if present.
+
+Use standard GitHub-hosted runners for legitimate project CI. Public-repository standard-runner compute is currently free, but larger runners and storage have separate billing. Stay within existing free allowances, do not increase storage limits, use short artifact retention and avoid large dataset/checkpoint uploads. No purchased runners or GPU jobs. This is CI for the software, not a plan to use Actions as an unlimited paid-agent host.
+
+Create maintainable workflows for lint/import boundaries, schemas and worker-dependency isolation, unit/contract/recovery tests, Linux integration, packaging/install/doctor, and macOS smoke tests where supported. Use locked dependencies, cache by OS/Python/lock hash, minimal GITHUB_TOKEN permissions, job timeouts and cancellation of obsolete CI runs. Pin third-party actions to reviewed revisions. No Anthropic API key in CI. Test live provider behavior separately within the accounted smoke-test allowance; fixture-provider tests must remain labeled as such. GitHub Actions tests must run against the exact claimed commit, and a green CI result is not proof of GPU training or sealed host isolation.
+
+EXECUTION AND LONG-SESSION HANDOFF
+
+Install the cloud implementation instructions from CLAUDE_BUILD_PROMPT.txt into the lead's task context. Ask it to read the full architecture, create an acceptance-to-code/verification map, then implement continuously across dependencies. No arbitrary milestone approval stops. Scope remains the full local v1; prioritize foundational contracts and a real end-to-end journey so any budget-limited result is coherent.
+
+Use the platform's persisted events and compaction, plus repository files for durable state: IMPLEMENTATION_STATUS.md, ACCEPTANCE_MATRIX.md and concise decisions. Record what is implemented, runtime-tested, fixture-only, unqualified or unfinished. Persist current commit, active worktrees, commands, failing checks and next concrete action. Push coherent checkpoints regularly without pretending every checkpoint is a release. Follow the build prompt's immutable tagging and experiment-manifest rules.
+
+Observe the launched cloud session until it has actually cloned the repo, read the design and begun implementation. Verify its native budget and served model. A successful create-session response alone is not proof of an executing build. Do not spend model calls repeatedly asking “are you still working?”
+
+Document what survives closing the Mac: the already-running hosted session and its cap. An idle end_turn, permission request, failure or budget_reached may still require a controller/user event. Do not promise unlimited self-resumption after every stop. Provide working status, interrupt, event-follow and resume commands using the actual saved session ID. Any scripted continuation must inspect the stop reason and budget, have a finite retry count and refuse repeated no-progress failures. Do not install a recurring local or cloud schedule as part of this setup.
+
+END THE LOCAL SETUP WITH
+
+- The actual managed session URL/ID, resource/config versions and model IDs.
+- Repository/build branch/PR links and the transferred design revision/hash.
+- Confirmed native cap, ancillary spend/reservations and remaining campaign allowance, with the in-flight limitation stated.
+- Location and exact commands for the small local controller and its secret-free state; how to inspect/interrupt/resume without creating a duplicate session.
+- Evidence that implementation started remotely, plus any concrete access/platform limitation.
+- Confirmation that no private evaluation material or control-plane API key reached the hosted builder, and that no local SSD build was created.
+
+Proceed with the authorized setup, verification and cloud launch now.
