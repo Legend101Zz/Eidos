@@ -109,7 +109,9 @@ def switch_order_scripted(req: DecisionRequest) -> dict[str, Any]:
     trains = _jobs(view, "eidos.pytorch.train@")
     if not trains:
         return _wait("no baseline exists: train OrderedSwitchNet seed 41 for 45 steps", [_run(
-            train, {}, {"adapter": ADAPTER, "builder": "OrderedSwitchNet", "steps": 45, "seed": 41})])
+            train, {}, {"adapter": ADAPTER, "builder": "OrderedSwitchNet", "steps": 45, "seed": 41}),
+            _note("baseline training admitted"), _note("evaluation follows once the checkpoint exists"),
+            _note("recorded before the turn closes")])
     ckpt = _out(trains[0], "checkpoint")
     evals = _jobs(view, "eidos.pytorch.evaluate@")
     base_eval = _by_input(evals, "checkpoint", ckpt)

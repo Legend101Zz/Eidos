@@ -11,8 +11,12 @@ Recovery rules implemented here:
 
 from __future__ import annotations
 
+import contextvars
+import functools
 import json
 import tempfile
+import threading
+from contextlib import contextmanager
 
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
@@ -22,6 +26,35 @@ from eidos.domain.turns import EFFECT_TOOLS, WORKFLOW_PAYLOAD_LIMIT, check_paylo
 from eidos.investigator.context import pack
 from eidos.investigator.runtime import DecisionRequest, ModelCallFailed, build_runtime
 from eidos_wire import command_key
+
+
+@contextmanager
+def _heartbeating(every: float = 5.0):
+    """Heartbeat while an activity body runs so Temporal notices a killed worker within the heartbeat
+    timeout (30 s in TurnWorkflow) instead of waiting for the 10-minute start-to-close timeout."""
+    ctx = contextvars.copy_context()
+    stop = threading.Event()
+
+    def loop() -> None:
+        while not stop.wait(every):
+            try:
+                activity.heartbeat()
+            except Exception:  # noqa: BLE001 - the activity is gone; nothing to heartbeat
+                return
+
+    threading.Thread(target=lambda: ctx.run(loop), daemon=True).start()
+    try:
+        yield
+    finally:
+        stop.set()
+
+
+def _hb(fn):
+    @functools.wraps(fn)
+    def wrapper(self, a):
+        with _heartbeating():
+            return fn(self, a)
+    return wrapper
 
 
 def _app_error(exc: LabError) -> ApplicationError:
@@ -46,6 +79,7 @@ class InvestigatorActivities:
 
     # -- turn lifecycle ----------------------------------------------------------------------
     @activity.defn(name="begin_turn")
+    @_hb
     def begin_turn(self, a: dict) -> dict:
         try:
             r = self.wf.command("begin_turn", {"investigation_id": a["investigation_id"],
@@ -60,6 +94,7 @@ class InvestigatorActivities:
                 "resumed": r.get("resumed", False), "model_timeout": lim.get("deadline_seconds", 300)}
 
     @activity.defn(name="build_context")
+    @_hb
     def build_context(self, a: dict) -> dict:
         p = a["project_id"]
         turn = self.wf.query("get_turn", {"turn_id": a["turn_id"]}, project=p)
@@ -98,6 +133,7 @@ class InvestigatorActivities:
         return out
 
     @activity.defn(name="decide")
+    @_hb
     def decide(self, a: dict) -> dict:
         p = a["project_id"]
         turn = self.wf.query("get_turn", {"turn_id": a["turn_id"]}, project=p)
@@ -153,6 +189,7 @@ class InvestigatorActivities:
 
     # -- effects -------------------------------------------------------------------------------
     @activity.defn(name="execute_decision")
+    @_hb
     def execute_decision(self, a: dict) -> dict:
         p = a["project_id"]
         turn = self.wf.query("get_turn", {"turn_id": a["turn_id"]}, project=p)
@@ -189,6 +226,7 @@ class InvestigatorActivities:
             return {"tool": tool, "index": idx, "ok": False, "code": exc.code, "error": exc.error}
 
     @activity.defn(name="complete_turn")
+    @_hb
     def complete_turn(self, a: dict) -> dict:
         r = self.wf.command("complete_turn", {"turn_id": a["turn_id"], "stop_reason": a["stop_reason"],
                             "control": a.get("control"), "receipts": a.get("receipts", [])},

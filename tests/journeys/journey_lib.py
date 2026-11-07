@@ -157,8 +157,12 @@ class Journey:
                            env=env, timeout=timeout)
         try:
             data = json.loads(r.stdout) if r.stdout.strip() else None
-        except json.JSONDecodeError:
-            data = None
+        except json.JSONDecodeError:  # line-oriented output (investigate events): one JSON object per line
+            try:
+                lines = [json.loads(x) for x in r.stdout.splitlines() if x.strip()]
+                data = {**lines[-1], "lines": lines[:-1]}
+            except (json.JSONDecodeError, IndexError):
+                data = None
         return r.returncode, data, r.stderr
 
     def download_json(self, artifact_id: str) -> Any:

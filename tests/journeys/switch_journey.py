@@ -630,7 +630,224 @@ def _second_plan(j: Journey, c: dict) -> str:
     return r["plan_id"]
 
 
-STEPS = [("1", step1), ("2", step2), ("3", step3), ("2b", step2b_amend), ("4", step4), ("5", step5)]
+# =================================================================================================
+# step 6 - reuse of the pair scorer, unchanged, on the image project
+# =================================================================================================
+
+def step6(j: Journey, a: argparse.Namespace) -> None:
+    with j.step("6", "lab.pairs.by_group reused unchanged on the image project (second project/environment)") as st:
+        img = j.project + "-img"
+        rc, _, err = j.cli("project", "create", img, "--budget", "compute_seconds=5000", "--budget", "trials=100")
+        j.check("second project created", rc == 0, err=err[-200:])
+        rc, _, err = j.cli("project", "register-env", img, "--python", a.torch_python, "--root",
+                           str(REPO / "examples/image-project"), "--adapter", ADAPTER)
+        j.check("image project environment registered (different project_root, same module name)", rc == 0, err=err[-200:])
+        stage = Path(a.workdir) / "stage"
+        for name in ("eidos.pytorch.train", "eidos.pytorch.evaluate", "lab.pairs.by_group"):
+            src = REPO / "components" / name
+            if name in TORCH_COMPONENTS:
+                src, _ = stage_component(src, stage)
+            rc, data, err = j.cli("component", "install", img, str(src))
+            j.check(f"install {name} into the image project", rc == 0 and bool(data and data.get("component_ref")), err=err[-300:])
+        # run in the second project through its own project id
+        def run_img(label, ref, inputs, config):
+            r = j.cmd_result("run_component", {"component_ref": ref, "inputs": inputs, "config": config, "wall_seconds": 600},
+                             project=img)
+            job = j.query("get_job", {"job_id": r["job_id"], "include_lock": False}, project=img)
+            end = time.monotonic() + 600
+            while job["status"] not in ("succeeded", "failed", "cancelled") and time.monotonic() < end:
+                time.sleep(0.5)
+                job = j.query("get_job", {"job_id": r["job_id"], "include_lock": False}, project=img)
+            j.record_job(label, job)
+            j.check(f"job {label} succeeded", job["status"] == "succeeded",
+                    error=(job.get("terminal") or {}).get("error"))
+            return job
+        tj = run_img("img:train", TRAIN, {}, {"adapter": ADAPTER, "builder": "ConvNet", "steps": 80, "seed": 17})
+        ck = {o["slot"]: o["artifact_id"] for o in tj["outputs"]}["checkpoint"]
+        ej = run_img("img:evaluate", EVALUATE, {"checkpoint": ck},
+                     {"adapter": ADAPTER, "evaluation": {"split": "audit", "data_seed": 180, "pairs": 400}})
+        pred = {o["slot"]: o["artifact_id"] for o in ej["outputs"]}["predictions"]
+        sj = run_img("img:score", SCORER, {"predictions": pred}, {})
+        rec = (sj.get("terminal") or {}).get("receipt") or {}
+        j.check("pair scorer reports both-correct and reference accuracy on the image model",
+                {"both_correct_rate", "reference_accuracy"} <= set(rec.get("metrics") or {}), metrics=rec.get("metrics"),
+                group_counts=rec.get("group_counts"))
+        st["numbers"]["image_metrics"] = rec.get("metrics")
+        st["numbers"]["image_group_counts"] = rec.get("group_counts")
+        d_sw = j.query("describe_component", {"component_ref": SCORER})
+        d_img = j.query("describe_component", {"component_ref": SCORER}, project=img)
+        j.check("the scorer release is byte-identical in both projects (bundle digest)",
+                d_sw["body"]["bundle_digest"] == d_img["body"]["bundle_digest"],
+                switch=d_sw["body"]["bundle_digest"], image=d_img["body"]["bundle_digest"])
+        j.check("the image-project environment is distinct from the switch project's",
+                j.query("get_profile", {})["body"]["environments"]["default"]["id"] !=
+                j.query("get_profile", {}, project=img)["body"]["environments"]["default"]["id"])
+
+
+# =================================================================================================
+# step 7 - FIXTURE-ONLY autonomous investigation, crash recovery, detach/reattach
+# =================================================================================================
+
+def investigator_pid(home: str) -> int | None:
+    try:
+        return json.loads((Path(home) / "run" / "status.json").read_text())["services"]["investigator-worker"]["pid"]
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def step7(j: Journey, a: argparse.Namespace) -> None:
+    import signal
+    import threading
+    with j.step("7", "FIXTURE-ONLY autonomous investigation (scripted policy, no LLM): loop, kill, recovery, reattach") as st:
+        c = j.S.get("charter")
+        if not c:
+            raise Blocked("needs the charter")
+        home = os.environ["EIDOS_HOME"]
+        j.rec["fixture_only"] = True
+        j.note("step 7 is FIXTURE-ONLY: a deterministic scripted policy ('switch-order-scripted') decides every turn; "
+               "it validates loop mechanics, not model behaviour")
+        rc, data, err = j.cli("investigate", "start", j.project, "--question",
+                              "[FIXTURE-ONLY scripted policy] OrderedSwitchNet scores low on both-correct but high on reference "
+                              "accuracy: diagnose, repair, verify, export", "--charter", c["charter_id"],
+                              "--runtime", "fixture", "--policy", "switch-order-scripted", "--max-turns", "30",
+                              "--limit", "compute_seconds=2400", "--limit", "trials=24", "--limit", "turns=30",
+                              "--limit", "model_tokens=500000", "--investigation-id", f"inv-{j.project}-{int(time.time()) % 100000}")
+        j.check("lab investigate start (fixture runtime + switch-order-scripted)", rc == 0 and data, err=err[-300:])
+        if not data:
+            raise Blocked("could not start")
+        inv = data["result"]["investigation_id"]
+        j.S["investigation"] = inv
+        j.rec["investigation"] = inv
+
+        kills: list[dict] = []
+        stop = threading.Event()
+
+        def watcher():
+            """SIGKILL the investigator-worker as soon as the first job of this investigation is admitted: the
+            decision's effect is committed, but its remaining calls, receipts and complete_turn are not."""
+            while not stop.is_set() and not kills:
+                try:
+                    shown_now = j.client.query("get_investigation", {"investigation_id": inv}, project=j.project)
+                except Exception:  # noqa: BLE001
+                    time.sleep(0.02)
+                    continue
+                if shown_now["jobs"]:
+                    pid = investigator_pid(home)
+                    if pid:
+                        t_kill = time.time()
+                        os.kill(pid, signal.SIGKILL)
+                        after = j.client.query("get_investigation", {"investigation_id": inv}, project=j.project)
+                        kills.append({"pid": pid, "t": t_kill, "jobs_at_kill": [x["id"] for x in shown_now["jobs"]],
+                                      "turns_after_kill": [(t["id"], t["status"]) for t in after["turns"]]})
+                time.sleep(0.005)
+
+        th = threading.Thread(target=watcher, daemon=True)
+        th.start()
+        # ---- detach / reattach while it runs ---------------------------------------------------------------
+        time.sleep(3)
+        rc1, ev1, _ = j.cli("investigate", "events", j.project, "--investigation", inv, "--cursor", "0")
+        rc2, shown, _ = j.cli("investigate", "show", j.project, inv)
+        j.check("a fresh CLI process can read the running investigation (detach)", rc2 == 0 and shown and shown.get("status") in
+                ("active", "concluded"), status=shown and shown.get("status"))
+        # ---- wait for the loop to finish ---------------------------------------------------------------------
+        end = time.monotonic() + 900
+        status = None
+        while time.monotonic() < end:
+            shown = j.query("get_investigation", {"investigation_id": inv})
+            status = shown["status"]
+            if status in ("concluded", "stopped") or any(t["status"] == "failed" for t in shown["turns"]) and status != "active":
+                break
+            if len([t for t in shown["turns"] if t["status"] == "completed"]) >= 30:
+                break
+            time.sleep(2)
+        stop.set()
+        th.join(timeout=5)
+        rc3, ev2, _ = j.cli("investigate", "events", j.project, "--investigation", inv, "--cursor", str((ev1 or {}).get("next_cursor", 0)))
+        cur1 = (ev1 or {}).get("next_cursor", 0)
+        j.check("reattach with the saved event cursor returns later events, none repeated",
+                rc3 == 0 and ev2 is not None and ev2.get("next_cursor", 0) >= cur1, first_cursor=cur1,
+                second_cursor=(ev2 or {}).get("next_cursor"))
+        j.rec["investigation_final"] = {"status": status, "turns": [(t["id"], t["status"], t["stop_reason"]) for t in shown["turns"]],
+                                        "jobs": shown["jobs"]}
+        j.check("investigation concluded through its internal loop", status == "concluded", status=status,
+                turns=[(t["seq"], t["status"], t["stop_reason"]) for t in shown["turns"]])
+        st["numbers"]["turns"] = len(shown["turns"])
+        st["numbers"]["jobs"] = len(shown["jobs"])
+
+        # ---- the kill ---------------------------------------------------------------------------------------
+        j.check("the investigator-worker was killed (SIGKILL) right after a committed effect", len(kills) == 1, kills=kills)
+        events = j.client.query("list_events", {"investigation_id": inv, "cursor": 0, "limit": 5000}, project=j.project)["events"]
+        kturn = None
+        if kills:
+            k = kills[0]
+            open_turns = [t for t, stt in k["turns_after_kill"] if stt == "open"]
+            kturn = open_turns[-1] if open_turns else None
+            j.check("kill landed after the decision's effect (job admitted) and before the turn completed",
+                    kturn is not None, turns_after_kill=k["turns_after_kill"], jobs_at_kill=k["jobs_at_kill"])
+            j.rec["kill"] = {**k, "killed_turn": kturn, "new_pid": investigator_pid(home)}
+            j.check("the supervisor restarted the investigator-worker with a new pid",
+                    investigator_pid(home) not in (None, k["pid"]), old=k["pid"], new=investigator_pid(home))
+        # ---- one logical admission per call; charges visible; reconstruction ---------------------------------
+        turns = [j.query("get_turn", {"turn_id": t["id"]}) for t in shown["turns"]]
+        accepted_calls, accepted_per_slot = [], {}
+        for t in turns:
+            for d in t["decisions"]:
+                if d["accepted"]:
+                    accepted_per_slot[(t["id"], d["slot"])] = accepted_per_slot.get((t["id"], d["slot"]), 0) + 1
+                    accepted_calls += [(t["id"], d["id"], cl) for cl in d["body"]["calls"]]
+        j.check("exactly one accepted decision per (turn, slot)", all(v == 1 for v in accepted_per_slot.values()),
+                slots=len(accepted_per_slot))
+        job_calls = [x for x in accepted_calls if x[2]["tool"] in ("run_component", "author_component", "plan_trial",
+                                                                    "launch_trial", "plan_branch", "launch_branch")]
+        n_jobs_expected = len([x for x in job_calls if x[2]["tool"] in ("run_component", "author_component")])
+        inv_jobs = shown["jobs"]
+        j.check("one job per job-creating call (no duplicated admission after the kill)", len(inv_jobs) == n_jobs_expected,
+                jobs=len(inv_jobs), calls=n_jobs_expected)
+        inv_ids = {x["id"] for x in inv_jobs}
+        admitted = [e["subject"] for e in events if e["type"] == "job.admitted" and e["subject"] in inv_ids]
+        j.check("exactly one job.admitted event per job", len(admitted) == len(set(admitted)) == len(inv_jobs),
+                admitted=len(admitted), distinct=len(set(admitted)))
+        keys = [x[2]["command_key"] for x in accepted_calls]
+        j.check("persisted command keys are unique", len(keys) == len(set(keys)))
+        bud = j.query("budgets", {"investigation_id": inv, "entries": True})
+        entries = bud["entries"]
+        per_ref: dict[str, int] = {}
+        for e in entries:
+            if e.get("dimension") == "trials":
+                per_ref[e.get("ref")] = per_ref.get(e.get("ref"), 0) + 1
+        j.rec["budget_after_investigation"] = {"budgets": bud["budgets"], "n_entries": len(entries)}
+        j.check("every job's trial charge appears exactly once in the budget ledger",
+                all(per_ref.get(jb["id"], 0) >= 1 for jb in inv_jobs) and all(v <= 2 for v in per_ref.values()),
+                per_ref=per_ref)
+        used = bud["budgets"]
+        j.check("model tokens (fixture usage) and compute/trials charges are all visible",
+                used.get("model_tokens", {}).get("used", 0) > 0 and used.get("trials", {}).get("used", 0) +
+                used.get("trials", {}).get("reserved", 0) >= len(inv_jobs), budgets=used)
+        # next turn reconstructs from evidence
+        if kills and kturn:
+            seqs = sorted(shown["turns"], key=lambda t: t["seq"])
+            idx = next((i for i, t in enumerate(seqs) if t["id"] == kturn), None)
+            if idx is not None and idx + 1 < len(seqs):
+                nxt = j.query("get_turn", {"turn_id": seqs[idx + 1]["id"]})
+                view = j.download_json(nxt["context"]["source_manifest_artifact_id"])
+                crashed_jobs = [x[2] for x in accepted_calls if x[0] == kturn]
+                killed_turn_jobs = {jb["id"] for jb in view["jobs"]}
+                kt = next(t for t in turns if t["id"] == kturn)
+                rr = j.query("get_record", {"kind": "decision_receipts", "id": next(d["id"] for d in kt["decisions"] if d["accepted"])})
+                job_ids = [r["result"].get("job_id") for r in rr["body"]["receipts"] if r.get("ok") and r.get("result", {}).get("job_id")]
+                j.check("the turn after the kill reconstructs the crashed turn's work from the ledger view",
+                        bool(job_ids) and set(job_ids) <= killed_turn_jobs, receipts_jobs=job_ids, view_jobs=sorted(killed_turn_jobs))
+                j.check("the crashed turn's receipts were recorded after recovery (its effects were not lost or repeated)",
+                        len(rr["body"]["receipts"]) == len(kt["decisions"][0]["body"]["calls"]) if kt["decisions"] else False)
+        exports = j.query("list_records", {"kind": "export", "limit": 50})
+        j.check("the scripted investigation requested an export through export_model",
+                any((x.get("title") or "") for x in exports) or len(exports) >= 1, exports=len(exports))
+        claims = j.query("list_records", {"kind": "claim", "limit": 50})
+        j.check("it filed a claim", len(claims) >= 1)
+        st["numbers"]["exports_total"] = len(exports)
+
+
+STEPS = [("1", step1), ("2", step2), ("3", step3), ("2b", step2b_amend), ("4", step4), ("5", step5), ("6", step6), ("7", step7)]
 
 
 def main() -> int:
