@@ -66,11 +66,15 @@ class AssessorActivities:
     reads, then submits through the command service. Holds ``assess`` and ``qualify`` grants
     (two principals), never ledger credentials or candidate code."""
 
-    def __init__(self, assessor: LabClient, qualifier: LabClient, runner_factory, lab_python: str):
+    def __init__(self, assessor: LabClient, qualifier: LabClient, runner_factory, lab_python: str, *,
+                 credential_path: str = "/nonexistent", api_port: int = 0, max_evidence_bytes: int = 256 << 20):
         self.assessor = assessor
         self.qualifier = qualifier
         self.runner_factory = runner_factory
         self.lab_python = lab_python
+        self.credential_path = credential_path
+        self.api_port = api_port
+        self.max_evidence_bytes = max_evidence_bytes
 
     @activity.defn(name="assess_plan")
     def assess_plan(self, a: dict) -> dict:
@@ -103,28 +107,72 @@ class AssessorActivities:
         return {"assessment_id": r["result"]["assessment_id"], "outcome": r["result"]["outcome"]}
 
     def _run_assessor(self, p: str, ref: str, evidence: dict) -> dict:
+        """Run the pinned assessment release in its own sandbox: read-only release, evidence and lab
+        interpreter; writable staging/scratch only; no lab secrets or environment. Candidate code is
+        never involved; predictions arrive as parsed rows inside evidence.json."""
+        import os
+        import time as _time
+
+        from eidos.runtime.launcher import LaunchSpec, bwrap_available, launch, profile_config_digest, run_probes
+        from eidos.runtime.runner import SDK_PATHS, materialize_bundle, python_prefixes
+        from eidos_wire import OutputManifest
+        from eidos_worker.testing import make_invocation, read_output_json
         desc = self.assessor.query("describe_component", {"component_ref": ref}, project=p)
         entry = desc["body"]["manifest"]["entry"]
-        with tempfile.TemporaryDirectory() as d:
-            bundle = Path(d) / "bundle.json"
+        base = Path(tempfile.mkdtemp(prefix="eidos-assess-"))
+        os.chmod(base, 0o755)
+        try:
+            bundle = base / "bundle.json"
             self.assessor.download(p, desc["body"]["bundle_artifact_id"], bundle)
-            from eidos.runtime.runner import materialize_bundle
-            src = materialize_bundle(str(bundle), Path(d) / "src")
-            ev = Path(d) / "evidence.json"
+            src = materialize_bundle(str(bundle), base / "src")
+            ev = base / "evidence.json"
             ev.write_text(json.dumps(evidence))
-            from eidos_worker.testing import make_invocation, read_output_json, run_subprocess
-            inv = make_invocation(Path(d) / "run", entry, inputs={"evidence": (ev.read_bytes(), "application/json")},
+            if ev.stat().st_size > int(self.max_evidence_bytes):
+                raise ApplicationError("evidence exceeds the assessor input cap", type="ASSESSOR_INPUT_TOO_LARGE",
+                                       non_retryable=True)
+            inv = make_invocation(base / "run", entry, inputs={"evidence": (ev.read_bytes(), "application/json")},
                                   config={}, source_dir=str(src))
-            proc = run_subprocess(inv)
+            inv_path = base / "run" / "invocation.json"
+            if not inv_path.exists():
+                inv.write(inv_path)
+            import eidos as _eidos
+            lab_src = str(Path(_eidos.__file__).resolve().parent.parent)
+            profile = "linux:bwrap-sealed" if bwrap_available() else "dev:same-user"
+            readonly = sorted({*SDK_PATHS, lab_src, str(src), str(inv_path), *[i.path for i in inv.inputs.values()]})
+            spec = LaunchSpec(argv=[self.lab_python, "-m", "eidos_worker.run", str(inv_path)], cwd=str(src),
+                              attempt_dir=str(base / "proc"), profile=profile, readonly=readonly,
+                              writable=[inv.staging_dir, inv.scratch_dir],
+                              env={"PYTHONPATH": os.pathsep.join([*SDK_PATHS, lab_src, str(src)])},
+                              python_prefixes=python_prefixes(self.lab_python) if profile != "dev:same-user" else [])
+            receipt = {"profile": profile, "config_digest": profile_config_digest(spec), "role": "assessor",
+                       "release": ref}
+            if profile != "dev:same-user":
+                canary = base / "canary"
+                canary.write_text("x")
+                receipt.update(run_probes(spec, label_path=str(canary), credential_path=self.credential_path,
+                                          host_write_path=str(base / "host-write"), api_port=self.api_port))
+            h = launch(spec)
+            deadline = _time.time() + 600
+            while h.exit_code() is None and _time.time() < deadline:
+                _time.sleep(0.2)
+                activity.heartbeat()
+            if h.exit_code() is None:
+                h.terminate()
+                raise ApplicationError("assessor timed out", type="ASSESSOR_FAILED", non_retryable=True)
             try:
-                from eidos_wire import OutputManifest
                 man = OutputManifest.read(inv.staging_dir)
             except Exception as exc:  # noqa: BLE001 - no manifest means the assessor process itself failed
-                raise ApplicationError(f"assessor produced no output manifest ({exc}): {proc.stderr[-800:]}",
+                err = (base / "proc" / "stderr.log").read_text()[-800:] if (base / "proc" / "stderr.log").exists() else ""
+                raise ApplicationError(f"assessor produced no output manifest ({exc}): {err}",
                                        type="ASSESSOR_FAILED", non_retryable=True) from exc
-            if man.status != "succeeded":
+            if man.status != "succeeded" or h.exit_code() != 0:
                 raise ApplicationError(f"assessor failed: {man.error}", type="ASSESSOR_FAILED", non_retryable=True)
-            return read_output_json(inv, man, "evaluation")
+            out = read_output_json(inv, man, "evaluation")
+            out["assessor_isolation"] = receipt
+            return out
+        finally:
+            import shutil
+            shutil.rmtree(base, ignore_errors=True)
 
     @activity.defn(name="submit_qualification_results")
     def submit_qualification_results(self, a: dict) -> dict:
