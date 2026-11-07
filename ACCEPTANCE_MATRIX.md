@@ -77,11 +77,12 @@ Closed since v0.1.0; each item names its evidence:
 - **Distinct candidate identity:** passes with an interpreter under /opt. Evidence: `test_isolation_probes.py`.
 - **Abrupt stop / power-loss equivalent:** both scenarios pass. A: services killed, then reattach on the same attempt. B: services and the job killed, then lost-attempt reconciliation and a new fenced attempt. Evidence: `tests/ops/abrupt_stop.sh`, log in `docs/dev-runs/abrupt-stop-2026-11-07.log`.
 - **History and payload stress, plus a wake-storm fix:** the coordinator now rolls over even while waiting on signals. Evidence: `test_workflows.py::test_stress_...`, which passes together with the frozen-history replay.
+- **Worker death:** a job-private resume directory persists across attempts; `eidos.pytorch.train` 1.2.0 resumes from the latest committed checkpoint. Verified live: worker `kill -9`, the new attempt resumed at step 28,000 and finished. A failed run's staged checkpoints are published as citable partial results, branchable only if vouched.
+- **Live-provider receipt #1 defects fixed:** strict-mode-safe args, required-arg validation, partial usage on failure, 4xx non-retryable, bounded request budget.
 - **All 14 public development cards:** reference smoke through Eidos jobs plus reference-assisted builder checks; `qualify.py` 27/27. Evidence: `docs/dev-runs/research-cards.md`.
 
 Still open:
 - **Real LLM providers:** a script is ready for the controller (`scripts/qualify/live_provider_check.py`).
 - **Not qualified:** macOS on a researcher machine (a runner smoke job exists), Lima VM, CUDA/MPS, and external MCP hosts (Claude Code/Desktop, Codex). The official SDK client is verified over stdio and HTTP.
-- **D11-style worker death inside a job:** a crashing worker's committed checkpoint is published only when the run sets `allow_nonzero_exit`. There is no automatic partial publication on failure.
 - **Not exercised:** sleep/suspend, multi-day runs, performance targets (p95 latency, evidence visibility) and distributed training.
 - **Scientific release (A16):** out of builder scope.
