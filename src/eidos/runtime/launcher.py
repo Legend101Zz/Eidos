@@ -138,7 +138,7 @@ def bwrap_argv(spec: LaunchSpec) -> list[str]:
         if os.path.exists(p):
             a += ["--ro-bind", p, p]
     seen = set()
-    for p in spec.python_prefixes + spec.readonly:
+    for p in spec.python_prefixes + spec.readonly + [spec.cwd]:
         if p and os.path.exists(p) and p not in seen:
             seen.add(p)
             a += ["--ro-bind", p, p]
