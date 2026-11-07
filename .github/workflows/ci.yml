@@ -19,6 +19,8 @@ env:
 
 jobs:
   lint-and-unit:
+    # Same-repo PRs are already built by the push trigger; run pull_request builds only for forks.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -32,6 +34,8 @@ jobs:
       - run: uv run pytest tests/unit -q
 
   integration:
+    # Same-repo PRs are already built by the push trigger; run pull_request builds only for forks.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     services:
@@ -58,6 +62,8 @@ jobs:
       - run: uv run pytest tests/integration -q
 
   worker-compat:
+    # Same-repo PRs are already built by the push trigger; run pull_request builds only for forks.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -72,6 +78,8 @@ jobs:
       - run: bash tests/worker_compat/run_matrix.sh
 
   fresh-install:
+    # Same-repo PRs are already built by the push trigger; run pull_request builds only for forks.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     name: fresh-install (ubuntu-24.04, wheels in a clean venv, full lab lifecycle)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -99,6 +107,8 @@ jobs:
           if-no-files-found: ignore
 
   macos-arm64-smoke:
+    # Same-repo PRs are already built by the push trigger; run pull_request builds only for forks.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     name: macOS arm64 GitHub-runner evidence (not researcher-machine qualification)
     runs-on: macos-15
     timeout-minutes: 40

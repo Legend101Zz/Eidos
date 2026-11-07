@@ -416,7 +416,7 @@ dev = [
 
 [[package]]
 name = "eidos-pytorch"
-version = "1.0.0"
+version = "1.1.0"
 source = { editable = "packages/eidos-pytorch" }
 dependencies = [
     { name = "eidos-worker-sdk" },
@@ -432,7 +432,7 @@ source = { editable = "packages/eidos-wire" }
 
 [[package]]
 name = "eidos-worker-sdk"
-version = "1.0.0"
+version = "1.1.0"
 source = { editable = "packages/eidos-worker-sdk" }
 dependencies = [
     { name = "eidos-wire" },
