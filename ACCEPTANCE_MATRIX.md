@@ -30,7 +30,7 @@ Paths are relative to the repository root. Verification commands are listed in
 | A12 | Turn evaluation: reconstruct historical view, alternate context/model policies without future leakage, isolated benchmark commands, unexecuted counterfactuals distinguished | `src/eidos/investigator/replay.py` | `tests/integration/test_turn_recovery.py::test_offline_replay...` | runtime-verified |
 | A13 | Training and architecture changes: weight edit, stateful learning rule, architecture patch, synthetic data generation, whole custom trainer; restore classes per device profile; strict-load/wrong-builder fixture fails behavioral acceptance | `packages/eidos-pytorch`, `components/`, `examples/` | components tests; `tests/journeys/switch_journey.py` (EIDOS_JOURNEY=1; 149 checks passed 2026-11-07; record docs/dev-runs/switch-journey.md) steps 3-4 (ema rule, builder change, generator, wrong builder behavior_match=false with strict load ok); task bundles via whole-project command | runtime-verified on CPU; CUDA/MPS unqualified |
 | A14 | Operator/API integrity: authenticated HTTP + stdio, capability/version conformance, cross-project access/exfiltration, lost-reply dedup, stale revisions, cooperative cancellation, detach/reattach; real external clients | `src/eidos/api`, `src/eidos/mcp` | `tests/mcp/*`, `tests/integration/test_command_path.py` | runtime-verified with SDK client; external clients unqualified |
-| A15 | Local operations: disk exhaustion, restart/sleep, service failures, installation upgrade, backup/restore on fresh lab dir; reconcile jobs; show missing progress, unknown spend, restoration limits | `src/eidos/supervisor` | backup/restore/upgrade runs; `tests/integration/test_disk_pressure.py`; reattach logic | partially runtime-verified; sleep/power-loss not exercised |
+| A15 | Local operations: disk exhaustion, restart/sleep, service failures, installation upgrade, backup/restore on fresh lab dir; reconcile jobs; show missing progress, unknown spend, restoration limits | `src/eidos/supervisor` | backup/restore/upgrade runs; `test_disk_pressure.py`; `tests/ops/{runner_reattach,abrupt_stop,checkpoint_and_stop}.sh` | runtime-verified on Linux (sleep/suspend not exercised) |
 | A16 | Scientific release: locked success rules, blinded results on different tasks/hardware, losing candidates and nulls, reproduction package | external evaluation workstream | — | out of builder scope; scientifically-unproven |
 
 ## B. Assignment requirements 1–9 (cross-reference)
@@ -65,16 +65,23 @@ Paths are relative to the repository root. Verification commands are listed in
 | Turn dies after tool effect commits → same key, existing receipt | `test_turn_recovery.py` | runtime-verified (activity level); worker kill in journey |
 | Payload overflow / history limit → reject + rollover | `test_workflows.py`, envelope checks | runtime-verified (dev server) |
 | Component/investigator upgrade during turn | integration | not-started |
-| Machine sleep/reboot/power loss → reconcile, don't trust PID | ops journey | not-started |
+| Machine sleep/reboot/power loss → reconcile, don't trust PID | `tests/ops/abrupt_stop.sh` (kill -9 services ± job; boot id + start time) | runtime-verified for kill/power-loss equivalent; sleep not exercised |
 | Disk full / incomplete backup / service corruption | `test_disk_pressure.py`; backup refuses missing blobs | partially verified |
 
-## D. Known limitations (2026-11-07, eidos-v0.1.0)
+## D. Known limitations (updated 2026-11-07, after eidos-v0.1.0)
 
-- Real LLM providers: the Pydantic AI adapter has been checked only against fixture models. Live runs are listed in IMPLEMENTATION_STATUS.md for the controller to perform.
-- Not qualified: macOS (host-native and Lima VM), CUDA/MPS, and the external MCP clients (Claude Code/Desktop, Codex).
-- Pausing with `checkpoint-and-stop` currently requests cancellation. Components do not yet implement a checkpoint-on-signal protocol.
-- `launch_evidence_plan` runs one component run per arm. The template's multi-job arm pipelines must be resolved into runs before freezing.
-- Training-extension source is mounted by `python_path`. Mounting extension releases as ports during `run_component` is not implemented.
-- Sealed profile: a distinct candidate identity needs a candidate-readable interpreter (e.g. under /opt). With one it passes; with root-owned interpreters it is reported as failed.
-- Not exercised: sleep or power loss, multi-day runs, performance targets (p95 command latency, evidence visibility), and distributed training.
-- Scientific release (A16) is out of builder scope, and no superiority claim is made.
+Closed since v0.1.0; each item names its evidence:
+- **checkpoint-and-stop pause/cancel policy:** SIGUSR1 → checkpoint at a committed step → `cancelled` with a published checkpoint. Evidence: `tests/ops/checkpoint_and_stop.sh`, verified live at step 22,654.
+- **Multi-step evidence-plan pipelines:** DAG admission, reference resolution and blocking on a failed predecessor. Evidence: `tests/integration/test_plan_pipelines.py`.
+- **Training extensions bound as published releases:** pinned by digest, mounted by the launcher, phase/writer conflicts rejected, retired releases refused. Evidence: `tests/integration/test_extensions.py`.
+- **Distinct candidate identity:** passes with an interpreter under /opt. Evidence: `test_isolation_probes.py`.
+- **Abrupt stop / power-loss equivalent:** both scenarios pass. A: services killed, then reattach on the same attempt. B: services and the job killed, then lost-attempt reconciliation and a new fenced attempt. Evidence: `tests/ops/abrupt_stop.sh`, log in `docs/dev-runs/abrupt-stop-2026-11-07.log`.
+- **History and payload stress, plus a wake-storm fix:** the coordinator now rolls over even while waiting on signals. Evidence: `test_workflows.py::test_stress_...`, which passes together with the frozen-history replay.
+- **All 14 public development cards:** reference smoke through Eidos jobs plus reference-assisted builder checks; `qualify.py` 27/27. Evidence: `docs/dev-runs/research-cards.md`.
+
+Still open:
+- **Real LLM providers:** a script is ready for the controller (`scripts/qualify/live_provider_check.py`).
+- **Not qualified:** macOS on a researcher machine (a runner smoke job exists), Lima VM, CUDA/MPS, and external MCP hosts (Claude Code/Desktop, Codex). The official SDK client is verified over stdio and HTTP.
+- **D11-style worker death inside a job:** a crashing worker's committed checkpoint is published only when the run sets `allow_nonzero_exit`. There is no automatic partial publication on failure.
+- **Not exercised:** sleep/suspend, multi-day runs, performance targets (p95 latency, evidence visibility) and distributed training.
+- **Scientific release (A16):** out of builder scope.

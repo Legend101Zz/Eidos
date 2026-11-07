@@ -46,7 +46,8 @@ export EIDOS_HOME=/workspace/.eidos-dev/lead/lab   # lead lab
 
 ## Last verified results (2026-11-07)
 
-- unit + integration + mcp + reporting: **70 passed** (78e4597). Switch journey: 149 checks passed. A fresh wheel install (`uv build` → new venv → init/start/doctor) was all ok.
+- Round 2 (c75c814): unit 27, integration incl. workflows and pipelines, MCP 19. Every suite passes.
+- Earlier: unit + integration + mcp + reporting **70 passed** (78e4597). Switch journey: 149 checks passed. A fresh wheel install (`uv build` → new venv → init/start/doctor) was all ok.
 - mcp + reporting: 26 passed. Worker matrix: MATRIX OK. Components: 53 passed.
 - Import Linter: 5/5 contracts kept. Ruff clean.
 - Live lab:
@@ -91,11 +92,16 @@ These are separate commits in the journey merge:
 - `assess_plan` reads the output manifest correctly.
 - Investigator activities heartbeat, so a killed worker is recovered in about 30 s.
 
+## Round 2 (operator continuation), done
+
+- CI is merged. Third-party actions are pinned to commit SHAs. New jobs: fresh-install (Linux) and macOS arm64 runner smoke, labelled runner evidence. Results come from the controller.
+- Product gaps closed: checkpoint-and-stop, plan pipelines, published extensions, separate identity, abrupt-stop recovery, and stress tests including the wake-storm fix. See ACCEPTANCE_MATRIX §D.
+- Research release: all 14 cards ran as reference smoke through Eidos (builder checks reference-assisted, labelled as such). `qualify.py` passed 27/27. Task issues are in `docs/dev-runs/research-task-issues.md`.
+- MCP: the official SDK client is verified over stdio and streamable HTTP. The named external hosts remain untested.
+- Live provider: `scripts/qualify/live_provider_check.py` is ready for the controller (command above).
+
 ## Next concrete action
 
-1. Run the controller-side live-provider qualification listed above (Pydantic AI + Anthropic). Then run D02/D12 with `--runtime pydantic-ai`, recorded as a real-LLM development run.
-2. Close the known limitations in ACCEPTANCE_MATRIX §D, in order:
-   - checkpoint-and-stop protocol
-   - extension ports
-   - plan arm pipelines
-3. Qualify macOS on a real Mac; this cannot be done here.
+1. Receive CI results for the current head from the controller. If green, cut `eidos-v0.2.0`.
+2. Run the live-provider receipt (controller), then real-LLM D02/D12 development runs.
+3. Remaining open items are in ACCEPTANCE_MATRIX §D.
