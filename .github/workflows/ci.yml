@@ -77,6 +77,29 @@ jobs:
       - run: EIDOS_WHEELHOUSE=/tmp/wheelhouse bash scripts/dev/fetch_cpu_torch.sh 2.15.0 cp312
       - run: bash tests/worker_compat/run_matrix.sh
 
+  components:
+    # Same-repo PRs are already built by the push trigger; run pull_request builds only for forks.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    name: components (built-in component tests, CPU torch 2.15 + numpy)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CI_WORK: /tmp/eidos-components
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: true
+      - run: bash scripts/ci/components.sh
+      - name: Upload component test log on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: components-logs
+          path: /tmp/eidos-components/components.log
+          retention-days: 3
+          if-no-files-found: ignore
+
   fresh-install:
     # Same-repo PRs are already built by the push trigger; run pull_request builds only for forks.
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository

@@ -11,6 +11,7 @@ Workflow: `.github/workflows/ci.yml`. Standard GitHub-hosted runners only (`ubun
 | `lint-and-unit` | ruff, import-linter contracts, unit tests |
 | `integration` | integration tests against a PostgreSQL 16 service and the Temporal CLI dev server |
 | `worker-compat` | worker packages install and pass without server deps (Python 3.9 + pydantic<2; Python 3.12 + CPU torch unchanged) |
+| `components` | built-in component suite (`tests/components`, 59 tests): manifests/fixtures, each component through the worker SDK, end-to-end CPU switch-order replication. Lab venv (`uv sync`) runs pytest and is asserted torch-free; one project venv with CPU torch 2.15.0 (`fetch_cpu_torch.sh` wheelhouse) + numpy serves as both `EIDOS_TORCH_PYTHON` and `EIDOS_NUMPY_PYTHON`; fixture checkpoints are regenerated in it first; any skipped test fails the job. Log uploaded on failure |
 | `fresh-install` | `uv build --all-packages`; wheels installed into a clean venv (asserted not imported from the checkout); `lab init` (non-root `initdb`, pinned Temporal 1.32.2 downloaded and sha256-verified), `lab start`, `lab doctor --json` (any `fail` fails the job), `lab project create ci1` (built-in components through validate/publish), `lab status --json`, `lab stop`. Lab logs and results uploaded on failure |
 | `macos-arm64-smoke` | **macOS arm64 GitHub-runner evidence, not researcher-machine qualification.** Same wheel build/install; PostgreSQL 16 from Homebrew; the lab lifecycle with each step reported separately (informational: failures are shown in the job summary and uploaded logs and do not stop later steps); worker SDK tests in a plain venv with only `eidos-wire` + `eidos-worker-sdk`; research-release smoke (`research/public/development`: `requirements.lock`, `check_bundles.py`, `package_task.py --task D02`, D02 baseline `train --seed 11`, CPU, one thread). The SDK and research smoke steps are required (they fail the job) |
 
@@ -19,5 +20,6 @@ Workflow: `.github/workflows/ci.yml`. Standard GitHub-hosted runners only (`ubun
 
 ## Running the scripts locally (`scripts/ci/`)
 - `fresh_install.sh`: build + clean venv + full lab lifecycle. Env: `CI_WORK`, `LAB_HOME`, `LAB_API_PORT`, `LAB_PG_PORT`, `LAB_TEMPORAL_PORT`, `PG_BIN`, `TEMPORAL_SOURCE` (directory containing `temporal-server`/`temporal-sql-tool`; omit to download the pinned release).
+- `components.sh`: component suite as in the `components` job. Env: `CI_WORK`, `EIDOS_WHEELHOUSE` (reuse an existing CPU torch wheelhouse).
 - `build_and_install.sh`, `lab_cycle.sh {init|start|doctor|project|status|stop|all}`, `sdk_tests.sh`, `research_smoke.sh`.
 - Requires `uv`, PostgreSQL >= 14 binaries. When run as root the lab uses `runuser -u postgres`; as a normal user (CI) it runs PostgreSQL as that user.
