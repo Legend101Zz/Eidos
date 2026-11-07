@@ -1,0 +1,6 @@
+{"id": "journey.template-qualifier", "release": "1.0.0", "implements": "qualification-runner/1", "kind": "artifact-op",
+ "entry": "template_qualifier.run:run", "scientific_effects": ["observe"],
+ "output": {"qualification_results": "qualification-results/1"},
+ "requires": ["artifact.writer/1", "target.source/1", "lab.domain.qualification/1"],
+ "isolation": "immutable-artifacts",
+ "summary": "journey fixture: executes a planning template on planted/null requests (author suite, not independent)"}

@@ -1,0 +1,3 @@
+{"id": "journey.ext.unscale-probe", "release": "1.0.0", "implements": "unscale-probe/1", "kind": "training-extension",
+ "entry": "unscale_probe:create", "scientific_effects": ["observe"], "phases": ["after-gradient-unscale"],
+ "isolation": "in-trial", "summary": "journey fixture: needs the after-gradient-unscale phase"}
