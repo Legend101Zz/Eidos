@@ -1,0 +1,17 @@
+[project]
+name = "eidos-pytorch"
+version = "1.0.0"
+description = "Eidos pytorch (standard library only; never installs or upgrades torch)"
+requires-python = ">=3.9"
+dependencies = ["eidos-worker-sdk>=1,<2"]
+license = { text = "Apache-2.0" }
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/eidos_pytorch"]
+
+[tool.uv.sources]
+eidos-worker-sdk = { workspace = true }

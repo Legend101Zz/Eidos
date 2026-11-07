@@ -34,3 +34,7 @@ artifacts/local/
 .DS_Store
 .idea/
 .vscode/
+
+# Scratch extraction of handoff examples and local wheelhouse
+/scratch/
+.wheelhouse/
