@@ -24,11 +24,11 @@ Updated 2026-11-07 by the lead session, on branch `build/eidos-local-v1`.
 | HTML reports | implemented, tested with a fake client and smoke-tested on a live lab |
 | Built-in components (12) and example projects (switch-order, image) | implemented, author-tested (`tests/components/run.sh`) |
 | Public task adapter (`eidos-task-bundle/0.1` → `eidos-answer/0.2`) | D01/D02/D12 run through the internal loop (fixture provider) with structurally valid answers |
-| Switch-order acceptance journey | helper assignment `task/switch-journey` (active) |
+| Switch-order acceptance journey | **runtime-verified**: 8 steps, 149 checks (fixture investigator for step 7) — `docs/dev-runs/switch-journey.md` |
 
 ## Active helper assignments and worktrees
 
-- `/workspace/wt/switch-journey`, branch `task/switch-journey`. Uses its own lab at `/workspace/.eidos-dev/h1/lab` (ports 8865/5644/7933).
+None. All task branches are merged and the worktrees are removed. Tag `eidos-v0.1.0` is the current development freeze; it is not v1 acceptance.
 
 ## How to run
 
@@ -46,7 +46,7 @@ export EIDOS_HOME=/workspace/.eidos-dev/lead/lab   # lead lab
 
 ## Last verified results (2026-11-07)
 
-- unit + integration (PostgreSQL 16, Temporal dev server for workflow tests): **44 passed**.
+- unit + integration + mcp + reporting: **70 passed** (78e4597). Switch journey: 149 checks passed. A fresh wheel install (`uv build` → new venv → init/start/doctor) was all ok.
 - mcp + reporting: 26 passed. Worker matrix: MATRIX OK. Components: 53 passed.
 - Import Linter: 5/5 contracts kept. Ruff clean.
 - Live lab:
@@ -71,9 +71,19 @@ Command (operator side, key in the environment of the investigator-worker only):
 - 2026-11-07, D02 development run: the builder-authored component `eidos.project.command@1.0.0` staged with an invalid role, so all baseline jobs failed. The fixture investigator correctly concluded "no successful runs". The builder fixed the defect and released 1.0.1. Both runs remain in the ledger.
 - No autonomous investigation with a real LLM has been run. Every investigator decision so far comes from deterministic fixture policies.
 
+## Helper fixes merged from the journey (builder interventions)
+
+These are separate commits in the journey merge:
+- Environment-provided capabilities recorded in the lock. The lead then tightened it: a missing adapter is an error.
+- `compare_trials` now uses the branch record to detect shared history.
+- `assess_plan` reads the output manifest correctly.
+- Investigator activities heartbeat, so a killed worker is recovered in about 30 s.
+
 ## Next concrete action
 
-1. Merge `task/switch-journey` after review.
-2. Update `ACCEPTANCE_MATRIX.md` statuses from its run record.
-3. Tag `eidos-v0.1.0` once the journey passes.
-4. Remaining gaps: macOS/Lima profile, external MCP clients and live providers are unqualified here.
+1. Run the controller-side live-provider qualification listed above (Pydantic AI + Anthropic). Then run D02/D12 with `--runtime pydantic-ai`, recorded as a real-LLM development run.
+2. Close the known limitations in ACCEPTANCE_MATRIX §D, in order:
+   - checkpoint-and-stop protocol
+   - extension ports
+   - plan arm pipelines
+3. Qualify macOS on a real Mac; this cannot be done here.
