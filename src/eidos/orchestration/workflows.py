@@ -29,6 +29,7 @@ MODEL = RetryPolicy(initial_interval=timedelta(seconds=2), backoff_coefficient=2
                     maximum_interval=timedelta(seconds=60), maximum_attempts=3,
                     non_retryable_error_types=NON_RETRYABLE)
 
+HB = timedelta(seconds=30)  # investigator activities heartbeat every 5 s; a killed worker is noticed in ~30 s
 WAIT_REASONS = ("waiting", "input-requested", "stale-revision", "calls-exhausted-waiting")
 TERMINAL_REASONS = ("concluded", "budget-exhausted", "max-turns-reached", "stopped", "investigation is stopped",
                     "investigation is concluded")
@@ -98,7 +99,8 @@ class TurnWorkflow:
     @workflow.run
     async def run(self, a: dict[str, Any]) -> dict[str, Any]:
         b = await workflow.execute_activity("begin_turn", a, task_queue=INVESTIGATOR_QUEUE,
-                                            start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
+                                            start_to_close_timeout=timedelta(seconds=60),
+                                            heartbeat_timeout=HB, retry_policy=SHORT)
         if not b.get("started"):
             return {"started": False, "reason": b.get("reason")}
         tid = b["turn_id"]
@@ -106,18 +108,20 @@ class TurnWorkflow:
         stop, control, receipts = "calls-exhausted", {}, []
         try:
             await workflow.execute_activity("build_context", base, task_queue=INVESTIGATOR_QUEUE,
-                                            start_to_close_timeout=timedelta(seconds=120), retry_policy=SHORT)
+                                            start_to_close_timeout=timedelta(seconds=120),
+                                            heartbeat_timeout=HB, retry_policy=SHORT)
             for slot in range(int(b.get("max_model_calls", 4))):
                 d = await workflow.execute_activity("decide", {**base, "slot": slot}, task_queue=INVESTIGATOR_QUEUE,
                                                     start_to_close_timeout=timedelta(seconds=int(b.get("model_timeout", 300))),
-                                                    retry_policy=MODEL)
+                                                    heartbeat_timeout=HB, retry_policy=MODEL)
                 if not d.get("accepted"):
                     stop = "stale-revision" if d.get("reason") == "stale-revision" else "error"
                     break
                 if d.get("n_calls"):
                     r = await workflow.execute_activity("execute_decision", {**base, "decision_id": d["decision_id"]},
                                                         task_queue=INVESTIGATOR_QUEUE,
-                                                        start_to_close_timeout=timedelta(seconds=600), retry_policy=SHORT)
+                                                        start_to_close_timeout=timedelta(seconds=600),
+                                                        heartbeat_timeout=HB, retry_policy=SHORT)
                     receipts.append({"decision_id": d["decision_id"], "summary": r.get("summary")})
                 control = d.get("control") or {}
                 action = control.get("action")
@@ -146,7 +150,7 @@ class TurnWorkflow:
             await workflow.execute_activity("complete_turn", {**base, "stop_reason": stop, "control": control,
                                                               "receipts": receipts[-20:]},
                                             task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60),
-                                            retry_policy=SHORT)
+                                            heartbeat_timeout=HB, retry_policy=SHORT)
         return {"started": True, "turn_id": tid, "stop_reason": stop, "control": control}
 
 

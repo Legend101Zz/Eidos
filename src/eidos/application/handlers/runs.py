@@ -59,11 +59,30 @@ def _inputs(ctx: Ctx, ids: dict[str, str]) -> dict[str, dict[str, Any]]:
     return out
 
 
+# Capabilities that the execution environment itself provides (the registered project adapter, the
+# target source mounted for qualification, lab-side domain code). They are not component releases, so
+# the release resolver cannot bind them; the lock records them as environment-provided.
+ENV_CAPABILITY_PREFIXES = ("pytorch.adapter/", "adapter.", "target.source/", "extension.source/", "lab.domain.",
+                           "training-extension/")
+
+
+def _env_provided(cap: str, cat: list[dict]) -> bool:
+    if not cap.startswith(ENV_CAPABILITY_PREFIXES):
+        return False
+    return not any(r["status"] == "active" and r["manifest"]["implements"] == cap for r in cat)
+
+
 def resolve_lock(ctx: Ctx, p: dict, *, extra_config: dict | None = None) -> dict:
     cat = catalog(ctx, include_inactive=True)
     target = next((r for r in cat if r["ref"] == p["component_ref"]), None)
     if target is None:
         raise NotFound(f"component {p['component_ref']} not found")
+    env_caps = [c for c in (*target["manifest"].get("requires", []), *target["manifest"].get("optional", []))
+                if _env_provided(c, cat)]
+    if env_caps:
+        man = {**target["manifest"], "requires": [c for c in target["manifest"].get("requires", []) if c not in env_caps],
+               "optional": [c for c in target["manifest"].get("optional", []) if c not in env_caps]}
+        target = {**target, "manifest": man}
     env_name = p.get("environment") or target["environment"]["name"]
     env = env_for(ctx, env_name)
     inputs = _inputs(ctx, p.get("inputs") or {})
@@ -74,6 +93,7 @@ def resolve_lock(ctx: Ctx, p: dict, *, extra_config: dict | None = None) -> dict
         overrides=p.get("overrides") or {}, inputs=inputs, config={**(p.get("config") or {}), **(extra_config or {})},
         grants=set(ctx.principal.scopes) | set(p.get("grants") or []), installed=env.get("installed") or {},
         adapters=adapters)
+    lock["ports"] = {**lock["ports"], **{c: {"environment_provided": True} for c in env_caps}}
     rel = ctx.tx.require("component_release", target["ref"])
     lock["component"]["bundle"] = {"artifact_id": rel.body["bundle_artifact_id"], "digest": rel.body["bundle_digest"]}
     lock["inputs"] = {k: {**lock["inputs"][k], "media_type": v["media_type"], "size": v["size"], "role": v["role"]}

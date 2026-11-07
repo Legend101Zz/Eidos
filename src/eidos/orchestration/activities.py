@@ -110,7 +110,13 @@ class AssessorActivities:
             from eidos_worker.testing import make_invocation, read_output_json, run_subprocess
             inv = make_invocation(Path(d) / "run", entry, inputs={"evidence": (ev.read_bytes(), "application/json")},
                                   config={}, source_dir=str(src))
-            man = run_subprocess(inv)
+            proc = run_subprocess(inv)
+            try:
+                from eidos_wire import OutputManifest
+                man = OutputManifest.read(inv.staging_dir)
+            except Exception as exc:  # noqa: BLE001 - no manifest means the assessor process itself failed
+                raise ApplicationError(f"assessor produced no output manifest ({exc}): {proc.stderr[-800:]}",
+                                       type="ASSESSOR_FAILED", non_retryable=True) from exc
             if man.status != "succeeded":
                 raise ApplicationError(f"assessor failed: {man.error}", type="ASSESSOR_FAILED", non_retryable=True)
             return read_output_json(inv, man, "evaluation")
