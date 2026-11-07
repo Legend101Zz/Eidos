@@ -1,0 +1,35 @@
+{
+  "id": "eidos.pytorch.train",
+  "release": "1.0.0",
+  "implements": "pytorch-train/1",
+  "kind": "artifact-op",
+  "entry": "eidos_train.train:run",
+  "scientific_effects": ["change-weights"],
+  "input": {"parent_checkpoint": "eidos-checkpoint/1"},
+  "output": {"checkpoint": "eidos-checkpoint/1"},
+  "requires": ["artifact.reader/1", "artifact.writer/1", "pytorch.adapter/1"],
+  "optional": ["training-extension/1"],
+  "reads": ["parent_checkpoint", "project.adapter"],
+  "writes": ["output:checkpoint"],
+  "isolation": "in-trial",
+  "card": "method-card.md",
+  "controls": [
+    "fixtures/train-from-scratch.json",
+    "fixtures/branch-no-change-exact.json",
+    "fixtures/branch-undeclared-state.json",
+    "fixtures/missing-adapter.json"
+  ],
+  "receipt": [
+    "examples", "updates", "end_step", "wall_seconds", "final_loss", "phase_counts", "restore_class",
+    "state_fingerprint", "model_fingerprint", "checkpoints", "metrics", "extensions"
+  ],
+  "state": {
+    "schema": "train-meta/1",
+    "restore_classes": ["exact", "warm-start"],
+    "mapping": "transform actions accept mapping {fresh: true | [param names]} or {value: <plain value>}; init creates fresh state"
+  },
+  "cost": {"examples": "steps x batch_size (adapter defined)", "device": "project environment (CPU or GPU)"},
+  "python": ">=3.9",
+  "dependencies": ["torch"],
+  "license": "Apache-2.0"
+}

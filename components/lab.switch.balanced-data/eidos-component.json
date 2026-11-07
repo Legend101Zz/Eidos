@@ -1,0 +1,30 @@
+{
+  "id": "lab.switch.balanced-data",
+  "release": "1.0.0",
+  "implements": "switch-data-generator/1",
+  "kind": "artifact-op",
+  "entry": "switch_data.generate:run",
+  "scientific_effects": ["generate-data"],
+  "input": {},
+  "output": {"dataset": "switch-sequences/1"},
+  "requires": ["artifact.writer/1"],
+  "optional": [],
+  "reads": [],
+  "writes": ["output:dataset"],
+  "isolation": "immutable-artifacts",
+  "card": "method-card.md",
+  "controls": [
+    "fixtures/rounded-half-percent.json",
+    "fixtures/bernoulli-half-percent.json",
+    "fixtures/rounded-two-percent.json",
+    "fixtures/bad-mode.json"
+  ],
+  "receipt": [
+    "mode", "requested_exception_rate", "requested_exceptions", "realized_exceptions",
+    "realized_exception_rate", "realized_exceptions_per_batch", "group_counts"
+  ],
+  "cost": {"cpu_seconds_per_100k_examples": 3},
+  "python": ">=3.9",
+  "dependencies": [],
+  "license": "Apache-2.0"
+}

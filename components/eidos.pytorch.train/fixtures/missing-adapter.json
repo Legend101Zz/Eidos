@@ -1,0 +1,12 @@
+{
+  "name": "missing-adapter",
+  "author_test": true,
+  "inputs": {},
+  "config": {
+    "steps": 3
+  },
+  "expect": {
+    "status": "failed",
+    "error_category": "contract"
+  }
+}

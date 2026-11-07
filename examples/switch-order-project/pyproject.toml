@@ -1,0 +1,13 @@
+[project]
+name = "switch-order-project"
+version = "0.1.0"
+description = "A small custom PyTorch project (order of two switches) used as an Eidos example"
+requires-python = ">=3.9"
+dependencies = ["torch"]
+
+[tool.setuptools]
+py-modules = ["switch_order", "pair_report", "eidos_adapter"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

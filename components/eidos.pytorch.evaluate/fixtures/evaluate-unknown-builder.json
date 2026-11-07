@@ -1,0 +1,21 @@
+{
+  "name": "evaluate-unknown-builder",
+  "author_test": true,
+  "inputs": {
+    "checkpoint": {
+      "file": "fixtures/data/parent-ordered-step20.ckpt",
+      "media_type": "application/octet-stream"
+    }
+  },
+  "config": {
+    "adapter": "eidos_adapter:ADAPTER",
+    "python_path": [
+      "fixtures/selftest"
+    ],
+    "builder": "NoSuchNet"
+  },
+  "expect": {
+    "status": "failed",
+    "error_category": "user-code"
+  }
+}

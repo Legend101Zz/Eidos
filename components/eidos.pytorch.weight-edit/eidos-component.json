@@ -1,0 +1,60 @@
+{
+  "release": "1.0.0",
+  "kind": "artifact-op",
+  "requires": [
+    "artifact.reader/1",
+    "artifact.writer/1",
+    "pytorch.adapter/1"
+  ],
+  "optional": [],
+  "card": "method-card.md",
+  "python": ">=3.9",
+  "dependencies": [
+    "torch"
+  ],
+  "license": "Apache-2.0",
+  "id": "eidos.pytorch.weight-edit",
+  "implements": "pytorch-weight-edit/1",
+  "entry": "eidos_weight_edit.edit:run",
+  "scientific_effects": [
+    "change-weights"
+  ],
+  "input": {
+    "checkpoint": "eidos-checkpoint/1"
+  },
+  "output": {
+    "checkpoint": "eidos-checkpoint/1"
+  },
+  "reads": [
+    "checkpoint"
+  ],
+  "writes": [
+    "output:checkpoint"
+  ],
+  "isolation": "private-copy",
+  "controls": [
+    "fixtures/zero-recorder-weight.json",
+    "fixtures/unknown-entry.json"
+  ],
+  "receipt": [
+    "edits",
+    "parent_digest",
+    "parent_unchanged",
+    "storage_independent",
+    "restore_class",
+    "migration_actions",
+    "checkpoints",
+    "metrics"
+  ],
+  "state": {
+    "schema": "eidos-checkpoint/1",
+    "restore_classes": [
+      "warm-start"
+    ],
+    "mapping": "every parent state entry is copied; only named model entries are edited"
+  },
+  "cost": {
+    "device": "cpu",
+    "examples": 0
+  }
+}

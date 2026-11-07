@@ -1,0 +1,71 @@
+{
+  "name": "missing-seeds",
+  "author_test": true,
+  "inputs": {
+    "request": {
+      "json": {
+        "claim": {
+          "kind": "improves",
+          "statement": "Silencing the recorder weight improves paired accuracy of OrderedSwitchNet at step 45",
+          "scope": {
+            "builder": "OrderedSwitchNet"
+          }
+        },
+        "success_rule_id": "early-repair",
+        "assessor": {
+          "ref": "eidos.assessors.paired-ci@1.0.0"
+        },
+        "evaluation": {
+          "split": "test",
+          "data_seed": 76102,
+          "pairs": 4000
+        },
+        "common_train": {
+          "adapter": "eidos_adapter:ADAPTER",
+          "builder": "OrderedSwitchNet",
+          "steps": 45
+        },
+        "common_evaluate": {
+          "adapter": "eidos_adapter:ADAPTER"
+        },
+        "budget": {
+          "steps": 45
+        },
+        "baseline": {
+          "description": "unedited parent recipe"
+        },
+        "candidate": {
+          "description": "zero recorder readout weight",
+          "post": [
+            {
+              "component": "eidos.pytorch.weight-edit",
+              "config": {
+                "edits": [
+                  {
+                    "entry": "readout.weight",
+                    "index": [
+                      0,
+                      -1
+                    ],
+                    "op": "set",
+                    "value": 0.0
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "config": {},
+  "expect": {
+    "status": "succeeded",
+    "receipt": {
+      "open_obligations": [
+        "seed_policy"
+      ],
+      "jobs_planned": 0
+    }
+  }
+}

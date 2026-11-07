@@ -1,0 +1,47 @@
+{
+  "id": "lab.pairs.by_group",
+  "release": "1.0.0",
+  "implements": "paired-report/1",
+  "kind": "artifact-op",
+  "entry": "pair_tools.report:run",
+  "scientific_effects": ["observe"],
+  "input": {"predictions": "labeled-binary-pairs/1"},
+  "output": {"report": "grouped-pair-counts/1"},
+  "requires": ["artifact.reader/1", "artifact.writer/1"],
+  "optional": [],
+  "reads": ["predictions"],
+  "writes": ["output:report"],
+  "isolation": "immutable-artifacts",
+  "card": "method-card.md",
+  "controls": [
+    "fixtures/opposite-labels.json",
+    "fixtures/ties-and-groups.json",
+    "fixtures/duplicate-pair-id.json",
+    "fixtures/nonfinite-score.json",
+    "fixtures/bad-label.json",
+    "fixtures/missing-group.json"
+  ],
+  "receipt": ["input_rows", "unique_pairs", "group_counts", "rejected_rows", "metrics"],
+  "metrics": {
+    "both_correct_rate": {
+      "identity": "paired-report/1:both-correct-rate",
+      "numerator": "pairs whose reference score decodes to reference_label AND whose variant score decodes to variant_label",
+      "denominator": "all pairs in the group (one pair = one analysis unit)",
+      "decoding": "score > 0 means class 1; score <= 0 means class 0 (ties decode to 0)",
+      "direction": "increase",
+      "unit": "pair"
+    },
+    "reference_accuracy": {
+      "identity": "paired-report/1:reference-accuracy",
+      "numerator": "pairs whose reference score decodes to reference_label",
+      "denominator": "all pairs in the group",
+      "decoding": "score > 0 means class 1; score <= 0 means class 0 (ties decode to 0)",
+      "direction": "increase",
+      "unit": "pair"
+    }
+  },
+  "cost": {"cpu_seconds_per_100k_rows": 2, "memory": "streaming; O(unique pair ids)"},
+  "python": ">=3.9",
+  "dependencies": [],
+  "license": "Apache-2.0"
+}

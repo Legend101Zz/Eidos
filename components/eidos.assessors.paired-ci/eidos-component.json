@@ -1,0 +1,68 @@
+{
+  "id": "eidos.assessors.paired-ci",
+  "release": "1.0.0",
+  "implements": "protocol-assessment/1",
+  "kind": "assessment",
+  "entry": "paired_ci.assess:run",
+  "scientific_effects": [
+    "assess"
+  ],
+  "input": {
+    "evidence": "evidence-set/1"
+  },
+  "output": {
+    "evaluation": "protocol-evaluation/1"
+  },
+  "requires": [
+    "artifact.reader/1",
+    "artifact.writer/1",
+    "lab.domain.evidence/1"
+  ],
+  "optional": [],
+  "reads": [
+    "evidence"
+  ],
+  "writes": [
+    "output:evaluation"
+  ],
+  "isolation": "sealed",
+  "card": "method-card.md",
+  "controls": [
+    "fixtures/planted-effect.json",
+    "fixtures/null-effect.json",
+    "fixtures/duplicate-unit.json",
+    "fixtures/unknown-arm.json"
+  ],
+  "receipt": [
+    "outcome",
+    "units",
+    "clusters",
+    "metrics"
+  ],
+  "grants": [
+    "assessment"
+  ],
+  "metrics": {
+    "both_correct_rate": {
+      "identity": "paired-report/1:both-correct-rate",
+      "numerator": "reference and variant both correct (score > 0 means class 1)",
+      "denominator": "pairs",
+      "unit": "pair"
+    },
+    "reference_accuracy": {
+      "identity": "paired-report/1:reference-accuracy",
+      "numerator": "reference correct",
+      "denominator": "pairs",
+      "unit": "pair"
+    }
+  },
+  "cost": {
+    "cpu_seconds": 1
+  },
+  "python": ">=3.11",
+  "dependencies": [
+    "eidos-lab"
+  ],
+  "license": "Apache-2.0",
+  "control_suite": "controls/suite.json"
+}

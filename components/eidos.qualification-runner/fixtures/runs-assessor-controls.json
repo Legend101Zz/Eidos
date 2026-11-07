@@ -1,0 +1,88 @@
+{
+  "name": "runs-assessor-controls",
+  "author_test": true,
+  "inputs": {},
+  "config": {
+    "suite": {
+      "target": {
+        "kind": "assessor",
+        "ref": "toy.assessor@0.0.1"
+      },
+      "scope": [
+        "fixture-only"
+      ],
+      "controls": [
+        {
+          "id": "planted",
+          "type": "planted",
+          "deterministic": true,
+          "repetitions": 2,
+          "expected_outcome": "protocol-passed",
+          "input": {
+            "inputs": {
+              "evidence": {
+                "effect": 0.9
+              }
+            }
+          }
+        },
+        {
+          "id": "null",
+          "type": "null",
+          "deterministic": true,
+          "repetitions": 2,
+          "expected_outcome": "protocol-failed",
+          "input": {
+            "inputs": {
+              "evidence": {
+                "effect": 0.0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "target_source": "fixtures/target"
+  },
+  "expect": {
+    "status": "succeeded",
+    "receipt": {
+      "target": "toy.assessor@0.0.1",
+      "controls": {
+        "planted": 2,
+        "null": 2
+      },
+      "invalid_runs": 0
+    },
+    "outputs": {
+      "qualification_results": {
+        "json": {
+          "planted": [
+            {
+              "detected": true,
+              "outcome": "protocol-passed",
+              "valid": true
+            },
+            {
+              "detected": true,
+              "outcome": "protocol-passed",
+              "valid": true
+            }
+          ],
+          "null": [
+            {
+              "detected": false,
+              "outcome": "protocol-failed",
+              "valid": true
+            },
+            {
+              "detected": false,
+              "outcome": "protocol-failed",
+              "valid": true
+            }
+          ]
+        }
+      }
+    }
+  }
+}
