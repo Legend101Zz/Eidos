@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import tempfile
-from typing import Any
 
 from temporalio import activity
 from temporalio.exceptions import ApplicationError

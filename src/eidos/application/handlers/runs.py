@@ -124,7 +124,7 @@ def launch_trial(ctx: Ctx, p: dict) -> dict:
     if tr.status != "planned":
         raise Invalid(f"trial {tr.id} is {tr.status}")
     lock = tr.body["lock"]
-    for cap, port in (lock.get("ports") or {}).items():
+    for _cap, port in (lock.get("ports") or {}).items():
         if port.get("ref"):
             rel = ctx.tx.require("component_release", port["ref"])
             if rel.status == "withdrawn":

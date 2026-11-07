@@ -12,7 +12,6 @@ activities, addressed by name so workflow code imports no adapters.
 
 from __future__ import annotations
 
-import asyncio
 from datetime import timedelta
 from typing import Any
 
@@ -89,8 +88,8 @@ class InvestigationWorkflow:
             if not res.get("started") or reason in WAIT_REASONS or reason == "error":
                 self._status = f"waiting ({reason})"
                 try:
-                    await workflow.wait_condition(lambda: self._wakes > seen, timeout=timedelta(seconds=idle))
-                except asyncio.TimeoutError:
+                    await workflow.wait_condition(lambda seen=seen: self._wakes > seen, timeout=timedelta(seconds=idle))
+                except TimeoutError:
                     pass
 
 

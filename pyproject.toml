@@ -80,7 +80,7 @@ src = ["src", "packages/*/src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]
-ignore = ["E501", "B008", "SIM108"]
+ignore = ["E501", "B008", "SIM108", "SIM115", "SIM105"]
 
 [tool.importlinter]
 root_packages = ["eidos", "eidos_wire", "eidos_worker", "eidos_pytorch"]

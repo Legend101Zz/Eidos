@@ -1,0 +1,71 @@
+name: ci
+
+on:
+  push:
+    branches: [build/eidos-local-v1, "task/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_CACHE_DIR: /tmp/uv-cache
+  UV_LOCKED: "1"
+
+jobs:
+  lint-and-unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync
+      - run: uv run ruff check src tests
+      - run: uv run lint-imports
+      - run: uv run pytest tests/unit -q
+
+  integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: devpass
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      EIDOS_TEST_PG_ADMIN: postgresql+psycopg://postgres:devpass@127.0.0.1:5432/postgres
+      EIDOS_TEMPORAL_CLI: /tmp/temporal/temporal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync
+      - name: Temporal CLI (dev server is used for workflow tests only)
+        run: |
+          mkdir -p /tmp/temporal
+          curl -fsSL "https://temporal.download/cli/archive/latest?platform=linux&arch=amd64" | tar xz -C /tmp/temporal
+      - run: uv run pytest tests/integration -q
+
+  worker-compat:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      EIDOS_COMPAT_ROOT: /tmp/compat
+      EIDOS_WHEELHOUSE: /tmp/wheelhouse
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: EIDOS_WHEELHOUSE=/tmp/wheelhouse bash scripts/dev/fetch_cpu_torch.sh 2.15.0 cp312
+      - run: bash tests/worker_compat/run_matrix.sh

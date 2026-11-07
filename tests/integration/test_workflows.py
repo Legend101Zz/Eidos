@@ -100,8 +100,11 @@ async def test_coordinator_rolls_over_and_carries_counters(env):
     hist = await first.fetch_history()
     from temporalio.api.enums.v1 import EventType
     assert hist.events[-1].event_type == EventType.EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW
+    # Record once; later code versions must keep replaying this frozen history (upgrade guard).
     HISTORIES.mkdir(parents=True, exist_ok=True)
-    (HISTORIES / "investigation_v1_rollover.json").write_text(hist.to_json())
+    frozen = HISTORIES / "investigation_v1_rollover.json"
+    if not frozen.exists():
+        frozen.write_text(hist.to_json())
 
 
 async def test_turn_with_non_retryable_payload_error_closes_turn(env):

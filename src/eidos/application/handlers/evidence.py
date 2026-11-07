@@ -207,7 +207,7 @@ def submit_assessment(ctx: Ctx, p: dict) -> dict:
                                     assessor_ref=plan.body["assessor"], conformance=conformance,
                                     evaluation=p.get("evaluation") or {"outcome": "inconclusive"})
     deps = []
-    for arm_id, jid in plan.body["launch"]["jobs"].items():
+    for _arm_id, jid in plan.body["launch"]["jobs"].items():
         deps.append(jid)
         job = ctx.tx.get_job(jid)
         for port in (job["lock"].get("ports") or {}).values():
