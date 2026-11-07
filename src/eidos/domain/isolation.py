@@ -52,6 +52,9 @@ def evaluate_receipt(required: dict[str, Any], receipt: dict[str, Any] | None, *
                                             "required": need}]}
     if receipt.get("launcher") not in trusted_launchers:
         findings.append({"finding": "receipt not issued by a trusted launcher", "launcher": receipt.get("launcher")})
+    want_profile = required.get("profile")
+    if want_profile and receipt.get("profile") != want_profile:
+        findings.append({"finding": f"receipt profile {receipt.get('profile')!r} differs from required {want_profile!r}"})
     if receipt.get("profile") == "dev:same-user":
         findings.append({"finding": "same-user development receipt cannot satisfy a plan requiring sealed execution"})
     controls = receipt.get("controls") or {}

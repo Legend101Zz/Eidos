@@ -49,13 +49,20 @@ def admit_job(ctx: Ctx, *, kind: str, lock: dict, investigation_id: str | None, 
 
 
 def _inputs(ctx: Ctx, ids: dict[str, str]) -> dict[str, dict[str, Any]]:
+    from eidos.application.handlers.queries import RESTRICTED_CLASSES
     out = {}
     for port, aid in (ids or {}).items():
         art = ctx.tx.get_artifact(aid)
         if not art or art["project_id"] != ctx.project_id:
             raise NotFound(f"artifact {aid} not found")
+        need = RESTRICTED_CLASSES.get(art["access_class"])
+        if need and not ctx.principal.has(need):
+            # Restricted bytes (e.g. sealed labels) can never be bound into a job by a principal that
+            # may not read them; otherwise any candidate could exfiltrate them through its outputs.
+            raise NotFound(f"artifact {aid} not found")
         out[port] = {"artifact_id": art["id"], "digest": art["digest"], "schema": art["schema"], "size": art["size"],
-                     "media_type": art["media_type"], "role": art["role"], "meta": art["meta"]}
+                     "media_type": art["media_type"], "role": art["role"], "meta": art["meta"],
+                     "access_class": art["access_class"]}
     return out
 
 
@@ -165,6 +172,13 @@ def resolve_lock(ctx: Ctx, p: dict, *, extra_config: dict | None = None) -> dict
         raise Invalid(f"unknown isolation profile {profile_name!r}", details={"available": sorted(PROFILES)})
     lock["isolation_profile"] = profile_name
     lock["seed"] = p.get("seed")
+    # Derived data inherits the most restrictive input class.
+    order = ("project", "restricted", "sealed-labels")
+    classes = [i.get("access_class", "project") for i in inputs.values()] or ["project"]
+    lock["output_access_class"] = max(classes, key=lambda c: order.index(c) if c in order else 0)
+    if lock["output_access_class"] != "project" and not profile_name.endswith("sealed"):
+        raise Invalid("restricted inputs may only be bound into a sealed execution profile",
+                      details={"output_access_class": lock["output_access_class"], "profile": profile_name})
     return lock
 
 

@@ -63,6 +63,7 @@
     "status": "succeeded",
     "receipt": {
       "open_obligations": [
+        "required_isolation",
         "seed_policy"
       ],
       "jobs_planned": 0

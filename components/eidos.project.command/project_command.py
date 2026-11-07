@@ -101,4 +101,5 @@ def run(inputs, config, *, reader, writer, context):
                "outputs": staged, "source": source, "project_receipt": metrics}
     writer.stage_json("receipt", receipt, schema="project-receipt/1")
     numeric = {k: v for k, v in metrics.items() if isinstance(v, (int, float)) and not isinstance(v, bool)}
-    return {"metrics": numeric, "source": source, "outputs": staged, "seconds": round(elapsed, 3)}
+    return {"metrics": numeric, "source": source, "outputs": staged, "seconds": round(elapsed, 3),
+            "returncode": proc.returncode}

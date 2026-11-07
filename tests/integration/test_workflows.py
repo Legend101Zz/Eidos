@@ -9,7 +9,7 @@ import uuid
 from pathlib import Path
 
 import pytest
-from temporalio import activity
+from temporalio import activity, workflow
 from temporalio.client import WorkflowFailureError
 from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
@@ -205,3 +205,70 @@ async def test_stress_many_turns_bounded_histories_and_oversized_results(env):
                   if last.event_type == EventType.EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW else None)
     # Each run may exceed the soft limit only by what one in-flight turn adds (signals during a child).
     assert len(lengths) >= fake.turns // 4 and max(lengths) < 400 + 120, lengths
+
+
+
+@workflow.defn(name="TurnWorkflow", sandboxed=False)
+class _TurnBeforeInvalidFeedback:
+    """TurnWorkflow as it was before the invalid-proposal feedback change (review finding e/6)."""
+
+    @workflow.run
+    async def run(self, a):
+        from datetime import timedelta
+
+        from eidos.orchestration.workflows import MODEL, SHORT
+        b = await workflow.execute_activity("begin_turn", a, task_queue=INVESTIGATOR_QUEUE,
+                                            start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
+        base = {"turn_id": b["turn_id"], "project_id": a["project_id"], "investigation_id": a["investigation_id"]}
+        stop = "calls-exhausted"
+        try:
+            await workflow.execute_activity("build_context", base, task_queue=INVESTIGATOR_QUEUE,
+                                            start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
+            for slot in range(int(b.get("max_model_calls", 4))):
+                d = await workflow.execute_activity("decide", {**base, "slot": slot}, task_queue=INVESTIGATOR_QUEUE,
+                                                    start_to_close_timeout=timedelta(seconds=60), retry_policy=MODEL)
+                if not d.get("accepted"):
+                    stop = "stale-revision" if d.get("reason") == "stale-revision" else "error"
+                    break
+        finally:
+            await workflow.execute_activity("complete_turn", {**base, "stop_reason": stop}, task_queue=INVESTIGATOR_QUEUE,
+                                            start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
+        return {"started": True, "stop_reason": stop}
+
+
+async def test_inflight_turn_with_invalid_proposal_replays_after_upgrade(env):
+    """A history recorded by the pre-change TurnWorkflow (invalid proposal ends the turn) must replay on
+    the current code (patched guard). The history is frozen as a fixture for future upgrades."""
+    @activity.defn(name="begin_turn")
+    async def begin_turn(a):
+        return {"started": True, "turn_id": "t1", "max_model_calls": 3}
+
+    @activity.defn(name="build_context")
+    async def build_context(a):
+        return {}
+
+    @activity.defn(name="decide")
+    async def decide(a):
+        return {"accepted": False, "reason": "invalid", "decision_id": "d"}
+
+    @activity.defn(name="complete_turn")
+    async def complete_turn(a):
+        return {"status": "completed"}
+
+    frozen = HISTORIES / "turn_v1_invalid_proposal.json"
+    if not frozen.exists():
+        async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=[_TurnBeforeInvalidFeedback]), \
+                Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=[begin_turn, build_context, decide, complete_turn]):
+            h = await env.client.start_workflow("TurnWorkflow", {"investigation_id": "i", "project_id": "p", "index": 1},
+                                                id=f"t-{uuid.uuid4().hex[:6]}", task_queue=WORKFLOW_QUEUE)
+            assert (await h.result())["stop_reason"] == "error"
+            frozen.write_text((await h.fetch_history()).to_json())
+    from temporalio.client import WorkflowHistory
+    await Replayer(workflows=ALL_WORKFLOWS).replay_workflow(
+        WorkflowHistory.from_json("turn-invalid", json.loads(frozen.read_text())))
+    # New behaviour: consecutive invalid proposals end the turn with a waiting stop reason.
+    async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
+            Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=[begin_turn, build_context, decide, complete_turn]):
+        r = await env.client.execute_workflow(TurnWorkflow.run, {"investigation_id": "i", "project_id": "p", "index": 2},
+                                              id=f"t-{uuid.uuid4().hex[:6]}", task_queue=WORKFLOW_QUEUE)
+    assert r["stop_reason"] == "invalid-proposals"

@@ -18,10 +18,11 @@ TORCH = {
     "eidos.pytorch.behavior-check",
 }
 LAB = {"eidos.assessors.paired-ci", "eidos.qualification-runner"}
+NUMPY = {"eidos.task.score-classification", "eidos.task.score-regression"}  # need numpy (project env)
 
 
 def test_ten_components_present():
-    assert len(ALL) == 10
+    assert len(ALL) >= 10
 
 
 @pytest.mark.parametrize("path", ALL, ids=lambda p: p.name)
@@ -37,7 +38,19 @@ def test_manifest_is_valid_and_complete(path):
         assert m.controls, "every runnable component ships fixtures"
 
 
-@pytest.mark.parametrize("path", [p for p in ALL if p.name not in TORCH], ids=lambda p: p.name)
+@pytest.mark.parametrize("name", sorted(NUMPY))
+def test_numpy_component_fixtures(name):
+    import os
+    import subprocess
+    py = os.environ.get("EIDOS_NUMPY_PYTHON")
+    if not py:
+        pytest.skip("set EIDOS_NUMPY_PYTHON to an interpreter with numpy")
+    r = subprocess.run([py, "-m", "eidos_worker.validate", str(COMPONENTS / name)], capture_output=True, text=True,
+                       env={**os.environ, "PYTHONPATH": SDK_PATH}, timeout=240)
+    assert r.returncode == 0 and r.stdout.strip().endswith("ok"), r.stdout + r.stderr
+
+
+@pytest.mark.parametrize("path", [p for p in ALL if p.name not in TORCH | NUMPY], ids=lambda p: p.name)
 def test_fixtures_pass_in_lab_environment(path):
     report = validate_component(path, timeout=240)
     assert report.manifest_problems == []

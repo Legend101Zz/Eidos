@@ -58,6 +58,10 @@
               }
             }
           ]
+        },
+        "required_isolation": {
+          "profile": "dev:same-user",
+          "controls": []
         }
       }
     }

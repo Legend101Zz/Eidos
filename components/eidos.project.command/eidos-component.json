@@ -1,6 +1,6 @@
 {
   "id": "eidos.project.command",
-  "release": "1.0.4",
+  "release": "1.0.6",
   "implements": "project-command/1",
   "kind": "artifact-op",
   "entry": "project_command:run",
@@ -32,7 +32,10 @@
   ],
   "isolation": "private-copy",
   "card": "method-card.md",
-  "controls": [],
+  "controls": [
+    "fixtures/hello.json",
+    "fixtures/nonzero.json"
+  ],
   "receipt": [
     "argv",
     "returncode",
@@ -75,5 +78,6 @@
         "minimum": 1
       }
     }
-  }
+  },
+  "dynamic_outputs": true
 }

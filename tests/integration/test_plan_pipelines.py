@@ -47,6 +47,7 @@ def _setup(lab):
         {"id": f"{arm}.s{s}.evaluate", "component": "p.eval@1.0.0", "inputs": {"checkpoint": f"{arm}.s{s}.train.checkpoint"},
          "config": {}, "environment": "lab"}]} for s in (1, 2)]
     draft = {"success_rule_id": "r1", "assessor": {"ref": "p.assess@1.0.0"}, "analysis_unit": "pair", "cluster_by": "seed",
+             "required_isolation": {"profile": "dev:same-user", "controls": [], "note": "explicit exploratory choice"},
              "seed_policy": {"seeds": [1, 2]},
              "arms": [{"id": "baseline", "role": "baseline", "runs": runs("baseline")},
                       {"id": "candidate", "role": "candidate", "runs": runs("candidate")}]}

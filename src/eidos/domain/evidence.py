@@ -102,13 +102,14 @@ def compile_plan(
         "seed_policy": draft.get("seed_policy"),
         "splits": draft.get("splits"),
         "tuning": draft.get("tuning", {}),
-        "required_isolation": draft.get("required_isolation", {"profile": "dev:same-user", "controls": []}),
+        # No silent default: running confirmation on the same OS user must be an explicit choice.
+        "required_isolation": draft.get("required_isolation"),
         "resource_reservation": draft.get("resource_reservation", {}),
         "obligations": list(draft.get("obligations", [])),
         "alternatives_unresolved": list(draft.get("alternatives_unresolved", [])),
         "disclosures": draft.get("disclosures", {}),
     }
-    for key in ("analysis_unit", "seed_policy", "assessor"):
+    for key in ("analysis_unit", "seed_policy", "assessor", "required_isolation"):
         if not plan[key] and key not in plan["obligations"]:
             plan["obligations"].append(key)
     return plan

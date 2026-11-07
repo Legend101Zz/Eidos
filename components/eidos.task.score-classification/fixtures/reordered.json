@@ -1,0 +1,26 @@
+{
+ "name": "accuracy with reordered ids",
+ "inputs": {
+  "predictions": {
+   "file": "fixtures/data/pred.npz",
+   "media_type": "application/x-npz"
+  },
+  "reference": {
+   "file": "fixtures/data/ref.npz",
+   "media_type": "application/x-npz"
+  }
+ },
+ "config": {
+  "nclasses": 2
+ },
+ "expect": {
+  "status": "succeeded",
+  "receipt": {
+   "metrics": {
+    "accuracy": 0.6666666666666666,
+    "n": 3
+   }
+  }
+ },
+ "author_test": true
+}

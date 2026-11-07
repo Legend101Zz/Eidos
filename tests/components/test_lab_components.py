@@ -124,6 +124,7 @@ def _request(**over):
         "evaluation": {"split": "test", "data_seed": 9, "pairs": 100},
         "baseline": {},
         "candidate": {"post": [{"component": "eidos.pytorch.weight-edit", "config": {"edits": []}}]},
+        "required_isolation": {"profile": "dev:same-user", "controls": []},
     }
     req.update(over)
     return req
@@ -191,11 +192,12 @@ def test_template_leaves_open_obligations_instead_of_inventing(lab_run):
     res = lab_run(
         "eidos.templates.improves-under-budget",
         "improves_template.expand:run",
-        inputs={"request": _request(seeds=None, evaluation=None)},
+        inputs={"request": _request(seeds=None, evaluation=None, required_isolation=None)},
         config={},
     )
     draft = res.json("draft")
     assert draft["seed_policy"] is None and set(draft["obligations"]) == {
         "seed_policy",
         "evaluation split and size",
+        "required_isolation",
     }

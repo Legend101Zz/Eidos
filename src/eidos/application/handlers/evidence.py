@@ -254,10 +254,13 @@ def maybe_request_assessment(ctx: Ctx, plan_id: str) -> None:
 
 def _realized(ctx: Ctx, plan) -> dict:
     arms, iso_findings, iso_ok = {}, [], True
+    req = plan.body.get("required_isolation") or {}
+    sealed_needed = bool(req.get("sealed") or str(req.get("profile", "")).endswith("sealed") or req.get("controls"))
+    # Trusted = holds the launcher grant and, for sealed requirements, the sealed:read grant too.
     trusted = {pr["id"] for pr in [ctx.tx.get_principal(r.body.get("launcher", "")) or {} for r in
                                    ctx.tx.list_records(ctx.project_id, "isolation_receipt")]
-               if pr and "launcher" in (pr.get("scopes") or [])}
-    req = plan.body.get("required_isolation") or {}
+               if pr and "launcher" in (pr.get("scopes") or [])
+               and (not sealed_needed or "sealed:read" in (pr.get("scopes") or []))}
     blocked = (plan.body["launch"].get("blocked") or {})
     for arm_id, jids in arm_jobs(plan.body).items():
         statuses, receipt = [], {}
@@ -267,6 +270,9 @@ def _realized(ctx: Ctx, plan) -> dict:
             receipt = (job.get("terminal") or {}).get("receipt", {}) if job else {}
             att_receipt = ctx.tx.get_record("isolation_receipt", job["current_attempt"]) if job and job["current_attempt"] else None
             verdict = isolation.evaluate_receipt(req, att_receipt.body if att_receipt else None, trusted_launchers=trusted)
+            if job and att_receipt and att_receipt.body.get("profile") != job["lock"].get("isolation_profile"):
+                verdict = {"ok": False, "findings": verdict["findings"] + [{"finding": "receipt profile differs from the "
+                           "job's locked profile", "job_profile": job["lock"].get("isolation_profile")}]}
             if not verdict["ok"]:
                 iso_ok = False
                 iso_findings.extend({**f, "arm": arm_id, "job": jid} for f in verdict["findings"])

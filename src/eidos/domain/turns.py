@@ -48,7 +48,7 @@ REQUIRED_ARGS = {
 }
 CONTROL_TOOLS = ("wait_for_jobs", "request_input", "conclude", "stop")
 READ_TOOLS = ("inspect_evidence", "search_components", "describe_component", "get_job", "read_artifact")
-STOP_REASONS = ("calls-exhausted", "waiting", "input-requested", "concluded", "budget-exhausted",
+STOP_REASONS = ("calls-exhausted", "invalid-proposals", "waiting", "input-requested", "concluded", "budget-exhausted",
                 "deadline", "cancelled", "error", "stale-revision")
 
 

@@ -59,7 +59,11 @@
             }
           ]
         },
-        "min_effect": 0.01
+        "min_effect": 0.01,
+        "required_isolation": {
+          "profile": "dev:same-user",
+          "controls": []
+        }
       }
     }
   },

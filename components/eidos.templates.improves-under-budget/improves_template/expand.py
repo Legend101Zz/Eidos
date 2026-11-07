@@ -120,6 +120,8 @@ def run(inputs, config, *, reader, writer, context):
     if not candidate:
         raise ContractError("request.candidate (the intervention under test) is required")
     obligations: list[str] = []
+    if not request.get("required_isolation"):
+        obligations.append("required_isolation")  # never default confirmation to the same OS user
     if seeds is None:
         obligations.append("seed_policy")
     if not evaluation:
@@ -160,7 +162,7 @@ def run(inputs, config, *, reader, writer, context):
         ),
         "splits": {"evaluation": evaluation or None, "tuning": None},
         "tuning": request.get("tuning", {}),
-        "required_isolation": request.get("required_isolation", {"profile": "dev:same-user", "controls": []}),
+        "required_isolation": request.get("required_isolation"),
         "resource_reservation": {"matched_budget": budget, "arms": len(arms), "seeds": len(seeds or [])},
         "obligations": obligations,
         "alternatives_unresolved": list(

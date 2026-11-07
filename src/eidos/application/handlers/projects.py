@@ -81,6 +81,14 @@ def register_environment(ctx: Ctx, p: dict) -> dict:
     for k in ("python_executable", "project_root", "python_version"):
         if not p.get(k):
             raise Invalid(f"{k} is required")
+    lab_root = ctx.settings.get("lab_root")
+    if lab_root:
+        from pathlib import Path as _P
+        root = _P(lab_root).resolve()
+        for k in ("project_root", "python_executable"):
+            target = _P(p[k]).resolve()
+            if target == root or root in target.parents:
+                raise Invalid(f"{k} must not lie inside the lab directory (it would expose lab data to jobs)")
     env_id = p.get("env_id") or f"env:{ctx.project_id}:{name}"
     body = {k: p.get(k) for k in ("python_executable", "project_root", "python_version", "installed",
                                   "lock_digest", "platform", "devices", "adapter", "isolation_profiles", "notes")}
@@ -111,11 +119,15 @@ def register_artifact(ctx: Ctx, p: dict) -> dict:
     if access == "sealed-labels" and not ctx.principal.has("sealed:write"):
         raise Invalid("registering sealed labels requires the sealed:write grant")
     import uuid as _uuid
-    aid = p.get("artifact_id") or f"art_{_uuid.uuid4().hex[:16]}"
+    # Artifact ids are minted by the lab; caller-chosen ids could pre-empt job output ids.
+    aid = f"art_{_uuid.uuid4().hex[:16]}"
     ctx.tx.insert_artifact({"id": aid, "project_id": ctx.project_id, "digest": p["digest"], "size": int(p["size"]),
                             "media_type": p.get("media_type", "application/octet-stream"), "schema": p.get("schema"),
                             "role": p.get("role", "input"), "access_class": access,
                             "origin": p.get("origin", "imported"), "meta": p.get("meta") or {}})
-    ctx.event("artifact.registered", aid, {"digest": p["digest"], "schema": p.get("schema"), "name": p.get("name")},
-              investigation_id=p.get("investigation_id"))
+    if access == "project":
+        ctx.event("artifact.registered", aid, {"digest": p["digest"], "schema": p.get("schema"), "name": p.get("name")},
+                  investigation_id=p.get("investigation_id"))
+    else:  # restricted ids/digests are not broadcast in the shared event stream
+        ctx.event("artifact.registered", None, {"access_class": access})
     return {"artifact_id": aid, "digest": p["digest"], "size": int(p["size"])}

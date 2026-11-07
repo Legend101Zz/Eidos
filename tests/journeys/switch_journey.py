@@ -33,7 +33,7 @@ from staging import stage_component  # noqa: E402
 ADAPTER = "eidos_adapter:ADAPTER"
 TRAIN, EVALUATE, EDIT = "eidos.pytorch.train@1.0.0", "eidos.pytorch.evaluate@1.0.0", "eidos.pytorch.weight-edit@1.0.0"
 BEHAVIOR, SCORER = "eidos.pytorch.behavior-check@1.0.0", "lab.pairs.by_group@1.0.0"
-ASSESSOR, TEMPLATE = "eidos.assessors.paired-ci@1.0.0", "eidos.templates.improves-under-budget@1.0.0"
+ASSESSOR, TEMPLATE = "eidos.assessors.paired-ci@1.0.0", "eidos.templates.improves-under-budget@1.1.0"
 RUNNER = "eidos.qualification-runner@1.0.0"
 EVAL_CFG = {"adapter": ADAPTER, "evaluation": {"split": "test", "data_seed": 76102, "pairs": 4000}}
 EDIT_CFG = {"edits": [{"entry": "readout.weight", "index": [0, -1], "op": "set", "value": 0.0}],
@@ -495,6 +495,7 @@ def step5(j: Journey, a: argparse.Namespace) -> None:
         j.check("assessor promoted after the passing receipt", bool(ap.get("approval_id")), **ap)
         # ---- template qualification (journey runner; author suite) -------------------------------------------
         base_req = {"claim": {"kind": "improves", "statement": "qualification control"}, "success_rule_id": "early-repair",
+                    "required_isolation": {"profile": "dev:same-user", "controls": []},
                     "assessor": {"ref": ASSESSOR}, "seeds": {"count": 3, "start": 41}, "evaluation": EVAL_CFG["evaluation"],
                     "common_train": {"adapter": ADAPTER, "builder": "OrderedSwitchNet", "steps": 45},
                     "common_evaluate": {"adapter": ADAPTER}, "budget": {"steps": 45}}
@@ -534,7 +535,9 @@ def step5(j: Journey, a: argparse.Namespace) -> None:
         j.S["claim"] = claim["claim_id"]
         request = {**base_req, "claim": {"kind": "improves", "statement": "silence recorder weight"},
                    "seeds": [41, 53, 67], "baseline": {"description": "unedited step-45 model"},
-                   "candidate": planted["candidate"]}
+                   "candidate": planted["candidate"],
+                   # Explicit choice: this development journey confirms on the same OS user (exploratory).
+                   "required_isolation": {"profile": "dev:same-user", "controls": [], "note": "exploratory journey"}}
         up = j.client.upload(j.project, data=json.dumps(request).encode(), media_type="application/json",
                              schema="plan-request/1", role="input", name="plan-request")
         tj = j.run("plan:template-expand", TEMPLATE, inputs={"request": up["result"]["artifact_id"]}, config={})

@@ -61,6 +61,10 @@
         },
         "parent": {
           "checkpoint_ref": "checkpoint:parent-ordered-45"
+        },
+        "required_isolation": {
+          "profile": "dev:same-user",
+          "controls": []
         }
       }
     }

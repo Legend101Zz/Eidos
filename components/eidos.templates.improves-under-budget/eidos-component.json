@@ -1,6 +1,6 @@
 {
   "id": "eidos.templates.improves-under-budget",
-  "release": "1.0.0",
+  "release": "1.1.0",
   "implements": "evidence-plan/1",
   "kind": "planning",
   "entry": "improves_template.expand:run",

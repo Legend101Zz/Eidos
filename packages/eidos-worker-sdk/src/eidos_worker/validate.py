@@ -132,6 +132,8 @@ def _run_fixture(root: Path, manifest, fixture_path: Path, control: str, timeout
                     if entry.role == "log":
                         continue
                     declared = manifest.output.get(entry.slot)
+                    if declared is None and manifest.raw.get("dynamic_outputs"):
+                        continue  # whole-project escape hatch: slots come from what the project writes
                     if declared is None:
                         problems.append(f"staged slot {entry.slot!r} is not a declared output port")
                     elif entry.schema is not None and entry.schema != declared:

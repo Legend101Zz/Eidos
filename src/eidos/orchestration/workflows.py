@@ -30,7 +30,8 @@ MODEL = RetryPolicy(initial_interval=timedelta(seconds=2), backoff_coefficient=2
                     non_retryable_error_types=NON_RETRYABLE)
 
 HB = timedelta(seconds=30)  # investigator activities heartbeat every 5 s; a killed worker is noticed in ~30 s
-WAIT_REASONS = ("waiting", "input-requested", "stale-revision", "calls-exhausted-waiting")
+WAIT_REASONS = ("waiting", "input-requested", "stale-revision", "calls-exhausted-waiting", "invalid-proposals")
+MAX_CONSECUTIVE_INVALID = 2
 TERMINAL_REASONS = ("concluded", "budget-exhausted", "max-turns-reached", "stopped", "investigation is stopped",
                     "investigation is concluded")
 
@@ -111,6 +112,7 @@ class TurnWorkflow:
         tid = b["turn_id"]
         base = {"turn_id": tid, "project_id": a["project_id"], "investigation_id": a["investigation_id"]}
         stop, control, receipts = "calls-exhausted", {}, []
+        invalid_run = 0
         try:
             await workflow.execute_activity("build_context", base, task_queue=INVESTIGATOR_QUEUE,
                                             start_to_close_timeout=timedelta(seconds=120),
@@ -120,10 +122,16 @@ class TurnWorkflow:
                                                     start_to_close_timeout=timedelta(seconds=int(b.get("model_timeout", 300))),
                                                     heartbeat_timeout=HB, retry_policy=MODEL)
                 if not d.get("accepted"):
-                    if d.get("reason") == "invalid":
-                        continue  # the next slot sees why the proposal was refused (bounded by max_model_calls)
+                    # Versioned change: histories recorded before it ended the turn on any rejection.
+                    if d.get("reason") == "invalid" and workflow.patched("invalid-proposal-feedback-v1"):
+                        invalid_run += 1
+                        if invalid_run >= MAX_CONSECUTIVE_INVALID:
+                            stop = "invalid-proposals"  # waits like other wait reasons; no hot loop
+                            break
+                        continue  # the next slot sees why the proposal was refused
                     stop = "stale-revision" if d.get("reason") == "stale-revision" else "error"
                     break
+                invalid_run = 0
                 if d.get("n_calls"):
                     r = await workflow.execute_activity("execute_decision", {**base, "decision_id": d["decision_id"]},
                                                         task_queue=INVESTIGATOR_QUEUE,

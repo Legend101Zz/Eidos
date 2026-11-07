@@ -77,6 +77,14 @@ def start_attempt(ctx: Ctx, p: dict) -> dict:
                            "lease_expires_at": lease})
     ctx.tx.update_job(job["id"], status="running", epoch=epoch, current_attempt=aid)
     ctx.event("attempt.started", aid, {"job_id": job["id"], "epoch": epoch}, investigation_id=job["investigation_id"])
+    from eidos.application.handlers.queries import RESTRICTED_CLASSES
+    for port, inp in (job["lock"].get("inputs") or {}).items():
+        art = ctx.tx.get_artifact(inp["artifact_id"])
+        need = RESTRICTED_CLASSES.get(art["access_class"]) if art else None
+        if need and not ctx.principal.has(need):  # this launcher may not hand restricted bytes to anyone
+            _terminal(ctx, job, "failed", {"error": {"category": "isolation-unavailable",
+                      "message": f"input {port} is {art['access_class']}; launcher {ctx.principal.id} lacks {need}"}})
+            return {"run": False, "status": "failed"}
     inputs = {port: {**inp, "path": ctx.store.path_for(inp["digest"])} for port, inp in (job["lock"].get("inputs") or {}).items()}
     bundle = job["lock"].get("component", {}).get("bundle")
     if bundle:
@@ -135,8 +143,18 @@ def publish_outputs(ctx: Ctx, p: dict) -> dict:
             raise Invalid(f"staged bytes for slot {out.slot!r} are missing or fail verification; nothing published",
                           details={"slot": out.slot, "digest": out.digest})
         aid = f"art_{job['id'][4:]}_{out.slot}"[:120]
+        existing = ctx.tx.get_artifact(aid)
+        if existing is not None and (existing["digest"] != out.digest or existing["size"] != out.size
+                                     or existing["producer_job"] != job["id"]):
+            # Never point a publication at bytes this job did not produce (pre-registered id hijack).
+            raise Invalid(f"artifact id {aid} is taken by different content; publication refused",
+                          details={"slot": out.slot})
         meta = {}
-        if out.role == "checkpoint":
+        role = out.role
+        declared = (job["lock"].get("outputs") or {}).get(out.slot)
+        if role == "checkpoint" and declared != "eidos-checkpoint/1":
+            role = "output"  # only slots the component declares as checkpoints can become branch parents
+        if role == "checkpoint":
             ck = dict(checkpoints.get(out.slot) or {})
             # A checkpoint from a failed run is branchable only if its receipt vouches for it.
             ck.setdefault("complete", man.status == "succeeded")
@@ -152,12 +170,12 @@ def publish_outputs(ctx: Ctx, p: dict) -> dict:
             meta["checkpoint"] = ck
         if ctx.tx.get_artifact(aid) is None:
             ctx.tx.insert_artifact({"id": aid, "project_id": ctx.project_id, "digest": out.digest, "size": out.size,
-                                    "media_type": out.media_type, "schema": out.schema, "role": out.role,
+                                    "media_type": out.media_type, "schema": out.schema, "role": role,
                                     "origin": "job-output", "producer_job": job["id"], "producer_attempt": p["attempt_id"],
                                     "access_class": job["lock"].get("output_access_class", "project"), "meta": meta})
         if ctx.tx.insert_publication(job["id"], out.slot, epoch, p["attempt_id"], aid):
             ctx.tx.add_lineage(ctx.project_id, job["id"], aid, f"output:{out.slot}")
-            published.append({"slot": out.slot, "artifact_id": aid, "digest": out.digest, "role": out.role})
+            published.append({"slot": out.slot, "artifact_id": aid, "digest": out.digest, "role": role})
         else:
             duplicates.append(out.slot)
     if duplicates:
@@ -237,6 +255,9 @@ def record_isolation_receipt(ctx: Ctx, p: dict) -> dict:
     receipt = dict(p.get("receipt") or {})
     receipt["launcher"] = ctx.principal.id
     receipt["job_id"] = job["id"]
+    receipt["job_profile"] = job["lock"].get("isolation_profile")
+    if ctx.tx.get_record("isolation_receipt", p["attempt_id"]) is not None:  # write-once per attempt
+        raise Invalid(f"isolation receipt for {p['attempt_id']} already recorded")
     rec = ctx.tx.put_record("isolation_receipt", p["attempt_id"], ctx.project_id, receipt, created_by=ctx.principal.id,
                             status="recorded", parent_id=job["id"])
     return {"receipt_id": rec.id, "digest": rec.digest}

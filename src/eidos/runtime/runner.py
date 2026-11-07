@@ -173,6 +173,10 @@ class AttemptRunner:
             d.mkdir(parents=True)
         env = lock["environment"]
         python = env["python_executable"]
+        lab = self.root.resolve()
+        for label, path in (("project_root", env["project_root"]), ("python_executable", python)):
+            if lab == Path(path).resolve() or lab in Path(path).resolve().parents:
+                raise StoreError(f"{label} {path} lies inside the lab directory; refusing to expose lab data to a job")
         source = None
         if st.get("bundle"):
             source = materialize_bundle(st["bundle"]["path"], adir / "source")
@@ -304,6 +308,15 @@ class AttemptRunner:
             err = (adir / "stderr.log").read_text()[-3000:] if (adir / "stderr.log").exists() else ""
             return self._finish(project, ctx, "failed", {}, {"category": "infrastructure",
                                 "message": f"no valid output manifest ({exc}); exit={h.exit_code()}", "stderr_tail": err})
+        code = h.exit_code()
+        if man.status == "succeeded" and code not in (0, None):
+            # The manifest lives in candidate-writable staging; a crashed process cannot claim success.
+            return self._finish(project, ctx, "failed", {}, {"category": "contract", "message":
+                                f"worker exited with code {code} but its manifest claims success"}, final=True)
+        limit = int(ctx["lock"].get("limits", {}).get("max_output_bytes", 512 << 20))
+        if sum(o.size for o in man.outputs) > limit:
+            return self._finish(project, ctx, "failed", {}, {"category": "resource",
+                                "message": f"outputs exceed max_output_bytes={limit}"}, final=True)
         outputs = []
         for o in man.outputs:
             src = (staging / o.filename)
