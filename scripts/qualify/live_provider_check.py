@@ -106,23 +106,30 @@ def main() -> int:
         try:
             res = PydanticAIRuntime(cfg).decide(req)
             spent["requests"] += int(res.usage.get("calls") or 0)
-            entry.update({"outcome": "decision", "usage": res.usage, "served_models": res.model_settings.get("served_models")})
+            entry.update({"outcome": "bounded-no-decision" if res.usage.get("limit_reached") else "decision",
+                          "usage": res.usage, "served_models": res.model_settings.get("served_models")})
             try:
-                d = validate_decision(res.proposal, max_calls=6)
+                d = validate_decision(res.proposal, max_calls=6)  # rejects calls missing required args
                 entry["schema_valid"] = True
+                entry["executable"] = True
                 entry["tools"] = [c["tool"] for c in d["calls"]]
+                entry["calls"] = [{"tool": c["tool"], "args": json.dumps(c["args"], sort_keys=True)[:600]} for c in d["calls"]]
                 entry["control"] = d["control"]
             except Exception as exc:
                 entry["schema_valid"] = False
                 entry["validation_error"] = str(exc)[:300]
         except ModelCallFailed as exc:
-            spent["requests"] += 1  # conservatively count a possibly billed request
+            spent["requests"] += max(1, int((exc.possible_usage or {}).get("calls") or 0))
             entry.update({"outcome": "model-call-failed", "retryable": exc.retryable, "error": str(exc)[:300],
                           "possible_usage": exc.possible_usage})
         entry["seconds"] = round(time.time() - t0, 2)
-        entry["pass"] = (entry.get("outcome") == "decision" and entry.get("schema_valid")) if expect == "valid-decision" \
-            else (entry.get("outcome") == expect.split(":")[0] and (
-                  ":" not in expect or str(entry.get("retryable")).lower() == expect.split(":")[1]))
+        if expect == "valid-decision":
+            entry["pass"] = entry.get("outcome") == "decision" and bool(entry.get("schema_valid")) and bool(entry.get("calls") or entry.get("control"))
+        elif expect == "bounded-or-decision":
+            entry["pass"] = entry.get("outcome") in ("decision", "bounded-no-decision") and bool(entry.get("schema_valid"))
+        else:
+            entry["pass"] = entry.get("outcome") == expect.split(":")[0] and (
+                ":" not in expect or str(entry.get("retryable")).lower() == expect.split(":")[1])
         receipt["scenarios"].append(entry)
 
     for name, view, cat_n, _ in SCENARIOS:
@@ -132,16 +139,16 @@ def main() -> int:
              "search_components": lambda t="", c=None: {"components": _catalog(4)},
              "describe_component": lambda r: {"ref": r, "body": {"manifest": {"entry": "x:y"}}},
              "get_job": lambda j: {"id": j, "status": "succeeded"}}
-    run("read-tools-available", {}, _view([_job(0, 0.84)]), 6, tools, 3, "valid-decision")
+    run("read-tools-available", {}, _view([_job(0, 0.84)]), 6, tools, 6, "valid-decision")
     run("provider-timeout", {"request_timeout": 0.001}, _view(), 6, None, 1, "model-call-failed:true")
     run("request-limit-with-tool-loop", {}, _view([_job(0, 0.84)],
         steering=[{"by": "check", "instruction": "Inspect art_vp0 with inspect_evidence before deciding."}]), 6, tools, 1,
-        "any")
-    run("unknown-model-id", {"model": "anthropic:eidos-no-such-model"}, _view(), 6, None, 1, "model-call-failed")
+        "bounded-or-decision")
+    run("unknown-model-id", {"model": "anthropic:eidos-no-such-model"}, _view(), 6, None, 1, "model-call-failed:false")
     receipt["total_requests_counted"] = spent["requests"]
     receipt["finished_at"] = time.time()
     receipt["summary"] = {"scenarios": len(receipt["scenarios"]),
-                          "passed": sum(1 for s in receipt["scenarios"] if s.get("pass") or s.get("expect") == "any"),
+                          "passed": sum(1 for s in receipt["scenarios"] if s.get("pass")),
                           "schema_conformance": [s.get("schema_valid") for s in receipt["scenarios"]
                                                  if s.get("expect") == "valid-decision"]}
     print(json.dumps(receipt, indent=2, default=str))

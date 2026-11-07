@@ -33,6 +33,19 @@ EFFECT_TOOLS = {
     "export_model": "export_model",
     "record_note": "record_note",
 }
+# Arguments each effect tool cannot run without. A call missing any of them is rejected before
+# acceptance, so "schema-valid" also means "executable" (live provider finding: strict-mode JSON
+# schemas can silently drop free-form objects).
+REQUIRED_ARGS = {
+    "run_component": ("component_ref",), "plan_trial": ("component_ref",), "launch_trial": ("trial_id",),
+    "plan_branch": ("parent_checkpoint_id", "component_ref", "migration", "stream_policy"),
+    "launch_branch": ("trial_id",), "author_component": ("files",),
+    "publish_component": ("bundle_artifact_id", "validation_job_id"), "bind_component": ("component_ref",),
+    "retire_component": ("component_ref",), "file_claim": ("statement", "kind", "scope"),
+    "draft_evidence_plan": ("claim_id", "charter_id", "template_ref"), "freeze_evidence_plan": ("plan_id",),
+    "launch_evidence_plan": ("plan_id",), "export_model": ("checkpoint_artifact_id", "behavior_check_job_id"),
+    "record_note": ("text",),
+}
 CONTROL_TOOLS = ("wait_for_jobs", "request_input", "conclude", "stop")
 READ_TOOLS = ("inspect_evidence", "search_components", "describe_component", "get_job", "read_artifact")
 STOP_REASONS = ("calls-exhausted", "waiting", "input-requested", "concluded", "budget-exhausted",
@@ -63,6 +76,10 @@ def validate_decision(proposal: dict[str, Any], *, max_calls: int) -> dict[str, 
                           details={"allowed": sorted(EFFECT_TOOLS)})
         if not isinstance(c.get("args"), dict):
             raise Invalid(f"call {i}: args must be an object")
+        missing = [a for a in REQUIRED_ARGS.get(c["tool"], ()) if c["args"].get(a) in (None, "", {}, [])]
+        if missing:
+            raise Invalid(f"call {i} ({c['tool']}): missing required args {missing}",
+                          details={"tool": c["tool"], "missing": missing})
     control = proposal.get("control") or {}
     if control and control.get("action") not in CONTROL_TOOLS:
         raise Invalid(f"unknown control action {control.get('action')!r}")

@@ -312,3 +312,11 @@ def test_any_schema_input_port_accepts_any_artifact_schema():
     assert lock["inputs"]["extra_a"]["schema"] == "prediction-array/1"
     from eidos_wire import parse_manifest
     parse_manifest({**target["manifest"], "input": {"x": "*"}})
+
+
+def test_decision_with_empty_args_is_not_executable():
+    with pytest.raises(Invalid) as e:
+        turns.validate_decision({"calls": [{"tool": "run_component", "args": {}}]}, max_calls=4)
+    assert e.value.details["missing"] == ["component_ref"]
+    ok = turns.validate_decision({"calls": [{"tool": "run_component", "args": {"component_ref": "a@1.0.0"}}]}, max_calls=4)
+    assert ok["calls"][0]["args"]["component_ref"] == "a@1.0.0"

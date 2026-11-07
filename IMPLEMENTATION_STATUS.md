@@ -18,7 +18,7 @@ Updated 2026-11-07 by the lead session, on branch `build/eidos-local-v1`.
 | Temporal workflows (coordinator with Continue-As-New, bounded turns, independent jobs, assessment) | runtime-verified on the **regular Temporal Server 1.32.2 + PostgreSQL**. Rollover, retries and recorded-history replay are tested on the dev server (tests only). |
 | Runner/launcher | Reattach-safe handles: pid + start time + boot id, exit file. dev profile and **linux:bwrap-sealed** profile runtime-verified, with hostile probes. |
 | Investigator | context-policy/1, fixture runtime, recovery activities, offline turn replay. Fixture-only. |
-| Pydantic AI adapter | implemented. Qualified against FunctionModel/TestModel only (fixture). No live provider. |
+| Pydantic AI adapter | implemented. One real-provider qualification run (receipt #1) found four defects, now fixed; receipt #2 pending. |
 | Supervisor | init, start, stop, status, doctor, logs, backup, restore and upgrade runtime-verified on Linux. Restore was done into a fresh directory on new ports with re-enrolled credentials. |
 | MCP adapter (stdio + loopback HTTP, 34 tools, resources) | runtime-verified with the SDK client. External clients (Claude Code/Desktop, Codex) **not exercised**. |
 | HTML reports | implemented, tested with a fake client and smoke-tested on a live lab |
@@ -78,6 +78,38 @@ ANTHROPIC_API_KEY=... PYTHONPATH=src:packages/eidos-wire/src \
 
 Full-lab command (key in the investigator-worker's environment only):
 `lab investigate start <project> --runtime pydantic-ai --model anthropic:claude-sonnet-5-5 --limit model_tokens=600000 --limit turns=8 ...`
+
+## Real-provider adapter qualification runs (development; NOT autonomous investigations)
+
+### Receipt #1 (controller-run, 2026-11-07)
+
+- **Identity:** run id `live-1794081737`, script at `0edf7e3`.
+- **Environment:** macOS arm64, Python 3.12.8, pydantic-ai-slim 2.66.0, anthropic 2.6.0.
+- **Model:** requested `anthropic:claude-sonnet-5-5`; served `claude-sonnet-5-5`.
+- **Usage recorded:** 4 calls, 12,996 input and 1,976 output tokens. Controller-accounted spend was USD 0.27, including a USD 0.22 allowance for unrecorded requests.
+- **Results:**
+  - 4/4 conformance decisions validated, but probably with **empty args**. Anthropic strict mode forces `{}` for open `dict` fields, and the validator accepted calls without arguments.
+  - read-tools scenario: failed on `request_limit=3` with usage lost.
+  - timeout: correctly retryable.
+  - unknown model (404): wrongly classified retryable.
+- **Fixes (general adapter changes, this commit):**
+  - Tool args and claim scope are now JSON strings, parsed and validated. A unit test checks the output schema has no open objects.
+  - `validate_decision` rejects calls missing required args, so a valid decision is also an executable one.
+  - The receipt now records bounded args.
+  - Partial usage and request ids are taken from captured run messages on any failure.
+  - Failure classification: 4xx not-found, invalid-request and auth errors are not retryable; timeouts, connection errors, 429 and 5xx are.
+  - The request budget is stated in the prompt (default 8). Hitting it is a bounded no-effect decision with its usage reported.
+
+### Receipt #2 (to run after CI is green on the fix commit; same caps)
+
+```bash
+python3.12 -m venv /tmp/eidos-live && /tmp/eidos-live/bin/pip install -r scripts/qualify/requirements-live.txt
+ANTHROPIC_API_KEY=... PYTHONPATH=src:packages/eidos-wire/src \
+  /tmp/eidos-live/bin/python scripts/qualify/live_provider_check.py --model anthropic:claude-sonnet-5-5 > live-receipt-2.json
+```
+
+- Caps: at most 24 requests (the scenario budgets sum to 21) and 4,096 output tokens per request; temperature unset.
+- Pass means the decision has calls or a control, every call has its required args, and the args are listed in the receipt.
 
 ## Builder interventions log (distinct from autonomous investigator behaviour)
 
