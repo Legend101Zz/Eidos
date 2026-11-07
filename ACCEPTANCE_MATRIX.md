@@ -84,5 +84,6 @@ Closed since v0.1.0; each item names its evidence:
 Still open:
 - **Real LLM providers:** a script is ready for the controller (`scripts/qualify/live_provider_check.py`).
 - **Not qualified:** macOS on a researcher machine (a runner smoke job exists), Lima VM, CUDA/MPS, and external MCP hosts (Claude Code/Desktop, Codex). The official SDK client is verified over stdio and HTTP.
-- **Not exercised:** sleep/suspend, multi-day runs, performance targets (p95 latency, evidence visibility) and distributed training.
+- **Performance targets:** a smoke run met them on this host (p95 command 6.4 ms under training load; evidence visible ≤ 1.3 s; `docs/dev-runs/perf-smoke-2026-11-07.md`). Not measured on a declared reference machine.
+- **Not exercised:** sleep/suspend, multi-day runs and distributed training.
 - **Scientific release (A16):** out of builder scope.
