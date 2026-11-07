@@ -118,6 +118,8 @@ def publish_outputs(ctx: Ctx, p: dict) -> dict:
         raise Invalid(f"invalid output manifest: {exc}") from exc
     if man.job_id != job["id"] or man.attempt_id != p["attempt_id"] or man.epoch != epoch:
         raise Invalid("manifest identity does not match the attempt")
+    if job["status"] in TERMINAL:
+        raise Fenced(f"job {job['id']} is already {job['status']}; nothing more can be published")
     try:
         _fence(job, p["attempt_id"], epoch)
     except Fenced:
@@ -179,6 +181,12 @@ def finish_attempt(ctx: Ctx, p: dict) -> dict:
         ctx.tx.record_usage(scope, "compute_seconds", float(usage["compute_seconds"]), att["id"],
                             uncertain=bool(usage.get("uncertain")), detail={"job": job["id"], "epoch": epoch})
     status = p.get("status")
+    if job["status"] in TERMINAL:  # a late report can never rewrite a terminal job (usage still recorded)
+        if att["status"] not in TERMINAL + ("fenced", "lost"):
+            ctx.tx.update_attempt(att["id"], status="fenced", ended_at=datetime.now(UTC), usage=usage)
+        ctx.event("attempt.late_report", att["id"], {"job_status": job["status"], "reported": status},
+                  investigation_id=job["investigation_id"])
+        return {"fenced": True, "job_status": job["status"]}
     if job["epoch"] != epoch or job["current_attempt"] != att["id"]:
         ctx.tx.update_attempt(att["id"], status="fenced", ended_at=datetime.now(UTC), usage=usage)
         ctx.event("attempt.fenced", att["id"], {"usage": usage}, investigation_id=job["investigation_id"])
@@ -209,6 +217,8 @@ def finish_attempt(ctx: Ctx, p: dict) -> dict:
 def mark_job_outcome_unknown(ctx: Ctx, p: dict) -> dict:
     """A backend could not confirm whether work ran: keep possible spend reserved and visible."""
     job = _job(ctx, p["job_id"])
+    if job["status"] in TERMINAL:
+        return {"job_status": job["status"], "ignored": "job already terminal"}
     scope = job["lock"].get("budget_scope")
     if scope and p.get("possible_compute_seconds"):
         ctx.tx.record_usage(scope, "compute_seconds", float(p["possible_compute_seconds"]), job["id"], uncertain=True,
@@ -230,3 +240,14 @@ def record_isolation_receipt(ctx: Ctx, p: dict) -> dict:
     rec = ctx.tx.put_record("isolation_receipt", p["attempt_id"], ctx.project_id, receipt, created_by=ctx.principal.id,
                             status="recorded", parent_id=job["id"])
     return {"receipt_id": rec.id, "digest": rec.digest}
+
+
+@command("abandon_unstarted_job", "launcher")
+def abandon_unstarted_job(ctx: Ctx, p: dict) -> dict:
+    """Retries exhausted before any attempt started: terminalize the job and release its reservation."""
+    job = _job(ctx, p["job_id"])
+    if job["status"] in TERMINAL or job["current_attempt"]:
+        return {"job_status": job["status"], "ignored": True}
+    _terminal(ctx, job, "failed", {"error": {"category": "infrastructure",
+              "message": str(p.get("reason", "could not start any attempt"))[:1000]}})
+    return {"job_status": "failed"}

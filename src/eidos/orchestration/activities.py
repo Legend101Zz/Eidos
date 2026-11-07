@@ -35,8 +35,10 @@ class RunnerActivities:
             return cancel.is_set() or activity.is_cancelled()
 
         try:
-            return self.runner.run_job(a["job_id"], a["project_id"], activity_attempt=info.attempt, heartbeat=hb,
-                                       cancelled=cancelled)
+            # Start keys are unique per workflow run AND activity attempt: a re-dispatched JobWorkflow
+            # restarts activity attempt numbering at 1 and must not replay an old start receipt.
+            return self.runner.run_job(a["job_id"], a["project_id"], activity_attempt=f"{info.workflow_run_id}:{info.attempt}",
+                                       heartbeat=hb, cancelled=cancelled)
         except RetryableAttemptError as exc:
             raise ApplicationError(str(exc), type="RetryableAttempt") from exc
         except LabError as exc:
@@ -47,8 +49,11 @@ class RunnerActivities:
     def fail_job(self, a: dict) -> dict:
         """Retries exhausted: close the current attempt as a final failure (fenced if superseded)."""
         job = self.runner.client.query("get_job", {"job_id": a["job_id"]}, project=a["project_id"])
-        if job["status"] in ("succeeded", "failed", "cancelled") or not job["current_attempt"]:
+        if job["status"] in ("succeeded", "failed", "cancelled"):
             return {"job_status": job["status"]}
+        if not job["current_attempt"]:
+            return self.runner.client.command("abandon_unstarted_job", {"job_id": job["id"], "reason": a.get("error", "")},
+                                              project=a["project_id"], key=f"abandon:{job['id']}")["result"]
         r = self.runner.client.command("finish_attempt", {"job_id": job["id"], "attempt_id": job["current_attempt"],
                                        "epoch": job["epoch"], "status": "failed", "final": True,
                                        "error": {"category": "infrastructure", "message": a.get("error", "")[:1000]}},

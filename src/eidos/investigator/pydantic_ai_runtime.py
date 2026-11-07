@@ -101,7 +101,8 @@ def classify_failure(exc: BaseException) -> bool:
     return True
 
 
-def usage_from_messages(messages: list, provider: str, model: str | None) -> dict[str, Any]:
+def usage_from_messages(messages: list, provider: str, model: str | None,
+                        price: dict[str, float] | None = None) -> dict[str, Any]:
     from pydantic_ai.messages import ModelResponse
     responses = [m for m in messages if isinstance(m, ModelResponse)]
     return {"provider": provider, "model": model,
@@ -110,7 +111,9 @@ def usage_from_messages(messages: list, provider: str, model: str | None) -> dic
             "calls": len(responses), "request_ids": [r.provider_response_id for r in responses if r.provider_response_id],
             "served_models": sorted({r.model_name for r in responses if r.model_name}),
             "per_request": [{"model": r.model_name, "input_tokens": r.usage.input_tokens,
-                             "output_tokens": r.usage.output_tokens, "finish_reason": r.finish_reason} for r in responses]}
+                             "output_tokens": r.usage.output_tokens, "finish_reason": r.finish_reason} for r in responses],
+            **({"usd": (sum(r.usage.input_tokens or 0 for r in responses) * price["input"]
+                        + sum(r.usage.output_tokens or 0 for r in responses) * price["output"]) / 1e6} if price else {})}
 
 
 def _bounded(x: Any, limit: int = 8000) -> Any:
@@ -219,7 +222,7 @@ class PydanticAIRuntime:
                                 message_history=_close_tool_calls(first),
                                 usage_limits=UsageLimits(request_limit=1 + int(self.config.get("output_retries", 1))),
                                 model_settings=settings or None)
-                            usage = usage_from_messages(first + [m for m in result.new_messages()], self._provider(), model)
+                            usage = usage_from_messages(first + [m for m in result.new_messages()], self._provider(), model, self.config.get("price_per_mtok"))
                             usage["tool_budget_exhausted"] = True
                             raw = json.loads(_messages_json(first + list(result.new_messages())))
                             return DecisionResult(to_proposal(result.output), usage, raw,
@@ -228,7 +231,7 @@ class PydanticAIRuntime:
                             messages.extend(m for m in final_messages if m not in messages)
                 # A bounded outcome, not a lost failure: every billed request is reported and the
                 # slot ends with an explicit no-effect decision the next turn can see.
-                usage = usage_from_messages(messages, self._provider(), model)
+                usage = usage_from_messages(messages, self._provider(), model, self.config.get("price_per_mtok"))
                 usage["limit_reached"] = str(exc)[:300]
                 proposal = {"rationale": f"decision request budget ({max_requests}) exhausted before a final "
                                          "decision; no effects proposed", "calls": [],
@@ -238,16 +241,13 @@ class PydanticAIRuntime:
             except ModelCallFailed:
                 raise
             except Exception as exc:  # provider/transport failure: report everything that may have billed
-                usage = usage_from_messages(messages, self._provider(), model)
+                usage = usage_from_messages(messages, self._provider(), model, self.config.get("price_per_mtok"))
                 usage["failed_request"] = {"error": type(exc).__name__,
                                            "status_code": getattr(exc, "status_code", None)}
                 raise ModelCallFailed(f"{type(exc).__name__}: {exc}"[:500], retryable=classify_failure(exc),
                                       possible_usage=usage) from exc
-        usage = usage_from_messages(result.all_messages(), self._provider(), model)
+        usage = usage_from_messages(result.all_messages(), self._provider(), model, self.config.get("price_per_mtok"))
         raw = json.loads(result.all_messages_json())
-        price = self.config.get("price_per_mtok")  # {"input": x, "output": y} recorded by the operator
-        if price:
-            usage["usd"] = (usage["input_tokens"] * price["input"] + usage["output_tokens"] * price["output"]) / 1e6
         return DecisionResult(to_proposal(result.output), usage, raw, self._settings(usage, max_requests),
                               PROMPT_REVISION)
 

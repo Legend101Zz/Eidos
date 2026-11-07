@@ -44,6 +44,16 @@ VALIDATE_SNIPPET = (
 )
 
 
+def _ts(value) -> float:
+    """Ledger timestamp → epoch seconds; reattached attempts keep their original clock (wall limit
+    and compute accounting are not reset by a runner restart)."""
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(str(value)).timestamp()
+    except (TypeError, ValueError):
+        return time.time()
+
+
 class RetryableAttemptError(Exception):
     """Infrastructure failure; a new attempt (new epoch) may succeed."""
 
@@ -92,7 +102,7 @@ class AttemptRunner:
         self.allowed_profiles = allowed_profiles
 
     # -------------------------------------------------------------------------------------
-    def run_job(self, job_id: str, project: str, *, activity_attempt: int,
+    def run_job(self, job_id: str, project: str, *, activity_attempt: int | str,
                 heartbeat: Callable[[dict], None] = lambda d: None,
                 cancelled: Callable[[], bool] = lambda: False) -> dict[str, Any]:
         job = self.client.query("get_job", {"job_id": job_id}, project=project)
@@ -105,7 +115,7 @@ class AttemptRunner:
             finished = (Path(h.attempt_dir) / "staging" / OutputManifest.FILENAME).exists()
             if h.alive() or h.exit_code() is not None or finished:
                 ctx = {"job_id": job_id, "attempt_id": att["id"], "epoch": att["epoch"], "lock": job["lock"],
-                       "attempt_dir": h.attempt_dir, "reattached": True, "started": time.time()}
+                       "attempt_dir": h.attempt_dir, "reattached": True, "started": _ts(att.get("started_at"))}
                 return self._supervise(project, ctx, h, heartbeat, cancelled)
             # The recorded process is gone without an exit status (machine restart, power loss, kill):
             # reconcile it as lost, with the elapsed time it may have consumed, before a new fenced attempt.

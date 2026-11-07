@@ -169,9 +169,7 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
 @command("record_turn_context", "turn")
 def record_turn_context(ctx: Ctx, p: dict) -> dict:
     """Store the exact packed context and authorized source manifest used for this turn."""
-    turn = ctx.tx.get_turn(p["turn_id"])
-    if not turn:
-        raise Invalid("unknown turn")
+    _turn(ctx, p["turn_id"])
     body = {k: p.get(k) for k in ("context_artifact_id", "source_manifest_digest", "source_manifest_artifact_id",
                                   "policy", "selections", "omissions", "truncations", "catalog_snapshot_digest",
                                   "horizon", "chars")}
@@ -184,9 +182,7 @@ def record_turn_context(ctx: Ctx, p: dict) -> dict:
 def accept_decision(ctx: Ctx, p: dict) -> dict:
     """Persist a proposed decision. Exactly one decision is accepted per (turn, slot); a late or
     stale proposal is kept as an unapplied record with no authority to execute tools."""
-    turn = ctx.tx.get_turn(p["turn_id"], lock=True)
-    if not turn:
-        raise Invalid("unknown turn")
+    turn = _turn(ctx, p["turn_id"], lock=True)
     slot = int(p.get("slot", 0))
     existing = ctx.tx.accepted_decision(turn["id"], slot)
     did = f"dec_{uuid.uuid4().hex[:16]}"
@@ -257,9 +253,7 @@ def _charge_model_usage(ctx: Ctx, inv_id: str, usage: dict, *, ref: str) -> None
 def record_model_usage(ctx: Ctx, p: dict) -> dict:
     """Record model usage that is not attached to an accepted decision (failed/timeout calls).
     A timeout after possible charge is recorded as possible usage with its request ID."""
-    turn = ctx.tx.get_turn(p["turn_id"])
-    if not turn:
-        raise Invalid("unknown turn")
+    turn = _turn(ctx, p["turn_id"])
     _charge_model_usage(ctx, turn["investigation_id"], p.get("usage") or {}, ref=f"usage:{p['turn_id']}")
     ctx.event("model.usage", p["turn_id"], {"usage": p.get("usage")}, investigation_id=turn["investigation_id"])
     return {"recorded": True}
@@ -267,9 +261,7 @@ def record_model_usage(ctx: Ctx, p: dict) -> dict:
 
 @command("complete_turn", "turn")
 def complete_turn(ctx: Ctx, p: dict) -> dict:
-    turn = ctx.tx.get_turn(p["turn_id"], lock=True)
-    if not turn:
-        raise Invalid("unknown turn")
+    turn = _turn(ctx, p["turn_id"], lock=True)
     if turn["status"] != "open":
         return {"turn_id": turn["id"], "status": turn["status"], "already_closed": True}
     reason = p.get("stop_reason", "calls-exhausted")
@@ -295,6 +287,14 @@ def complete_turn(ctx: Ctx, p: dict) -> dict:
     return {"turn_id": turn["id"], "status": status}
 
 
+def _turn(ctx: Ctx, tid: str, *, lock: bool = False) -> dict:
+    """A turn of THIS project (turn ids are global; project access is checked here)."""
+    turn = ctx.tx.get_turn(tid, lock=lock)
+    if not turn or turn["project_id"] != ctx.project_id:
+        raise Invalid("unknown turn")
+    return turn
+
+
 def check_exploration_allowed(ctx: Ctx, inv_id: str | None) -> dict | None:
     """Exploratory admission for an investigation requires a committed charter."""
     if not inv_id:
@@ -318,6 +318,8 @@ def ensure_budget_left(ctx: Ctx, scope: str, dim: str, amount: float) -> None:
 def record_decision_receipts(ctx: Ctx, p: dict) -> dict:
     """Store the ordered receipts of an accepted decision's calls (audit + next-slot context)."""
     dec = ctx.tx.get_decision(p["decision_id"])
+    if dec:
+        _turn(ctx, dec["turn_id"])
     if not dec or not dec["accepted"]:
         raise Invalid("receipts can only be recorded for an accepted decision")
     rec = ctx.tx.put_record("decision_receipts", dec["id"], ctx.project_id,

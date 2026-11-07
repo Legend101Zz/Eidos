@@ -367,9 +367,19 @@ class LedgerTx:
 
     # -- budgets ----------------------------------------------------------------------------
     def ensure_budget(self, scope: str, project_id: str, dimension: str, limit: float) -> None:
+        """Create a budget dimension. An existing scope keeps its limit (changes are explicit
+        amendments), and a scope owned by another project is never touched."""
+        owner = self._one("SELECT project_id FROM budgets WHERE scope_id=:s LIMIT 1", s=scope)
+        if owner and owner["project_id"] != project_id:
+            from eidos.domain.errors import Invalid
+            raise Invalid(f"budget scope {scope} belongs to another project")
         self.c.execute(text("INSERT INTO budgets(scope_id, dimension, project_id, limit_amount) VALUES (:s,:d,:p,:l)"
-                            " ON CONFLICT (scope_id, dimension) DO UPDATE SET limit_amount=EXCLUDED.limit_amount"),
+                            " ON CONFLICT (scope_id, dimension) DO NOTHING"),
                        {"s": scope, "d": dimension, "p": project_id, "l": limit})
+
+    def budget_owner(self, scope: str) -> str | None:
+        row = self._one("SELECT project_id FROM budgets WHERE scope_id=:s LIMIT 1", s=scope)
+        return row["project_id"] if row else None
 
     def budgets(self, scope: str) -> dict[str, dict]:
         return {r["dimension"]: {k: float(r[k]) for k in ("limit_amount", "reserved", "used", "uncertain")}

@@ -391,7 +391,7 @@ def submit_qualification(ctx: Ctx, p: dict) -> dict:
         raise Invalid("results were produced for a different release digest")
     if p.get("job_id"):
         job = ctx.tx.get_job(p["job_id"])
-        if not job or job["kind"] != "qualification" or job["status"] != "succeeded":
+        if not job or job["project_id"] != ctx.project_id or job["kind"] != "qualification" or job["status"] != "succeeded":
             raise Invalid("qualification job must have succeeded")
         if job["created_at"] < suite.created_at:
             raise Invalid("control suite must be committed before the qualification run")

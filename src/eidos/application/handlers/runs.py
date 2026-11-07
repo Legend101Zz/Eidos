@@ -297,7 +297,7 @@ def export_model(ctx: Ctx, p: dict) -> dict:
     if not art or art["project_id"] != ctx.project_id:
         raise NotFound("checkpoint not found")
     job = ctx.tx.get_job(p["behavior_check_job_id"])
-    if not job or job["status"] != "succeeded":
+    if not job or job["project_id"] != ctx.project_id or job["status"] != "succeeded":
         raise Invalid("behavior_check_job_id must name a succeeded behavioral check job")
     receipt = (job.get("terminal") or {}).get("receipt", {})
     checked = [i for i in job["lock"].get("inputs", {}).values() if i["digest"] == art["digest"]]

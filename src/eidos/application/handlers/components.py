@@ -93,7 +93,7 @@ def publish_component(ctx: Ctx, p: dict) -> dict:
     art, bundle = read_bundle(ctx, p["bundle_artifact_id"])
     man = parse_or_invalid(manifest_from_bundle(bundle))
     job = ctx.tx.get_job(p["validation_job_id"])
-    if not job or job["kind"] != "build" or job["lock"]["inputs"]["bundle"]["digest"] != art["digest"]:
+    if not job or job["project_id"] != ctx.project_id or job["kind"] != "build" or job["lock"]["inputs"]["bundle"]["digest"] != art["digest"]:
         raise Invalid("validation_job_id does not refer to a validation of this bundle")
     if job["status"] != "succeeded":
         raise Invalid(f"validation job is {job['status']}; only a passing validation can be published")

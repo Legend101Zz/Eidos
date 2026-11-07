@@ -251,6 +251,9 @@ def compare_trials(ctx: Ctx, p: dict) -> dict:
 @query("budgets")
 def budgets(ctx: Ctx, p: dict) -> dict:
     scope = p.get("scope") or (inv_scope(p["investigation_id"]) if p.get("investigation_id") else f"project:{ctx.project_id}")
+    owner = ctx.tx.budget_owner(scope)
+    if owner is not None and owner != ctx.project_id:
+        raise NotFound(f"budget scope {scope} not found")
     entries = ctx.tx.budget_entries(scope) if p.get("entries") else []
     return {"scope": scope, "budgets": ctx.tx.budgets(scope), "entries": [_jsonable(e) for e in entries[-200:]]}
 
