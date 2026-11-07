@@ -62,7 +62,8 @@ def run_api(cfg: LabConfig) -> None:
         relay = OutboxRelay(ledger, temporal, investigation_args={"history_limit": cfg.history_limit,
                             "turns_per_run": cfg.turns_per_run, "idle_poll_seconds": cfg.idle_poll_seconds})
         notifier.relay = relay
-        app = create_app(service, relay=relay)
+        relay.maintenance_flag = cfg.p("run", "maintenance")
+        app = create_app(service, relay=relay, maintenance_flag=cfg.p("run", "maintenance"))
         server = uvicorn.Server(uvicorn.Config(app, host=cfg.api_host, port=cfg.api_port, log_level="warning"))
         relay_task = asyncio.create_task(relay.run())
         try:

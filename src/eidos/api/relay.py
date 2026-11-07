@@ -40,6 +40,7 @@ class OutboxRelay:
         self._event = asyncio.Event()
         self._stats = {"dispatched": 0, "errors": 0, "last_error": None, "last_reconcile": None, "paused": False}
         self._task: asyncio.Task | None = None
+        self.maintenance_flag = None
 
     def notify(self) -> None:
         try:
@@ -58,7 +59,8 @@ class OutboxRelay:
         last_rec = 0.0
         while True:
             try:
-                if not self._stats["paused"]:
+                quiesced = self.maintenance_flag is not None and self.maintenance_flag.exists()
+                if not self._stats["paused"] and not quiesced:
                     await self.drain()
                     if time.monotonic() - last_rec > self.reconcile_every:
                         last_rec = time.monotonic()

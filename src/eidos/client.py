@@ -38,17 +38,20 @@ class LabClient:
             raise LabError(r.status_code, err)
         return r.json()
 
-    def _post(self, path: str, body: dict, retries: int = 4) -> Any:
+    def _post(self, path: str, body: dict, retries: int = 6) -> Any:
         """Transport retries are safe: commands are idempotent by command key."""
         delay = 0.5
         for i in range(retries + 1):
             try:
                 return self._handle(self.http.post(path, json=body))
+            except LabError as exc:  # quiesced for backup/upgrade: same command key is safe to resend
+                if exc.code != "MAINTENANCE" or i == retries:
+                    raise
             except (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError):
                 if i == retries:
                     raise
-                time.sleep(delay)
-                delay *= 2
+            time.sleep(delay)
+            delay = min(delay * 2, 8)
         raise AssertionError("unreachable")
 
     def command(self, name: str, payload: dict | None = None, *, project: str | None = None,

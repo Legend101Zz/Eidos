@@ -44,7 +44,7 @@ def principal_from_row(row: dict) -> Principal:
                      row["attributes"] or {}, row["display"] or "")
 
 
-def create_app(service: CommandService, *, relay: Any = None) -> FastAPI:
+def create_app(service: CommandService, *, relay: Any = None, maintenance_flag: Any = None) -> FastAPI:
     app = FastAPI(title="Eidos lab API", version=API_VERSION)
     cache: dict[str, tuple[float, Principal]] = {}
 
@@ -70,6 +70,11 @@ def create_app(service: CommandService, *, relay: Any = None) -> FastAPI:
 
     @app.middleware("http")
     async def limit_body(request: Request, call_next):
+        writes = request.url.path.startswith("/v1/commands") or (
+            request.method == "POST" and request.url.path.endswith("/artifacts"))
+        if writes and maintenance_flag is not None and maintenance_flag.exists():
+            return JSONResponse(status_code=503, content={"error": {"code": "MAINTENANCE", "message":
+                                "lab is quiesced for backup/upgrade", "next_action": "retry shortly with the same command key"}})
         if request.url.path.startswith("/v1/commands") or request.url.path.startswith("/v1/queries"):
             cl = int(request.headers.get("content-length") or 0)
             if cl > MAX_BODY:
