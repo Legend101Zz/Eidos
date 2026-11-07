@@ -137,3 +137,19 @@ def test_plans_must_state_their_isolation_requirement():
     assert "required_isolation" in plan["obligations"] and plan["required_isolation"] is None
     json.dumps(plan)
     uuid.uuid4()
+
+
+def test_generic_reads_of_evaluation_records_record_exposure(lab):
+    pid = _project(lab)
+    with lab.ledger.transaction() as tx:
+        tx.project_id = pid
+        tx.put_record("assessment", "assess_x", pid, {"outcome": "protocol-passed", "investigation_id": None},
+                      created_by="t", status="protocol-passed")
+    reader = lab.principal(f"reader-{pid}", ["reader"], [pid])
+    lab.q(reader, "list_records", {"kind": "assessment"}, project=pid)
+    lab.q(reader, "get_record", {"kind": "assessment", "id": "assess_x"}, project=pid)
+    lab.q(reader, "record_history", {"kind": "assessment", "id": "assess_x"}, project=pid)
+    with lab.ledger.transaction() as tx:
+        tx.project_id = pid
+        seen = [e for e in tx.exposures(pid) if e["principal_id"] == reader.id]
+    assert len(seen) == 3 and all(e["subject"].startswith("assessment:assess_x") for e in seen)

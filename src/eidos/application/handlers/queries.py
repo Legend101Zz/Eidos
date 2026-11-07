@@ -36,11 +36,27 @@ def _jsonable(row: dict) -> dict:
     return json.loads(json.dumps(row, default=str))
 
 
+SENSITIVE_KINDS = {"assessment", "qualification", "evidence_plan", "reassessment_request"}
+
+
+def _expose_record(ctx: Ctx, rec) -> None:
+    """Reads that can reveal evaluation outcomes are exposures, whichever query path is used."""
+    if rec.kind in SENSITIVE_KINDS:
+        _expose(ctx, (rec.body or {}).get("investigation_id"), f"{rec.kind}:{rec.id}@{rec.revision}",
+                {"status": rec.status})
+
+
+def _expose_job(ctx: Ctx, job: dict) -> None:
+    if job.get("kind") == "evidence-arm" and job.get("terminal"):
+        _expose(ctx, job.get("investigation_id"), f"job:{job['id']}", {"status": job["status"]})
+
+
 @query("get_record")
 def get_record(ctx: Ctx, p: dict) -> dict:
     rec = ctx.tx.require(p["kind"], p["id"], p.get("revision"))
     if rec.project_id != ctx.project_id:
         raise NotFound("not found")
+    _expose_record(ctx, rec)
     return rec.view()
 
 
@@ -48,6 +64,8 @@ def get_record(ctx: Ctx, p: dict) -> dict:
 def list_records(ctx: Ctx, p: dict) -> list[dict]:
     recs = ctx.tx.list_records(ctx.project_id, p["kind"], status=p.get("status"), parent_id=p.get("parent_id"),
                                limit=min(int(p.get("limit", 100)), 1000))
+    for r in recs:  # status alone can reveal an outcome (assessment status == outcome)
+        _expose_record(ctx, r)
     if p.get("summary", True):
         return [{k: v for k, v in r.view().items() if k != "body"} | {"title": _title(r)} for r in recs]
     return [r.view() for r in recs]
@@ -63,6 +81,7 @@ def record_history(ctx: Ctx, p: dict) -> list[dict]:
     rec = ctx.tx.require(p["kind"], p["id"])
     if rec.project_id != ctx.project_id:
         raise NotFound("not found")
+    _expose_record(ctx, rec)
     return [_jsonable(r) for r in ctx.tx.record_history(p["kind"], p["id"])]
 
 
@@ -83,6 +102,7 @@ def get_job(ctx: Ctx, p: dict) -> dict:
     job = ctx.tx.get_job(p["job_id"])
     if not job or job["project_id"] != ctx.project_id:
         raise NotFound(f"job {p['job_id']} not found")
+    _expose_job(ctx, job)
     out = _jsonable(job)
     out["attempts"] = [_jsonable(a) for a in ctx.tx.list_attempts(job["id"])]
     out["outputs"] = [_jsonable(x) for x in ctx.tx.publications(job["id"])]
@@ -94,6 +114,8 @@ def get_job(ctx: Ctx, p: dict) -> dict:
 @query("list_jobs")
 def list_jobs(ctx: Ctx, p: dict) -> list[dict]:
     rows = ctx.tx.list_jobs(ctx.project_id, investigation_id=p.get("investigation_id"), statuses=p.get("statuses"))
+    for j in rows:
+        _expose_job(ctx, j)
     return [{"id": j["id"], "kind": j["kind"], "status": j["status"], "purpose": j["purpose"], "epoch": j["epoch"],
              "component": j["lock"].get("component", {}).get("ref"), "trial_id": j["trial_id"],
              "cancel_requested": j["cancel_requested"], "created_at": str(j["created_at"]),
@@ -299,6 +321,8 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
             continue
         terminal_visible = any(e["subject"] == j["id"] and e["type"].startswith("job.") and e["type"] != "job.admitted"
                                for e in events)
+        if terminal_visible:
+            _expose_job(ctx, j)
         outputs = [o for o in ctx.tx.publications(j["id"]) if cutoff_ts is None or o["created_at"] <= cutoff_ts]
         jobs.append({"id": j["id"], "component": j["lock"].get("component", {}).get("ref"), "purpose": j["purpose"],
                      "status": j["status"] if terminal_visible else "running-or-queued",
