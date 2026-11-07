@@ -158,7 +158,9 @@ class InvestigatorActivities:
         receipts = []
         for call in dec["body"]["calls"]:
             receipts.append(self._execute_call(p, a["investigation_id"], turn["id"], dec["id"], call))
-        self.wf.command("record_decision_receipts", {"decision_id": dec["id"], "receipts": receipts}, project=p,
+        # Replay-invariant record: a retry after committed effects yields identical receipts.
+        stable = [{k: v for k, v in r.items() if k != "replayed"} for r in receipts]
+        self.wf.command("record_decision_receipts", {"decision_id": dec["id"], "receipts": stable}, project=p,
                         key=f"receipts:{dec['id']}")
         summary = [{"tool": r["tool"], "ok": r["ok"], "replayed": r.get("replayed"), "code": r.get("code")} for r in receipts]
         return bounded({"summary": summary})
