@@ -1,0 +1,10 @@
+{
+  "date": "2026-11-07T16:31:49.018630+00:00",
+  "revision": "v0.1 failure preserved",
+  "failures": [
+    "instrument aggregation assertion failed from float32 residual accumulation; use float64 summation without changing acceptance tolerance",
+    "upstream CIFAR fixture used a dict whose length counted keys; replace fixture with DataFrame matching row semantics"
+  ],
+  "changes_to_bars": "none",
+  "exposure": "baseline and reference predictions already executed; partial results retained"
+}

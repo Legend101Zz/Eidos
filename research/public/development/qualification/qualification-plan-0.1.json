@@ -1,0 +1,29 @@
+{
+  "created_utc": "2026-11-07T16:26:42.192789+00:00",
+  "status": "qualification acceptance fixed before execution; not comparative-study thresholds",
+  "cards": {
+    "D01.json": "29c21d98d785fb6740da9847bef20a0c6f05971b3dc23728980fcbb24f4a13ab",
+    "D02.json": "8d69ca2e6381044840a6323093414e391c472abeef5f425a76180469768d0a87",
+    "D03.json": "c5cb9ce82e87caff399ff86f0fe27c4ad920c4585a5664a8085a356908f39a82",
+    "D04.json": "b8ca52814455154ba7bb4dbca087905791ca9be07e9c9dcc2e2ffc35cb4ae750",
+    "D05.json": "8488d40e38826f2e83938146704f7cbdab1b429433b27c30ca74ba01824fd69b",
+    "D06.json": "c3f4f5796231fd649911796c307d978f53a3a7e225f57606831d2f19e8cd7fc9",
+    "D07.json": "01a72cc2804db2a28d2fdc64de9d10efd1be9613891dc62dfb7cfd9bf1f999f6",
+    "D08.json": "ac3b92deeed9a11875d08bebdb498a6568f48708d11110ed200865a338a6f622",
+    "D09.json": "4ca72180e26d2b713e7bf23de87167e6c90e281614ad6cc675f0842b68a448b9",
+    "D10.json": "7b0d2b7f8b24b4717fef24fa9f2254c2615d6121e14bc4ebf6354a6d33025da7",
+    "D11.json": "9735e72042d9d5d354b8b98b5cc20ff1474902c88cb314ac9ddec3d1d1dd1713",
+    "D12.json": "095bd06c2e3d422c5b5725f8e9b0e7be1ddb1915bdce7de4fa5c7dc2b061c484",
+    "D13.json": "282f3584225f9c417b3e3e2bb3278f35553f67f84d00994599496090c9ce3a92",
+    "D14.json": "00663f27c063ef062470008abf35dd46a6b2ea02d8886ddb9e025cffbb729747"
+  },
+  "negative_controls": [
+    "identical predictions zero gain",
+    "wrong/missing/duplicate IDs",
+    "NaN/inf",
+    "wrong length",
+    "invalid classes",
+    "restore missing optimizer/RNG"
+  ],
+  "stochastic_scope": "three fixed seeds demonstrate reproducibility only; no estimated power/FPR qualification"
+}
