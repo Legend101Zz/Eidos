@@ -107,6 +107,7 @@ class CommandService:
         pid = project_id or "_system"
         payload_hash = fingerprint({"command": name, "payload": payload, "expected_revision": expected_revision})
         with self.ledger.transaction() as tx:
+            tx.project_id = pid
             if spec.project_scoped and tx.get_project(pid) is None:
                 raise NotFound(f"project {pid} not found")
             existing = tx.claim_command(pid, principal.id, command_key, name, payload_hash, delegation or {})
@@ -135,6 +136,7 @@ class CommandService:
             raise NotFound(f"unknown query {name!r}")
         self._authorize(spec, principal, project_id)
         with self.ledger.transaction() as tx:
+            tx.project_id = project_id or "_system"
             ctx = Ctx(tx, principal, project_id or "_system", None, self.store, self.settings)
             return spec.fn(ctx, params)
 

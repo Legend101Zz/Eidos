@@ -64,7 +64,9 @@ def provision(admin_url: URL | str, roles: DbRoles) -> None:
             name = f"{roles.prefix}_{role}"
             exists = conn.execute(text("SELECT 1 FROM pg_roles WHERE rolname=:n"), {"n": name}).first()
             verb = "ALTER" if exists else "CREATE"
-            conn.exec_driver_sql(f"{verb} ROLE {_q(name)} LOGIN PASSWORD %(pw)s", {"pw": pw})
+            if not pw.replace("-", "").replace("_", "").isalnum():
+                raise ValueError("generated passwords must be url-safe")
+            conn.exec_driver_sql(f"{verb} ROLE {_q(name)} LOGIN PASSWORD '{pw}'")
         if not conn.execute(text("SELECT 1 FROM pg_database WHERE datname=:d"), {"d": roles.database}).first():
             conn.exec_driver_sql(f"CREATE DATABASE {_q(roles.database)} OWNER {_q(roles.prefix + '_migrator')}")
         conn.exec_driver_sql(f"REVOKE ALL ON DATABASE {_q(roles.database)} FROM PUBLIC")

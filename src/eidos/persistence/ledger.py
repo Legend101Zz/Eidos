@@ -59,6 +59,9 @@ class LedgerTx:
     def __init__(self, conn: Connection):
         self.c = conn
         self.command_id: int | None = None
+        # Records are project-scoped: identical ids (e.g. a component ref reused in another
+        # project) never collide. The command service binds the project for each transaction.
+        self.project_id: str = "_system"
 
     # -- generic helpers -------------------------------------------------------------------
     def _one(self, sql: str, **p) -> dict | None:
@@ -129,7 +132,10 @@ class LedgerTx:
     def put_record(self, kind: str, rid: str, project_id: str, body: dict, *, created_by: str, status: str,
                    expected_revision: int | None = None, parent_id: str | None = None,
                    labels: dict | None = None) -> Record:
-        head = self._one("SELECT * FROM heads WHERE kind=:k AND id=:i FOR UPDATE", k=kind, i=rid)
+        if project_id != self.project_id:
+            raise ValueError(f"record project {project_id} != transaction project {self.project_id}")
+        head = self._one("SELECT * FROM heads WHERE project_id=:p AND kind=:k AND id=:i FOR UPDATE",
+                         p=project_id, k=kind, i=rid)
         current = head["revision"] if head else 0
         if expected_revision is not None and expected_revision != current:
             raise StaleRevision(f"{kind} {rid} is at revision {current}, not {expected_revision}",
@@ -144,8 +150,9 @@ class LedgerTx:
         if head:
             self.c.execute(text(
                 "UPDATE heads SET revision=:r, status=:s, labels=COALESCE(CAST(:l AS jsonb), labels), updated_at=now()"
-                " WHERE kind=:k AND id=:i"),
-                {"r": rev, "s": status, "l": _j(labels) if labels is not None else None, "k": kind, "i": rid})
+                " WHERE project_id=:p AND kind=:k AND id=:i"),
+                {"r": rev, "s": status, "l": _j(labels) if labels is not None else None, "k": kind, "i": rid,
+                 "p": project_id})
         else:
             self.c.execute(text(
                 "INSERT INTO heads(kind,id,project_id,revision,status,parent_id,labels)"
@@ -156,22 +163,25 @@ class LedgerTx:
 
     def set_status(self, kind: str, rid: str, status: str, *, labels: dict | None = None,
                    expected_revision: int | None = None) -> None:
-        head = self._one("SELECT revision FROM heads WHERE kind=:k AND id=:i FOR UPDATE", k=kind, i=rid)
+        head = self._one("SELECT revision FROM heads WHERE project_id=:p AND kind=:k AND id=:i FOR UPDATE",
+                         p=self.project_id, k=kind, i=rid)
         if not head:
             raise NotFound(f"{kind} {rid} not found")
         if expected_revision is not None and head["revision"] != expected_revision:
             raise StaleRevision(f"{kind} {rid} is at revision {head['revision']}",
                                 details={"observed_revision": head["revision"]})
         self.c.execute(text("UPDATE heads SET status=:s, labels=labels || CAST(:l AS jsonb), updated_at=now()"
-                            " WHERE kind=:k AND id=:i"),
-                       {"s": status, "l": _j(labels or {}), "k": kind, "i": rid})
+                            " WHERE project_id=:p AND kind=:k AND id=:i"),
+                       {"s": status, "l": _j(labels or {}), "k": kind, "i": rid, "p": self.project_id})
 
     def get_record(self, kind: str, rid: str, revision: int | None = None, *, lock: bool = False) -> Record | None:
-        h = self._one("SELECT * FROM heads WHERE kind=:k AND id=:i" + (" FOR UPDATE" if lock else ""), k=kind, i=rid)
+        h = self._one("SELECT * FROM heads WHERE project_id=:p AND kind=:k AND id=:i" + (" FOR UPDATE" if lock else ""),
+                      p=self.project_id, k=kind, i=rid)
         if not h:
             return None
         rev = revision or h["revision"]
-        r = self._one("SELECT * FROM records WHERE kind=:k AND id=:i AND revision=:r", k=kind, i=rid, r=rev)
+        r = self._one("SELECT * FROM records WHERE project_id=:p AND kind=:k AND id=:i AND revision=:r",
+                      p=self.project_id, k=kind, i=rid, r=rev)
         if not r:
             return None
         return Record(kind, rid, rev, r["project_id"], r["body"], r["digest"], h["status"], r["created_by"],
@@ -188,7 +198,7 @@ class LedgerTx:
                      parent_id: str | None = None, label: tuple[str, Any] | None = None,
                      limit: int = 500) -> list[Record]:
         sql = ("SELECT h.*, r.body, r.digest, r.created_by, r.created_at FROM heads h JOIN records r"
-               " ON r.kind=h.kind AND r.id=h.id AND r.revision=h.revision WHERE h.kind=:k")
+               " ON r.project_id=h.project_id AND r.kind=h.kind AND r.id=h.id AND r.revision=h.revision WHERE h.kind=:k")
         p: dict[str, Any] = {"k": kind, "lim": limit}
         if project_id is not None:
             sql += " AND h.project_id=:p"
@@ -209,7 +219,7 @@ class LedgerTx:
 
     def record_history(self, kind: str, rid: str) -> list[dict]:
         return self._all("SELECT revision, body, digest, created_by, created_at FROM records"
-                         " WHERE kind=:k AND id=:i ORDER BY revision", k=kind, i=rid)
+                         " WHERE project_id=:p AND kind=:k AND id=:i ORDER BY revision", p=self.project_id, k=kind, i=rid)
 
     # -- events and outbox -----------------------------------------------------------------
     def append_event(self, project_id: str, etype: str, subject: str | None, body: dict,

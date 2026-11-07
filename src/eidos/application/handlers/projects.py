@@ -38,6 +38,7 @@ def create_project(ctx: Ctx, p: dict) -> dict:
         raise Invalid(f"project {pid} already exists")
     ctx.tx.insert_project(pid, p.get("name") or pid, ctx.principal.id)
     ctx.project_id = pid
+    ctx.tx.project_id = pid
     policy = {"auto_freeze_approved_templates": bool(p.get("auto_freeze_approved_templates", False)),
               "data_egress": p.get("data_egress", "authorized-context-only"),
               "default_isolation_profile": "dev:same-user"}
@@ -99,3 +100,22 @@ def update_profile_policy(ctx: Ctx, p: dict) -> dict:
     nb["policy"] = {**nb.get("policy", {}), **(p.get("policy") or {})}
     pr = new_profile_revision(ctx, nb, expected_revision=ctx.expected_revision, reason="policy changed")
     return {"profile_revision": pr.revision}
+
+
+@command("register_artifact", "artifact:write")
+def register_artifact(ctx: Ctx, p: dict) -> dict:
+    """Publish uploaded/imported bytes (already verified in the store) as an external artifact."""
+    if not ctx.store.verify(p["digest"], int(p["size"])):
+        raise Invalid("uploaded bytes are missing or fail verification")
+    access = p.get("access_class", "project")
+    if access == "sealed-labels" and not ctx.principal.has("sealed:write"):
+        raise Invalid("registering sealed labels requires the sealed:write grant")
+    import uuid as _uuid
+    aid = p.get("artifact_id") or f"art_{_uuid.uuid4().hex[:16]}"
+    ctx.tx.insert_artifact({"id": aid, "project_id": ctx.project_id, "digest": p["digest"], "size": int(p["size"]),
+                            "media_type": p.get("media_type", "application/octet-stream"), "schema": p.get("schema"),
+                            "role": p.get("role", "input"), "access_class": access,
+                            "origin": p.get("origin", "imported"), "meta": p.get("meta") or {}})
+    ctx.event("artifact.registered", aid, {"digest": p["digest"], "schema": p.get("schema"), "name": p.get("name")},
+              investigation_id=p.get("investigation_id"))
+    return {"artifact_id": aid, "digest": p["digest"], "size": int(p["size"])}

@@ -56,9 +56,9 @@ class ComponentManifest:
     implements: str
     kind: str
     entry: str
-    input: Dict[str, str]
-    output: Dict[str, str]
     scientific_effects: List[str]
+    input: Dict[str, str] = field(default_factory=dict)
+    output: Dict[str, str] = field(default_factory=dict)
     requires: List[str] = field(default_factory=list)
     optional: List[str] = field(default_factory=list)
     reads: List[str] = field(default_factory=list)

@@ -60,7 +60,7 @@ CREATE TABLE records (
   created_by text NOT NULL,
   command_id bigint REFERENCES commands(id),
   created_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (kind, id, revision)
+  PRIMARY KEY (project_id, kind, id, revision)
 );
 
 CREATE TABLE heads (
@@ -72,7 +72,7 @@ CREATE TABLE heads (
   parent_id text,
   labels jsonb NOT NULL DEFAULT '{}',
   updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (kind, id)
+  PRIMARY KEY (project_id, kind, id)
 );
 CREATE INDEX heads_project_kind ON heads (project_id, kind);
 CREATE INDEX heads_parent ON heads (parent_id);
