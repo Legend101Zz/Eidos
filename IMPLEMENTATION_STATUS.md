@@ -151,6 +151,7 @@ These are separate commits in the journey merge:
 
 ## Next concrete action
 
-1. Receive CI results for the current head from the controller. If green, cut `eidos-v0.2.0`.
-2. Run the live-provider receipt (controller), then real-LLM D02/D12 development runs.
-3. Remaining open items are in ACCEPTANCE_MATRIX §D.
+1. The controller checks CI on head `d7c5e99`: relocked `uv.lock`, and a single run per commit. Tag `eidos-v0.2.0` only once lint-and-unit, integration, fresh-install, worker-compat and macOS are all green on one SHA.
+2. The controller runs live receipt #2 (`scripts/qualify/live_provider_check.py`, same caps).
+3. Then lab-free real-LLM runs on D02 and D12 (`scripts/qualify/live_bundle_investigation.py`). Record them as lab-free real-LLM development runs, not autonomous Eidos lab runs.
+4. Open gaps that need hardware or clients: macOS researcher machine and Lima VM, CUDA/MPS, external MCP hosts, sleep/suspend.
