@@ -20,7 +20,7 @@ dependencies = [
     "typer>=0.15,<1",
     "rich>=13,<16",
     "mcp>=2.0,<3",
-    "pydantic-ai-slim>=2.60,<3",
+    "pydantic-ai-slim[anthropic,openai]>=2.60,<3",
 ]
 
 [project.scripts]
