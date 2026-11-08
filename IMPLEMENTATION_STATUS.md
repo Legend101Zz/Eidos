@@ -30,7 +30,7 @@ Updated 2026-11-08 by the lead session, on branch `build/eidos-local-v1`.
 
 ## Active helper assignments and worktrees
 
-Round 7: implementer on `task/e2e-journey` (`/workspace/wt/e2e-journey`, slot 1). Before that: All task branches are merged and the worktrees are removed. Tags `eidos-v0.1.0`…`eidos-v0.4.0` are development freezes, not v1 acceptance.
+None (round 7 helpers finished; worktrees removed). All task branches are merged and the worktrees are removed. Tags `eidos-v0.1.0`…`eidos-v0.4.0` are development freezes, not v1 acceptance.
 
 ## How to run
 
@@ -236,17 +236,29 @@ These are separate commits in the journey merge:
 - **Handoff:** `HANDOFF.md` written; this file and `ACCEPTANCE_MATRIX.md` updated.
 - **CI:** run `42429763457` on `e328608` passed all six jobs, including the seatbelt probes on GitHub macOS arm64. Tag `eidos-v0.4.1` → `e328608`.
 
-## Round 7 (2026-11-08, full-cap continuation), in progress
+## Round 7 (2026-11-08, full-cap continuation)
 
-- **macOS assessor under Seatbelt (`8c7e481`):** the assessor uses the host's sealed profile (bwrap or Seatbelt). The lab home, the assessor's own credential directory and the user's credential stores are unreadable, and the planted label sits in a denied root. `scripts/ci/assessor_sandbox_probe.py` runs in the macOS CI job. On Linux it passes, with all six sealed controls passed.
-- **Cross-release upgrade test (merged from `task/upgrade-test`):** v0.1.0 wheels → head on the same lab, 33 checks. It runs locally (63 s) and as the CI job `upgrade-across-releases`. `lab upgrade` now restarts services on the installation that ran it (`556fe66`).
-- **Adversarial review 2:** five findings fixed with regression tests (`181e50d`, `0754d92`, `67855b5`). Open questions are recorded in `docs/dev-runs/adversarial-review-2-2026-11-08.md`.
-- **Verified:** unit + integration + MCP + reporting **117 passed, 1 skipped** at `67855b5`. Ruff clean; import contracts 5/5.
-- **In progress:** the clean-install end-to-end journey through the CLI and the MCP SDK client (helper `task/e2e-journey`, worktree `/workspace/wt/e2e-journey`).
-- **Not started:** the Lima VM profile (item 5). Whether GitHub macOS arm64 runners allow nested virtualization has not been checked from here.
+- **Tag `eidos-v0.5.0` → `e822744`:** CI was green on all eight jobs.
+- **macOS assessor under Seatbelt (`8c7e481`):** the CI step `assessor_sandbox_probe.py` is green on macOS arm64.
+- **Cross-release upgrade test:** v0.1.0 wheels → head, 33 checks. It runs as the CI job `upgrade-across-releases`. `lab upgrade` now switches the interpreter (`556fe66`).
+- **Clean-install end-to-end journey (`scripts/journeys/e2e_journey.sh`, CI job `e2e-journey`):** 9/9 steps at `993b8fd`, 116 s locally.
+  - CLI: D01 fixture investigation, a validated answer, branch, export.
+  - CLI: qualified assessment, with the assessor and template qualified by executed controls, a claim, a frozen plan, six evidence jobs and an AssessmentWorkflow outcome of `inconclusive`.
+  - MCP SDK client: start, detach, read back, `get_assessment`.
+  - Record: `docs/dev-runs/e2e-journey.md`.
+- **Regression found by the journey and fixed (`8771bb3`):** `submit_assessment` crashed for every evidence plan on `eidos-v0.2.0`…`v0.5.0`.
+- **Adversarial review 2:** six items fixed with regression tests (`181e50d`, `0754d92`, `67855b5`, `378ff0f`). Open questions are in `docs/dev-runs/adversarial-review-2-2026-11-08.md`.
+- `lab component install` is now idempotent (`e822744`).
+- **Not done:**
+  - Lima VM profile (item 5). Whether GitHub macOS arm64 runners allow nested virtualization was not verified from here; GitHub documentation was unreachable.
+  - Repair of `tests/journeys/switch_journey.py` drift (published-extension checks, intermediate-checkpoint branching, default-env reinstall). The e2e journey replaces its role in CI.
+- **Last full local run:** 117 passed, 1 skipped at `67855b5`. Later commits were each followed by their focused tests and the e2e journey.
 
 ## Next concrete action
 
-1. Done: CI is green on `e328608` and tag `eidos-v0.4.1` is cut. The seatbelt probe JSON is in the `macos-arm64-evidence` artifact of run `42429763457`, retained for 3 days. The controller may archive it.
-2. Owner decisions, listed in `HANDOFF.md`: the macOS kit, real-LLM lab-free D02/D12 runs, OpenAI-compatible qualification, external MCP clients, and seatbelt vs Lima.
-3. The remaining v1 gaps need hardware, clients or keys. See ACCEPTANCE_MATRIX §C/§D.
+1. The controller relays CI for the head (currently `378ff0f`). If it is green, tag `eidos-v0.5.1` there; it is the first tag on which qualified assessment works again.
+2. Owner decisions in `HANDOFF.md`: the macOS kit, real-LLM D02/D12 runs, OpenAI-compatible qualification, external MCP clients, and Seatbelt vs Lima. Note that Seatbelt does not isolate against hostile same-user programs.
+3. Optional engineering:
+   - repair the `switch_journey.py` drift;
+   - fix the review 2 idle-poll rollover issue (carry `waited_since` across Continue-As-New, and skip the turn after a quiet rollover);
+   - Lima VM profile.
