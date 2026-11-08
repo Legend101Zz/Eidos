@@ -137,13 +137,17 @@ def _export_loads(j: Journey, a: argparse.Namespace, export: dict) -> dict:
             "import sys, json\n"
             f"sys.path.insert(0, {str(REPO / 'examples/switch-order-project')!r})\n"
             "import torch\n"
-            "from eidos_pytorch.checkpoint import load_checkpoint, restore_checkpoint\n"
+            "from eidos_pytorch.checkpoint import load_checkpoint\n"
             "import eidos_adapter\n"
             "st = load_checkpoint(sys.argv[1])\n"
             "builder = (st['manifest'].get('builder') or {}).get('name') or 'OrderedSwitchNet'\n"
             "builder = builder.split(':')[-1] if builder.split(':')[-1] in ('SwitchNet', 'OrderedSwitchNet') else 'OrderedSwitchNet'\n"
             "m = eidos_adapter.ADAPTER.build({'builder': builder})\n"
-            "restore_checkpoint(st, m, restore_rng_state=False)\n"
+            "m.load_state_dict(st['entries']['model'], strict=True)  # the exported weights, strict\n"
+            "m.eval()\n"
+            "with torch.no_grad():\n"
+            "    out = m(torch.randint(0, 6, (4, 8)), torch.tensor([1.0, 0.0, 1.0, 0.0]))\n"
+            "assert out.shape == (4,) and torch.isfinite(out).all()\n"
             "w = m.readout.weight.detach()\n"
             "print(json.dumps({'ok': True, 'builder': builder, 'params': sum(p.numel() for p in m.parameters()),"
             " 'recorder_weight': float(w[0, -1])}))\n")
@@ -158,7 +162,7 @@ def _export_loads(j: Journey, a: argparse.Namespace, export: dict) -> dict:
 
 def live(j: Journey, a: argparse.Namespace) -> None:
     with j.step("A8", f"REAL-MODEL autonomous investigation ({a.model}): diagnose, author, trial, branch, assess, "
-                      "export; investigator-worker crash after a committed effect") as st:
+                      "export; investigator-worker crash after a committed effect"):
         c = j.S.get("charter")
         if not c:
             raise Blocked("needs the charter")
@@ -169,6 +173,15 @@ def live(j: Journey, a: argparse.Namespace) -> None:
             settings["price_per_mtok"] = json.loads(a.price)
         if a.base_url:
             settings["base_url"] = a.base_url
+        if a.recheck:
+            # Re-evaluate the A8 checks of a recorded run (no new investigation, no model call); the kill record
+            # comes from that run's receipt.
+            prev = json.loads(Path(a.previous_receipt).read_text())
+            inv, kills = a.recheck, prev.get("kills") or []
+            j.rec.update(investigation=inv, rechecked_from=a.previous_receipt)
+            j.note(f"recheck of recorded investigation {inv}: checks re-evaluated from the ledger; no model call")
+            _checks(j, a, inv, kills, home)
+            return
         inv_id = f"inv-a8-{int(time.time()) % 1000000}"
         limits = ["--limit", f"model_tokens={a.model_tokens}", "--limit", f"turns={a.max_turns}",
                   "--limit", "compute_seconds=6000", "--limit", "trials=60"]
@@ -223,7 +236,14 @@ def live(j: Journey, a: argparse.Namespace) -> None:
             j.note(f"investigation stopped by the driver after the wait (status was active, needs_input="
                    f"{shown.get('needs_input')})")
         time.sleep(5)
+        _checks(j, a, inv, kills, home, status_hint=status)
+
+
+def _checks(j: Journey, a: argparse.Namespace, inv: str, kills: list, home: str, status_hint: str | None = None) -> None:
+    st = j.rec["steps"]["A8"]
+    if True:
         shown = j.query("get_investigation", {"investigation_id": inv})
+        status = shown["status"]
         view = j.query("investigation_view", {"investigation_id": inv,
                                                "horizon": j.query("project_summary", {})["horizon"]})
         turns = _turn_rows(j, shown)
@@ -327,6 +347,8 @@ def main() -> int:
     ap.add_argument("--no-kill", action="store_true")
     ap.add_argument("--skip-setup", action="store_true", help="reuse --project (state file in --workdir)")
     ap.add_argument("--setup-only", action="store_true", help="operator setup only; no investigation")
+    ap.add_argument("--recheck", help="re-evaluate the A8 checks of this recorded investigation (no model call)")
+    ap.add_argument("--previous-receipt", help="with --recheck: that run's receipt (for its kill record)")
     a = ap.parse_args()
     Path(a.workdir).mkdir(parents=True, exist_ok=True)
     os.chdir(REPO)
