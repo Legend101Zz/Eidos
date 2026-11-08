@@ -42,6 +42,16 @@
    used the lab-free meaning (authored a replacement `project.py`). Align the driver with the lab, or document the
    whole-trainer path (`project.command` `files`/`source`) in the context.
 
+11. **Show authored sources in the packed context** (re-run 2): list the investigation's `author_source` bundles
+   (id, files, turn) in `context-policy/1`, or feed the call result (bundle id) back so a later decision can pass it as
+   `inputs.source`. Today the id only exists as an `artifact.registered` event subject, and the packer drops events, so
+   the investigator re-authored the same candidate 4 times and never ran it.
+12. **A bounded no-effect wait with nothing outstanding still parks**: the runtime's `request-budget-exhausted`
+   outcome is exempt from the idle refusal; when nothing is outstanding, give it the same bounded retry → needs-input
+   path as other waits (it parked for >10 min until an operator stop).
+13. `max_requests_per_decision=5` allowed 6 requests in one decision (pydantic-ai `request_limit` 4 + output retries);
+   make the bound exact or document the +1, since the full-lab caps are computed from it.
+
 ## For the owner
 
 1. **Claude Desktop** (not installed here): merge `docs/mac/receipts/a14-claude-desktop-snippet.json` into

@@ -229,3 +229,43 @@ investigator's view source and packed contexts contained it. The `null` came fro
 receipt are annotated.
 
 Ledger: ancillary spent 165c of 1000c (this re-run 32c); available 835c.
+
+## Re-run 2: full-lab D02 at 4bf5974 (after the fixes for REQUESTS 8-10)
+
+Merged `origin/build/eidos-local-v1` at 4bf5974 (fast-forward); fresh wheels `uv build --no-cache` into `$S/dist-4bf5974`,
+lab venv reinstalled `--no-cache --reinstall`. Fake-marker check first: only `eidos.apps.role investigator-worker`
+held it; the probe job's environment had 10 variables and no key; `$HOME`, `~/.claude.json`, network and lab API
+refused; no lab file contained it. Same caps and command as re-run 1 (12 × 1 × 5 ≤ 60 requests, `model_usd=2`), key via
+stdin (`receipts/a8-full-lab-D02-rerun2.json`).
+
+| | First run (5.2) | Re-run 1 (2df52bb) | Re-run 2 (4bf5974) |
+|---|---|---|---|
+| Baseline job | failed | succeeded first time | succeeded first time (val acc 0.8384); also seeds 12, 13 |
+| Turns / decisions | 5 / 5 accepted | 3 / 3 accepted | 6 / 6 accepted, 0 refused decisions |
+| Refused / invalid | 0 | 0 (but an INVALID `author_component` call) | turn 3 `invalid-proposals`: it waited for jobs already finished (nothing outstanding) → bounded immediate retry |
+| Jobs | 5 (1 failed) | 2 | 4 (baseline ×3 seeds, 1 scoring), all succeeded |
+| `author_source` / `author_component` | — / — | — / 1 (INVALID) | **4** / 0; all 4 sources registered, **none ever run** |
+| End | turn cap, no conclusion | stalled, operator stop | **parked** after turn 6 (bounded `request-budget-exhausted` wait, nothing outstanding) → operator stop after >10 min; no conclusion |
+| Claim | none | none | none filed. Its rationale asserted the baseline is "badly undertrained" and expected "large gains": an untested hypothesis, no candidate was evaluated, so nothing supports it |
+| Requests / tokens | 20 / 172k in, 12k out | 15 / 122k in, 6.7k out | 31 / 329k in, 28.8k out |
+| Cost (settled) | $0.4663 (47c) | $0.3111 (32c) | **$0.9465 (95c)**, reserved 250c |
+| Key in lab files | [] | [] | [] |
+
+Intervention (labelled builder intervention): turn 6 completed 2026-11-08 19:43:54 IST with nothing outstanding;
+`stop_investigation` at 19:55 IST after the >10-minute park. No steering.
+
+Why it stalled (diagnosed, platform-independent; REQUESTS 11-13):
+1. **Authored sources are invisible in the packed context.** `author_source` registers a source bundle (no job), and
+   its id reaches the investigation view only as the `subject` of an `artifact.registered` event; the context packer
+   (`investigator/context.py`) has no events or authored-sources section. None of the 4 bundle ids
+   (`art_4ea5…`, `art_1ce2…`, `art_c38a…`, `art_8ffc…`) appears in any packed context, and the turn-4/5/6 contexts are
+   identical in size (11,347 chars). The model said each time it would run the source "next turn" because "the
+   bundle id is only known after" authoring, then re-authored.
+2. With `max_model_calls_per_turn=1` it cannot author and run in one turn, so (1) blocks the whole-trainer path.
+3. **The bounded no-effect outcome still parks.** Turn 6 exhausted the decision's request bound and produced the
+   runtime's exempt `wait_for_jobs` with nothing outstanding; nothing wakes it (max idle 6 h). The ADR 0007 exemption
+   should not apply when nothing is outstanding.
+4. Minor: turn 6 made **6** requests against `max_requests_per_decision=5` (pydantic-ai reported a request_limit of 4
+   plus output retries; the last two responses were cut at 4,096 output tokens). The run total (31) stayed under 60.
+
+Ledger: ancillary spent 260c of 1000c (this run 95c); available 740c.
