@@ -43,10 +43,47 @@ $S/venvs/research/bin/python scripts/qualify/mps_smoke.py --require-mps --out $S
 It trains the switch-order `OrderedSwitchNet` (45 steps, seed 41) through `eidos_pytorch.training.train_loop` on cpu and on mps in separate processes with `PYTORCH_ENABLE_MPS_FALLBACK=1`, and records per device: torch version, `mps.is_available()`, the device the parameters lived on, wall time, final loss, evaluation accuracy on a fixed 4000-pair draw, a parameter checksum, warnings and any CPU-fallback messages. Pass criterion (printed in the receipt): |Δ final loss| ≤ 5e-3 and |Δ accuracy| ≤ 0.02; exact equality is not expected. `--require-mps` makes an unavailable MPS a failure. Linux CPU reference (this build sandbox): final loss 0.27577, accuracy 0.9840 (the reference number for this model at step 45). Unqualified until the Mac receipt shows `match_within_tolerance: true`; the lab itself never claims exact restore across devices.
 Note: `train_loop(device=...)` moves the model only; the script moves batches because the example adapter builds them on the CPU.
 
-## 5. Real-LLM steps (placeholders, the lead adds these)
-* [ ] 5.1 provider and model selection, credentials handling
-* [ ] 5.2 first live investigation (budget, charter, receipt)
-* [ ] 5.3 report back: receipts, cost, deviations
+## 5. Real-LLM steps (lead)
+
+Keep the key only in the shell that runs these commands. Never put it in `lab.json`, a file, or `lab start` from another shell. The supervisor passes provider credentials only to the investigator worker. Jobs and model-chosen commands run with an allowlisted environment, and on macOS under `macos:seatbelt-sealed`.
+
+**5.0 Security check.** Run it first, with no key needed:
+
+```bash
+pytest -q tests/integration/test_contained_commands.py
+```
+
+Run it from a checkout with the repo venv. It should report 4 passed on macOS, where Seatbelt is available.
+
+**5.1 Lab-free driver re-run, after the security fix.**
+
+```bash
+cd research/public/development && $PY package_task.py --task D02 --out $SSD/bundles/D02 && cd -
+ANTHROPIC_API_KEY=... PYTHONPATH=src:packages/eidos-wire/src $PY scripts/qualify/live_bundle_investigation.py \
+  --bundle $SSD/bundles/D02 --python $PY --out $SSD/receipts/live-D02.json --max-requests 40 --max-turns 8
+```
+
+- Repeat with `--task D12` for the null case.
+- The receipt's `isolation` list must show `macos:seatbelt-sealed` for every command.
+- Without a sealed profile the driver refuses to run, unless `--allow-same-user` is given; that waiver is recorded.
+
+**5.2 Full-lab investigation on D02.**
+- Precondition: the lab is initialised from the wheels with `EIDOS_HOME` on the SSD, and it is stopped.
+- Command:
+
+  ```bash
+  PRICE='{"input": <USD/Mtok>, "output": <USD/Mtok>}' ANTHROPIC_API_KEY=... \
+    bash scripts/qualify/full_lab_live.sh --bundle $SSD/bundles/D02 --python $PY --out $SSD/receipts/full-lab-D02.json
+  ```
+
+- Hard caps: 5 turns × 2 decisions × 4 requests = 40 requests, `model_usd=3` at PRICE, `model_tokens=600000`.
+- The receipt contains the served model ids and per-decision usage.
+- `key_found_in_lab_files` must be `[]`; if it is not, the script exits 1.
+
+**5.3 Send back:**
+- `live-D02.json`, `live-D12.json` and `full-lab-D02.json`;
+- `lab logs investigator-worker --lines 400`;
+- the controller's spend figures.
 
 ## 6. What to send back
 `$S/mcp-run/*.receipt.json`, `$S/mps-receipt.json`, the `du`/`ls` output from step 1.3, `lab doctor --json`, the Desktop log check output (if done), and any flag corrections made to `run_clients.sh`.
