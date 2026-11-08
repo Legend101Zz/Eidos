@@ -59,7 +59,20 @@ See `CHANGELOG.md`. In short:
 
 ## Qualification evidence
 
-Filled in from the receipts in `docs/mac/receipts/` and `docs/release/evidence/` as the gates complete; see `ACCEPTANCE_MATRIX.md` § Release gates for the gate table.
+The gate table is `ACCEPTANCE_MATRIX.md` § E. Receipts are in `docs/release/evidence/`, plus `docs/mac/STATUS.md` § v1.0.0 release session.
+
+- **G5, A8 with a real model.** Pass. `claude-sonnet-5-5` completed the whole autonomous journey on the switch-order project through the internal loop, with no intervention:
+  - diagnosis;
+  - a new component authored, validated, published and run;
+  - a trial and a checkpoint branch;
+  - a frozen, qualified evidence plan assessed `inconclusive`;
+  - a behaviour check, and an export that loads strictly;
+  - the investigator worker SIGKILLed after its first committed effect and handed off, with one admission per job, unique keys and visible charges (USD 1.81).
+
+  Two earlier runs exposed six Eidos defects, all fixed with tests. This is development evidence, not a scientific result.
+- **G6, local operations.** Disk exhaustion on a real 2 GiB APFS volume, SIGKILL of every service including PostgreSQL, and abrupt stop with and without the job all pass on macOS. A real machine sleep and restart is the owner's step (`scripts/qualify/sleep_restart_check.sh`).
+- **G3 and G7.** Tests are listed in the CHANGELOG.
+- **Switch-order acceptance journey on macOS:** 154/154.
 
 ## Install
 
