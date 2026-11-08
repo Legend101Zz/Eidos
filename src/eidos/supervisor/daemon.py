@@ -51,7 +51,10 @@ class Supervisor:
     # -- lifecycle -----------------------------------------------------------------------------
     def spawn(self, ch: Child) -> None:
         log = open(self.cfg.p("logs", f"{ch.name}.log"), "ab")
-        env = {**os.environ, "EIDOS_HOME": str(self.cfg.root), "PYTHONUNBUFFERED": "1"}
+        from eidos.runtime.launcher import scrub_secrets
+        base = dict(os.environ) if ch.name == "investigator-worker" else scrub_secrets(os.environ)
+        # Only the model-calling investigator worker holds provider credentials.
+        env = {**base, "EIDOS_HOME": str(self.cfg.root), "PYTHONUNBUFFERED": "1"}
         cwd = str(self.cfg.p("services", "temporal")) if ch.name == "temporal" else str(self.cfg.root)
         ch.proc = subprocess.Popen(ch.argv, stdout=log, stderr=log, stdin=subprocess.DEVNULL, env=env, cwd=cwd,
                                    start_new_session=True)

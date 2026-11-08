@@ -151,6 +151,69 @@ def bwrap_available() -> bool:
     return r.returncode == 0
 
 
+# Variables a research process may inherit on the same-user profile; everything else (provider keys,
+# cloud credentials, lab tokens) is dropped. Sealed profiles start from an empty environment.
+ENV_ALLOW = ("PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "LANG", "TZ", "TMPDIR", "PYTHONHASHSEED",
+             "OMP_NUM_THREADS", "MKL_NUM_THREADS", "CUDA_VISIBLE_DEVICES", "PYTORCH_ENABLE_MPS_FALLBACK",
+             "PYTORCH_MPS_HIGH_WATERMARK_RATIO", "UV_CACHE_DIR")
+ENV_ALLOW_PREFIXES = ("LC_",)
+SECRET_MARKERS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "AUTH", "SESSION")
+
+
+def job_environment(environ) -> dict[str, str]:
+    return {k: v for k, v in environ.items()
+            if (k in ENV_ALLOW or k.startswith(ENV_ALLOW_PREFIXES)) and not k.startswith("EIDOS_")}
+
+
+def scrub_secrets(environ) -> dict[str, str]:
+    """Drop variables that look like credentials (for lab services that never call a model)."""
+    return {k: v for k, v in environ.items() if k.startswith("EIDOS_") or (
+            not any(m in k.upper() for m in SECRET_MARKERS) and not k.startswith(("AWS_", "GOOGLE_", "AZURE_")))}
+
+
+class IsolationUnavailable(RuntimeError):
+    pass
+
+
+def run_contained(argv: list[str], *, cwd: str, writable: list[str], readonly: list[str] = (), python: str | None = None,
+                  timeout: float = 300, allow_same_user: bool = False, env: dict[str, str] | None = None,
+                  attempt_dir: str | None = None) -> dict[str, Any]:
+    """Run an untrusted (e.g. model-authored) command under the strongest available profile.
+
+    Sealed profiles: empty environment plus ``env``, no network, writes only to ``writable``, the user's
+    home and credential stores unreadable (except listed paths). Without a sealed profile the call is
+    refused unless ``allow_same_user`` is set; then the environment is still the allowlist (no secrets)."""
+    import tempfile
+    profile = detect_sealed_profile()
+    waiver = None
+    if not profile:
+        if not allow_same_user:
+            raise IsolationUnavailable("no sealed profile (bwrap/seatbelt) on this host; pass allow_same_user to "
+                                       "run untrusted commands as the same user (recorded as a waiver)")
+        profile, waiver = "dev:same-user", "allow_same_user requested; no sealed profile available"
+    adir = attempt_dir or tempfile.mkdtemp(prefix="eidos-contained-")
+    prefixes: list[str] = []
+    if python and profile != "dev:same-user":
+        out = subprocess.run([python, "-I", "-c", "import json,sys; print(json.dumps([p for p in sys.path if p]))"],
+                             capture_output=True, text=True, env=job_environment(os.environ))
+        prefixes = sorted(set(json.loads(out.stdout) if out.returncode == 0 else [])
+                          | {str(Path(python).resolve().parent.parent), str(Path(python).parent.parent)})
+    spec = LaunchSpec(argv=argv, cwd=cwd, attempt_dir=adir, env=dict(env or {}), profile=profile,
+                      readonly=list(readonly), writable=list(writable), python_prefixes=prefixes,
+                      deny_read=[str(Path.home()), *credential_dirs()] if profile != "dev:same-user" else [])
+    h = launch(spec)
+    deadline = time.monotonic() + timeout
+    while h.exit_code() is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+    timed_out = h.exit_code() is None
+    if timed_out:
+        h.terminate(grace=2)
+    read = lambda n: (Path(adir) / n).read_text(errors="replace") if (Path(adir) / n).exists() else ""  # noqa: E731
+    return {"returncode": h.exit_code() if not timed_out else None, "timed_out": timed_out, "stdout": read("stdout.log"),
+            "stderr": read("stderr.log"), "profile": profile, "waiver": waiver,
+            "config_digest": profile_config_digest(spec)}
+
+
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 
 
@@ -258,7 +321,7 @@ def launch(spec: LaunchSpec) -> ProcessHandle:
         env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp), "TMPDIR": str(tmp), **spec.env}
     else:
         inner = spec.argv
-        env = {k: v for k, v in os.environ.items() if not k.startswith("EIDOS_")}  # never leak lab credentials
+        env = job_environment(os.environ)  # allowlist: no lab credentials, provider keys or other secrets
         env.update(spec.env)
     # The wrapper ignores SIGUSR1 (the checkpoint-and-stop signal is for the worker, which installs
     # its own handler) so it survives to record the exit status.

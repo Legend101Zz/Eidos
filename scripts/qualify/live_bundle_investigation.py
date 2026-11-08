@@ -31,7 +31,6 @@ import argparse
 import json
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -72,8 +71,10 @@ print(json.dumps({"accuracy": sum(c) / len(c), "n": len(c), "correct": sum(c)}))
 
 
 class LocalLab:
-    def __init__(self, bundle: Path, python: str, work: Path, timeout: int):
+    def __init__(self, bundle: Path, python: str, work: Path, timeout: int, allow_same_user: bool = False):
         self.bundle, self.python, self.work, self.timeout = bundle, python, work, timeout
+        self.allow_same_user = allow_same_user
+        self.isolation: list[dict] = []  # realized profile (and any waiver) of every contained command
         self.jobs: list[dict] = []
         self.artifacts: dict[str, Path] = {"art_train": bundle / "train.npz", "art_validation": bundle / "validation.npz",
                                            "art_task": bundle / "task.json"}
@@ -124,12 +125,12 @@ class LocalLab:
                                                                                   "--inputs", "{work}", "--out", "{out}",
                                                                                   "--seed", "{seed}"])]
         t0 = time.time()
-        try:
-            r = subprocess.run(argv, cwd=wd, capture_output=True, text=True, timeout=self.timeout)
-        except subprocess.TimeoutExpired:
+        # Model-chosen argv: never with the provider key, the home directory or the network.
+        r = self._contained(argv, wd, [str(wd), str(out)], [str(self.bundle)], jdir)
+        if r["timed_out"]:
             return self._fail(ref, inputs, config, f"timeout after {self.timeout}s")
-        if r.returncode != 0:
-            return self._fail(ref, inputs, config, f"exit {r.returncode}: {r.stderr[-1500:]}")
+        if r["returncode"] != 0:
+            return self._fail(ref, inputs, config, f"exit {r['returncode']}: {r['stderr'][-1500:]}")
         outputs = []
         for p in sorted(out.iterdir()):
             aid = f"art_{len(self.artifacts):04d}"
@@ -148,12 +149,24 @@ class LocalLab:
         pred, refa = self.artifacts.get(inputs.get("predictions")), self.artifacts.get(inputs.get("reference"))
         if pred is None or refa is None or refa.name != "validation.npz":
             return self._fail(ref, inputs, config, "scoring needs predictions and the validation reference only")
-        r = subprocess.run([self.python, "-c", SCORE, str(pred), str(refa)], capture_output=True, text=True, timeout=120)
-        if r.returncode != 0:
-            return self._fail(ref, inputs, config, r.stderr[-800:])
-        m = json.loads(r.stdout)
+        sdir = self.work / f"score{len(self.jobs):03d}"
+        sdir.mkdir(parents=True)
+        r = self._contained([self.python, "-I", "-c", SCORE, str(pred), str(refa)], sdir, [str(sdir)],
+                            [str(pred), str(refa)], sdir / "proc")
+        if r["returncode"] != 0:
+            return self._fail(ref, inputs, config, r["stderr"][-800:])
+        m = json.loads(r["stdout"].strip().splitlines()[-1])
         j = self._job(ref, "succeeded", inputs, config, {"metrics": m}, [])
         return {"ok": True, "job_id": j["id"], "metrics": m}
+
+    def _contained(self, argv, cwd, writable, readonly, adir):
+        from eidos.runtime.launcher import run_contained
+        r = run_contained(argv, cwd=str(cwd), writable=writable, readonly=readonly, python=self.python,
+                          timeout=self.timeout, allow_same_user=self.allow_same_user, attempt_dir=str(adir),
+                          env={"PYTHONHASHSEED": "0"})
+        self.isolation.append({"argv0": argv[0], "profile": r["profile"], "waiver": r["waiver"],
+                               "config_digest": r["config_digest"]})
+        return r
 
     def _fail(self, ref, inputs, config, msg):
         j = self._job(ref, "failed", inputs, config, None, [], {"category": "user-code", "message": msg[:1500]})
@@ -197,6 +210,8 @@ def main() -> int:
     ap.add_argument("--max-requests", type=int, default=40)
     ap.add_argument("--max-turns", type=int, default=8)
     ap.add_argument("--command-timeout", type=int, default=300)
+    ap.add_argument("--allow-same-user", action="store_true",
+                    help="run model-chosen commands as the same user when no sealed profile exists (recorded waiver)")
     args = ap.parse_args()
     if args.max_requests > HARD_MAX_REQUESTS:
         print(json.dumps({"error": f"--max-requests above hard cap {HARD_MAX_REQUESTS}"}))
@@ -222,7 +237,12 @@ def main() -> int:
     task = json.loads((bundle / "task.json").read_text())
     question = (bundle / "brief.md").read_text().strip()
     work = Path(tempfile.mkdtemp(prefix="eidos-live-bundle-"))
-    lab = LocalLab(bundle, args.python, work, args.command_timeout)
+    from eidos.runtime.launcher import detect_sealed_profile
+    if not detect_sealed_profile() and not args.allow_same_user:
+        print(json.dumps({"error": "no sealed profile (bwrap/seatbelt): refusing to run model-chosen commands as the "
+                                   "same user; pass --allow-same-user to accept and record the waiver"}))
+        return 2
+    lab = LocalLab(bundle, args.python, work, args.command_timeout, args.allow_same_user)
     record = {"driver": "eidos-live-bundle/1", "label": "lab-free real-LLM development run (not a full Eidos lab run)",
               "task_id": task.get("task_id"), "bundle_hashes": task.get("hashes"), "model_requested": args.model,
               "caps": {"max_requests": args.max_requests, "max_turns": args.max_turns, "max_output_tokens": 4096,
@@ -283,7 +303,7 @@ def main() -> int:
             break
     else:
         record["stop"] = "turn cap reached"
-    record.update({"total_requests": spent, "jobs": lab.jobs, "notes": lab.notes,
+    record.update({"total_requests": spent, "jobs": lab.jobs, "notes": lab.notes, "isolation": lab.isolation,
                    "authored_sources": {k: sorted(v) for k, v in lab.sources.items()}, "finished_at": time.time(),
                    "usage_total": {"input_tokens": sum((t.get("usage") or {}).get("input_tokens") or 0 for t in record["turns"]),
                                    "output_tokens": sum((t.get("usage") or {}).get("output_tokens") or 0 for t in record["turns"])}})
