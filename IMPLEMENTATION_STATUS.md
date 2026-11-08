@@ -330,8 +330,32 @@ Lesson: three of the four failures came from round 5 making sealed the default p
   - switch journey **154/154 twice** (271 s, 242 s);
   - unit + integration + MCP + reporting **120 passed, 1 skipped**. The skipped test is the live-lab MCP test; in one run it failed only because a stale `EIDOS_HOME` pointed at a stopped lab.
 
+## Round 11 (2026-11-08): owner decisions; security fix; Mac qualification kit
+
+- **CI on `57dd5bd`:** 6 of 9 jobs green. Three jobs failed in setup on GitHub release-asset 504s (uv and the Temporal download). That was infrastructure, not code.
+- **Download robustness (`3a96f64`):** the Temporal download now retries with backoff, and `EIDOS_TEMPORAL_ARCHIVE_CACHE` provides a verified archive cache. The CI lab jobs cache the archive with `actions/cache`, keyed by OS/arch and the pinned table, and fall back to the PyPI uv wheel if setup-uv fails.
+  - The v0.1.0 side of the upgrade job still downloads with old code, without retries.
+- **SECURITY (`3a094d8`):** model-chosen commands and job processes no longer see provider keys.
+  - `run_contained` runs untrusted commands under the strongest sealed profile: empty env, no network, no home or credential-store reads, writes only to work/out, timeouts. Without a sealed profile it refuses, unless `allow_same_user` is set, which records a waiver.
+  - The lab-free driver runs its project commands and scorer through it (`--allow-same-user`; `isolation` in the receipt).
+  - Same-user job launches get an allowlisted environment (`job_environment`).
+  - The supervisor passes credentials only to the investigator worker (`scrub_secrets` for the others).
+  - Task-bundle export, environment inspection and prefix probes also use the allowlisted env.
+  - Tests in `tests/integration/test_contained_commands.py`, all passing here under bwrap: no key, no planted home file, no network, no host write outside work, same-user only with a waiver, and the D02 baseline plus scorer still run contained.
+- **Mac qualification kit**, to be run by the controller (runbook `docs/ops/MAC_QUALIFICATION_RUNBOOK.md`):
+  - MCP clients, `scripts/qualify/mcp_clients/`: config generator, the Claude Code / Codex commands, receipt verification, and a Claude Desktop log check. The client flag syntax is unverified here.
+  - MPS smoke: `scripts/qualify/mps_smoke.py`.
+  - Full-lab real-LLM D02 with caps: `scripts/qualify/full_lab_live.sh`.
+  - Lab-free D02/D12 re-run.
+  - Storage paths: `docs/ops/STORAGE_PATHS.md`.
+- **New CLI options:** `lab investigate start --settings JSON --max-model-calls-per-turn N`.
+- **Verified here:** unit + integration + MCP + reporting **124 passed, 1 skipped** at `80c1e2d`.
+
 ## Next concrete action
 
-1. The controller relays CI for the current head of `build/eidos-local-v1`. `8301799` is RED, for the cause above. If all nine jobs are green, a later session or the owner tags `eidos-v0.5.3`.
-2. Owner decisions (`HANDOFF.md`): the macOS kit, real-LLM D02/D12 runs, OpenAI-compatible provider qualification, external MCP clients, and Seatbelt vs Lima.
-3. Engineering backlog: the review-2 idle-poll rollover issue, a CI test for checkpoint-and-stop under bwrap, and an audit of any other `uv pip install --find-links` sites for the cached-wheel hazard.
+1. The controller runs `docs/ops/MAC_QUALIFICATION_RUNBOOK.md` on the owner's Mac and returns the receipts: MCP clients, MPS, lab-free D02/D12, full-lab D02 and the security test. The lead fixes what they show.
+2. CI on the head of `build/eidos-local-v1`. If all nine jobs are green, tag `eidos-v0.5.3`. The release-asset 504s were infrastructure.
+3. Backlog:
+   - Temporal download retries on the v0.1.0 side of the upgrade job;
+   - the review-2 idle-poll rollover issue;
+   - a CI test for checkpoint-and-stop under bwrap.

@@ -12,6 +12,10 @@
     - `investigation_view` job visibility no longer uses a 5,000-event window that starts at seq 0;
     - the investigator's own effects count as news.
 - **Post-tag head:** the current branch head needs CI before any tag such as `eidos-v0.5.3`.
+- **Round 11 (owner decisions):**
+  - Real-model checks, real MCP clients and MPS are qualified on the owner's Mac by the controller, using `docs/ops/MAC_QUALIFICATION_RUNBOOK.md`; results are pending.
+  - The security defect the controller found is fixed (`3a094d8`): model-chosen commands could inherit `ANTHROPIC_API_KEY`, home and network. Untrusted commands now run under the sealed profile with no secrets, and only the investigator worker holds provider keys.
+  - Download robustness for CI was added (`3a96f64`).
 - Earlier freeze: annotated tag `eidos-v0.5.0` → `e822744`. All eight CI jobs are green there: lint-and-unit, integration, fresh-install, upgrade-across-releases, e2e-journey, components, macOS arm64, worker-compat.
 - Earlier tags, never moved: `eidos-v0.1.0` → `78e4597`, `v0.2.0` → `37bd0c5`, `v0.3.0` → `8a33793`, `v0.4.0` → `c57dba9`, `v0.4.1` → `e328608`, `v0.5.0` → `e822744`, `v0.5.1` → `12b4822`, `v0.5.2` → `e4558e2`.
 - **Since v0.4.1:**
@@ -83,7 +87,7 @@ Full guide: `docs/ops/INSTALL_AND_OPERATE.md`. CI layout: `docs/ops/CI.md`. Exac
 | **Fixture-only** | All investigator decisions inside lab runs: the D01/D02/D12 investigations and journey step 7. |
 | **Development-qualified, lab-free** | The Anthropic path through the Pydantic AI adapter. Controller-run live receipt #3 passed 8/8. |
 | **GitHub-runner evidence (macOS arm64)** | Wheel install, `lab init/start/doctor/project/status/stop`, worker SDK tests and research smoke. **New:** `macos:seatbelt-sealed` passed on a GitHub macOS 15 arm64 runner (`scripts/ci/seatbelt_probes.py`, CI run `42429763457`):<br>• all six sealed controls held under the sandbox;<br>• the same-user planted-effect control detected the accesses;<br>• the permitted computation read its input copy and wrote staging, scratch, resume and tmp, while project-root writes were refused.<br>**v0.5.0 (CI on `e822744`):** the hardened profile passed, including `no-process-inspection` against a same-user peer. The assessor ran under Seatbelt with a planted-effect assessment and all controls passed (`scripts/ci/assessor_sandbox_probe.py`). |
-| **Unqualified** | macOS researcher machine; Lima VM; CUDA/MPS; OpenAI-compatible providers; external MCP hosts (Claude Code/Desktop, Codex); sleep/suspend; multi-day runs; distributed training; performance on a declared reference machine. |
+| **Unqualified** (Mac runs prepared, pending: macOS researcher machine, MPS, Claude Code/Codex, real-LLM full lab) | macOS researcher machine; Lima VM; CUDA/MPS; OpenAI-compatible providers; external MCP hosts (Claude Code/Desktop, Codex); sleep/suspend; multi-day runs; distributed training; performance on a declared reference machine. |
 | **Scientifically unproven** | Any claim that Eidos improves verified outcomes under comparable budgets (A16). |
 
 ## Open items
