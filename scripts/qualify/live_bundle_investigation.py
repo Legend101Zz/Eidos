@@ -7,8 +7,10 @@ What is NOT the full lab: no PostgreSQL ledger, Temporal, fencing, or isolation 
 an in-memory record and executes a restricted tool set locally:
 
 * ``run_component`` with ``eidos.project.command*`` (the bundle's own CLI, optional candidate
-  ``inputs.source`` from ``author_component``) or ``eidos.task.score-classification*`` (validation);
-* ``author_component`` (stores candidate project files; the driver does not build components);
+  ``inputs.source`` from ``author_source``) or ``eidos.task.score-classification*`` (validation);
+* ``author_source`` (candidate project files as a source bundle; same name and meaning as in the lab).
+  ``author_component`` (build a new component) exists only in the full lab and is refused here, so a
+  lab-free result never relies on a meaning the lab does not have;
 * ``record_note``; control ``wait_for_jobs`` (jobs run synchronously) / ``conclude`` / ``stop``.
 
 The investigator sees ONLY the bundle (brief, task.json, train/validation arrays via declared
@@ -182,20 +184,21 @@ class LocalLab:
         j = self._job(ref, "failed", inputs, config, None, [], {"category": "user-code", "message": msg[:1500]})
         return {"ok": False, "job_id": j["id"], "error": msg[:500]}
 
-    def author_component(self, a: dict) -> dict:
+    def author_source(self, a: dict) -> dict:
         files = a.get("files") or {}
         if not isinstance(files, dict) or not all(isinstance(v, str) for v in files.values()):
             return {"ok": False, "error": "files must map relative paths to text"}
         sid = f"src_{len(self.sources):03d}"
         self.sources[sid] = files
-        return {"ok": True, "bundle_artifact_id": sid, "note": "use as run_component inputs.source"}
+        return {"ok": True, "artifact_id": sid, "use_as": "run_component inputs.source (e.g. eidos.project.command)"}
 
     def view(self, question: str, horizon: int) -> dict:
         return {"investigation": {"id": "inv-live-bundle", "status": "active", "body": {
             "question": question, "inputs": {"train": "art_train", "validation": "art_validation", "task": "art_task"},
             "notes": "Lab-free driver: run_component (eidos.project.command*, eidos.task.score-classification*), "
-                     "author_component (candidate project files usable as run_component inputs.source), record_note, "
-                     "conclude. Jobs finish before your next turn."}},
+                     "author_source (candidate project files usable as run_component inputs.source), record_note, "
+                     "conclude. author_component (building a new component) is not available in this driver. "
+                     "Jobs finish before your next turn."}},
             "horizon": horizon, "charter": {"study_id": "live-bundle", "exploration_only": True},
             "jobs": self.jobs[-25:], "claims": [], "events": [], "budgets": {}}
 
@@ -298,8 +301,8 @@ def main() -> int:
         for c in d["calls"]:
             if c["tool"] == "run_component":
                 receipts.append(lab.run_component(c["args"]))
-            elif c["tool"] == "author_component":
-                receipts.append(lab.author_component(c["args"]))
+            elif c["tool"] == "author_source":
+                receipts.append(lab.author_source(c["args"]))
             elif c["tool"] == "record_note":
                 lab.notes.append(c["args"])
                 receipts.append({"ok": True})

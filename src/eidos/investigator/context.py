@@ -24,7 +24,11 @@ Effect tools (executed in order only after the lab accepts your decision):
   run_component {component_ref, inputs:{port: artifact_id}, config, environment?, wall_seconds?, prediction?, falsifier?}
   plan_trial / launch_trial {trial_id}; plan_branch {parent_checkpoint_id, component_ref, migration, stream_policy, seed?,
   intervention, inputs, config}; launch_branch {trial_id}
-  author_component {files:{path: text}, environment}  -> validation job; then publish_component {bundle_artifact_id, validation_job_id}
+  author_source {files:{path: text}}  -> a source-bundle artifact id: candidate project files (e.g. a changed project.py)
+    for run_component inputs.source of eidos.project.command (the whole-trainer path). No build, no new component.
+  author_component {files:{path: text}, environment: "<registered environment name string, e.g. \"default\">"}
+    -> builds a NEW component (needs an eidos-component.json manifest in files): a validation job; then
+    publish_component {bundle_artifact_id, validation_job_id}
   bind_component {component_ref, capability?}; retire_component {component_ref}
   file_claim {statement, kind, scope}; draft_evidence_plan {claim_id, charter_id, template_ref, draft}
   freeze_evidence_plan {plan_id}; launch_evidence_plan {plan_id}
@@ -39,6 +43,8 @@ def pack(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int
     omitted: dict[str, list] = {"jobs": [], "catalog": []}
     lines = [f"# Investigation {view['investigation']['id']} (status {view['investigation']['status']}, horizon {view['horizon']})",
              f"Question: {inv.get('question')}"]
+    if view.get("environments"):
+        lines.append(f"Registered environments (names for `environment`): {', '.join(view['environments'])}")
     if inv.get("model_artifact_id"):
         lines.append(f"Model artifact: {inv['model_artifact_id']}  environment: {inv.get('environment')}")
     ch = view.get("charter")

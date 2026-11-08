@@ -367,7 +367,13 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
               and (cutoff_ts is None or c.created_at <= cutoff_ts)]
     for c in claims:
         _expose_record(ctx, c)
+    try:
+        from eidos.application.handlers.projects import get_profile
+        environments = sorted(get_profile(ctx).body.get("environments") or {})
+    except Exception:  # noqa: BLE001 - a project without a profile simply has none
+        environments = []
     return {"investigation": {"id": inv.id, "status": inv.status, "body": inv_body}, "horizon": horizon,
+            "environments": environments,
             "charter": charter, "jobs": jobs,
             "events": [{"seq": e["seq"], "type": e["type"], "subject": e["subject"]} for e in events[-200:]],
             "turns": [{"id": t["id"], "seq": t["seq"], "status": t["status"], "result": t["result"]} for t in turns],

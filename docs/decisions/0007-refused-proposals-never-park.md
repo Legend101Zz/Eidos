@@ -26,3 +26,18 @@ Status: accepted (2026-11-08).
 - `test_turn_recovery.py::test_wait_refused_when_launched_jobs_finished_before_the_decision_and_next_view_sees_them`
 - `test_turn_recovery.py::test_wait_for_jobs_with_nothing_outstanding_is_refused_within_the_turn`
 - The switch journey, run locally twice.
+
+## Amendment (2026-11-08, Mac full-lab re-run)
+
+**What happened.** A second parking path appeared in the real re-run. An accepted decision's only call (`author_component` with a non-string `environment`) failed at execution, and the decision waited anyway. Nothing was outstanding, and a failed call is not news.
+
+**Choice.** `execute_decision` now reports `nothing_outstanding`, with the failed calls, when a waiting decision leaves no active jobs. The turn then treats this like a refused proposal (patched `failed-calls-no-wait-v1`):
+- the next slot sees the failed receipts;
+- the turn ends `invalid-proposals` after the bounded count, or on its last slot;
+- the coordinator's bounded retry-then-surface applies.
+
+**Rejected alternative.** Counting failed calls as news would start a full new turn after every failure. It would also depend on the idle-poll interval, and it does not bound repeated failures.
+
+**Related changes.**
+- `environment` arguments are checked at acceptance: they must be the name of a registered environment, and the error lists the available names.
+- The whole-trainer path has its own tool, `author_source`. It means the same thing in the lab and in the lab-free driver; the driver refuses `author_component`.

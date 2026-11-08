@@ -278,11 +278,33 @@ def _check_something_to_wait_for(ctx: Ctx, inv, decision: dict) -> None:
                   "something, request input, or conclude", details={"control": "wait_for_jobs", "outstanding": 0})
 
 
+def _environment_names(ctx: Ctx) -> list[str]:
+    from eidos.application.handlers.projects import get_profile
+    try:
+        return sorted(get_profile(ctx).body.get("environments") or {})
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def _check_component_contracts(ctx: Ctx, calls: list[dict]) -> None:
     """A decision is accepted only if each component invocation satisfies that release's declared
     configuration contract (so accepted means runnable, not merely well-formed)."""
     from eidos.domain.contracts import validate_config
     for i, c in enumerate(calls):
+        if c["tool"] in ("author_component", "run_component", "plan_trial", "plan_branch") \
+                and c["args"].get("environment") is not None or c["tool"] == "author_component":
+            env = c["args"].get("environment", "default")
+            from eidos.application.handlers.components import env_for
+            if not isinstance(env, str):
+                env_names = _environment_names(ctx)
+                raise Invalid(f"call {i} ({c['tool']}): environment must be a registered environment name string, "
+                              f"not {type(env).__name__}; available: {env_names}",
+                              details={"call": i, "available": env_names})
+            try:
+                env_for(ctx, env)
+            except Invalid as exc:
+                raise Invalid(f"call {i} ({c['tool']}): environment {env!r} is not registered; available: "
+                              f"{_environment_names(ctx)}", details={"call": i, "available": _environment_names(ctx)}) from exc
         if c["tool"] not in ("run_component", "plan_trial", "plan_branch"):
             continue
         rel = ctx.tx.get_record("component_release", c["args"].get("component_ref", ""))

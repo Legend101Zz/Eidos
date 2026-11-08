@@ -22,7 +22,8 @@ EFFECT_TOOLS = {
     "launch_trial": "launch_trial",
     "plan_branch": "plan_branch",
     "launch_branch": "launch_branch",
-    "author_component": "validate_component",  # composite: upload source bundle, then validate
+    "author_component": "validate_component",  # composite: upload source bundle, then validate (builds a component)
+    "author_source": "register_artifact",  # candidate project files as a source bundle (run_component inputs.source)
     "publish_component": "publish_component",
     "bind_component": "bind_component",
     "retire_component": "retire_component",
@@ -39,7 +40,7 @@ EFFECT_TOOLS = {
 REQUIRED_ARGS = {
     "run_component": ("component_ref",), "plan_trial": ("component_ref",), "launch_trial": ("trial_id",),
     "plan_branch": ("parent_checkpoint_id", "component_ref", "migration", "stream_policy"),
-    "launch_branch": ("trial_id",), "author_component": ("files",),
+    "launch_branch": ("trial_id",), "author_component": ("files",), "author_source": ("files",),
     "publish_component": ("bundle_artifact_id", "validation_job_id"), "bind_component": ("component_ref",),
     "retire_component": ("component_ref",), "file_claim": ("statement", "kind", "scope"),
     "draft_evidence_plan": ("claim_id", "charter_id", "template_ref"), "freeze_evidence_plan": ("plan_id",),

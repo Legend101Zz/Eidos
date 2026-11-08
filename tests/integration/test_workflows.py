@@ -376,3 +376,36 @@ async def test_needs_input_survives_continue_as_new(env):
         await asyncio.sleep(4)
         assert fake.turns >= 4
         await h.terminate()
+
+
+async def test_wait_after_failed_calls_is_not_a_park(env):
+    """Mac request 8: accepted wait decisions whose calls left nothing outstanding end the turn like refused
+    proposals (bounded retries, then needs operator input) instead of waiting for news that never comes."""
+    import asyncio
+    fake = FakeInvestigator()
+
+    @activity.defn(name="decide")
+    async def decide(a: dict) -> dict:
+        return {"accepted": True, "decision_id": f"{a['turn_id']}-d{a['slot']}", "n_calls": 1,
+                "control": {"action": "wait_for_jobs"}}
+
+    @activity.defn(name="execute_decision")
+    async def execute_decision(a: dict) -> dict:
+        return {"summary": [{"tool": "launch_trial", "ok": False}], "nothing_outstanding": True,
+                "failed_calls": [{"tool": "launch_trial", "code": "NOT_FOUND"}]}
+
+    @activity.defn(name="check_news")
+    async def check_news(a: dict) -> dict:
+        return {"news": False}
+
+    acts = [fake.begin_turn, fake.build_context, decide, execute_decision, fake.complete_turn, check_news,
+            fake.mark_needs_input]
+    wid = f"inv-failwait-{uuid.uuid4().hex[:6]}"
+    async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
+            Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=acts):
+        h = await env.client.start_workflow(InvestigationWorkflow.run, {"investigation_id": wid, "project_id": "p",
+                                            "idle_poll_seconds": 1}, id=wid, task_queue=WORKFLOW_QUEUE)
+        await asyncio.sleep(6)
+        assert fake.turns == 3 and all(c["stop_reason"] == "invalid-proposals" for c in fake.completed), fake.completed
+        assert "needs operator input" in (await h.query("state"))["status"]
+        await h.terminate()

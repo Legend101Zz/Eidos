@@ -172,6 +172,7 @@ class TurnWorkflow:
         base = {"turn_id": tid, "project_id": a["project_id"], "investigation_id": a["investigation_id"]}
         stop, control, receipts = "calls-exhausted", {}, []
         invalid_run = 0
+        failed_waits = 0  # accepted waits whose calls left nothing outstanding
         try:
             await workflow.execute_activity("build_context", base, task_queue=INVESTIGATOR_QUEUE,
                                             start_to_close_timeout=timedelta(seconds=120),
@@ -200,6 +201,15 @@ class TurnWorkflow:
                     receipts.append({"decision_id": d["decision_id"], "summary": r.get("summary")})
                 control = d.get("control") or {}
                 action = control.get("action")
+                if action == "wait_for_jobs" and d.get("n_calls") and r.get("nothing_outstanding") \
+                        and workflow.patched("failed-calls-no-wait-v1"):
+                    # Nothing to wait for after the calls ran (all failed or launched nothing): the next slot sees
+                    # the failed receipts; repeated, it ends like refused proposals (bounded retry, then surface).
+                    failed_waits += 1
+                    if failed_waits >= MAX_CONSECUTIVE_INVALID or slot == int(b.get("max_model_calls", 4)) - 1:
+                        stop = "invalid-proposals"
+                        break
+                    continue
                 if action == "wait_for_jobs":
                     stop = "waiting"
                     break

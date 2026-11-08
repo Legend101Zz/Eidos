@@ -290,3 +290,48 @@ def test_wait_refused_when_launched_jobs_finished_before_the_decision_and_next_v
     h = lab.q(lab.admin, "project_summary", {}, project=pid)["horizon"]
     view = lab.q(lab.admin, "investigation_view", {"investigation_id": inv, "horizon": h}, project=pid)
     assert {j["status"] for j in view["jobs"]} == {"succeeded"}, view["jobs"]
+
+
+@fixture_policy("test-failing-call-then-wait")
+def _failing_then_wait(req):
+    return {"rationale": "launch a trial that does not exist", "calls": [
+        {"tool": "launch_trial", "args": {"trial_id": "trial_missing", "purpose": "open-search"}}],
+        "control": {"action": "wait_for_jobs"}}
+
+
+def test_wait_after_calls_that_all_failed_reports_nothing_outstanding(lab):
+    """Mac request 8: the only call fails at execution and the decision waits; the turn must learn that there is
+    nothing to wait for (and which call failed) instead of parking until max-idle."""
+    pid, _, acts = setup(lab)
+    inv = lab.cmd(lab.admin, "start_investigation", {"question": "q", "charter_id": f"charter:s{pid}",
+                  "investigator": {"runtime": "fixture", "settings": {"policy": "test-failing-call-then-wait"}}},
+                  project=pid)["result"]["investigation_id"]
+    env = ActivityEnvironment()
+    b = env.run(acts.begin_turn, {"investigation_id": inv, "project_id": pid, "index": 1})
+    base = {"turn_id": b["turn_id"], "project_id": pid, "investigation_id": inv}
+    env.run(acts.build_context, base)
+    d = env.run(acts.decide, {**base, "slot": 0})
+    assert d["accepted"], d
+    r = env.run(acts.execute_decision, {**base, "decision_id": d["decision_id"]})
+    assert r.get("nothing_outstanding") is True and r["failed_calls"][0]["tool"] == "launch_trial", r
+
+
+def test_environment_must_be_a_registered_name_and_author_source_returns_a_source_artifact(lab):
+    """Mac requests 9-10: a non-string or unknown environment is refused at acceptance, listing the names; the
+    whole-trainer path has its own tool (author_source) with the same meaning in the lab and the lab-free driver."""
+    pid, inv, acts = setup(lab)
+    env = ActivityEnvironment()
+    b = env.run(acts.begin_turn, {"investigation_id": inv, "project_id": pid, "index": 1})
+    wf = lab.principal(f"wf-{pid}", ["workflow"], [pid])
+    bad = lab.cmd(wf, "accept_decision", {"turn_id": b["turn_id"], "slot": 0, "proposal": {
+        "rationale": "x", "calls": [{"tool": "author_component", "args": {"files": {"a.py": "x"},
+                                                                         "environment": {"base": "project-root"}}}],
+        "control": {}}}, project=pid)["result"]
+    assert not bad["accepted"] and "lab" in bad["error"]["message"] and "environment" in bad["error"]["message"]
+    ok = lab.cmd(wf, "accept_decision", {"turn_id": b["turn_id"], "slot": 1, "proposal": {
+        "rationale": "x", "calls": [{"tool": "author_source", "args": {"files": {"project.py": "print(1)"}}}],
+        "control": {}}}, project=pid)["result"]
+    assert ok["accepted"], ok
+    r = env.run(acts.execute_decision, {"turn_id": b["turn_id"], "project_id": pid, "investigation_id": inv,
+                                        "decision_id": ok["decision_id"]})
+    assert r["summary"][0] == {"tool": "author_source", "ok": True, "replayed": None, "code": None} or r["summary"][0]["ok"]

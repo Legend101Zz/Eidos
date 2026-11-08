@@ -234,7 +234,19 @@ class InvestigatorActivities:
         self.wf.command("record_decision_receipts", {"decision_id": dec["id"], "receipts": stable}, project=p,
                         key=f"receipts:{dec['id']}")
         summary = [{"tool": r["tool"], "ok": r["ok"], "replayed": r.get("replayed"), "code": r.get("code")} for r in receipts]
-        return bounded({"summary": summary})
+        out = {"summary": summary}
+        # A wait after effects that created nothing to wait for (every effect call failed, or none launched work)
+        # would park the investigation: report it so the turn treats it like a refused proposal (ADR 0007/0008).
+        if (dec["body"].get("control") or {}).get("action") == "wait_for_jobs" and receipts:
+            active = self.wf.query("list_jobs", {"investigation_id": a["investigation_id"],
+                                                 "statuses": ["admitted", "queued", "running", "cancel-requested"]},
+                                   project=p)
+            if not active:
+                out["nothing_outstanding"] = True
+                out["failed_calls"] = [{"tool": r["tool"], "code": r.get("code"),
+                                        "message": str((r.get("error") or {}).get("message", ""))[:300]}
+                                       for r in receipts if not r["ok"]]
+        return bounded(out)
 
     def _execute_call(self, p: str, inv: str, turn_id: str, dec_id: str, call: dict) -> dict:
         tool, args, idx = call["tool"], dict(call["args"]), call["index"]
@@ -242,6 +254,13 @@ class InvestigatorActivities:
         assert key == command_key(p, turn_id, dec_id, idx), "persisted command key mismatch"
         args.setdefault("investigation_id", inv)
         try:
+            if tool == "author_source":  # the whole-trainer path: candidate project files, no build
+                bundle = json.dumps({"files": args.get("files") or {}}, sort_keys=True).encode()
+                up = self.inv.upload(p, data=bundle, media_type="application/vnd.eidos.source-bundle+json",
+                                     schema="source-bundle/1", role="source", name="authored-source", key=key)
+                return {"tool": tool, "index": idx, "ok": True, "replayed": up.get("replayed"),
+                        "result": {"artifact_id": up["result"]["artifact_id"],
+                                   "use_as": "run_component inputs.source (e.g. eidos.project.command)"}}
             if tool == "author_component":
                 bundle = json.dumps({"files": args.get("files") or {}}, sort_keys=True).encode()
                 up = self.inv.upload(p, data=bundle, media_type="application/vnd.eidos.source-bundle+json",
