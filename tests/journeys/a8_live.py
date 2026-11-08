@@ -61,7 +61,9 @@ What I need from this investigation, in order. Use the tools; cite job and artif
 5. Behaviour-check the repaired checkpoint in a fresh process (eidos.pytorch.behavior-check) and export it with
    export_model.
 6. Conclude with a short summary of the diagnosis, the evidence and its limits.
-Every job finishes in a later turn: use wait_for_jobs after launching work."""
+Every job finishes in a later turn: use wait_for_jobs after launching work.
+The model budget for this investigation is small (about USD 2): combine independent calls in one decision, avoid
+re-reading what the context already shows, and move on to the evidence plan and the export once a repair works."""
 
 JOB_TOOLS = ("run_component", "author_component", "launch_trial", "launch_branch")
 

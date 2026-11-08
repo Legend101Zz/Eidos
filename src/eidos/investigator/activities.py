@@ -72,6 +72,17 @@ def bounded(result: dict) -> dict:
             "truncated": True}
 
 
+def decision_usd_envelope(est_tokens: float, price: dict, cfg: dict) -> float:
+    """Worst-case USD for one decision: at most max_requests_per_decision x max_output_tokens of the token
+    envelope can be output; the rest is input. Pricing every token at the output rate (the old bound) reserved
+    about 3x too much and ended a real run with a third of its budget unused (G5 live run 2)."""
+    out_cap = float(cfg.get("max_requests_per_decision", 4)) * float(cfg.get("max_output_tokens", 4096))
+    out_tokens = min(est_tokens, out_cap)
+    in_price = float(price.get("input", max(price.values())))
+    out_price = float(price.get("output", max(price.values())))
+    return ((est_tokens - out_tokens) * in_price + out_tokens * out_price) / 1e6
+
+
 class InvestigatorActivities:
     def __init__(self, investigator: LabClient, workflow: LabClient, *, runtime_overrides: dict | None = None):
         self.inv = investigator
@@ -166,7 +177,7 @@ class InvestigatorActivities:
         price = cfg.get("price_per_mtok") or {}
         estimate = {"model_tokens": est_tokens}
         if price:
-            estimate["model_usd"] = est_tokens * max(price.values()) / 1e6
+            estimate["model_usd"] = decision_usd_envelope(est_tokens, price, cfg)
         try:
             rr = self.wf.command("reserve_model_budget", {"turn_id": a["turn_id"], "slot": a["slot"],
                                  "attempt": activity.info().attempt, "estimate": estimate}, project=p,

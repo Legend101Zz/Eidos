@@ -66,3 +66,16 @@ def test_reconcile_resumes_after_the_last_turn_and_skips_needs_input():
     args = {a["investigation_id"]: a for _, a in t.started}
     assert args["inv-a"]["turn_counter"] == 11
     assert "turn_counter" not in args["inv-c"]  # no turns yet: starts at 0
+
+
+def test_decision_usd_envelope_is_a_tight_upper_bound():
+    from eidos.investigator.activities import decision_usd_envelope
+    price = {"input": 2.0, "output": 10.0}
+    cfg = {"max_requests_per_decision": 4, "max_output_tokens": 4096}
+    usd = decision_usd_envelope(120_000, price, cfg)
+    out = 4 * 4096
+    assert abs(usd - ((120_000 - out) * 2 + out * 10) / 1e6) < 1e-12
+    assert usd < 120_000 * 10 / 1e6  # the old bound priced everything as output
+    assert usd >= 120_000 * 2 / 1e6  # never below all-input
+    assert decision_usd_envelope(1000, price, cfg) == 1000 * 10 / 1e6  # tiny envelope: may all be output
+    assert decision_usd_envelope(1000, {"flat": 3.0}, cfg) == 1000 * 3.0 / 1e6
