@@ -21,6 +21,10 @@ import sys
 import time
 from pathlib import Path
 
+# The newest migration in this checkout (the head the upgrade must reach).
+HEAD_REVISION = max(f.name.split("_")[0] for f in (Path(__file__).resolve().parents[3] / "src/eidos/persistence/migrations/versions")
+                    .glob("[0-9]*_*.py"))
+
 LAB = os.environ["LAB_BIN"]
 HOME = Path(os.environ["EIDOS_HOME"])
 OUT = Path(os.environ["OUT"])
@@ -224,7 +228,7 @@ def verify() -> None:
     w = old["watermark"]
     new = snapshot(OUT / "snapshot-after.json")
 
-    ck("ledger migrated to head", new["revision"] == "0003", f"{old['revision']} -> {new['revision']}")
+    ck("ledger migrated to head", new["revision"] == HEAD_REVISION, f"{old['revision']} -> {new['revision']}")
     ck(
         "event_counter in step with events",
         psql("SELECT last_seq FROM ledger.event_counter")[0][0] == str(new["events"]["max"]),
@@ -342,7 +346,7 @@ def verify() -> None:
     )
     ck(
         "doctor reports migration at head",
-        any(c["check"] == "ledger-migration" and "0003" in c["detail"] for c in doctor),
+        any(c["check"] == "ledger-migration" and HEAD_REVISION in c["detail"] for c in doctor),
     )
 
     result = {
