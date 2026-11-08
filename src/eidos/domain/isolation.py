@@ -31,12 +31,19 @@ PROFILES: dict[str, dict[str, Any]] = {
         "summary": "bubblewrap namespaces, read-only inputs, no network, separate scorer process",
         "platforms": ("linux",),
     },
+    "macos:seatbelt-sealed": {
+        "controls": SEALED_CONTROLS,
+        "summary": "macOS Seatbelt (sandbox-exec): lab home and credential directories unreadable, writes only to "
+                   "staging/scratch/resume, no network, cleared environment; same OS user; mach IPC not filtered",
+        "platforms": ("darwin",),
+    },
     "macos:lima-vm-sealed": {
         "controls": SEALED_CONTROLS,
         "summary": "Lima Linux VM with bwrap inside; no broad host mounts",
         "platforms": ("darwin",),
     },
 }
+SEALED_PROFILES = tuple(p for p in PROFILES if p.endswith("-sealed"))
 
 
 def evaluate_receipt(required: dict[str, Any], receipt: dict[str, Any] | None, *, trusted_launchers: set[str]) -> dict[str, Any]:

@@ -43,6 +43,7 @@ class LabConfig:
     turns_per_run: int = 20
     idle_poll_seconds: int = 60
     sealed_available: bool = False
+    sealed_profile: str = ""  # linux:bwrap-sealed | macos:seatbelt-sealed | "" (none)
     version: str = "0.1.0"
     extra: dict = field(default_factory=dict)
 

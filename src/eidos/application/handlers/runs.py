@@ -80,7 +80,9 @@ def _env_provided(cap: str, cat: list[dict]) -> bool:
 
 
 def strongest_profile(ctx: Ctx) -> str:
-    return "linux:bwrap-sealed" if ctx.settings.get("sealed_available") else "dev:same-user"
+    if not ctx.settings.get("sealed_available"):
+        return "dev:same-user"
+    return ctx.settings.get("sealed_profile") or "linux:bwrap-sealed"
 
 
 def choose_profile(ctx: Ctx, requested: str | None, waiver: str | None) -> dict:

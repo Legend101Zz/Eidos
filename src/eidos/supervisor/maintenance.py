@@ -182,8 +182,9 @@ def restore(bundle: Path, home: str, *, api_port: int = 8765, pg_port: int = 554
         enroll_principals(cfg)
     finally:
         svc.pg_stop(cfg)
-    from eidos.runtime.launcher import bwrap_available
-    cfg.sealed_available = bwrap_available()
+    from eidos.runtime.launcher import detect_sealed_profile
+    cfg.sealed_profile = detect_sealed_profile() or ""
+    cfg.sealed_available = bool(cfg.sealed_profile)
     cfg.extra["restored_from"] = {"bundle": str(bundle), "event_watermark": man["event_watermark"],
                                   "created_utc": man["created_utc"]}
     cfg.save()

@@ -53,7 +53,8 @@ def run_api(cfg: LabConfig) -> None:
 
     notifier = Notifier()
     service = CommandService(ledger, store, settings={"max_upload_bytes": 4 << 30, "lab_root": str(cfg.root),
-                                                      "sealed_available": cfg.sealed_available}, notifier=notifier)
+                                                      "sealed_available": cfg.sealed_available,
+                                                      "sealed_profile": cfg.sealed_profile}, notifier=notifier)
     loop = None
 
     async def main():
@@ -121,7 +122,7 @@ def run_training_runner(cfg: LabConfig) -> None:
 def run_sealed_runner(cfg: LabConfig) -> None:
     from eidos.orchestration.activities import RunnerActivities
     from eidos.orchestration.names import SEALED_QUEUE
-    acts = RunnerActivities(_runner(cfg, "svc-sealed-launcher", ("linux:bwrap-sealed",)))
+    acts = RunnerActivities(_runner(cfg, "svc-sealed-launcher", (cfg.sealed_profile or "linux:bwrap-sealed",)))
     _worker(cfg, SEALED_QUEUE, activities=[acts.run_attempt, acts.fail_job], max_concurrent=1)
 
 

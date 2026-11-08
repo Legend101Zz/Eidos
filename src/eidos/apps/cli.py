@@ -25,7 +25,7 @@ def init(home: Path = typer.Option(None, help="lab data root (default $EIDOS_HOM
     cfg = init_lab(str(home), api_port=api_port, pg_port=pg_port, temporal_port=temporal_port, pg_bin=pg_bin,
                    temporal_source=temporal_source)
     out({"home": cfg.home, "api_url": cfg.api_url, "sealed_available": cfg.sealed_available,
-         "admin_token_file": str(cfg.secret_path("admin.token")), "next": f"EIDOS_HOME={cfg.home} lab start"})
+         "sealed_profile": cfg.sealed_profile or None, "admin_token_file": str(cfg.secret_path("admin.token")), "next": f"EIDOS_HOME={cfg.home} lab start"})
 
 
 @app.command("start")

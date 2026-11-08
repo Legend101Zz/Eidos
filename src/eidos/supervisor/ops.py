@@ -86,8 +86,9 @@ def init_lab(home: str, *, api_port: int = 8765, pg_port: int = 5544, temporal_p
         svc.temporal_setup(cfg)
     finally:
         svc.pg_stop(cfg)
-    from eidos.runtime.launcher import bwrap_available
-    cfg.sealed_available = bwrap_available()
+    from eidos.runtime.launcher import detect_sealed_profile
+    cfg.sealed_profile = detect_sealed_profile() or ""
+    cfg.sealed_available = bool(cfg.sealed_profile)
     cfg.extra["candidate_user"] = ensure_candidate_user()
     cfg.save()
     return cfg
@@ -190,9 +191,15 @@ def doctor(cfg: LabConfig) -> list[dict[str, Any]]:
             level="fail" if name in ("postgres", "temporal", "api") else "warn")
     add("disk", not st["disk"]["pressure"], f"free {st['disk']['free_bytes'] >> 20} MiB, reserve {cfg.min_free_bytes >> 20} MiB",
         level="warn")
-    from eidos.runtime.launcher import bwrap_available, candidate_uid
-    add("sealed-profile:bwrap", bwrap_available(), "linux:bwrap-sealed " + ("available" if bwrap_available() else
-        "unavailable — plans requiring sealed execution cannot be admitted"), level="warn")
+    from eidos.runtime.launcher import bwrap_available, candidate_uid, seatbelt_available
+    if sys.platform == "darwin":
+        ok = seatbelt_available()
+        add("sealed-profile:seatbelt", ok, "macos:seatbelt-sealed " + ("available (sandbox-exec; same OS user; per-run "
+            "probes decide which controls hold)" if ok else "unavailable — plans requiring sealed execution cannot be "
+            "admitted"), level="warn")
+    else:
+        add("sealed-profile:bwrap", bwrap_available(), "linux:bwrap-sealed " + ("available" if bwrap_available() else
+            "unavailable — plans requiring sealed execution cannot be admitted"), level="warn")
     add("sealed-profile:separate-identity", candidate_uid() is not None,
         "distinct candidate OS user exists; whether it can run each project interpreter is checked at launch and "
         "reported per receipt" if candidate_uid() else "no distinct candidate user (separate-identity control will fail)",

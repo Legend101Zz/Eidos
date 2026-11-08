@@ -3,6 +3,10 @@
 * ``dev:same-user``: a host process in the project's own interpreter (exploratory work only).
 * ``linux:bwrap-sealed``: bubblewrap with no network, read-only inputs, a private /tmp, cleared
   environment, and (when the lab runs as root and the user exists) a distinct OS identity.
+* ``macos:seatbelt-sealed``: ``sandbox-exec`` with a generated Seatbelt profile: no network, no reads
+  of the lab home or credential directories (except the attempt's own files), writes only to
+  staging/scratch/resume and a private tmp, cleared environment. Same OS user; mach IPC is not
+  filtered. ``sandbox-exec`` is deprecated by Apple but still shipped; probes decide what holds.
 
 Processes are started in their own session and survive a launcher restart. Identity is checked
 with (pid, kernel start time, boot id) — never the PID alone — and the exit code is written to
@@ -116,6 +120,7 @@ class LaunchSpec:
     readonly: list[str] = field(default_factory=list)
     writable: list[str] = field(default_factory=list)
     python_prefixes: list[str] = field(default_factory=list)
+    deny_read: list[str] = field(default_factory=list)  # Seatbelt: contents unreadable unless listed above
 
 
 _CAND_OK: dict[str, bool] = {}
@@ -144,6 +149,72 @@ def bwrap_available() -> bool:
     r = subprocess.run(["bwrap", "--ro-bind", "/", "/", "--unshare-all", "--die-with-parent", "true"],
                        capture_output=True)
     return r.returncode == 0
+
+
+SANDBOX_EXEC = "/usr/bin/sandbox-exec"
+
+
+def seatbelt_available() -> bool:
+    if sys.platform != "darwin" or not os.path.exists(SANDBOX_EXEC):
+        return False
+    r = subprocess.run([SANDBOX_EXEC, "-p", "(version 1)(allow default)(deny network*)", "/usr/bin/true"],
+                       capture_output=True)
+    return r.returncode == 0
+
+
+def detect_sealed_profile() -> str | None:
+    """The sealed profile this host can provide, if any (probes still decide per receipt)."""
+    if bwrap_available():
+        return "linux:bwrap-sealed"
+    if seatbelt_available():
+        return "macos:seatbelt-sealed"
+    return None
+
+
+def credential_dirs() -> list[str]:
+    home = Path.home()
+    return [str(home / d) for d in (".ssh", ".aws", ".gnupg", ".netrc", ".docker", ".kube", ".config/gcloud",
+                                    "Library/Keychains")]
+
+
+def seatbelt_policy(spec: LaunchSpec, tmp: str) -> tuple[str, list[str]]:
+    """Seatbelt profile text plus ``-D`` parameters (paths are passed as parameters, never spliced).
+
+    Reads of each ``deny_read`` root are refused except beneath the attempt's own paths that lie
+    *inside* that root (an ancestor such as a project root containing the lab home re-allows nothing).
+    Writes are refused everywhere except staging/scratch/resume, a private tmp, /dev and the logs.
+    """
+    params: list[str] = []
+
+    def norm(x: str) -> str:
+        return os.path.realpath(x) if os.path.isabs(x) else x
+
+    def par(prefix: str, path: str) -> str:
+        params.append(f"{prefix}{len(params)}={path}")
+        return f'(param "{prefix}{len(params) - 1}")'
+
+    writable = [norm(w) for w in spec.writable + [tmp]]
+    allowed = list(dict.fromkeys(norm(x) for x in spec.python_prefixes + spec.readonly + [spec.cwd] + writable if x))
+    rules = ["(version 1)", "(allow default)", "(deny network*)"]
+    for d in dict.fromkeys(norm(x) for x in spec.deny_read if x):
+        inner = [a for a in allowed if a != d and a.startswith(d.rstrip("/") + "/")]
+        target = f"(subpath {par('D', d)})"
+        if inner:
+            target = (f"(require-all {target} (require-not (require-any "
+                      + " ".join(f"(subpath {par('R', a)})" for a in inner) + ")))")
+        rules.append(f"(deny file-read-data file-read-xattr {target})")
+    keep = ['(subpath "/dev")'] + [f"(subpath {par('W', w)})" for w in dict.fromkeys(writable)]
+    keep += [f"(literal {par('L', norm(str(Path(spec.attempt_dir) / f)))})" for f in ("stdout.log", "stderr.log")]
+    rules.append("(deny file-write* (require-not (require-any " + " ".join(keep) + ")))")
+    return "\n".join(rules), params
+
+
+def seatbelt_argv(spec: LaunchSpec, tmp: str) -> list[str]:
+    text, params = seatbelt_policy(spec, tmp)
+    a = [SANDBOX_EXEC, "-p", text]
+    for kv in params:
+        a += ["-D", kv]
+    return a + spec.argv
 
 
 def bwrap_argv(spec: LaunchSpec) -> list[str]:
@@ -175,6 +246,11 @@ def launch(spec: LaunchSpec) -> ProcessHandle:
     if spec.profile == "linux:bwrap-sealed":
         inner = bwrap_argv(spec)
         env = {"PATH": "/usr/bin:/bin"}
+    elif spec.profile == "macos:seatbelt-sealed":
+        tmp = adir / "tmp"
+        tmp.mkdir(exist_ok=True)
+        inner = seatbelt_argv(spec, str(tmp))
+        env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp), "TMPDIR": str(tmp), **spec.env}
     else:
         inner = spec.argv
         env = {k: v for k, v in os.environ.items() if not k.startswith("EIDOS_")}  # never leak lab credentials
@@ -241,7 +317,8 @@ def run_probes(spec: LaunchSpec, *, label_path: str, credential_path: str, host_
     python = spec.argv[0]
     probe_spec = LaunchSpec(argv=[python, "-I", "-c", PROBE, json.dumps(cfg)], cwd=spec.cwd,
                             attempt_dir=str(Path(spec.attempt_dir) / "probe"), env={}, profile=spec.profile,
-                            readonly=spec.readonly, writable=[], python_prefixes=spec.python_prefixes)
+                            readonly=spec.readonly, writable=[], python_prefixes=spec.python_prefixes,
+                            deny_read=spec.deny_read)
     h = launch(probe_spec)
     deadline = time.monotonic() + 60
     while h.exit_code() is None and time.monotonic() < deadline:
@@ -272,7 +349,13 @@ def _digest(s: str) -> str:
 
 
 def profile_config_digest(spec: LaunchSpec) -> str:
-    cfg = bwrap_argv(LaunchSpec(argv=["<cmd>"], cwd=spec.cwd, attempt_dir="", profile=spec.profile,
-                                readonly=sorted(spec.readonly), writable=["<staging>", "<scratch>"],
-                                python_prefixes=sorted(spec.python_prefixes))) if spec.profile == "linux:bwrap-sealed" else ["host-process"]
+    shape = LaunchSpec(argv=["<cmd>"], cwd=spec.cwd, attempt_dir="<attempt>", profile=spec.profile,
+                       readonly=sorted(spec.readonly), writable=["<staging>", "<scratch>"],
+                       python_prefixes=sorted(spec.python_prefixes), deny_read=sorted(spec.deny_read))
+    if spec.profile == "linux:bwrap-sealed":
+        cfg = bwrap_argv(shape)
+    elif spec.profile == "macos:seatbelt-sealed":
+        cfg = list(seatbelt_policy(shape, "<tmp>"))
+    else:
+        cfg = ["host-process"]
     return _digest(json.dumps(cfg))

@@ -20,12 +20,14 @@ import eidos_pytorch
 import eidos_wire
 import eidos_worker
 from eidos.client import LabClient, LabError
+from eidos.domain.isolation import SEALED_PROFILES
 from eidos.runtime.artifacts import LocalArtifactStore, StoreError
 from eidos.runtime.launcher import (
     CANDIDATE_USER,
     LaunchSpec,
     ProcessHandle,
     candidate_uid,
+    credential_dirs,
     launch,
     profile_config_digest,
     run_probes,
@@ -183,7 +185,7 @@ class AttemptRunner:
         elif lock["component"].get("kind") == "build":
             source = materialize_bundle(st["inputs"]["bundle"]["path"], adir / "source")
         profile = lock.get("isolation_profile", "dev:same-user")
-        sealed = profile == "linux:bwrap-sealed"
+        sealed = profile in SEALED_PROFILES
         inputs: dict[str, InputBinding] = {}
         readonly = list(SDK_PATHS) + [env["project_root"]] + ([str(source)] if source else [])
         for port, inp in (st.get("inputs") or {}).items():
@@ -212,7 +214,7 @@ class AttemptRunner:
         comp = dict(lock["component"])
         comp["source_dir"] = str(source) if source else None
         pythonpath = os.pathsep.join(SDK_PATHS + ([str(source)] if source else []))
-        if sealed and candidate_uid(python):
+        if profile == "linux:bwrap-sealed" and candidate_uid(python):
             for d in (adir, staging, scratch, resume):
                 shutil.chown(d, CANDIDATE_USER, CANDIDATE_USER)
             if adir.parent.exists():
@@ -232,7 +234,8 @@ class AttemptRunner:
         return LaunchSpec(argv=argv, cwd=env["project_root"], attempt_dir=str(adir),
                           env={"PYTHONPATH": pythonpath, "PYTHONHASHSEED": "0"},
                           profile=profile, readonly=readonly, writable=[str(staging), str(scratch), str(resume)],
-                          python_prefixes=python_prefixes(python) if sealed else [])
+                          python_prefixes=python_prefixes(python) if sealed else [],
+                          deny_read=[str(self.root), *credential_dirs()] if sealed else [])
 
     def _isolation_receipt(self, spec: LaunchSpec, profile: str) -> dict:
         import platform
@@ -247,7 +250,11 @@ class AttemptRunner:
             os.chmod(self.label_canary, 0o600)
         probes = run_probes(spec, label_path=self.label_canary, credential_path=self.credential_path,
                             host_write_path=str(self.root / "config" / "probe-host-write"), api_port=self.api_port)
-        return {**base, **probes, "threat_model": "local process; kernel, administrator and drivers trusted"}
+        threat = "local process; kernel, administrator and drivers trusted"
+        if profile == "macos:seatbelt-sealed":
+            threat += ("; macOS Seatbelt via deprecated sandbox-exec, same OS user, mach IPC (e.g. Keychain via "
+                       "securityd) not filtered")
+        return {**base, **probes, "threat_model": threat}
 
     # -------------------------------------------------------------------------------------
     def _supervise(self, project: str, ctx: dict, h: ProcessHandle, heartbeat, cancelled) -> dict:

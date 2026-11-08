@@ -148,6 +148,11 @@ jobs:
         run: |
           bash scripts/ci/build_and_install.sh
           echo "${RUNNER_TEMP}/eidos-ci/venv/bin" >> "$GITHUB_PATH"
+      - name: Seatbelt candidate-sandbox probes (macos:seatbelt-sealed, with a same-user planted-effect control)
+        id: seatbelt
+        env:
+          OUT: ${{ runner.temp }}/eidos-ci/ci-results
+        run: '"${RUNNER_TEMP}/eidos-ci/venv/bin/python" scripts/ci/seatbelt_probes.py'
       - name: PostgreSQL 16 (Homebrew)
         run: |
           brew install postgresql@16
@@ -199,6 +204,7 @@ jobs:
             echo "| project create | ${{ steps.lab_project.outcome }} |"
             echo "| status | ${{ steps.lab_status.outcome }} |"
             echo "| stop | ${{ steps.lab_stop.outcome }} |"
+            echo "| seatbelt probes (not a lab step; required) | ${{ steps.seatbelt.outcome }} |"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload evidence
         if: always()

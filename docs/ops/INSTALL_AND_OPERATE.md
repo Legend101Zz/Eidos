@@ -8,8 +8,9 @@ Eidos runs entirely on your own machine. It does not need a cloud account, an OC
 |---|---|
 | Linux x86_64, CPU | Runtime-verified in the hosted build sandbox (Ubuntu 24.04, Python 3.12, PostgreSQL 16, Temporal 1.32.2). That is a build environment, not a researcher machine. |
 | `linux:bwrap-sealed` isolation | Runtime-verified with hostile probes. When the lab runs as root with the `eidos-cand` user, candidate code runs as that distinct OS identity if it can execute the project interpreter. Provision sealed-evaluation environments under a world-readable prefix (e.g. `UV_PYTHON_INSTALL_DIR=/opt/eidos/python uv python install 3.12`, venv under `/opt/eidos/envs/`, `chmod -R a+rX`); `separate-identity` then passes (verified). |
-| macOS (arm64/x86_64) host-native `dev:same-user` | **Unqualified.** The code paths exist; no macOS run has been performed. |
-| macOS `macos:lima-vm-sealed` | **Not implemented/qualified.** Plans that require sealed execution cannot be admitted on macOS. |
+| macOS (arm64/x86_64) host-native `dev:same-user` | **Unqualified on a researcher machine.** GitHub-hosted macOS arm64 runner evidence only: wheel install, `lab init/start/doctor/project/status/stop`, worker SDK tests, research smoke (`.github/workflows/ci.yml`, job `macos-arm64-smoke`). Owner kit: `docs/ops/MACOS_OWNER_QUALIFICATION.md`. |
+| macOS `macos:seatbelt-sealed` (candidate code) | **Implemented; GitHub-runner evidence only.** `sandbox-exec` with a generated Seatbelt profile: the lab home and common credential directories are unreadable (except the attempt's own files), writes go only to staging/scratch/resume and a private tmp, no network, cleared environment. Same OS user, so `separate-identity` fails; mach IPC (e.g. the Keychain via securityd) is not filtered. Apple deprecates `sandbox-exec`; every run's receipt records the probe results, so a broken control shows up as `failed`, not assumed. CI runs the hostile probes plus a same-user planted-effect control (`scripts/ci/seatbelt_probes.py`). The macOS assessor process still runs `dev:same-user`. |
+| macOS `macos:lima-vm-sealed` | **Not implemented.** Needed only where a plan requires `separate-identity` or VM-level isolation on macOS. |
 | CUDA / MPS devices | Discovered and reported. **Unqualified.** Exact restore across devices is never claimed. |
 | Windows / WSL | Not supported in v1. |
 
@@ -18,7 +19,7 @@ Eidos runs entirely on your own machine. It does not need a cloud account, an OC
 - Python 3.11–3.13 for the lab. The research projects keep their own interpreters.
 - PostgreSQL ≥ 14 server binaries, found on PATH, under `/usr/lib/postgresql/*/bin`, or via Homebrew `postgresql@*`. Eidos creates and owns a private cluster under the lab directory. It does not use your existing databases.
 - Network access once, to download the pinned Temporal Server release (sha256-verified). Alternatively, pass `--temporal-source DIR` pointing at existing `temporal-server`/`temporal-sql-tool` binaries.
-- Optional: `bubblewrap` (Linux) for the sealed evaluation profile.
+- Optional: `bubblewrap` (Linux) for the sealed evaluation profile. On macOS the sealed candidate profile uses the system `/usr/bin/sandbox-exec`.
 
 ## Install
 
