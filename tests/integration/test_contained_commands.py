@@ -53,7 +53,14 @@ def test_contained_command_sees_no_key_home_network_or_outside_writes(tmp_path, 
     srv = socket.socket()
     srv.bind(("127.0.0.1", 0))
     srv.listen(4)
-    threading.Thread(target=lambda: [srv.accept()[0].close() for _ in range(4)], daemon=True).start()
+    def _serve():  # macOS aborts a pending accept() with ECONNABORTED when the socket closes at teardown
+        try:
+            for _ in range(4):
+                srv.accept()[0].close()
+        except OSError:
+            pass
+
+    threading.Thread(target=_serve, daemon=True).start()
     work, out = tmp_path / "work", tmp_path / "out"
     work.mkdir()
     out.mkdir()

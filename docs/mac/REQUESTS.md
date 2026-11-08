@@ -9,7 +9,7 @@
    hours while `gh release download` (API asset endpoint) worked. Consider a fallback in `services._download` to
    `https://api.github.com/repos/temporalio/temporal/releases/assets/<id>` with `Accept: application/octet-stream`
    (digest still pinned), or document `EIDOS_TEMPORAL_ARCHIVE_CACHE` in INSTALL_AND_OPERATE.
-3. `lab init` prints its "next" command without shell quoting (`EIDOS_HOME=/Volumes/Mrigesh SSD/... lab start`).
+3. (fixed in e36bfb1) `lab init` printed its "next" command without shell quoting.
 
 4. **`eidos.project.command` vs the lab-free driver** (found in the first full-lab real-LLM run): the component copies
    inputs into the work dir only through `config.files`; the lab-free driver defaults `files` to
@@ -21,8 +21,8 @@
    Put a bounded stderr tail into the attempt error.
 6. Test hygiene from the macOS suite run: `components/build_fixtures.py` rewrites two tracked fixtures when numpy is
    importable (`branch-no-change-exact.json`, `branch-undeclared-state.json` gain `"rng.numpy": "copy"`); the
-   listener thread in `test_contained_commands.py` raises `ConnectionAbortedError` on macOS at teardown (warning only);
-   there is no pytest for the Seatbelt access probes (only `scripts/ci/seatbelt_probes.py`).
+   listener thread in `test_contained_commands.py` raised `ConnectionAbortedError` on macOS at teardown (warning only;
+   made tolerant on the Mac branch); there is no pytest for the Seatbelt access probes (only `scripts/ci/seatbelt_probes.py`).
 7. Matrix rows to update from `docs/mac/STATUS.md`: A1 (macOS researcher machine runtime-verified, same OS user), A8
    (real-LLM development runs exist: lab-free D02/D12 and one full-lab D02), A9 (OpenAI-compatible adapter path against a
    local endpoint; small model fails conformance), A13 (MPS runtime-verified; CUDA unqualified), A14 (Claude Code and
