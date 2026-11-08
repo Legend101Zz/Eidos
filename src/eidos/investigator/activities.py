@@ -160,7 +160,9 @@ class InvestigatorActivities:
         runtime = build_runtime(cfg)
         # Reserve this decision's maximum envelope before any request (checked inside the turn,
         # not only between turns). Failure paths settle the reservation via record_model_usage.
-        est_tokens = float(cfg.get("max_tokens_per_decision", 120_000))
+        # A fixture runtime makes no model requests: reserve nothing unless an envelope is configured.
+        default_env = 0 if cfg.get("runtime", "fixture") == "fixture" else 120_000
+        est_tokens = float(cfg.get("max_tokens_per_decision", default_env))
         price = cfg.get("price_per_mtok") or {}
         estimate = {"model_tokens": est_tokens}
         if price:

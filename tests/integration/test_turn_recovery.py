@@ -74,7 +74,8 @@ def setup(lab):
             project=pid)
     inv = lab.cmd(lab.admin, "start_investigation", {"question": "q", "charter_id": f"charter:s{pid}",
                   "limits": {"model_tokens": 1e6, "compute_seconds": 1e5, "trials": 100},
-                  "investigator": {"runtime": "fixture", "settings": {"policy": "test-run-echo-then-wait"}}},
+                  "investigator": {"runtime": "fixture", "settings": {"policy": "test-run-echo-then-wait",
+                                                                      "max_tokens_per_decision": 120_000}}},
                   project=pid)["result"]["investigation_id"]
     acts = InvestigatorActivities(ShimClient(lab, lab.principal(f"inv-{pid}", ["investigator"], [pid])),
                                   ShimClient(lab, lab.principal(f"wf-{pid}", ["workflow"], [pid])))
