@@ -86,7 +86,7 @@ def _inspect_env(python: str, root: Path) -> dict[str, Any]:
     code = ("import json,platform\nfrom importlib import metadata\n"
             "inst={d.metadata['Name'].lower().replace('_','-'):d.version for d in metadata.distributions() if d.metadata['Name']}\n"
             "print(json.dumps({'python_version':platform.python_version(),'installed':inst,'platform':platform.platform()}))")
-    r = subprocess.run([python, "-c", code], capture_output=True, text=True, cwd=root, timeout=120)
+    r = subprocess.run(env=_job_env(), args=[python, "-c", code], capture_output=True, text=True, cwd=root, timeout=120)
     if r.returncode != 0:
         raise RuntimeError(f"cannot inspect project interpreter: {r.stderr[-500:]}")
     info = json.loads(r.stdout)
@@ -155,7 +155,7 @@ def export_answer(client: Any, project: str, *, task_id: str, run_id: str, out: 
         model = next(o for o in job["outputs"] if o["role"] == "model-export")
         client.download(project, model["artifact_id"], cdir / "model.pt")
         if test_inputs is not None:
-            r = subprocess.run([python, str(cdir / "project.py"), "infer", "--model", str(cdir / "model.pt"),
+            r = subprocess.run(env=_job_env(), args=[python, str(cdir / "project.py"), "infer", "--model", str(cdir / "model.pt"),
                                 "--inputs", str(test_inputs), "--out", str(cdir / "test_predictions.npz")],
                                capture_output=True, text=True, timeout=300, cwd=cdir)
             if r.returncode != 0:
@@ -232,7 +232,7 @@ def export_answer(client: Any, project: str, *, task_id: str, run_id: str, out: 
     (out / "answer.json").write_text(json.dumps(answer, indent=2, sort_keys=True))
     result = {"answer": str(out / "answer.json"), "seconds": round(time.time() - started, 2)}
     if validator is not None:
-        r = subprocess.run([python, str(validator), str(out / "answer.json")], capture_output=True, text=True, timeout=120)
+        r = subprocess.run(env=_job_env(), args=[python, str(validator), str(out / "answer.json")], capture_output=True, text=True, timeout=120)
         result["validator"] = {"returncode": r.returncode, "stdout": r.stdout[-2000:], "stderr": r.stderr[-2000:]}
     return result
 
@@ -243,10 +243,10 @@ def _reload_check(client, project, python, cdir: Path, out: Path, val_in: str, v
         d = Path(d)
         client.download(project, val_in, d / "validation.npz")
         client.download(project, val_pred, d / "recorded.npz")
-        r = subprocess.run([python, str(cdir / "project.py"), "infer", "--model", str(cdir / "model.pt"),
+        r = subprocess.run(env=_job_env(), args=[python, str(cdir / "project.py"), "infer", "--model", str(cdir / "model.pt"),
                             "--inputs", str(d / "validation.npz"), "--out", str(d / "fresh.npz")],
                            capture_output=True, text=True, timeout=300, cwd=cdir)
-        cmp = subprocess.run([python, "-c", (
+        cmp = subprocess.run(env=_job_env(), args=[python, "-c", (
             "import numpy as np,json,sys\n"
             "a=np.load(sys.argv[1],allow_pickle=False);b=np.load(sys.argv[2],allow_pickle=False)\n"
             "ia={int(i):int(p) for i,p in zip(a['ids'],a['predictions'])};ib={int(i):int(p) for i,p in zip(b['ids'],b['predictions'])}\n"
@@ -276,3 +276,11 @@ def _cost(client, project, investigation_id) -> dict[str, Any]:
     rec["unknown_fields"] = [f for f in fields if rec[f] is None]
     rec["receipt_paths"] = []
     return {"record": rec, "receipt": receipt}
+
+
+def _job_env() -> dict:
+    """Project/candidate code never inherits provider keys or lab secrets from the operator's shell."""
+    import os
+
+    from eidos.runtime.launcher import job_environment
+    return job_environment(os.environ)

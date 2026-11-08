@@ -160,7 +160,7 @@ def register_env(project: str, python: str = typer.Option(..., help="the project
                  root: Path = typer.Option(..., help="project root (adapter importable from here)"),
                  name: str = "default", adapter: str = typer.Option(None, help="module:ATTR of the model adapter")):
     """Record an existing project environment without changing any of its packages."""
-    r = subprocess.run([python, "-c", INSPECT], capture_output=True, text=True, cwd=root)
+    r = subprocess.run(env=_job_env(), args=[python, "-c", INSPECT], capture_output=True, text=True, cwd=root)
     if r.returncode != 0:
         typer.echo(r.stderr, err=True)
         raise typer.Exit(2)
@@ -556,3 +556,11 @@ def report(project: str, investigation: str = None, out_dir: Path = typer.Option
         out({"report": str(path)})
     except LabError as exc:
         fail(exc)
+
+
+def _job_env() -> dict:
+    """Project/candidate code never inherits provider keys or lab secrets from the operator's shell."""
+    import os
+
+    from eidos.runtime.launcher import job_environment
+    return job_environment(os.environ)

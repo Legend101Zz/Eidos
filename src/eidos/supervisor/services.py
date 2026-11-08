@@ -135,6 +135,22 @@ def temporal_platform() -> tuple[str, str]:
     return osname, arch
 
 
+def _download(url: str, dest: Path, attempts: int = 5) -> None:
+    """Bounded retry with exponential backoff (release CDNs return transient 5xx)."""
+    delay = 2.0
+    for i in range(attempts):
+        try:
+            tmp = dest.with_suffix(".part")
+            urllib.request.urlretrieve(url, tmp)
+            tmp.replace(dest)
+            return
+        except OSError as exc:  # URLError/HTTPError are OSErrors
+            if i == attempts - 1:
+                raise ServiceError(f"download failed after {attempts} attempts: {url}: {exc}") from exc
+            time.sleep(delay)
+            delay *= 2
+
+
 def install_temporal(cfg: LabConfig, source: str | None = None) -> str:
     """Install the pinned server binaries into the lab (or use an explicit existing directory)."""
     dest = cfg.p("services", "temporal", "bin")
@@ -149,15 +165,23 @@ def install_temporal(cfg: LabConfig, source: str | None = None) -> str:
     if key not in TEMPORAL_RELEASES:
         raise ServiceError(f"no pinned Temporal server release for {key}; pass --temporal-source with qualified binaries")
     url = TEMPORAL_RELEASES[key][0]
+    pinned = TEMPORAL_RELEASES.get(key, (None, None))[1]
     dest.mkdir(parents=True, exist_ok=True)
     tgz = dest.parent / "server.tgz"
+    # Optional verified archive cache (e.g. CI's actions/cache), keyed by the pinned digest.
+    cache_dir = os.environ.get("EIDOS_TEMPORAL_ARCHIVE_CACHE")
+    cached = Path(cache_dir, f"temporal-server-{pinned}.tgz") if cache_dir and pinned else None
+    if not tgz.exists() and cached and cached.exists():
+        shutil.copyfile(cached, tgz)
     if not tgz.exists():
-        urllib.request.urlretrieve(url, tgz)
+        _download(url, tgz)
     digest = hashlib.sha256(tgz.read_bytes()).hexdigest()
-    pinned = TEMPORAL_RELEASES.get(key, (None, None))[1]
     if pinned and digest != pinned:
         tgz.unlink()
         raise ServiceError(f"temporal server download digest {digest} != pinned {pinned}")
+    if cached and not cached.exists():
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(tgz, cached)
     (dest.parent / "server.sha256").write_text(f"{digest}  {url}\n")
     with tarfile.open(tgz) as tf:
         for member in ("temporal-server", "temporal-sql-tool"):

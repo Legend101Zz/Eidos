@@ -82,7 +82,7 @@ _PREFIX_CACHE: dict[str, list[str]] = {}
 
 def python_prefixes(python: str) -> list[str]:
     if python not in _PREFIX_CACHE:
-        out = subprocess.run([python, "-c", "import sys,json;print(json.dumps([sys.prefix, sys.base_prefix, sys.exec_prefix]))"],
+        out = subprocess.run(env=_job_env(), args=[python, "-c", "import sys,json;print(json.dumps([sys.prefix, sys.base_prefix, sys.exec_prefix]))"],
                              capture_output=True, text=True, timeout=60)
         paths = json.loads(out.stdout) if out.returncode == 0 else []
         real = {str(Path(python).resolve().parent.parent)}
@@ -381,3 +381,11 @@ class AttemptRunner:
             raise RetryableAttemptError((error or {}).get("message", "retryable failure"))
         return {"job_status": res.get("job_status"), "attempt_id": ctx["attempt_id"], "reattached": ctx["reattached"],
                 "fenced": res.get("fenced", False)}
+
+
+def _job_env() -> dict:
+    """Project/candidate code never inherits provider keys or lab secrets from the operator's shell."""
+    import os
+
+    from eidos.runtime.launcher import job_environment
+    return job_environment(os.environ)
