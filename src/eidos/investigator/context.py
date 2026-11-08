@@ -24,7 +24,10 @@ Effect tools (executed in order only after the lab accepts your decision):
   run_component {component_ref, inputs:{port: artifact_id}, config, environment?, wall_seconds?, prediction?, falsifier?}
   plan_trial {component_ref, inputs, config, environment?} -> trial_id; launch_trial {trial_id}
   plan_branch {parent_checkpoint_id, component_ref, migration, stream_policy, seed?, intervention, inputs, config}
-    -> trial_id; launch_branch {trial_id}. A returned trial_id is listed under "Results of your recent calls" in
+    migration = {<every parent state entry, e.g. "model", "optimizer", "rng.torch", "data_cursor">: "copy"|"transform"|
+    "init"|"drop"}; stream_policy "paired" or "independent" (independent needs seed); intervention = {"kind": "none"|
+    "change-weights"|"change-learning"|"change-structure", "component_ref"?, "config"?}. A refusal lists the parent's
+    state entries. -> trial_id; launch_branch {trial_id}. A returned trial_id is listed under "Results of your recent calls" in
     the NEXT turn; launch it there.
   author_source {files:{path: text}}  -> a source-bundle artifact id: candidate project files (e.g. a changed project.py)
     for run_component inputs.source of eidos.project.command (the whole-trainer path). No build, no new component.
@@ -32,7 +35,13 @@ Effect tools (executed in order only after the lab accepts your decision):
     an id returned by an earlier call of the same decision).
   author_component {files:{path: text}, environment: "<registered environment name string, e.g. \"default\">"}
     -> builds a NEW component (needs an eidos-component.json manifest in files): a validation job; then
-    publish_component {bundle_artifact_id, validation_job_id}
+    publish_component {bundle_artifact_id, validation_job_id}. The manifest "entry" is "module:function", called as
+    function(inputs, config, *, reader=None, writer=None, context=None) (keyword arguments injected by name):
+    reader.json(port)/reader.rows(port)/reader.path(port) read inputs; writer.stage_json(slot, obj, schema=...) or
+    writer.stage_file(slot, path, schema=...) write the outputs declared in the manifest; a returned dict goes to the
+    job receipt. A training extension in eidos.pytorch.train config.extensions is {"name", "component_ref":
+    "<published training-extension release>"} (pinned and mounted by the lab) or {"name", "spec": "module:attr"}
+    (importable code); a release ref never goes in "spec".
   bind_component {component_ref, capability?}; retire_component {component_ref}
   file_claim {statement, kind, scope}; draft_evidence_plan {claim_id, charter_id, template_ref, draft}
     draft = {"success_rule_id": <charter rule id>, "assessor": {"ref": <approved assessor ref>},

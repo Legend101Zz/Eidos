@@ -26,8 +26,20 @@ def validate_branch(parent: dict[str, Any], request: dict[str, Any]) -> dict[str
                       details={"checkpoint": parent.get("checkpoint_id")})
     entries = list(parent.get("state_entries") or [])
     migration = request.get("migration") or {}
+    shape_hint = {"migration": {e: "copy" for e in entries} or {"model": "copy"},
+                  "intervention": {"kind": "change-weights", "component_ref": "<release ref>", "config": {}}}
+    if not isinstance(migration, dict):
+        raise Invalid("migration must be an object mapping each parent state entry to an action",
+                      details={"parent_state_entries": entries, "actions": list(ACTIONS), "example": shape_hint})
+    intervention_in = request.get("intervention")
+    if intervention_in is not None and not isinstance(intervention_in, dict):
+        raise Invalid("intervention must be an object {kind, component_ref?, config?}, not a description",
+                      details={"example": shape_hint["intervention"], "parent_state_entries": entries})
     norm: dict[str, dict[str, Any]] = {}
     for name, spec in migration.items():
+        if not isinstance(spec, (str, dict)):
+            problems.append(f"state {name!r}: action must be one of {ACTIONS} (got {spec!r})")
+            continue
         spec = {"action": spec} if isinstance(spec, str) else dict(spec)
         if spec.get("action") not in ACTIONS:
             problems.append(f"state {name!r}: action must be one of {ACTIONS}")
@@ -46,7 +58,8 @@ def validate_branch(parent: dict[str, Any], request: dict[str, Any]) -> dict[str
         problems.append("an independent stream needs an explicit branch seed")
     intervention = request.get("intervention") or {"kind": "none"}
     if problems:
-        raise Invalid("invalid branch request", details={"problems": problems})
+        raise Invalid("invalid branch request", details={"problems": problems, "parent_state_entries": entries,
+                                                         "actions": list(ACTIONS), "example": shape_hint})
     no_change = intervention.get("kind") == "none" and all(s["action"] == "copy" for s in norm.values())
     structural = intervention.get("kind") in ("change-structure",)
     if no_change:

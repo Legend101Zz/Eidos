@@ -332,3 +332,19 @@ def test_component_config_contract():
     assert validate_config({}, schema) == ["config.argv: required"]
     assert validate_config({"argv": ["python", 3]}, schema) == ["config.argv[1]: expected string, got int"]
     assert validate_config({"argv": ["python", "x"], "seed": -1}, schema)
+
+
+def test_malformed_branch_request_is_invalid_not_a_crash():
+    """G5 live run: a real model sent migration {"fresh": false} and a prose intervention; validate_branch raised
+    TypeError (HTTP 500). Malformed shapes are INVALID with the parent's state entries and an example."""
+    import pytest
+
+    from eidos.domain.errors import Invalid
+    parent = {"checkpoint_id": "c", "complete": True, "state_entries": ["model", "optimizer"], "restore_class": "exact"}
+    for req in ({"migration": {"fresh": False}, "stream_policy": "paired"},
+                {"migration": ["copy"], "stream_policy": "paired"},
+                {"migration": {"model": "copy", "optimizer": "copy"}, "stream_policy": "paired", "intervention": "prose"}):
+        with pytest.raises(Invalid) as e:
+            branching.validate_branch(parent, req)
+        assert e.value.details["parent_state_entries"] == ["model", "optimizer"]
+        assert "example" in e.value.details
