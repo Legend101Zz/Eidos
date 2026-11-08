@@ -330,3 +330,23 @@ All under `/Volumes/Mrigesh SSD/eidos-mac/` (sizes at wrap-up):
 | `tmp/` | 15 MB | pytest and probe temp dirs |
 | `bundles/`, `runs/`, `receipts/` | <1 MB | task bundles and raw run outputs (receipts are copied into `docs/mac/receipts/`) |
 | `helpers/with_anthropic_key.py` | 4 KB | key helper (reads the Keychain inside the process only) |
+
+## v1.0.0 release session (2026-11-08, owner's Mac, storage on the SSD under `/Volumes/Mrigesh SSD/eidos-v1/`)
+
+Evidence files: `docs/release/evidence/`.
+
+| Item | Result | Evidence |
+|---|---|---|
+| G4 Anthropic `live_provider_check.py` re-run (`claude-sonnet-5-5`) | **8/8 pass**: 13 requests, 54,911 in / 5,439 out tokens, USD 0.1642 (settled 17c) | `g4-anthropic-live-provider-check.json` |
+| G6 disk exhaustion: 2 GiB APFS image (`hdiutil create`/`attach -nobrowse`, no sudo), whole lab home on it | **13/13 pass.** A job filled the volume to 128 MiB free (reserve 512 MiB): uploads got `DISK_PRESSURE`; the output publication was refused; the attempt ended `failed`/`resource` with nothing half-published; `lab status` showed `pressure` and `refusing_new_bytes`; `lab doctor` failed the disk check. A job then wrote until ENOSPC: it failed and the services kept answering. After freeing space the display cleared, uploads worked and a new job succeeded. The image was detached and deleted | `g6-disk-full.json` |
+| G6 service failures: SIGKILL by PID of api, workflow-worker, investigator-worker, training-runner, assessor-worker, sealed-runner, temporal and the PostgreSQL postmaster during a running job | **all restarted by the supervisor** (2–4 s each). The job finished on its original attempt; doctor clean | `g6-service-failures.json` |
+| G6 abrupt stop (`tests/ops/abrupt_stop.sh` on macOS) | A: services killed, the job survived and reattached on a single attempt. B: services and job killed, the attempt was reconciled as `lost`, then a new fenced attempt succeeded; doctor OK | `g6-abrupt-stop.log` |
+| G6 machine sleep / restart | **owner item**: `scripts/qualify/sleep_restart_check.sh` (a dry run without a real sleep correctly FAILS its `kern.waketime` check) | `REQUESTS.md` R1 |
+| Switch-order acceptance journey on macOS (fresh wheels, Seatbelt default profile) | **154/154**, 196 s wall | `tests/journeys/run_ci.sh` |
+| `lab upgrade` on the A8 lab (venv swap, migrations at 0004) | ok; restarted on the new interpreter | |
+
+Defects found on the Mac and fixed in this session (each has a regression test or check):
+- The supervisor did not restart a dead PostgreSQL.
+- `lab doctor` only warned while every upload was refused.
+- A Temporal port block above 32767 made `temporal-server` exit (it stores ports as PostgreSQL `smallint`), and `lab start` only timed out.
+- `tests/ops/*.sh` broke on paths with spaces.

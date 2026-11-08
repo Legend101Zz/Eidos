@@ -104,6 +104,8 @@ def main() -> int:
     ap.add_argument("--model", default="anthropic:claude-sonnet-5-5")
     ap.add_argument("--base-url", help="OpenAI-compatible endpoint, e.g. http://127.0.0.1:11535/v1")
     ap.add_argument("--api-key-env", help="environment variable holding the endpoint key (default: provider's own)")
+    ap.add_argument("--request-timeout", type=float, default=120.0,
+                    help="seconds per model request (a local model on a laptop may need several minutes)")
     args = ap.parse_args()
     provider = args.model.partition(":")[0]
     key_env = args.api_key_env or ("ANTHROPIC_API_KEY" if provider == "anthropic" else "OPENAI_API_KEY")
@@ -122,7 +124,7 @@ def main() -> int:
     spent = {"requests": 0}
     receipt = {"check": "eidos-live-provider/1", "model_requested": args.model, "base_url": args.base_url, "caps": {
         "max_total_requests": MAX_TOTAL_REQUESTS, "max_output_tokens": MAX_OUTPUT_TOKENS, "temperature": "unset"},
-        "started_at": time.time(), "scenarios": []}
+        "request_timeout_seconds": args.request_timeout, "started_at": time.time(), "scenarios": []}
     m = build_model({"model": args.model, **endpoint})
     receipt["transport_retries_disabled"] = getattr(getattr(m, "client", None), "max_retries", None) == 0
 
@@ -131,7 +133,8 @@ def main() -> int:
             receipt["scenarios"].append({"name": name, "skipped": "request cap would be exceeded"})
             return
         cfg = {"model": args.model, "max_output_tokens": MAX_OUTPUT_TOKENS, "output_retries": 1,
-               "max_requests_per_decision": budget_needed, "request_timeout": 120, **endpoint, **cfg_extra}
+               "max_requests_per_decision": budget_needed, "request_timeout": args.request_timeout, **endpoint,
+               **cfg_extra}
         packed = pack(view, _catalog(catalog_n))
         req = DecisionRequest(turn_id=f"live:{name}", slot=0, context=packed["text"], turn_so_far=[],
                               limits={"max_calls": 6}, read_tools=tools or {}, view=view)
