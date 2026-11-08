@@ -61,6 +61,27 @@ class RunnerActivities:
         return r["result"]
 
 
+def _read_staged_json(staging: Path, man, slot: str, max_bytes: int) -> dict:
+    """Read an output written by a sandboxed process from the unsandboxed side: the same checks as the
+    runner (regular file contained in staging, declared digest and size), plus a size cap."""
+    from eidos_wire import sha256_file
+    entry = next((e for e in man.outputs if e.slot == slot), None)
+    if entry is None:
+        raise ApplicationError(f"assessor produced no {slot!r} output", type="ASSESSOR_FAILED", non_retryable=True)
+    src = staging / entry.filename
+    if src.is_symlink() or not src.is_file() or staging.resolve() not in src.resolve().parents:
+        raise ApplicationError(f"assessor output {slot} is not a regular file inside staging", type="ASSESSOR_FAILED",
+                               non_retryable=True)
+    digest, size = sha256_file(src)
+    if size > max_bytes or digest != str(entry.digest).replace("sha256:", "") or size != entry.size:
+        raise ApplicationError(f"assessor output {slot} exceeds the cap or does not match its declared digest/size",
+                               type="ASSESSOR_FAILED", non_retryable=True)
+    out = json.loads(src.read_text(encoding="utf-8"))
+    if not isinstance(out, dict):
+        raise ApplicationError(f"assessor output {slot} is not a JSON object", type="ASSESSOR_FAILED", non_retryable=True)
+    return out
+
+
 class AssessorActivities:
     """Runs the plan's pinned, approved assessor release on evidence gathered through authorized
     reads, then submits through the command service. Holds ``assess`` and ``qualify`` grants
@@ -125,7 +146,7 @@ class AssessorActivities:
         )
         from eidos.runtime.runner import SDK_PATHS, materialize_bundle, python_prefixes
         from eidos_wire import OutputManifest
-        from eidos_worker.testing import make_invocation, read_output_json
+        from eidos_worker.testing import make_invocation
         desc = self.assessor.query("describe_component", {"component_ref": ref}, project=p)
         entry = desc["body"]["manifest"]["entry"]
         base = Path(tempfile.mkdtemp(prefix="eidos-assess-"))
@@ -175,6 +196,10 @@ class AssessorActivities:
             if h.exit_code() is None:
                 h.terminate()
                 raise ApplicationError("assessor timed out", type="ASSESSOR_FAILED", non_retryable=True)
+            staging = Path(inv.staging_dir)
+            if (staging / OutputManifest.FILENAME).is_symlink():
+                raise ApplicationError("assessor manifest is not a regular file", type="ASSESSOR_FAILED",
+                                       non_retryable=True)
             try:
                 man = OutputManifest.read(inv.staging_dir)
             except Exception as exc:  # noqa: BLE001 - no manifest means the assessor process itself failed
@@ -183,7 +208,7 @@ class AssessorActivities:
                                        type="ASSESSOR_FAILED", non_retryable=True) from exc
             if man.status != "succeeded" or h.exit_code() != 0:
                 raise ApplicationError(f"assessor failed: {man.error}", type="ASSESSOR_FAILED", non_retryable=True)
-            out = read_output_json(inv, man, "evaluation")
+            out = _read_staged_json(staging, man, "evaluation", self.max_evidence_bytes)
             out["assessor_isolation"] = receipt
             return out
         finally:

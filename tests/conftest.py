@@ -28,6 +28,8 @@ def _pg_available() -> bool:
 @pytest.fixture(scope="session")
 def pg_roles():
     if not _pg_available():
+        if os.environ.get("EIDOS_TEST_PG_ADMIN"):  # explicitly configured: an unusable server is a failure, not a skip
+            pytest.fail(f"EIDOS_TEST_PG_ADMIN is set but unusable ({ADMIN.split('@')[-1]})")
         pytest.skip("PostgreSQL not available (set EIDOS_TEST_PG_ADMIN)")
     from eidos.persistence.roles import DbRoles, migrate, provision
     db = f"eidos_t_{uuid.uuid4().hex[:8]}"

@@ -250,10 +250,26 @@ def _charge_model_usage(ctx: Ctx, inv_id: str, usage: dict, *, ref: str, reserve
     detail = {k: usage.get(k) for k in ("provider", "model", "request_ids", "calls")}
     tokens = float(usage.get("input_tokens", 0) or 0) + float(usage.get("output_tokens", 0) or 0)
     usd = float(usage.get("usd") or 0)
+    still_open = _open_by_ref(ctx, scope, ref) if reserved else {}
     for dim, actual in (("model_tokens", tokens), ("model_usd", usd)):
-        if actual or reserved.get(dim):
-            ctx.tx.settle(scope, dim, reserved=float(reserved.get(dim, 0)), actual=actual, ref=ref,
-                          uncertain=uncertain, detail=detail)
+        # Never release more than is still open under this ref (a retry may already have released it).
+        held = min(float(reserved.get(dim, 0)), still_open.get((dim, ref), 0.0))
+        if actual or held:
+            ctx.tx.settle(scope, dim, reserved=held, actual=actual, ref=ref, uncertain=uncertain, detail=detail)
+
+
+def _open_by_ref(ctx: Ctx, scope: str, prefix: str) -> dict[tuple[str, str], float]:
+    """Open (reserved minus settled) model reservations per (dimension, exact ref) under ``prefix``."""
+    acc: dict[tuple[str, str], float] = {}
+    for e in ctx.tx.budget_entries(scope):
+        if not str(e["ref"]).startswith(prefix):
+            continue
+        k = (e["dimension"], e["ref"])
+        if e["kind"] == "reserve":
+            acc[k] = acc.get(k, 0.0) + float(e["amount"])
+        elif e["kind"] in ("release", "usage", "possible-usage"):
+            acc[k] = acc.get(k, 0.0) - float(e["amount"])
+    return {k: v for k, v in acc.items() if v > 0}
 
 
 @command("reserve_model_budget", "turn")
@@ -263,10 +279,17 @@ def reserve_model_budget(ctx: Ctx, p: dict) -> dict:
     turn = _turn(ctx, p["turn_id"])
     scope = inv_scope(turn["investigation_id"])
     budgets = ctx.tx.budgets(scope)
+    ref = f"model:{p['turn_id']}:{p.get('slot')}:{p.get('attempt')}"
+    # Only one attempt of a decision slot runs at a time: a reservation left by an earlier attempt of
+    # this slot belongs to a dead activity. Release it so the retry does not collide with it (a late
+    # settlement from that attempt is capped at what is still open, so nothing is released twice).
+    for (dim, old_ref), left in _open_by_ref(ctx, scope, f"model:{p['turn_id']}:{p.get('slot')}:").items():
+        if old_ref != ref:
+            ctx.tx.settle(scope, dim, reserved=left, actual=0, ref=old_ref, detail={"released_by": ref})
     out = {}
     for dim, amount in (p.get("estimate") or {}).items():
         if dim in ("model_tokens", "model_usd") and dim in budgets and float(amount) > 0:
-            ctx.tx.reserve(scope, dim, float(amount), f"model:{p['turn_id']}:{p.get('slot')}:{p.get('attempt')}")
+            ctx.tx.reserve(scope, dim, float(amount), ref)
             out[dim] = float(amount)
     return {"reserved": out, "reservation_ref": f"model:{p['turn_id']}:{p.get('slot')}:{p.get('attempt')}"}
 

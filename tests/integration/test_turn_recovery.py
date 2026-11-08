@@ -201,3 +201,29 @@ def test_context_build_retry_after_new_evidence_is_idempotent(lab):
     finally:
         acts.wf.query = orig
     assert second["context_artifact_id"] == first["context_artifact_id"]
+
+
+def test_retried_decide_does_not_collide_with_its_own_dead_reservation(lab):
+    """Review 2 finding 2: attempt 1 reserved and died; the retry must not see BUDGET_EXHAUSTED from its own
+    leaked reservation, and the dead reservation is released exactly once."""
+    pid, inv, acts = setup(lab)
+    env = ActivityEnvironment()
+    b = env.run(acts.begin_turn, {"investigation_id": inv, "project_id": pid, "index": 1})
+    base = {"turn_id": b["turn_id"], "project_id": pid, "investigation_id": inv}
+    env.run(acts.build_context, base)
+    with lab.ledger.transaction() as tx:      # leave 150k of 1M: room for ONE 120k reservation
+        tx.project_id = pid
+        tx.reserve(f"inv:{inv}", "model_tokens", 1e6 - 150_000, "test:fill")
+    wf = lab.principal(f"wf-{pid}", ["workflow"], [pid])
+    lab.cmd(wf, "reserve_model_budget", {"turn_id": b["turn_id"], "slot": 0, "attempt": 1,
+                                         "estimate": {"model_tokens": 120_000}}, project=pid)
+    env2 = ActivityEnvironment()
+    env2.info = env2.info.__class__(**{**env2.info.__dict__, "attempt": 2})
+    d = env2.run(acts.decide, {**base, "slot": 0})
+    assert d.get("reason") != "budget-exhausted", d
+    # a late settlement from the dead attempt releases nothing more
+    lab.cmd(wf, "record_model_usage", {"turn_id": b["turn_id"], "usage": {"input_tokens": 0, "output_tokens": 0},
+                                       "reserved": {"model_tokens": 120_000},
+                                       "reservation_ref": f"model:{b['turn_id']}:0:1"}, project=pid)
+    bud = lab.q(lab.admin, "budgets", {"investigation_id": inv}, project=pid)["budgets"]["model_tokens"]
+    assert bud["reserved"] >= 1e6 - 150_000 - 1, bud   # the test fill is still held, not released twice

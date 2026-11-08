@@ -57,3 +57,30 @@ def test_assessor_runs_sandboxed_and_reports_realized_isolation(tmp_path):
     assert out["outcome"] == "protocol-passed"
     assert iso["profile"] == detect_sealed_profile()
     assert iso["controls"]["no-credential-read"] == "passed" and iso["controls"]["no-network-egress"] == "passed"
+
+
+def test_staged_assessor_output_must_be_a_contained_regular_file(tmp_path):
+    """Review 2 finding 1: a hostile assessor swapped its staged evaluation for a symlink to a host JSON
+    file, which the unsandboxed activity followed into the assessment record."""
+    from temporalio.exceptions import ApplicationError
+
+    from eidos.orchestration.activities import _read_staged_json
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    (staging / "evaluation.json").write_text('{"outcome": "protocol-passed"}')
+    import hashlib
+    data = (staging / "evaluation.json").read_bytes()
+    from types import SimpleNamespace
+    man = SimpleNamespace(outputs=[SimpleNamespace(slot="evaluation", filename="evaluation.json",
+                                                   digest="sha256:" + hashlib.sha256(data).hexdigest(), size=len(data))])
+    assert _read_staged_json(staging, man, "evaluation", 1 << 20)["outcome"] == "protocol-passed"
+    secret = tmp_path / "host.json"
+    secret.write_text('{"sealed_labels": [1, 0]}')
+    (staging / "evaluation.json").unlink()
+    (staging / "evaluation.json").symlink_to(secret)
+    with pytest.raises(ApplicationError, match="regular file"):
+        _read_staged_json(staging, man, "evaluation", 1 << 20)
+    (staging / "evaluation.json").unlink()
+    (staging / "evaluation.json").write_text('{"outcome": "protocol-passed", "x": 1}')
+    with pytest.raises(ApplicationError, match="digest"):
+        _read_staged_json(staging, man, "evaluation", 1 << 20)
