@@ -70,9 +70,7 @@ visible in the plan. The numbers are development evidence, not a research result
    Fix that makes the journey pass: `for _arm_id, jids in plan.body["launch"]["jobs"].items(): for jid in jids if isinstance(jids, list) else [jids]:`
    around the existing loop body.
 2. **`lab doctor` reports `secret-permissions` as failed after any sealed assessment.** `orchestration/activities.py:186` creates
-   `config/secrets/assessor-label-canary` with the default mode (0644), and doctor requires every file in that directory to be 0600. The file
-   is deliberately readable (a 0600 canary would make the sandbox's denied-read probe trivial; chmod 0600 was tried and the file was still
-   0644 in the run, so it was not pursued), so the canary belongs outside `config/secrets` or doctor should exempt it. The journey tolerates
+   `config/secrets/assessor-label-canary` with the default mode (0644), and doctor requires every file in that directory to be 0600. A local `chmod 0o600` right after the `write_text` at that line did not change the mode seen afterwards (cause not investigated; another writer may exist), so the canary belongs outside `config/secrets` or doctor should exempt it. The journey tolerates
    exactly this failure, only while that file is the sole offender, and records it.
 
 ## Not covered
