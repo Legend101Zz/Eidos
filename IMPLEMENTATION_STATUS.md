@@ -447,13 +447,31 @@ Lesson: three of the four failures came from round 5 making sealed the default p
 - **Docs:** the 4-run table and the final handoff are at the top of HANDOFF.md, and A8 is updated.
 - **Verification:** unit + integration + MCP + reporting **140 passed, 4 skipped** on the merged head (3 skips are macOS-only; 1 is the live-lab MCP test).
 
+## Round 18 (2026-11-08/09): v1.0.0 release session (local Mac controller)
+
+Gates and evidence: `ACCEPTANCE_MATRIX.md` § E; receipts in `docs/release/evidence/`; Mac details in `docs/mac/STATUS.md` § v1.0.0 release session.
+- **Licence and scope:** Apache-2.0 everywhere (G1); `docs/release/SUPPORTED.md` (G2).
+- **Isolation honesty (G3):** a same-user Seatbelt receipt never satisfies a sealed plan; macOS labs refuse sealed plans.
+- **Review open items (G7):**
+  - migration 0004 fences old writers;
+  - a reservation double release found and fixed;
+  - quiet-wait rollover fixed;
+  - the CI setup-uv fallback no longer masks failures.
+- **Real-model A8 (G5):** three Sonnet runs. Runs 1 and 2 exposed six Eidos defects, each fixed with tests. Run 3 concluded with every A8 check passing.
+- **Local operations (G6):**
+  - disk exhaustion on a real 2 GiB APFS image, service SIGKILLs and abrupt stop all pass on macOS;
+  - defects fixed: PostgreSQL supervision, the doctor disk check, the Temporal port-block limit, quoting in the ops scripts;
+  - machine sleep and restart is an owner item.
+- **Local suite:** 158 passed, 4 skipped at `329d9c3`; it is re-run on the RC SHA (G9). The switch journey on macOS passed 154/154.
+
+How to run, additions:
+- `PYTHONPATH=src:packages/eidos-wire/src .venv/bin/python scripts/qualify/live_provider_check.py --model openai-compatible:<model> --base-url http://127.0.0.1:11535/v1 --request-timeout 900`
+- `EIDOS_HOME=<lab> <lab venv>/bin/python tests/journeys/a8_live.py --model <model> [--base-url ...] --price '{"input": 2, "output": 10}' --model-usd <cap> ...`; add `--setup-only` once first.
+- `LAB=<venv>/bin/lab WORK=<ssd dir> bash scripts/qualify/disk_full_check.sh`, and the same for `service_failure_check.sh`.
+- `bash scripts/qualify/sleep_restart_check.sh start|--verify` (owner).
+
 ## Next concrete action
 
-1. The controller confirms CI on the final head and creates the annotated release tag.
-2. Owner decisions: see HANDOFF.md § Final handoff.
-3. Engineering backlog, if work resumes:
-   - same-decision artifact references;
-   - `build_fixtures.py` must not rewrite tracked fixtures;
-   - a pytest for the Seatbelt probes;
-   - the review-2 idle-poll rollover issue;
-   - a CI test for checkpoint-and-stop under bwrap.
+1. Owner: machine sleep and restart (`REQUESTS.md` R1 on the SSD; `scripts/qualify/sleep_restart_check.sh`).
+2. With both receipts `ok`: Phase 5 of the release brief. Bump to 1.0.0, get CI green, tag `eidos-v1.0.0`, merge PR #1 with a merge commit, and create the GitHub release with the wheels.
+3. Later, separately: A16, the scientific evaluation (`eval-*` tags).
