@@ -1,0 +1,58 @@
+{
+  "client": "claude",
+  "at": "2026-11-08T10:26:29Z",
+  "project": "macq",
+  "investigation": "inv-mcpq",
+  "lab_status_now": "active",
+  "lab_components": 4,
+  "checks": {
+    "client_exit_code_zero": true,
+    "called_get_investigation": true,
+    "lab_investigation_found": true,
+    "final_answer_present": true,
+    "final_names_investigation": true,
+    "final_names_lab_status": true,
+    "called_steer_investigation": true,
+    "lab_has_exactly_one_steering_entry_with_marker": true,
+    "final_reports_steered": true
+  },
+  "tool_calls_seen": 3,
+  "tools_called": [
+    "ToolSearch",
+    "mcp__eidos__get_investigation",
+    "mcp__eidos__steer_investigation"
+  ],
+  "final_answer": "e instruction in `body.steering`, marked effective at the next turn.\n\nTwo things you might want to look at:\n- **Attribution:** the steering entry is recorded as `\"by\": \"admin\"`, not as claude. The MCP credential seems to map to the admin identity.\n- **Turn budget:** the investigation has used both of its 2 allowed turns, and both stopped waiting for input. So this \"next-turn\" instruction may never be picked up unless the limit is raised. That's fine for this check, since the instruction says no action is needed.\n\n{\"investigation\": \"inv-mcpq\", \"status\": \"active\", \"steered\": true, \"revision\": 2}",
+  "claimed": {
+    "investigation": "inv-mcpq",
+    "status": "active",
+    "steered": true,
+    "revision": 2
+  },
+  "write_path": {
+    "marker": "mcpq-20261108T102554Z-79720-claude",
+    "entries": [
+      {
+        "after_revision": 1,
+        "by": "admin",
+        "effective": "next-turn",
+        "instruction": "MCP write-path check from claude (mcpq-20261108T102554Z-79720-claude): no action needed.",
+        "structured": {}
+      }
+    ],
+    "lab_revision_now": 2,
+    "claimed_revision": 2
+  },
+  "advisory": {},
+  "ok": true,
+  "raw_output": "mcp/run1/claude-write.raw.jsonl",
+  "run_meta": {
+    "num_turns": 4,
+    "duration_ms": 12033,
+    "total_cost_usd": 0.17434020000000003,
+    "is_error": false,
+    "billing": "Claude Max subscription (cost figure is Claude Code's notional estimate, not Console credits)"
+  },
+  "evidence": "real external MCP client on the researcher Mac (macOS 26.3.1 arm64) against the live Mac lab (wheels from 41ccf01)",
+  "client_version": "Claude Code 2.1.318"
+}

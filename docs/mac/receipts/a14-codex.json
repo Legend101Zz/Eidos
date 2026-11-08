@@ -1,0 +1,54 @@
+{
+  "client": "codex",
+  "at": "2026-11-08T10:27:12Z",
+  "project": "macq",
+  "investigation": "inv-mcpq",
+  "lab_status_now": "active",
+  "lab_components": 4,
+  "checks": {
+    "client_exit_code_zero": true,
+    "called_get_investigation": true,
+    "lab_investigation_found": true,
+    "final_answer_present": true,
+    "final_names_investigation": true,
+    "final_names_lab_status": true,
+    "called_list_components": true,
+    "lab_has_components": true,
+    "claimed_status_matches_lab": true,
+    "claimed_components_match_lab": true
+  },
+  "tool_calls_seen": 12,
+  "tools_called": [
+    "get_investigation",
+    "list_components",
+    "list_events",
+    "list_mcp_resource_templates",
+    "list_mcp_resources",
+    "read_mcp_resource"
+  ],
+  "final_answer": "{\"investigation\":\"inv-mcpq\",\"status\":\"active\",\"components\":4,\"events_read\":5}",
+  "claimed": {
+    "investigation": "inv-mcpq",
+    "status": "active",
+    "components": 4,
+    "events_read": 5
+  },
+  "write_path": null,
+  "advisory": {
+    "read_investigation_resource": true
+  },
+  "ok": true,
+  "raw_output": "mcp/run1/codex.raw.jsonl",
+  "run_meta": {
+    "usage": {
+      "input_tokens": 161444,
+      "cached_input_tokens": 137088,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 328,
+      "reasoning_output_tokens": 21
+    },
+    "billing": "Codex CLI's configured account"
+  },
+  "evidence": "real external MCP client on the researcher Mac (macOS 26.3.1 arm64) against the live Mac lab (wheels from 41ccf01)",
+  "client_version": "codex-cli 0.157.0"
+}

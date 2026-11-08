@@ -1,0 +1,49 @@
+{
+  "client": "claude",
+  "at": "2026-11-08T10:26:15Z",
+  "project": "macq",
+  "investigation": "inv-mcpq",
+  "lab_status_now": "active",
+  "lab_components": 4,
+  "checks": {
+    "client_exit_code_zero": true,
+    "called_get_investigation": true,
+    "lab_investigation_found": true,
+    "final_answer_present": true,
+    "final_names_investigation": true,
+    "final_names_lab_status": true,
+    "called_list_components": true,
+    "read_investigation_resource": true,
+    "lab_has_components": true,
+    "claimed_status_matches_lab": true,
+    "claimed_components_match_lab": true
+  },
+  "tool_calls_seen": 5,
+  "tools_called": [
+    "ReadMcpResourceTool",
+    "ToolSearch",
+    "mcp__eidos__get_investigation",
+    "mcp__eidos__list_components",
+    "mcp__eidos__list_events"
+  ],
+  "final_answer": "dos.assessors.paired-ci@1.0.0`, `eidos.qualification-runner@1.0.0`, `eidos.templates.improves-under-budget@1.1.0` and `lab.pairs.by_group@1.0.0`. All four are qualified only by their authors' own tests (`author-tests-only`).\n4. **Resource `lab://projects/macq/investigations/inv-mcpq`:** It matches step 1: same id, status, revision, digest (`sha256:9b78bfb2\u2026`), turn and budgets. The only difference is that it shows the numbers as decimals (`2.0`, `100000.0`), while the tool shows whole numbers (`2`, `100000`).\n\n{\"investigation\": \"inv-mcpq\", \"status\": \"active\", \"components\": 4, \"events_read\": 5}",
+  "claimed": {
+    "investigation": "inv-mcpq",
+    "status": "active",
+    "components": 4,
+    "events_read": 5
+  },
+  "write_path": null,
+  "advisory": {},
+  "ok": true,
+  "raw_output": "mcp/run1/claude.raw.jsonl",
+  "run_meta": {
+    "num_turns": 6,
+    "duration_ms": 16411,
+    "total_cost_usd": 0.21109260000000002,
+    "is_error": false,
+    "billing": "Claude Max subscription (cost figure is Claude Code's notional estimate, not Console credits)"
+  },
+  "evidence": "real external MCP client on the researcher Mac (macOS 26.3.1 arm64) against the live Mac lab (wheels from 41ccf01)",
+  "client_version": "Claude Code 2.1.318"
+}

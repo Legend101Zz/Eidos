@@ -1,0 +1,36 @@
+{
+  "snippet": "/Volumes/Mrigesh SSD/eidos-mac/runs/mcp/run1/configs/claude-desktop-snippet.json",
+  "checks": {
+    "single_eidos_server": true,
+    "command_absolute_executable": true,
+    "args_mcp": true,
+    "env_only_eidos_home": true,
+    "no_secret_values": true,
+    "live_initialize": true,
+    "live_tools_list_has_start_investigation": true,
+    "live_get_investigation": true
+  },
+  "live": {
+    "server_info": {
+      "name": "eidos-lab",
+      "version": "0.1.0"
+    },
+    "protocol_version": "2025-11-25",
+    "tools": 34,
+    "has_start_investigation": true,
+    "resource_templates": [
+      "lab://projects/{project}/investigations/{investigation}",
+      "lab://projects/{project}/runs/{job}",
+      "lab://projects/{project}/artifacts/{artifact}/manifest",
+      "lab://projects/{project}/claims/{claim}",
+      "lab://projects/{project}/evidence-plans/{plan}",
+      "lab://projects/{project}/assessments/{assessment}",
+      "lab://projects/{project}/charters/{charter}"
+    ],
+    "get_investigation": {
+      "is_error": false,
+      "names_investigation": true
+    }
+  },
+  "ok": true
+}

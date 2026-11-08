@@ -1,0 +1,60 @@
+{
+  "client": "codex",
+  "at": "2026-11-08T10:27:33Z",
+  "project": "macq",
+  "investigation": "inv-mcpq",
+  "lab_status_now": "active",
+  "lab_components": 4,
+  "checks": {
+    "client_exit_code_zero": true,
+    "called_get_investigation": true,
+    "lab_investigation_found": true,
+    "final_answer_present": true,
+    "final_names_investigation": true,
+    "final_names_lab_status": true,
+    "called_steer_investigation": true,
+    "lab_has_exactly_one_steering_entry_with_marker": true,
+    "final_reports_steered": true
+  },
+  "tool_calls_seen": 4,
+  "tools_called": [
+    "get_investigation",
+    "steer_investigation"
+  ],
+  "final_answer": "{\"investigation\":\"inv-mcpq\",\"status\":\"active\",\"steered\":true,\"revision\":3}",
+  "claimed": {
+    "investigation": "inv-mcpq",
+    "status": "active",
+    "steered": true,
+    "revision": 3
+  },
+  "write_path": {
+    "marker": "mcpq-20261108T102641Z-80267-codex",
+    "entries": [
+      {
+        "after_revision": 2,
+        "by": "admin",
+        "effective": "next-turn",
+        "instruction": "MCP write-path check from codex (mcpq-20261108T102641Z-80267-codex): no action needed.",
+        "structured": {}
+      }
+    ],
+    "lab_revision_now": 3,
+    "claimed_revision": 3
+  },
+  "advisory": {},
+  "ok": true,
+  "raw_output": "mcp/run1/codex-write.raw.jsonl",
+  "run_meta": {
+    "usage": {
+      "input_tokens": 83492,
+      "cached_input_tokens": 68992,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 231,
+      "reasoning_output_tokens": 0
+    },
+    "billing": "Codex CLI's configured account"
+  },
+  "evidence": "real external MCP client on the researcher Mac (macOS 26.3.1 arm64) against the live Mac lab (wheels from 41ccf01)",
+  "client_version": "codex-cli 0.157.0"
+}

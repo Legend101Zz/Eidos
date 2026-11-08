@@ -43,3 +43,30 @@ What was wrong in the cloud-written kit/runbook (for the cloud session):
 - `lab init`'s "next" hint prints `EIDOS_HOME=/Volumes/Mrigesh SSD/... lab start` unquoted (breaks on paths with spaces).
 
 Open: GitHub release-asset downloads (browser URL) returned 504 for the whole session; the API asset route worked. See REQUESTS.md.
+
+## Item 2: real MCP clients (A14)
+
+**Evidence class: macOS-researcher-machine runtime-verified** for Claude Code and Codex CLI as external MCP hosts over
+stdio. Claude Desktop: **unqualified** (not installed); its snippet was verified without Desktop (owner item).
+
+Lab: `EIDOS_HOME=$S/lab`, venv `$S/venvs/lab` from fresh wheels at 41ccf01 (`uv pip install --no-cache --reinstall`),
+project `macq`, fixture investigation `inv-mcpq` (`--policy note-then-wait`). Nothing global was edited: configs are
+per-invocation files from `gen_configs.py`.
+
+| Run | Command | Result |
+|---|---|---|
+| Claude Code read | `run_clients.sh --home $S/lab --lab $S/venvs/lab/bin/lab --project macq --investigation inv-mcpq --out $S/runs/mcp/run1 --write --only claude --run` | ok: called `get_investigation`, `list_events`, `list_components`, read `lab://projects/macq/investigations/inv-mcpq`; final JSON status `active` and 4 components = lab (`a14-claude.json`) |
+| Claude Code write | same run, `--write` phase | ok: one `steer_investigation`; lab record holds exactly one steering entry with the marker (by `admin`); revision 1→2 (`a14-claude-write.json`) |
+| Codex read | same with `--only codex` | ok: `get_investigation`, `list_events`, `list_components`, and it read the resource too (`read_mcp_resource`); final JSON = lab (`a14-codex.json`) |
+| Codex write | same | ok: one `steer_investigation`, exactly one entry, revision 2→3; the steering wake produced turn 2 in the lab (`a14-codex-write.json`) |
+| Desktop snippet | `$S/venvs/lab/bin/python scripts/qualify/mcp_clients/check_desktop_snippet.py <snippet> --project macq --investigation inv-mcpq` | ok: static checks; live stdio launch of exactly that command/env: `initialize` (`eidos-lab`, protocol 2025-11-25), 34 tools, 7 resource templates, `get_investigation` (`a14-claude-desktop-snippet-check.json`) |
+
+Usage: Claude Code runs used the Max subscription (4 and 6 turns, model `claude-opus-5-5`); Codex used its own account
+(input 161k/83k tokens, mostly cached; output 328/231). No Console credits.
+
+Fixes to the cloud-written scripts (not run on a Mac before): the verifier searched the whole event stream for the
+status (tool results contain it), so it now judges the final answer and its JSON line against the lab; there was no
+write-path check (added `--write`, `--only`); `EIDOS_HOME` was not passed to the verifier's `lab query`; added
+`--no-session-persistence` / `--ephemeral`; client stdin from `/dev/null` (Codex waits on stdin otherwise: "Reading
+additional input from stdin..."). Runbook assumptions corrected (Codex needs no approval override and does read
+resources; `--max-turns` works although not in `--help`).
