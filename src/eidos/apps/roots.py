@@ -123,7 +123,9 @@ def run_sealed_runner(cfg: LabConfig) -> None:
     from eidos.orchestration.activities import RunnerActivities
     from eidos.orchestration.names import SEALED_QUEUE
     acts = RunnerActivities(_runner(cfg, "svc-sealed-launcher", (cfg.sealed_profile or "linux:bwrap-sealed",)))
-    _worker(cfg, SEALED_QUEUE, activities=[acts.run_attempt, acts.fail_job], max_concurrent=1)
+    # Sealed is the default profile, so it needs the same parallelism as the dev runner.
+    _worker(cfg, SEALED_QUEUE, activities=[acts.run_attempt, acts.fail_job],
+            max_concurrent=int(cfg.extra.get("sealed_runner_slots", cfg.extra.get("runner_slots", 2))))
 
 
 def run_assessor_worker(cfg: LabConfig) -> None:
