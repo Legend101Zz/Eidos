@@ -14,7 +14,7 @@ set -euo pipefail
 P="${1:?project}"
 L="${LAB:-$(cd "$(dirname "$0")/../.." && pwd)/.venv/bin/lab}"
 H="${EIDOS_HOME:?}"
-REF=$($L component list "$P" --text eidos.project.command | python3 -c "import json,sys; print(sorted(c['ref'] for c in json.load(sys.stdin)['components'])[-1])")
+REF=$("$L" component list "$P" --text eidos.project.command | python3 -c "import json,sys; print(sorted(c['ref'] for c in json.load(sys.stdin)['components'])[-1])")
 CFG='{"argv": ["python", "-c", "import time,os; time.sleep(40); os.makedirs(\"{out}\", exist_ok=True); open(\"{out}/done.txt\",\"w\").write(\"ok\")"]}'
 
 hard_kill_services() {
@@ -35,12 +35,12 @@ PY
 }
 
 run_job() {
-  $L run "$P" "$REF" --wall-seconds 400 --purpose reproduction --config "$CFG" \
+  "$L" run "$P" "$REF" --wall-seconds 400 --purpose reproduction --config "$CFG" \
     | python3 -c "import json,sys; print(json.load(sys.stdin)['result']['job_id'])"
 }
 
 check() {  # job, expected attempt statuses (python literal)
-  $L job show "$P" "$1" | python3 -c "
+  "$L" job show "$P" "$1" | python3 -c "
 import json,sys; d=json.load(sys.stdin)
 att=[a['status'] for a in d['attempts']]
 print(d['id'], d['status'], att)
@@ -52,7 +52,7 @@ echo "== scenario A: services killed, job survives"
 JA=$(run_job); sleep 10
 hard_kill_services
 sleep 3
-$L start >/dev/null
+"$L" start >/dev/null
 sleep 90
 check "$JA" "['succeeded']"
 echo "SCENARIO A OK (reattached; single attempt)"
@@ -64,8 +64,8 @@ import json,glob; print(json.load(open(sorted(glob.glob('$H/jobs/$JB/*/handle.js
 hard_kill_services
 kill -9 -- -"$JPID" 2>/dev/null || kill -9 "$JPID" || true
 sleep 3
-$L start >/dev/null
+"$L" start >/dev/null
 sleep 150
 check "$JB" "['lost', 'succeeded']"
 echo "SCENARIO B OK (lost attempt reconciled; new fenced attempt succeeded)"
-$L doctor >/dev/null && echo "DOCTOR OK"
+"$L" doctor >/dev/null && echo "DOCTOR OK"

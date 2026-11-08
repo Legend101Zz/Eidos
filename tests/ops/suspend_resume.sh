@@ -8,12 +8,12 @@
 set -euo pipefail
 P="${1:?project}"; STOP="${2:-150}"
 L="${LAB:-$(dirname "$0")/../../.venv/bin/lab}"
-REF=$($L component list "$P" --text eidos.project.command | python3 -c "import json,sys; print(sorted(c['ref'] for c in json.load(sys.stdin)['components'])[-1])")
-J=$($L run "$P" "$REF" --wall-seconds 900 --purpose reproduction \
+REF=$("$L" component list "$P" --text eidos.project.command | python3 -c "import json,sys; print(sorted(c['ref'] for c in json.load(sys.stdin)['components'])[-1])")
+J=$("$L" run "$P" "$REF" --wall-seconds 900 --purpose reproduction \
   --config '{"argv": ["python", "-c", "import time,os; [time.sleep(1) for _ in range(40)]; os.makedirs(\"{out}\", exist_ok=True); open(\"{out}/done.txt\",\"w\").write(\"ok\")"]}' \
   | python3 -c "import json,sys; print(json.load(sys.stdin)['result']['job_id'])")
 for _ in $(seq 1 60); do
-  S=$($L job show "$P" "$J" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])"); [ "$S" = running ] && break; sleep 1
+  S=$("$L" job show "$P" "$J" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])"); [ "$S" = running ] && break; sleep 1
 done
 sleep 5
 PIDS=$(python3 - <<'PY'
@@ -35,10 +35,10 @@ sleep "$STOP"
 kill -CONT $PIDS 2>/dev/null || true
 echo "resumed; waiting for the job"
 for _ in $(seq 1 180); do
-  S=$($L job show "$P" "$J" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")
+  S=$("$L" job show "$P" "$J" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")
   case "$S" in succeeded|failed|cancelled) break;; esac; sleep 2
 done
-$L job show "$P" "$J" | python3 -c "
+"$L" job show "$P" "$J" | python3 -c "
 import json,sys; d=json.load(sys.stdin)
 att=[(a['status'], (a.get('usage') or {}).get('compute_seconds')) for a in d['attempts']]
 outs=[o['slot'] for o in d['outputs']]
