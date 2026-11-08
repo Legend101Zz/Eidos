@@ -42,7 +42,7 @@ ls dist-new | grep -E 'eidos_lab'
 
 step "install OLD wheels into a fresh venv"
 uv venv -q --python "$PYTHON" venv
-env -u PYTHONPATH uv pip install -q --python venv/bin/python --find-links dist-old eidos-lab
+env -u PYTHONPATH uv pip install -q --no-cache --python venv/bin/python --find-links dist-old eidos-lab
 OLD_VERSION="$(venv/bin/python -c 'import eidos; print(eidos.__version__)')"
 echo "installed eidos $OLD_VERSION"
 
@@ -65,7 +65,7 @@ python3 "$HERE/upgrade/check.py" snapshot >/dev/null
 echo "old ledger snapshot: $(python3 -c 'import json;d=json.load(open("'"$OUT"'/snapshot.json"));print(d["revision"], d["counts"])')"
 
 step "UPGRADE: install head wheels over the same venv, then lab upgrade (lab was running)"
-env -u PYTHONPATH uv pip install -q --python venv/bin/python --reinstall --find-links dist-new eidos-lab
+env -u PYTHONPATH uv pip install -q --no-cache --python venv/bin/python --reinstall --find-links dist-new eidos-lab
 NEW_VERSION="$(venv/bin/python -c 'import eidos; print(eidos.__version__)')"
 echo "eidos $OLD_VERSION -> $NEW_VERSION"
 [ "$OLD_VERSION" != "$NEW_VERSION" ] || { echo "version did not change" >&2; exit 1; }

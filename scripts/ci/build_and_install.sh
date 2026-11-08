@@ -13,7 +13,8 @@ ls -l "$CI_WORK/dist"
 # Run from the scratch dir so nothing in the repo (cwd, src/, editable installs) is importable.
 cd "$CI_WORK"
 uv venv --python "$PYTHON" venv
-env -u PYTHONPATH uv pip install --python venv/bin/python --find-links dist eidos-lab
+# --no-cache: never install a cached wheel of the same version instead of the one just built
+env -u PYTHONPATH uv pip install --no-cache --python venv/bin/python --find-links dist eidos-lab
 # Prove the install is from the wheel, not the checkout.
 venv/bin/python - <<PY
 import eidos, pathlib, sys

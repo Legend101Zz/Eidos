@@ -4,7 +4,14 @@
 
 - Repository: `Legend101Zz/Eidos`. Branch: `build/eidos-local-v1`. The controller maintains the draft PR `build/eidos-local-v1 → main`.
 - **Current freeze: annotated tag `eidos-v0.5.2` → `e4558e2`.** CI was green on all nine jobs, including `switch-journey` (154/154). It is the first tag with both qualified assessment and sealed checkpoint-and-stop working, and with the restored acceptance journey in CI.
-- **Post-tag head (needs CI, then a tag such as `eidos-v0.5.3`):** commit `64ad288` plus documentation commits. It refuses `wait_for_jobs` when nothing is outstanding (the idle trap), and changes the `note-then-wait` fixture to request input.
+- **`8301799` (contains `64ad288`) is RED in CI:** the `switch-journey` step 7 investigation parked after turn 5.
+  - Cause, reproduced locally: the idle-trap rule refused whole decisions, including the scripted policy's publish+wait. That dropped the publish, so the policy re-proposed it forever. Also, a turn ending on the invalid-proposal limit had no wake.
+  - Fixed in `08f9e01` and `63f7cac` (ADR 0007):
+    - only pure waits with nothing outstanding are refused;
+    - a refused-proposal turn gets 2 bounded immediate retries, then surfaces as "needs operator input";
+    - `investigation_view` job visibility no longer uses a 5,000-event window that starts at seq 0;
+    - the investigator's own effects count as news.
+- **Post-tag head:** the current branch head needs CI before any tag such as `eidos-v0.5.3`.
 - Earlier freeze: annotated tag `eidos-v0.5.0` → `e822744`. All eight CI jobs are green there: lint-and-unit, integration, fresh-install, upgrade-across-releases, e2e-journey, components, macOS arm64, worker-compat.
 - Earlier tags, never moved: `eidos-v0.1.0` → `78e4597`, `v0.2.0` → `37bd0c5`, `v0.3.0` → `8a33793`, `v0.4.0` → `c57dba9`, `v0.4.1` → `e328608`, `v0.5.0` → `e822744`, `v0.5.1` → `12b4822`, `v0.5.2` → `e4558e2`.
 - **Since v0.4.1:**
@@ -90,7 +97,7 @@ Full guide: `docs/ops/INSTALL_AND_OPERATE.md`. CI layout: `docs/ops/CI.md`. Exac
 | External MCP hosts | No Claude Code/Desktop or Codex host in the sandbox. | Use the snippets in `docs/ops/mcp-clients.md`. The SDK client is already verified over stdio and HTTP. |
 | CUDA/MPS restore classes, distributed training | Hardware. | Unauthorized here. |
 | `macos:lima-vm-sealed` profile (the design's VM isolation on macOS) | **Owner/hardware item, not built.** It cannot be exercised in CI: GitHub's runner reference, under "Limitations for arm64 macOS runners", says nested virtualization is not supported because of a limitation of Apple's Virtualization Framework. The arm64 standard runner has 3 M1 CPUs, 7 GB RAM and a 14 GB SSD. Source: relayed by the controller. | Build and qualify it on an owner Mac with Lima, bwrap inside the VM and no broad host mounts. It is needed for macOS plans that require `separate-identity` or isolation from hostile same-user programs. |
-| Investigator idles when it waits with nothing outstanding | **Fixed after v0.5.2 (`64ad288`).** Such a decision is refused at acceptance with the message "nothing to wait for: run something, request input, or conclude". The refusal is fed back within the turn and counts against the invalid-proposal limit. The runtime's own bounded no-effect outcome (request budget spent) is exempt. There is no workflow change. | Confirm CI on the head, then tag it. |
+| Investigator idles when it waits with nothing outstanding | **Fixed after v0.5.2 (`64ad288`, corrected in `63f7cac` after the red CI on `8301799`; ADR 0007).** Such a decision is refused at acceptance with the message "nothing to wait for: run something, request input, or conclude". The refusal is fed back within the turn and counts against the invalid-proposal limit. The runtime's own bounded no-effect outcome (request budget spent) is exempt. There is no workflow change. | Confirm CI on the head, then tag it. |
 | Drift-sweep fixes after `eidos-v0.5.1` | Three silent failures, all fixed and green in CI on `2e61edf`: checkpoint-and-stop under bwrap, sealed-runner concurrency, and the fixture budget in the macOS owner kit. | See `IMPLEMENTATION_STATUS.md` § Drift sweep. These are not in any tag before the final one. |
 | Review 2 open questions | Recorded, not fixed: idle-poll behaviour across rollover; the assessor with a distinct candidate user; old writers during upgrade. | `docs/dev-runs/adversarial-review-2-2026-11-08.md` |
 | Interruption-table rows still `not-started` | Not built yet. | See ACCEPTANCE_MATRIX §C. These rows are: storage lag, question change/withdrawal, assessor dedupe, method withdrawn during confirmation, lost branch reply, node preemption. |
