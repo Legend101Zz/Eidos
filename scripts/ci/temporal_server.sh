@@ -7,7 +7,9 @@
 # FORCE_SOURCE_BUILD=1 skips 1-2 (used by the CI job that proves the fallback).
 set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-read -r VERSION URL SHA < <(python3 - "$REPO/src/eidos/supervisor/services.py" <<'PY'
+# Quoted heredoc at top level, output via a file: bash 3.2 (macOS) mis-parses heredocs inside <(...)/$(...).
+PINFILE=$(mktemp)
+python3 - "$REPO/src/eidos/supervisor/services.py" > "$PINFILE" <<'PY'
 import ast, platform, sys
 src = open(sys.argv[1]).read(); tree = ast.parse(src); env = {}
 for node in tree.body:
@@ -23,7 +25,8 @@ for node in tree.body:
 url, sha = table[(osn, arch)]
 print(env["TEMPORAL_VERSION"], url, sha)
 PY
-)
+read -r VERSION URL SHA < "$PINFILE"
+rm -f "$PINFILE"
 CACHE="${EIDOS_TEMPORAL_ARCHIVE_CACHE:-${RUNNER_TEMP:-/tmp}/eidos-temporal}"
 ARCHIVE="$CACHE/temporal-server-$SHA.tgz"
 mkdir -p "$CACHE"
