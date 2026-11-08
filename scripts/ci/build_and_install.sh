@@ -10,6 +10,7 @@ mkdir -p "$CI_WORK"
 rm -rf "$CI_WORK/dist" "$CI_WORK/venv"
 ( cd "$REPO" && uv build --all-packages -o "$CI_WORK/dist" )
 ls -l "$CI_WORK/dist"
+python3 "$REPO/scripts/ci/check_wheel_licences.py" "$CI_WORK/dist"   # G1: Apache-2.0 metadata, LICENSE and NOTICE
 # Run from the scratch dir so nothing in the repo (cwd, src/, editable installs) is importable.
 cd "$CI_WORK"
 uv venv --python "$PYTHON" venv

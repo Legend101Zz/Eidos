@@ -7,7 +7,7 @@ Reads `importlib.metadata` of the interpreter that runs it (use the repo's `.ven
 show up as "dev"). A distribution is `runtime` when it is reachable from `eidos-lab` through `Requires-Dist` entries that are not
 behind an `extra ==` marker (extras named in a requirement, e.g. `psycopg[binary]`, are followed); everything else installed is
 `dev`. The licence comes from `License-Expression`, else the `License` field (only if short), else `License ::` classifiers.
-Flags: `UNKNOWN` (nothing declared), `COPYLEFT?` (GPL/LGPL/AGPL/MPL/EPL/CDDL/EUPL/SSPL in any declared text), `OWNER` (the project's own packages: licence not chosen). The flags are a screen, not legal advice.
+Flags: `UNKNOWN` (nothing declared), `COPYLEFT?` (GPL/LGPL/AGPL/MPL/EPL/CDDL/EUPL/SSPL in any declared text), `OWN-LICENCE-MISSING` (one of the project's own packages does not declare `License-Expression: Apache-2.0`). The flags are a screen, not legal advice.
 """
 from __future__ import annotations
 
@@ -80,7 +80,9 @@ def main() -> int:
         if COPYLEFT.search(text) or any(COPYLEFT.search(f) for f in found):
             flags.append("COPYLEFT?")
         if name in PROJECT:
-            text, flags = "(this project's own package; licence is an owner decision, not yet made)", ["OWNER"]
+            declared = d.metadata.get("License-Expression") or ""
+            text = f"{declared or 'none declared'} (this project's own package)"
+            flags = [] if declared == "Apache-2.0" else ["OWN-LICENCE-MISSING"]
         rows.append((d.metadata["Name"], d.version, text.replace("|", "/"), "runtime" if name in runtime else "dev", ", ".join(flags)))
     lines = ["| name | version | licence (declared) | scope | flag |", "|---|---|---|---|---|"]
     lines += [f"| {n} | {v} | {t} | {s} | {f} |" for n, v, t, s, f in rows]

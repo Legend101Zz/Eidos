@@ -2,6 +2,8 @@
 name = "eidos-lab"
 version = "0.3.0.dev0"
 description = "Eidos: a local research harness for custom PyTorch model investigation"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 classifiers = [
@@ -42,7 +44,7 @@ eidos-supervisor = "eidos.apps.supervisor:main"
 eidos-mcp = "eidos.apps.mcp:main"
 
 [build-system]
-requires = ["hatchling>=1.25"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

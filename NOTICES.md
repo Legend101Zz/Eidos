@@ -6,7 +6,7 @@ Checked by searching `src/`, `components/`, `packages/`, `examples/`, `scripts/`
 
 **No third-party code was copied or adapted into Eidos.** The design documents (`docs/design/`) discuss other systems (agent harnesses, workflow engines, plugin hosts) as prior art for ideas; no source from them is included, and the ADRs record no reuse of upstream code. The only grep hits outside prose were the words "copied from" in comments about internal behaviour (for example "success rules are copied from the charter").
 
-**Copied from the project owner's design handoff archive (`eidos-claude-handoff`, worked example `pytorch-lab-worked-example`):** the researcher's own example scripts, kept with a provenance header in each file. They are the owner's existing code, not third-party code; their licence follows the project's licence, which is still undecided (see `docs/ops/LICENSES.md`).
+**Copied from the project owner's design handoff archive (`eidos-claude-handoff`, worked example `pytorch-lab-worked-example`):** the researcher's own example scripts, kept with a provenance header in each file. They are the owner's existing code, not third-party code; they are covered by the project's licence, Apache-2.0 (`LICENSE`, `NOTICE`, `docs/ops/LICENSES.md`).
 * `examples/switch-order-project/switch_order.py`, `examples/switch-order-project/pair_report.py`
 * `examples/image-project/image_reuse.py`, `examples/image-project/pair_report.py`
 * `components/eidos.pytorch.{behavior-check,evaluate,train,weight-edit}/fixtures/selftest/switch_order.py` and `pair_report.py` (verbatim copies used as component self-test fixtures)

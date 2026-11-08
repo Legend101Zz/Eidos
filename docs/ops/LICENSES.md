@@ -2,16 +2,16 @@
 
 Generated inventory plus the items that need a human decision. The inventory is produced by `scripts/dev/license_inventory.py` (run it with the repo's `.venv` interpreter; it reads `importlib.metadata` of that interpreter) and is a screen, not legal advice: it reports what each package *declares*.
 
-## Owner items (not decided by the build)
+## Eidos's own licence (owner decision, 2026-11-08)
 
-1. **The licence of Eidos itself is an owner decision and is not set.** `README.md` says "TBD". The four `pyproject.toml` files (`eidos-lab`, `eidos-wire`, `eidos-worker-sdk`, `eidos-pytorch`) previously carried `license = { text = "Apache-2.0" }` from the first skeleton commit (`e672a3c`); that was a placeholder rather than a decision, and it has been removed so that built wheels do not claim a licence. There is no `LICENSE` file. Until the owner chooses: add the licence to `README.md`, a `LICENSE` file, the `license` field of the four `pyproject.toml` files, and the `OWNER` rows below disappear.
-2. **Project URLs** (`[project.urls]`: homepage, source, issues) are not set because no public repository is known to the build.
-3. **`research/public/`** carries "no general redistribution license" (its own `NOTICES.md`); redistributing the repository with that subtree needs the owner's explicit licence decision for it.
-4. **The worked-example scripts** copied from the owner's handoff archive (see `NOTICES.md`) follow whatever licence the owner assigns.
+1. **Eidos is licensed under the Apache License 2.0.** The text is in `LICENSE` and the attribution notice in `NOTICE`. All four packages (`eidos-lab`, `eidos-wire`, `eidos-worker-sdk`, `eidos-pytorch`) declare `license = "Apache-2.0"` (PEP 639, wheel metadata `License-Expression: Apache-2.0`). Each wheel ships `LICENSE` and `NOTICE` under `*.dist-info/licenses/`. `scripts/ci/check_wheel_licences.py` checks the built wheels in CI.
+2. **Project URLs** (`[project.urls]`) are not set.
+3. **`research/public/` is excluded.** It carries "no general redistribution license" (its own `NOTICES.md`), and `NOTICE` says so. It is not part of any wheel.
+4. **The worked-example scripts** copied from the owner's handoff archive (see `NOTICES.md`) are the owner's code. They are covered by the project licence.
 
 ## Packaging metadata state
 
-All four packages have name, version, description and (new) classifiers (alpha, science/research, Linux and macOS, Python 3, AI topic). None has `license`, `license-files` or `[project.urls]`. Versions: `eidos-lab` 0.3.0.dev0, `eidos-wire` 1.0.0, `eidos-worker-sdk` 1.1.0, `eidos-pytorch` 1.1.0. The worker packages depend on nothing (standard library only); `eidos-lab` depends on the packages in the table.
+All four packages have name, version, description, classifiers, `license = "Apache-2.0"` and `license-files = ["LICENSE", "NOTICE"]` (hatchling ≥ 1.27). None has `[project.urls]`. The worker packages depend on nothing (standard library only); `eidos-lab` depends on the packages in the table.
 
 ## Flagged entries in the environment inventory
 
@@ -54,10 +54,10 @@ Python environment: the repository `.venv` (runtime and dev dependency groups). 
 | click | 8.5.1 | BSD-3-Clause | runtime |  |
 | cryptography | 50.0.2 | Apache-2.0 OR BSD-3-Clause | runtime |  |
 | docstring_parser | 0.18.0 | MIT / MIT License | runtime |  |
-| eidos-lab | 0.3.0.dev0 | (this project's own package; licence is an owner decision, not yet made) | runtime | OWNER |
-| eidos-pytorch | 1.1.0 | (this project's own package; licence is an owner decision, not yet made) | runtime | OWNER |
-| eidos-wire | 1.0.0 | (this project's own package; licence is an owner decision, not yet made) | runtime | OWNER |
-| eidos-worker-sdk | 1.1.0 | (this project's own package; licence is an owner decision, not yet made) | runtime | OWNER |
+| eidos-lab | 0.3.0.dev0 | Apache-2.0 (this project's own package) | runtime |  |
+| eidos-pytorch | 1.1.0 | Apache-2.0 (this project's own package) | runtime |  |
+| eidos-wire | 1.0.0 | Apache-2.0 (this project's own package) | runtime |  |
+| eidos-worker-sdk | 1.1.0 | Apache-2.0 (this project's own package) | runtime |  |
 | fastapi | 0.162.2 | MIT | runtime |  |
 | genai-prices | 0.2.1 | MIT | runtime |  |
 | griffelib | 2.4.1 | ISC | runtime |  |
@@ -123,4 +123,4 @@ Python environment: the repository `.venv` (runtime and dev dependency groups). 
 | urllib3 | 2.8.0 | MIT | runtime |  |
 | uvicorn | 0.54.0 | BSD-3-Clause | runtime |  |
 
-81 distributions (68 runtime, 13 dev) from Python 3.12.11.
+81 distributions (68 runtime, 13 dev) from Python 3.12.8.

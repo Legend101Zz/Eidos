@@ -1,0 +1,12 @@
+Eidos
+Copyright 2026 The Eidos authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The directory research/public/ is NOT covered by this licence. It is an
+imported research release that carries its own notices and no general
+redistribution licence; see research/public/development/NOTICES.md.
+
+Eidos depends on third-party software that is installed separately and is
+not included in this distribution (Temporal Server, PostgreSQL, Python
+packages). Their licences are listed in docs/ops/LICENSES.md and NOTICES.md.
