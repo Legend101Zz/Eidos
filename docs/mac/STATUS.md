@@ -70,3 +70,28 @@ write-path check (added `--write`, `--only`); `EIDOS_HOME` was not passed to the
 `--no-session-persistence` / `--ephemeral`; client stdin from `/dev/null` (Codex waits on stdin otherwise: "Reading
 additional input from stdin..."). Runbook assumptions corrected (Codex needs no approval override and does read
 resources; `--max-turns` works although not in `--help`).
+
+## Item 3: MPS (A13)
+
+**Evidence class: macOS-researcher-machine runtime-verified** for the eidos-pytorch training path on `mps` vs `cpu`,
+`devices()` reporting and checkpoint save/restore across cpu/mps. **CUDA: unqualified (no hardware).**
+
+What ran (research venv from `research/public/development/requirements.lock`, torch 2.15.0, Python 3.12.8):
+
+| Run | Command | SHA | Result |
+|---|---|---|---|
+| smoke, before fix | `$S/venvs/research/bin/python scripts/qualify/mps_smoke.py --require-mps --out ...` | c1efd8e | **fail**: MPS `train_loop(deterministic=True)` raised `embedding_dense_backward_mps does not have a deterministic implementation`; the script's retry with `deterministic=False` failed the same way because determinism stayed on process-wide (`receipts/a13-mps-smoke-pre-fix.json`) |
+| **smoke** | same (script extended) | **5813dc2** | **ok** (`receipts/a13-mps-smoke.json`): cpu and mps final loss 0.2757698 (identical), eval accuracy 0.984 both, parameter max diff ≤ 4e-7; params on `mps:0`; MPS determinism `warn-only` with the embedding backward listed; no CPU fallbacks; `devices()` reports mps available, cuda not, `exact_restore_across_devices: false`. Checkpoint at step 20, resume to 45: cpu→cpu bit-exact; mps→mps, mps→cpu, cpu→mps within tolerance (Δloss ≤ 3e-8, Δacc 0) |
+| eidos-pytorch tests | `$S/venvs/torchtest/bin/python -m pytest -q packages/eidos-pytorch/tests` (torch 2.15.0 arm64) | 5813dc2 | 19 passed (incl. 3 MPS-only tests that ran on MPS) |
+| components | `EIDOS_TORCH_PYTHON=$S/venvs/torchtest/bin/python ... pytest -q -rs tests/components` after `build_fixtures.py` | 5813dc2 | 59 passed, 0 skipped |
+
+Fixes:
+- **5813dc2 (core, eidos-pytorch)**: `train_loop` scopes determinism (restores the previous global setting, also on
+  exceptions); on `mps` a deterministic request runs warn-only and the receipt records `device` and
+  `determinism {requested, mode, nondeterministic_ops}`; `rng.mps` captured/restored in checkpoints. Regression tests
+  in `packages/eidos-pytorch/tests/test_pytorch.py` (5 new; all fail without the fix).
+- 5813dc2^ (script): `mps_smoke.py` now also checks checkpoint save/restore across devices, records determinism and
+  `devices()`; same-device CPU resume must be exact.
+
+What was wrong in the cloud-written smoke: its retry path could never work (global determinism leaked from the first
+call), and it did not test checkpoint save/restore across devices or device reporting, which A13 needs.

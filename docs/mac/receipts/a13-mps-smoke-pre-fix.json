@@ -1,0 +1,38 @@
+{
+  "script": "mps_smoke.py",
+  "at": "2026-11-08T10:29:24Z",
+  "config": {
+    "steps": 45,
+    "seed": 41,
+    "builder": "OrderedSwitchNet",
+    "PYTORCH_ENABLE_MPS_FALLBACK": "1"
+  },
+  "python": "3.12.8",
+  "cpu": {
+    "device_requested": "cpu",
+    "torch": "2.15.0",
+    "available": true,
+    "device_actual": "cpu",
+    "wall_seconds": 1.216,
+    "final_loss": 0.27576982975006104,
+    "eval_accuracy": 0.984000027179718,
+    "steps": 45,
+    "param_checksum": -13.047526029869914,
+    "param_l2": 9.808787036677273,
+    "deterministic_used": true,
+    "warnings": [],
+    "fallback_lines_in_stderr": [],
+    "cpu_fallbacks": []
+  },
+  "mps": {
+    "device_requested": "mps",
+    "error": "ain_loop(adapter, cfg, lambda i: to_dev(stream(i)), steps=steps, seed=seed, deterministic=False,\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Volumes/Mrigesh SSD/eidos-mac/Eidos/packages/eidos-pytorch/src/eidos_pytorch/training.py\", line 236, in train_loop\n    (scaler.scale(scaled) if scaler is not None else scaled).backward()\n  File \"/Volumes/Mrigesh SSD/eidos-mac/venvs/research/lib/python3.12/site-packages/torch/_tensor.py\", line 623, in backward\n    torch.autograd.backward(\n  File \"/Volumes/Mrigesh SSD/eidos-mac/venvs/research/lib/python3.12/site-packages/torch/autograd/__init__.py\", line 395, in backward\n    _engine_run_backward(\n  File \"/Volumes/Mrigesh SSD/eidos-mac/venvs/research/lib/python3.12/site-packages/torch/autograd/graph.py\", line 1113, in _engine_run_backward\n    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nRuntimeError: embedding_dense_backward_mps does not have a deterministic implementation, but you set 'torch.use_deterministic_algorithms(True)'. You can turn off determinism just for this operation, or you can use the 'warn_only=True' option, if that's acceptable for your application. You can also file an issue at https://github.com/pytorch/pytorch/issues to help us prioritize adding deterministic support for this operation.\n"
+  },
+  "comparison": {
+    "loss_tol": 0.005,
+    "acc_tol": 0.02,
+    "match_within_tolerance": null
+  },
+  "ok": false,
+  "evidence": "same machine, before 5813dc2 (scripts at c1efd8e): MPS training failed"
+}
