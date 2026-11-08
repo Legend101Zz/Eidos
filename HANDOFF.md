@@ -13,6 +13,15 @@
     - `investigation_view` job visibility no longer uses a 5,000-event window that starts at seq 0;
     - the investigator's own effects count as news.
 - **Post-tag head:** the current branch head needs CI before any tag such as `eidos-v0.5.3`.
+- **Round 14, Mac evidence merged (99be3ba).** Evidence classes as the Mac session labelled them (`docs/mac/STATUS.md`):
+  - **A1:** macOS researcher machine runtime-verified (M4, macOS 26.3.1; owner kit 15/15). Same OS user, no Lima VM.
+  - **A14:** Claude Code and Codex verified; Claude Desktop unqualified.
+  - **A13:** MPS runtime-verified; CUDA unqualified.
+  - **A9:** OpenAI-compatible adapter verified against a local Ollama endpoint; qwen2.5:3b fails conformance, which is a model finding.
+  - **A8:** first real-LLM development runs, claude-sonnet-5-5, USD 0.77 in total: lab-free D02 no improvement; lab-free D12 null, no false claim; full-lab D02 no conclusion within 5 turns.
+    - The full-lab run exposed an input-staging defect. Because of it, the **lab-free driver's results overstated the full lab**.
+    - Fixed in a39ab1a: `eidos.project.command` 1.0.7 stages declared inputs by one documented rule shared with the driver; contracts, optional inputs and an example are shown in the investigator's context; failure messages name the work-dir contents.
+    - A capped full-lab D02 re-run by the Mac session is pending.
 - **Round 12:**
   - CI and `lab init` no longer depend on GitHub's release CDN: verified cache, then pinned download, then source build with recorded provenance.
   - Adversarial review 3 fixes, including a key leak through symlinked outputs in the lab-free driver.
@@ -115,6 +124,11 @@ Full guide: `docs/ops/INSTALL_AND_OPERATE.md`. CI layout: `docs/ops/CI.md`. Exac
 | Independent evaluation (A16) | External workstream. | Use `eval-*` tags for evaluation configurations, and freeze runs only from a clean tagged tree. |
 
 ## Owner decisions pending
+
+- **From the Mac session (`docs/mac/REQUESTS.md`, "For the owner"):**
+  - Install Claude Desktop and verify it with the prepared snippet and `scripts/qualify/mcp_clients/check_desktop_log.sh`.
+  - Choose between Seatbelt and a Lima VM.
+  - Optionally delete the Ollama update cache (218 MB on the internal disk), the pulled `qwen2.5:3b-instruct` model and the `$S/suite` test scratch on the SSD.
 
 0. **Project licence.**
    - The README says TBD.

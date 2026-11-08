@@ -392,11 +392,34 @@ Lesson: three of the four failures came from round 5 making sealed the default p
   - Tests: `test_review2_exposure.py::test_needs_input_is_durable_visible_and_cleared_by_an_operator_action`, plus the workflow test asserting exactly one mark.
 - **Soak history capture fixed:** the soak now describes each running workflow execution, since the list output carries no history size. A 4-minute re-run passed (156 jobs). A running coordinator was captured at history length 5 / 926 bytes; later samples had no running workflows. JSON: `/mnt/session/outputs/ops/soak5.json`.
 
+## Round 14 (2026-11-08): Mac branch merged, full-lab defect fixed
+
+- **Merge:** `origin/mac/local-qualification` (e966344) merged into `build/eidos-local-v1` as merge commit 99be3ba. `docs/mac/` is kept as history.
+- **Suites on the merged result:**
+  - 133 passed, 2 failed. Both failures were a Linux false negative in the new home-read probe (`os.listdir` saw the bwrap bind-mount scaffold). It now reads a planted file in the real home instead.
+  - Re-run: the isolation, assessor, sealed-home and contained suites give 13 passed, 3 skipped (macOS-only).
+  - Components: 61 passed.
+- **Fix for the A8 full-lab defect (a39ab1a):**
+  - `eidos.project.command` 1.0.7 stages every declared input as `<port><ext>` unless `config.files` maps it. The rule and an example are documented in its summary and `config_schema`.
+  - It records `staged_inputs`, and its failure message lists the work-dir contents and the stderr tail.
+  - The lab-free driver applies the identical rule.
+  - The catalog and investigator context show optional inputs and a 600-character summary, built by the shared `catalog_row`.
+  - Job errors in the context show category and message, not a 600-character clipped dump.
+  - Regression test: `tests/components/test_project_command_staging.py`. A fixture policy that reads only the packed context builds a working call.
+- **REQUESTS processed:**
+  1. Merged; the note on pre-b7d9ed1 receipts is in the matrix.
+  2. Temporal download falls back to the GitHub REST asset endpoint (02ef6e8, digest still pinned).
+  3. Already fixed.
+  4. and 5. a39ab1a.
+  6. Recorded but not done: `build_fixtures.py` rewrites tracked fixtures when numpy is present, and there is no pytest for the Seatbelt probes.
+  7. Matrix updated.
+
 ## Next concrete action
 
-1. **Mac session:** results arrive through the controller. Fix core defects, and merge `mac/local-qualification` when told to (merge commit).
-2. **CI on the current head:** if all ten jobs are green, it is eligible for `eidos-v0.6.1`. `eidos-v0.6.0` → `c7b6681` already exists.
-3. **Backlog:**
+1. **CI for the head.** The Mac session then re-runs ONE capped full-lab D02 real-LLM investigation, with a higher turn cap, against a39ab1a or later. The lead folds the receipt in.
+2. **Backlog:**
+   - `build_fixtures.py` must not rewrite tracked fixtures;
+   - a pytest wrapper for the Seatbelt probes on macOS CI;
    - the review-2 idle-poll rollover issue;
    - a CI test for checkpoint-and-stop under bwrap.
-4. **Owner:** project licence (`docs/ops/LICENSES.md`) and the other decisions in HANDOFF.md.
+3. **Owner decisions:** see HANDOFF.md.
