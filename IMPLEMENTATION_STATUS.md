@@ -440,12 +440,20 @@ Lesson: three of the four failures came from round 5 making sealed the default p
   - turn-recovery: 12 passed, including the context-only test that authors a source and reads its id next turn, and the bounded-outcome refusal;
   - unit + MCP + reporting: 68 passed, 1 skipped.
 
+## Round 17 (2026-11-08): final handoff
+
+- **Merge:** `mac/local-qualification` (aae1d25) merged.
+- **Re-run 3:** the full-lab D02 run concluded autonomously with no intervention. 26 requests, USD 0.74, 12 jobs, no claim. It is an exploration-only observation, not scientific evidence.
+- **Docs:** the 4-run table and the final handoff are at the top of HANDOFF.md, and A8 is updated.
+- **Verification:** unit + integration + MCP + reporting **140 passed, 4 skipped** on the merged head (3 skips are macOS-only; 1 is the live-lab MCP test).
+
 ## Next concrete action
 
-1. **CI for the head.** The Mac session then does the last capped full-lab D02 attempt against 8ad9519 or later, and the lead folds the receipt in during the final handoff round.
-2. **Backlog:**
+1. The controller confirms CI on the final head and creates the annotated release tag.
+2. Owner decisions: see HANDOFF.md § Final handoff.
+3. Engineering backlog, if work resumes:
+   - same-decision artifact references;
    - `build_fixtures.py` must not rewrite tracked fixtures;
-   - a pytest wrapper for the Seatbelt probes on macOS CI;
+   - a pytest for the Seatbelt probes;
    - the review-2 idle-poll rollover issue;
    - a CI test for checkpoint-and-stop under bwrap.
-3. **Owner decisions:** see HANDOFF.md.

@@ -1,3 +1,72 @@
+# Final handoff (2026-11-08)
+
+## Identity
+
+- **Repository:** `Legend101Zz/Eidos`.
+- **Branch:** `build/eidos-local-v1`. The controller maintains PR #1 (build → main).
+- **Latest commit:** the head of `build/eidos-local-v1` after this section was written. It contains the merge of `mac/local-qualification` at `aae1d25`.
+- **Release tag:** none for this head yet. The controller will create the annotated release tag after CI is green on it.
+- **Earlier development tags (annotated, never moved):** `eidos-v0.1.0`, `v0.2.0`, `v0.3.0`, `v0.4.0`, `v0.4.1`, `v0.5.0`, `v0.5.1`, `v0.5.2`, `v0.6.0`.
+  - `eidos-v0.2.0` … `v0.5.0`: qualified assessment was broken.
+  - `eidos-v0.4.0` … `v0.5.1`: sealed checkpoint-and-stop was broken.
+- **Not v1.0.0.** The release acceptance criteria below are not all met.
+
+## Evidence classes
+
+| Class | What |
+|---|---|
+| **Runtime-verified, hosted Linux** | Ledger, commands, orchestration, runner, isolation (bwrap), assessor, supervisor, MCP, reports, upgrade across releases, backup/restore, suspend/resume, 20-min soak. The switch-order journey (154 checks) and the clean-install journey (9 steps) run in CI on 10 green jobs. |
+| **Runtime-verified, owner's Mac** (Apple M4, macOS 26.3.1) | macOS researcher machine (owner kit 15/15; Seatbelt and assessor probes, same OS user); MPS (cpu/mps parity, cross-device resume); Claude Code and Codex CLI over MCP. Evidence: `docs/mac/`. |
+| **Real-LLM development runs** | Lab-free D02/D12, and 4 full-lab D02 runs. One concluded autonomously (re-run 3). **Not scientifically evaluated.** |
+| **Fixture-only** | Autonomous-loop mechanics in the journeys. |
+| **Unqualified** | Claude Desktop (not installed); CUDA; Lima VM; a non-trivial OpenAI-compatible model (only qwen2.5:3b on local Ollama, which fails conformance); real machine sleep and multi-day runs; distributed training. |
+| **Scientifically unproven** | Whether Eidos helps an LLM do model research (A16, external evaluation). |
+
+## A8: full-lab D02 real-LLM runs
+
+All runs: claude-sonnet-5-5, on the owner's Mac. Real-LLM spend across the campaign was USD 3.35.
+
+| Run | Head | Requests / USD | Outcome | Intervention | Defects found → fix |
+|---|---|---|---|---|---|
+| 1 | e36bfb1 wheels | 20 / 0.47 | 5-turn cap; baseline failed; no conclusion | none (cap) | Inputs reached the work dir only via `config.files`, and the contract was not visible to the investigator → a39ab1a |
+| 2 | after a39ab1a | 15 / 0.31 | baseline OK (0.838); stalled at turn 3 | operator stop (builder) | Requests 8–10: a wait after a failed call; `environment` passed as an object; `author_component` had two meanings → 851a019 |
+| 3 | after 851a019 | 31 / 0.95 | baseline ×3 + scoring; 4 authored sources never run; parked | operator stop (builder) | Requests 11–13: created artifacts not in the context; bounded outcome exempt from the wait rule; request cap off by one → 8ad9519 |
+| 4 (re-run 3) | 4e4c758 | 26 / 0.74 | **concluded autonomously**; 12 jobs ok; candidate 0.958/0.958/0.961 vs baseline 0.838/0.830/0.855 | **none** | none |
+
+**Run 4 is an exploration-only development observation**, with no claim filed:
+- the same validation split was used for choosing and for reporting;
+- no qualified assessment;
+- the changes were bundled (MLP, steps, weight decay, standardization);
+- the baseline is under-trained.
+
+The lab-free driver's earlier results overstated the full lab until run 1's defect was fixed.
+
+## Owner decisions
+
+1. **Project licence.** The README says TBD, and the wheels declare none. See `docs/ops/LICENSES.md`.
+2. **Seatbelt or Lima VM** on macOS.
+3. **Claude Desktop:** install it and verify with `scripts/qualify/mcp_clients/check_desktop_log.sh`.
+4. **Further work:**
+   - a hosted OpenAI-compatible model;
+   - CUDA hardware;
+   - real sleep and multi-day runs;
+   - the independent scientific evaluation (A16), using `eval-*` tags and clean tagged trees.
+5. **SSD cleanup.** Optional; nothing was deleted. Everything is under `/Volumes/Mrigesh SSD/eidos-mac/`: `suite/` (5.6 GB), `ollama-models/` (1.8 GB), `venvs/`, `lab/`, caches, and `dist-*/`. The full list is in `docs/mac/STATUS.md` § SSD paths. Also optional: the Ollama update cache at `~/Library/Caches/ollama/updates/…` (218 MB).
+
+## How to resume
+
+- **Code:** work on `build/eidos-local-v1`. The tags above are immutable; tag only CI-green SHAs.
+- **Status and next actions:** `IMPLEMENTATION_STATUS.md`, `ACCEPTANCE_MATRIX.md`, `docs/decisions/`.
+- **Local test commands:** `IMPLEMENTATION_STATUS.md` § How to run.
+- **CI:** `.github/workflows/ci.yml`, 10 jobs; see `docs/ops/CI.md`.
+- **Mac work:** `docs/ops/MAC_QUALIFICATION_RUNBOOK.md`, `docs/ops/STORAGE_PATHS.md`. Mac results and requests: `docs/mac/`.
+- **Real-LLM checks (controller-run, capped):**
+  - lab-free: `scripts/qualify/live_bundle_investigation.py`;
+  - full lab: `scripts/qualify/full_lab_live.sh`, with the key via `lab start --credentials-stdin`.
+- **Install and operate:** `docs/ops/INSTALL_AND_OPERATE.md`, `docs/ops/TROUBLESHOOTING.md`, `docs/ops/TEMPORAL_SERVER_SOURCES.md`.
+
+---
+
 # Eidos handoff (2026-11-08, eidos-v0.5.2)
 
 ## Identity
