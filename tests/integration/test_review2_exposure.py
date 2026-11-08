@@ -49,3 +49,30 @@ def test_outcome_revealing_reads_record_exposures(lab):
     lab.q(r, "get_record", {"kind": "assessment", "id": "assess_y"}, project=pid)
     last = _exposures(lab, pid, r.id)[-1]
     assert last["study_id"] == "study-z", last
+
+
+def test_transient_deadlock_is_retried_once_and_commits_once(lab, monkeypatch):
+    """Review 2 finding 5: lock-order deadlocks (40P01) between commands are retried, not surfaced."""
+    import dataclasses
+
+    from eidos.application import service
+
+    class Deadlock(Exception):
+        sqlstate = "40P01"
+
+    spec = service.COMMANDS["create_project"]
+    calls = {"n": 0}
+
+    def flaky(ctx, p):
+        calls["n"] += 1
+        out = spec.fn(ctx, p)
+        if calls["n"] == 1:
+            raise Deadlock("deadlock detected")  # after the handler's writes: the transaction must roll back
+        return out
+
+    monkeypatch.setitem(service.COMMANDS, "create_project", dataclasses.replace(spec, fn=flaky))
+    pid = f"p{uuid.uuid4().hex[:8]}"
+    r = lab.cmd(lab.admin, "create_project", {"project_id": pid}, key="k-" + pid)
+    assert calls["n"] == 2 and not r.get("replayed")
+    again = lab.cmd(lab.admin, "create_project", {"project_id": pid}, key="k-" + pid)
+    assert again.get("replayed") is True

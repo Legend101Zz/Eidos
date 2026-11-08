@@ -17,7 +17,7 @@ Status: accepted for development (2026-11-08). Qualification: GitHub-runner evid
 - It blocks the accesses the design names for candidate code: labels, lab credentials, host writes, egress, the control socket and scorer capability.
 - A deny-default profile was rejected because Python and PyTorch need many undocumented mach and sysctl permissions, and it could not be iterated on a macOS host in this build.
 
-**Limits (recorded, not hidden).**
+**Limits (recorded, not hidden).** Seatbelt does **not** isolate candidate code from a hostile same-user program. After review 2 it also denies inspecting other processes (probed as `no-process-inspection`), exec of launchctl/osascript/open and the securityd mach services. Other launchd/XPC routes and signals stay open (`docs/dev-runs/adversarial-review-2-2026-11-08.md`). The per-limit details follow.
 - Same OS user, so `separate-identity` fails. Plans that require it cannot pass on macOS.
 - Mach IPC is unfiltered; the Keychain is reachable subject to its own ACLs.
 - Apple deprecates `sandbox-exec`.

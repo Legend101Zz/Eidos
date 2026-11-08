@@ -10,6 +10,7 @@ transaction.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -106,6 +107,29 @@ class CommandService:
         self._authorize(spec, principal, project_id)
         pid = project_id or "_system"
         payload_hash = fingerprint({"command": name, "payload": payload, "expected_revision": expected_revision})
+        for attempt in range(4):
+            try:
+                receipt = self._execute_once(spec, principal, name, pid, command_key, payload, payload_hash,
+                                             expected_revision, delegation)
+                break
+            except Exception as exc:  # noqa: BLE001 - only transient serialization failures are retried
+                state = getattr(getattr(exc, "orig", None), "sqlstate", None) or getattr(exc, "sqlstate", None)
+                if state not in ("40P01", "40001") or attempt == 3:
+                    raise
+                log.warning("command retried after transient database conflict",
+                            extra={"command": name, "sqlstate": state, "attempt": attempt + 1})
+                time.sleep(0.05 * (attempt + 1))
+        if receipt.get("replayed"):
+            return receipt
+        log.info("command committed", extra={"command": name, "principal": principal.id, "project": pid,
+                                             "command_key": command_key})
+        if self.notifier is not None:
+            self.notifier.notify()
+        return receipt
+
+    def _execute_once(self, spec: Spec, principal: Principal, name: str, pid: str, command_key: str,
+                      payload: dict[str, Any], payload_hash: str, expected_revision: int | None,
+                      delegation: dict[str, Any] | None) -> dict[str, Any]:
         with self.ledger.transaction() as tx:
             tx.project_id = pid
             if spec.project_scoped and tx.get_project(pid) is None:
@@ -124,10 +148,6 @@ class CommandService:
             receipt = {"command": name, "command_key": command_key, "status": "committed",
                        "result": result, "events": ctx.emitted, "replayed": False}
             tx.complete_command(receipt)
-        log.info("command committed", extra={"command": name, "principal": principal.id, "project": pid,
-                                             "command_key": command_key})
-        if self.notifier is not None:
-            self.notifier.notify()
         return receipt
 
     def query(self, principal: Principal, name: str, *, project_id: str | None, params: dict[str, Any]) -> Any:
