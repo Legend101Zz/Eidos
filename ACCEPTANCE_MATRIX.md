@@ -129,3 +129,19 @@ Still open:
 - **Performance targets:** a smoke run met them on this host (p95 command 6.4 ms under training load; evidence visible ≤ 1.3 s; `docs/dev-runs/perf-smoke-2026-11-07.md`). Not measured on a declared reference machine.
 - **Not exercised:** sleep/suspend, multi-day runs and distributed training.
 - **Scientific release (A16):** out of builder scope.
+
+## E. Release gates for eidos-v1.0.0 (v1.0.0 release session)
+
+All gates must pass on the same commit. Evidence files are in `docs/release/evidence/`; Mac details are in `docs/mac/STATUS.md` § v1.0.0 release session.
+
+| Gate | Status | Evidence |
+|---|---|---|
+| G1 licence and metadata | pass | `LICENSE` (canonical Apache-2.0), `NOTICE`; `License-Expression: Apache-2.0` with LICENSE/NOTICE in all four wheels (`scripts/ci/check_wheel_licences.py`, CI); `tests/unit/test_release_metadata.py` |
+| G2 supported scope | pass | `docs/release/SUPPORTED.md`, linked from README, HANDOFF and this matrix |
+| G3 isolation honesty | pass | `tests/unit/test_seatbelt_policy.py`, `tests/integration/test_sealed_plan_refusal.py`; ADR 0006 amendment |
+| G4 OpenAI-compatible with a capable local model | pending | Anthropic re-check 8/8 (`g4-anthropic-live-provider-check.json`) |
+| G5 A8 with a real model | pending | `tests/journeys/a8_live.py` |
+| G6 local operations | disk, services and abrupt stop pass on macOS; **machine sleep/restart is an owner item** | `g6-*.json`, `scripts/qualify/sleep_restart_check.sh` |
+| G7 review open questions | pass | writer fence (`test_writer_fence.py`), reservation double release (`test_turn_recovery.py`), quiet rollover (`test_workflows.py`), CI fallback; review docs updated |
+| G8 docs | in progress | this file, HANDOFF, IMPLEMENTATION_STATUS, `docs/mac/STATUS.md`, INSTALL_AND_OPERATE, TROUBLESHOOTING, README, CHANGELOG, release notes |
+| G9 final verification | pending | final SHA: full local suite, owner kit from fresh wheels, switch journey, CI, independent review |
