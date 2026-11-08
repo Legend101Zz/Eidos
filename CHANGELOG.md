@@ -2,7 +2,7 @@
 
 All notable changes to Eidos. Tags are annotated, created only on CI-green commits, and never moved. Development tags `eidos-v0.x` were freezes, not releases.
 
-## 1.0.0 (unreleased; release candidate `eidos-v1.0.0-rc1`)
+## 1.0.0 (release candidate 1.0.0rc1, tag `eidos-v1.0.0-rc1`; the final `eidos-v1.0.0` waits for the owner's sleep/restart evidence)
 
 The v1 **software** release: acceptance areas A1–A15 within the scope of `docs/release/SUPPORTED.md`. It makes **no scientific claim**: A16, the scientific comparison, is a separate later release with `eval-*` tags. Details and evidence: `docs/release/RELEASE_NOTES_v1.0.0.md`.
 
