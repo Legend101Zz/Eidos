@@ -27,6 +27,7 @@ from eidos.runtime.launcher import (
     LaunchSpec,
     ProcessHandle,
     candidate_uid,
+    credential_dirs,
     launch,
     profile_config_digest,
     run_probes,
@@ -82,12 +83,17 @@ _PREFIX_CACHE: dict[str, list[str]] = {}
 
 def python_prefixes(python: str) -> list[str]:
     if python not in _PREFIX_CACHE:
-        out = subprocess.run(env=_job_env(), args=[python, "-c", "import sys,json;print(json.dumps([sys.prefix, sys.base_prefix, sys.exec_prefix]"
-                                                    " + [p for p in sys.path if p]))"],
+        out = subprocess.run(env=_job_env(), args=[python, "-c", "import sys,json;print(json.dumps([[sys.prefix, "
+                                                    "sys.base_prefix, sys.exec_prefix], [p for p in sys.path if p]]))"],
                              capture_output=True, text=True, timeout=60)
-        paths = json.loads(out.stdout) if out.returncode == 0 else []
+        prefixes, extra = json.loads(out.stdout) if out.returncode == 0 else ([], [])
         real = {str(Path(python).resolve().parent.parent)}
-        _PREFIX_CACHE[python] = sorted(set(paths) | real)
+        # sys.path entries (.pth / editable paths) are re-allowed too, unless one is or contains the home
+        # directory or a credential store (bwrap binds these paths; Seatbelt would re-open nothing anyway)
+        protected = [os.path.realpath(str(Path.home())), *(os.path.realpath(d) for d in credential_dirs())]
+        extra = [e for e in extra if not any(os.path.realpath(e) == d or d.startswith(os.path.realpath(e).rstrip("/") + "/")
+                                             for d in protected)]
+        _PREFIX_CACHE[python] = sorted(set(prefixes) | real | set(extra))
     return _PREFIX_CACHE[python]
 
 

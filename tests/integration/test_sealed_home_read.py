@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -101,3 +102,20 @@ def test_credential_probe_covers_the_home_directory(tmp_path):
     spec.deny_read = [d for d in spec.deny_read if d != str(Path.home())]
     spec.attempt_dir = str(tmp_path / "pre-fix")
     assert run_probes(spec, **kw)["controls"]["no-credential-read"] == "failed"
+
+
+def test_interpreter_path_entries_holding_home_are_not_reopened(tmp_path, monkeypatch):
+    import eidos.runtime.runner as R
+    site = tmp_path / "venv" / "lib" / "site-packages"
+    site.mkdir(parents=True)
+    (site / "x.pth").write_text(f"{Path.home()}\n{Path.home().parent}\n{tmp_path / 'editable'}\n")
+    (tmp_path / "editable").mkdir()
+    helper = tmp_path / "helper.py"  # an interpreter whose site-packages has a .pth naming these paths
+    helper.write_text(f"import site, sys\nsite.addsitedir({str(site)!r})\nexec(sys.argv[2])\n")
+    shim = tmp_path / "py"
+    shim.write_text(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(helper))} \"$@\"\n")
+    shim.chmod(0o755)
+    monkeypatch.setattr(R, "_PREFIX_CACHE", {})
+    got = R.python_prefixes(str(shim))
+    assert str(tmp_path / "editable") in got
+    assert str(Path.home()) not in got and str(Path.home().parent) not in got
