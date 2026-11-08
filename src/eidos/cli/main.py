@@ -242,7 +242,7 @@ def install_component(c: LabClient, project: str, directory: Path, env: str = "d
         return {"component_ref": v["component_ref"], "validation": job["status"], "job_id": job["id"],
                 "terminal": job.get("terminal")}
     pub = c.command("publish_component", {"bundle_artifact_id": aid, "validation_job_id": job["id"]}, project=project,
-                    key=f"publish:{aid}")["result"]
+                    key=f"publish:{aid}:{job['id']}")["result"]  # the server dedupes identical releases
     if bind:
         try:
             c.command("bind_component", {"component_ref": pub["component_ref"], "mode": "add"}, project=project,
