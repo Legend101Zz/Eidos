@@ -180,14 +180,20 @@ def search_components(ctx: Ctx, p: dict) -> dict:
             continue
         if eff and eff not in m.get("scientific_effects", []):
             continue
-        rows.append({"ref": r["ref"], "implements": m["implements"], "kind": m["kind"], "status": r["status"],
-                     "effects": m["scientific_effects"], "summary": str(m.get("summary", ""))[:200],
-                     "input": m.get("input"), "output": m.get("output"), "qualification": r.get("qualification"),
-                     **({"config_schema": m["config_schema"]} if m.get("config_schema") else {})})
+        rows.append(catalog_row(r["ref"], m, r["status"], r.get("qualification")))
     start = int(p.get("cursor") or 0)
     limit = min(int(p.get("limit", 20)), 100)
     page = rows[start:start + limit]
     return {"components": page, "total": len(rows), "next_cursor": start + limit if start + limit < len(rows) else None}
+
+
+def catalog_row(ref: str, m: dict, status: str, qualification: Any = None) -> dict:
+    """What the catalog (and so the investigator's context) shows about a release: its ports, including
+    optional inputs, its config contract (with descriptions and examples) and a bounded summary."""
+    return {"ref": ref, "implements": m["implements"], "kind": m["kind"], "status": status,
+            "effects": m["scientific_effects"], "summary": str(m.get("summary", ""))[:600],
+            "input": m.get("input"), "optional_input": m.get("optional_inputs"), "output": m.get("output"),
+            "qualification": qualification, **({"config_schema": m["config_schema"]} if m.get("config_schema") else {})}
 
 
 @query("describe_component")

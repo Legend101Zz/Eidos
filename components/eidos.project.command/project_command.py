@@ -19,6 +19,15 @@ def _copy_project(src_root, work, skip):
             shutil.copyfile(p, work / p.name)
 
 
+SUFFIX_BY_MEDIA = {"application/x-npz": ".npz", "application/json": ".json", "text/csv": ".csv", "text/plain": ".txt"}
+
+
+def default_suffix(media_type, schema=None):
+    if schema == "model-file/1":
+        return ".pt"
+    return SUFFIX_BY_MEDIA.get(media_type or "", "")
+
+
 def run(inputs, config, *, reader, writer, context):
     work = Path(context.scratch_dir) / "work"
     out = Path(context.scratch_dir) / "out"
@@ -47,6 +56,11 @@ def run(inputs, config, *, reader, writer, context):
             shutil.copyfile(src, work / name)
     else:
         _copy_project(os.getcwd(), work, set(files.values()))
+    # Declared inputs not named in config.files are staged by the documented default: <port><ext>, with the
+    # extension from the input's media type (the same rule the lab-free driver uses).
+    for port, binding in inputs.items():
+        if port != "source" and port not in files:
+            files[port] = port + default_suffix(getattr(binding, "media_type", None), getattr(binding, "schema", None))
     for port, name in files.items():
         if port in inputs:
             if "/" in name or name.startswith("."):
@@ -68,7 +82,8 @@ def run(inputs, config, *, reader, writer, context):
     (out / "command-stdout.txt").write_text(proc.stdout[-200000:])
     (out / "command-stderr.txt").write_text(proc.stderr[-200000:])
     if proc.returncode != 0 and not config.get("allow_nonzero_exit"):
-        raise RuntimeError("project command failed (exit %d): %s" % (proc.returncode, proc.stderr[-2000:]))
+        raise RuntimeError("project command failed (exit %d); work dir had %s; stderr tail: %s"
+                           % (proc.returncode, sorted(x.name for x in work.iterdir())[:40], proc.stderr[-1500:]))
     staged, metrics = [], {}
     for p in sorted(out.rglob("*")):
         if not p.is_file() or p.is_symlink():
@@ -98,6 +113,7 @@ def run(inputs, config, *, reader, writer, context):
         writer.stage_json("source_snapshot", bundle, schema="source-bundle/1")
         staged.append("source_snapshot")
     receipt = {"argv": [os.path.basename(argv[0])] + argv[1:], "returncode": proc.returncode, "seconds": round(elapsed, 3),
+               "staged_inputs": {k: v for k, v in files.items() if k in inputs},
                "outputs": staged, "source": source, "project_receipt": metrics}
     writer.stage_json("receipt", receipt, schema="project-receipt/1")
     numeric = {k: v for k, v in metrics.items() if isinstance(v, (int, float)) and not isinstance(v, bool)}

@@ -42,7 +42,8 @@ _ROOT = Path(__file__).resolve().parents[2]
 def _contract(component_dir: str) -> dict:
     """Config contract + summary from the shipped manifest (the same one the lab enforces)."""
     m = json.loads((_ROOT / "components" / component_dir / "eidos-component.json").read_text())
-    return {"ref": f"{m['id']}@{m['release']}", "summary": m.get("summary", ""), "config_schema": m.get("config_schema")}
+    return {"ref": f"{m['id']}@{m['release']}", "summary": m.get("summary", ""), "config_schema": m.get("config_schema"),
+            "optional_input": m.get("optional_inputs")}
 
 
 def contract_problems(calls: list, catalog: list) -> list:
@@ -114,8 +115,13 @@ class LocalLab:
                     return self._fail(ref, inputs, config, f"source path escapes work dir: {rel}")
                 t.parent.mkdir(parents=True, exist_ok=True)
                 t.write_text(text)
-        for port, name in (config.get("files") or {"train": "train.npz", "validation": "validation.npz",
-                                                    "task": "task.json"}).items():
+        # Same staging rule as eidos.project.command >= 1.0.7: config.files maps port->filename; every other
+        # declared input is staged as <port><ext> (the extension of the stored artifact).
+        files = dict(config.get("files") or {})
+        for port, aid in inputs.items():
+            if port != "source" and port not in files and aid in self.artifacts:
+                files[port] = port + self.artifacts[aid].suffix
+        for port, name in files.items():
             aid = inputs.get(port)
             if aid in self.artifacts and "/" not in name:
                 shutil.copyfile(self.artifacts[aid], wd / name)
@@ -197,8 +203,8 @@ class LocalLab:
 _PC = _contract("eidos.project.command")
 CATALOG = [
     {"ref": _PC["ref"], "implements": "project-command/1", "kind": "artifact-op", "config_schema": _PC["config_schema"],
-     "effects": ["change-weights"], "input": {}, "output": {},
-     "summary": _PC["summary"] + " inputs: train/validation/task artifact ids, optional source (authored files)."},
+     "effects": ["change-weights"], "input": {}, "optional_input": _PC["optional_input"], "output": {},
+     "summary": _PC["summary"] + " Here: train/validation/task artifact ids, optional source (authored files)."},
     {"ref": "eidos.task.score-classification@1.0.0", "implements": "classification-score/1", "kind": "artifact-op",
      "effects": ["observe"], "input": {"predictions": "prediction-array/1", "reference": "task-array/1"}, "output": {},
      "summary": "validation accuracy: inputs predictions=<validation_predictions artifact>, reference=art_validation."},

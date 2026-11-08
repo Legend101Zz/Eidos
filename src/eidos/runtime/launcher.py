@@ -383,7 +383,7 @@ def denied(fn):
 res["no-label-read"] = denied(lambda: open(cfg["label_path"], "rb").read(1))
 # the lab credential, and the user's home directory (dotfiles, client tokens, keys) as a whole
 res["no-credential-read"] = denied(lambda: open(cfg["credential_path"], "rb").read(1)) and \
-    (not cfg.get("home") or denied(lambda: os.listdir(cfg["home"])))
+    (not cfg.get("home_planted") or denied(lambda: open(cfg["home_planted"], "rb").read(1)))
 def write_host():
     with open(cfg["host_write_path"], "w") as f:
         f.write("x")
@@ -417,12 +417,16 @@ def run_probes(spec: LaunchSpec, *, label_path: str, credential_path: str, host_
     """Run hostile-access probes with the exact profile configuration; return a receipt fragment."""
     import secrets as _secrets
     marker = "peer-" + _secrets.token_hex(8)
+    # A planted file in the real home directory: reading it is the leak (a bind-mount scaffold that makes the
+    # home path listable inside bwrap is not).
+    planted = Path.home() / f".eidos-home-probe-{_secrets.token_hex(6)}"
+    planted.write_text("planted")
     # A same-user peer holding a marker in its environment, like a lab daemon holding a provider key.
     peer = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"], env={**os.environ, "EIDOS_PEER": marker},
                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     cfg = {"label_path": label_path, "credential_path": credential_path, "host_write_path": host_write_path,
            "net_host": net_host, "net_port": net_port, "api_port": api_port, "peer_pid": peer.pid, "peer_marker": marker,
-           "home": str(Path.home())}
+           "home_planted": str(planted)}
     python = spec.argv[0]
     probe_spec = LaunchSpec(argv=[python, "-I", "-c", PROBE, json.dumps(cfg)], cwd=spec.cwd,
                             attempt_dir=str(Path(spec.attempt_dir) / "probe"), env={}, profile=spec.profile,
@@ -436,6 +440,7 @@ def run_probes(spec: LaunchSpec, *, label_path: str, credential_path: str, host_
     finally:
         peer.kill()
         peer.wait()
+        planted.unlink(missing_ok=True)
     try:
         out = json.loads((Path(probe_spec.attempt_dir) / "stdout.log").read_text().strip().splitlines()[-1])
     except (OSError, ValueError, IndexError):

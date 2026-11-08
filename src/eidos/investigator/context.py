@@ -70,7 +70,7 @@ def pack(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int
         metrics = rec.get("metrics") if isinstance(rec, dict) else None
         lines.append(json.dumps({"id": j["id"], "component": j["component"], "status": j["status"], "purpose": j["purpose"],
                                  "inputs": j.get("inputs"), "config": _clip(j.get("config")), "metrics": metrics,
-                                 "error": _clip(j.get("error")),
+                                 "error": _error_view(j.get("error")),
                                  "outputs": [{"slot": o["slot"], "artifact_id": o["artifact_id"], "role": o["role"],
                                               "schema": o["schema"]} for o in j.get("outputs", [])]}, sort_keys=True))
     claims = view.get("claims") or []
@@ -82,8 +82,9 @@ def pack(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int
     lines.append(f"## Component catalog ({len(catalog)} active; showing {min(len(catalog), MAX_CATALOG)})")
     for c in catalog[:MAX_CATALOG]:
         sel["catalog"].append(c["ref"])
-        lines.append(json.dumps({k: c.get(k) for k in ("ref", "implements", "kind", "effects", "input", "output", "summary",
-                                                        "config_schema") if c.get(k) is not None}, sort_keys=True))
+        lines.append(json.dumps({k: c.get(k) for k in ("ref", "implements", "kind", "effects", "input", "optional_input",
+                                                        "output", "summary", "config_schema") if c.get(k) is not None},
+                                sort_keys=True))
     omitted["catalog"] = [c["ref"] for c in catalog[MAX_CATALOG:]]
     if len(catalog) > MAX_CATALOG:
         lines.append("(more components exist: use search via the catalog query; they are data, not tools)")
@@ -97,6 +98,13 @@ def pack(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int
             "truncations": {"context_truncated": truncated}, "chars": len(text),
             "source_manifest_digest": "sha256:" + sha256_bytes(canonical_json(view).encode()),
             "known_tools": sorted(EFFECT_TOOLS) + list(CONTROL_TOOLS)}
+
+
+def _error_view(err: Any) -> Any:
+    """The failure reason first (category and message, bounded), not a clipped dump with the traceback."""
+    if not isinstance(err, dict):
+        return _clip(err)
+    return {"category": err.get("category"), "message": str(err.get("message", ""))[:1200]}
 
 
 def _clip(x: Any, n: int = 600) -> Any:
