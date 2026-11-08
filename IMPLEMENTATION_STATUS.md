@@ -254,6 +254,29 @@ These are separate commits in the journey merge:
   - Repair of `tests/journeys/switch_journey.py` drift (published-extension checks, intermediate-checkpoint branching, default-env reinstall). The e2e journey replaces its role in CI.
 - **Last full local run:** 117 passed, 1 skipped at `67855b5`. Later commits were each followed by their focused tests and the e2e journey.
 
+## Drift sweep (2026-11-08, round 8)
+
+Each script and driver was either run once at the current code or shown to be covered by a CI job. All runs used a fresh lab built from head wheels, with the clean-install journey left in place (`KEEP_WORK=1`). Logs are in `/mnt/session/outputs/drift-sweep/`.
+
+| Script / driver | How checked | Result |
+|---|---|---|
+| `scripts/ci/*`: build_and_install, lab_cycle, fresh_install, components, sdk_tests, research_smoke, seatbelt/assessor probes, upgrade_across_releases | CI jobs | green on `12b4822` |
+| `scripts/journeys/e2e_journey.sh` | CI job `e2e-journey`, plus a local run | pass, 9/9 |
+| `tests/unit`, `tests/integration` | CI | green |
+| `tests/mcp`, `tests/reporting` | **Were not in CI.** Now in `lint-and-unit` (`734ea42`). | 25 passed, 1 skipped. The skipped test is the live-lab MCP test, which the e2e journey covers. |
+| `tests/worker_compat/run_matrix.sh` | CI `worker-compat` | green |
+| `tests/ops/runner_reattach.sh` | run | REATTACH OK |
+| `tests/ops/checkpoint_and_stop.sh` | run | **FAILED: stuck in `cancel-requested`.** SIGUSR1 cannot cross bwrap's session/PID namespace, and sealed has been the default profile since round 5. Fixed with a stop-request file the SDK polls (`1a1c621`); re-run: OK at step 18,794. |
+| `tests/ops/abrupt_stop.sh` | run | scenarios A and B OK, doctor OK |
+| `tests/ops/perf_smoke.py` | run | **FAILED: evidence visibility timed out.** The sealed runner allowed only 1 concurrent attempt, so a long training job serialized everything else. Fixed with sealed slots equal to the dev runner's (`cabbecd`); re-run: p95 command 7.9 ms, evidence visible ≤ 1.36 s. |
+| `scripts/qualify/macos_owner_kit.sh` (Linux dry run) | run | **FAILED in substance:** the fixture investigation stopped `budget-exhausted` on turn 1, because the 120k in-turn reservation exceeded the kit's 100k limit. Fixed: fixture runtimes reserve nothing unless an envelope is configured (`4dfd56d`). Re-run: all steps ok, except preflight, which fails as expected on non-macOS. |
+| `scripts/research/cards.py` | run with `--cards cheap --seeds 11` | D01, D07, D12, D04 PASS |
+| `scripts/qualify/live_bundle_investigation.py` | `--model test` dry run on a D02 bundle | ok (2 requests, turn cap) |
+| `scripts/qualify/live_provider_check.py` | needs a key and refuses without one | correct refusal. The controller ran it live (receipts #1–#3). |
+| `tests/journeys/switch_journey.py` | **Drifted, not running** | Being restored by the helper on `task/switch-restore`. |
+
+Lesson: three of the four failures came from round 5 making sealed the default profile. No CI job exercised checkpoint-and-stop, sealed-runner concurrency or the kit's fixture budget, so they failed silently.
+
 ## Next concrete action
 
 1. The controller relays CI for the head (currently `378ff0f`). If it is green, tag `eidos-v0.5.1` there; it is the first tag on which qualified assessment works again.
