@@ -12,6 +12,11 @@
     - `investigation_view` job visibility no longer uses a 5,000-event window that starts at seq 0;
     - the investigator's own effects count as news.
 - **Post-tag head:** the current branch head needs CI before any tag such as `eidos-v0.5.3`.
+- **Round 12:**
+  - CI and `lab init` no longer depend on GitHub's release CDN: verified cache, then pinned download, then source build with recorded provenance.
+  - Adversarial review 3 fixes, including a key leak through symlinked outputs in the lab-free driver.
+  - A15 suspend/resume passes on Linux, and a soak was run.
+  - Licence inventory, NOTICES and a troubleshooting guide were added.
 - **Round 11 (owner decisions):**
   - Real-model checks, real MCP clients and MPS are qualified on the owner's Mac by the controller, using `docs/ops/MAC_QUALIFICATION_RUNBOOK.md`; results are pending.
   - The security defect the controller found is fixed (`3a094d8`): model-chosen commands could inherit `ANTHROPIC_API_KEY`, home and network. Untrusted commands now run under the sealed profile with no secrets, and only the investigator worker holds provider keys.
@@ -109,6 +114,13 @@ Full guide: `docs/ops/INSTALL_AND_OPERATE.md`. CI layout: `docs/ops/CI.md`. Exac
 | Independent evaluation (A16) | External workstream. | Use `eval-*` tags for evaluation configurations, and freeze runs only from a clean tagged tree. |
 
 ## Owner decisions pending
+
+0. **Project licence.**
+   - The README says TBD.
+   - The packages had claimed Apache-2.0 from the first skeleton commit; that claim was removed, so the built wheels now declare no licence.
+   - The redistribution terms of `research/public/` are also undecided.
+   - Details: `docs/ops/LICENSES.md`.
+
 
 1. Run the macOS owner kit on a researcher Mac.
 2. Authorize the real-LLM lab-free D02 and D12 runs, then a full-lab investigation.
