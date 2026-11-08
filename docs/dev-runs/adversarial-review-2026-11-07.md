@@ -41,8 +41,8 @@ Two read-only reviewer passes covered invariants (a) single write path, (b) idem
 | Idle poll started a model turn | **Fixed.** A quiet timeout runs `check_news` (a ledger query, no model). A turn starts only on a wake, news since the last horizon, or `max_idle_turn_seconds` (6 h). The change is version-guarded with `workflow.patched`. | `test_workflows.py::test_idle_polls_without_news...` (plus frozen-history replay) |
 | Component tests only local | **Fixed (pending CI confirmation).** A `components` CI job runs all 59 tests with zero skips allowed. | `.github/workflows/ci.yml`, `scripts/ci/components.sh` |
 
-## Still open
+## Still open (status at v1.0.0)
 
-- **macOS** has no sealed profile, so candidate code there runs same-user. This is recorded as `strongest_available: dev:same-user` with a note in every lock. The Lima VM profile is not implemented.
-- **Distinct candidate identity** requires a candidate-readable interpreter (e.g. under /opt). Otherwise `separate-identity` reports failed.
-- **Live Temporal timeout/retry semantics** for the inferred items A5/A7/A9–A11 are covered by unit/integration tests with fakes, not by a long-running live timeout exercise.
+- **macOS** has no sealed profile, so candidate code there runs same-user. This is recorded as `strongest_available: dev:same-user` with a note in every lock. The Lima VM profile is not implemented. **Superseded:** `macos:seatbelt-sealed` now exists, as a same-user profile that is not hostile-code isolation. Lima is not supported in v1 (`docs/release/SUPPORTED.md`).
+- **Distinct candidate identity** requires a candidate-readable interpreter (e.g. under /opt). Otherwise `separate-identity` reports failed. **v1 limitation, documented:** it is reported truthfully, and a plan listing `separate-identity` is satisfied only when the control passed.
+- **Live Temporal timeout/retry semantics** for the inferred items A5/A7/A9–A11 are covered by unit/integration tests with fakes, not by a long-running live timeout exercise. **Closed in round 6:** `tests/integration/test_temporal_realtime.py` uses real timers on the dev server and on the regular server.

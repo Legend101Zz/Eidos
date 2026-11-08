@@ -86,6 +86,24 @@ Check in this order:
 * **Fix:** install the new wheels, then run the **new** installation's `lab upgrade`; check the reported `lab_python` before/after. See the upgrade section of `docs/ops/INSTALL_AND_OPERATE.md`.
 * **Evidence:** `556fe66`, `scripts/ci/upgrade_across_releases.sh`.
 
+### `eidos ledger writer fenced: this writer declares generation N, the ledger requires M`
+* **Symptom:** an API or service process fails every command with this PostgreSQL error after an upgrade.
+* **Cause:** that process is an older Eidos version that kept running while the ledger was migrated (a manual or partial upgrade). Migration 0004 fences such writers so they cannot collide with the new schema, for example by inserting an event sequence number the migration-0003 counter also hands out. Nothing the old writer attempted was committed.
+* **Fix:** stop the old process (track it by PID; `lab status` shows the supervisor's services), then start the lab with the new installation (`lab start`), or run the new installation's `lab upgrade`.
+* **Evidence:** `tests/integration/test_writer_fence.py`.
+
+### macOS: `this plan requires sealed (hostile-code) execution, but this lab's strongest isolation profile is 'macos:seatbelt-sealed'`
+* **Symptom:** `freeze_evidence_plan` or `launch_evidence_plan` is refused on a Mac.
+* **Cause:** Seatbelt runs candidate code as the same OS user, so it is not hostile-code isolation. In v1, sealed evaluation is supported on Linux with `linux:bwrap-sealed` only (`docs/release/SUPPORTED.md`).
+* **Fix:** run the confirmation on a Linux lab with bubblewrap. Alternatively, draft the plan with a control-level requirement (`required_isolation.controls`) and accept that its assessment records same-user isolation.
+* **Evidence:** `tests/integration/test_sealed_plan_refusal.py`.
+
+### CI: `setup-uv failed, but the GitHub release download works`
+* **Symptom:** a CI job fails in the step "uv fallback, only when the GitHub release download is unavailable".
+* **Cause:** `astral-sh/setup-uv` failed for a reason other than the release CDN. The PyPI fallback covers only the CDN failure, so it does not mask other failures.
+* **Fix:** read the setup-uv step's log; re-run if the CDN recovered between the two steps.
+* **Evidence:** `scripts/ci/uv_fallback.sh`.
+
 ## Development and CI
 
 ### PostgreSQL tests: `EIDOS_TEST_PG_ADMIN` is set but the tests fail (or used to skip silently)

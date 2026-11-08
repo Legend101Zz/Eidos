@@ -16,12 +16,13 @@
 | 5a | `CommandService` had no retry on a deadlock (40P01) or serialization failure (40001). A lock-order deadlock was possible between `_terminal` and `submit_assessment`. (inferred) | low–medium | The whole transaction is retried up to 3 times on 40P01/40001. | `test_review2_exposure.py::test_transient_deadlock_is_retried_once_and_commits_once` |
 | — | PostgreSQL tests were skipped silently when `EIDOS_TEST_PG_ADMIN` was set but unusable. | test infrastructure | They now fail instead of skipping in that case. | `tests/conftest.py` |
 
-## Open questions (not fixed)
+## Open questions (status at v1.0.0: each item is fixed or documented as a v1 limitation)
 
 **Seatbelt:**
 - The same user can still reach launchd and XPC by other routes, for example a copied `launchctl` binary or direct mach messages.
 - Hard links into exempted directories are possible (low confidence).
 - Signals to other same-user processes are not denied, because training code must be able to signal its own children.
+- **v1 limitation (documented, not fixed):** the three items above are inherent to a same-user Seatbelt profile. Since v1.0.0 a Seatbelt receipt can no longer satisfy a plan requiring sealed execution, and macOS labs refuse such plans (`docs/release/SUPPORTED.md`, ADR 0006 amendment).
 - Conclusion: macOS candidates are **not isolated from a hostile same-user program**. Seatbelt raises the bar against accidental or unsophisticated access, and a VM profile is the real answer. This is recorded in ADR 0006 and HANDOFF.
 
 **Exposure:**
@@ -30,14 +31,17 @@
 **Idle poll:**
 - Quiet polls grow the workflow history. Past `history_limit`, the Continue-As-New run starts a model turn with no news (about every 3 h with defaults).
 - `waited_since` resets at rollover, so the 6 h max-idle timer is not honoured across rollovers (inferred).
+- **Fixed in v1.0.0:** a quiet wait now continues across Continue-As-New, with no model turn, and the max-idle timer counts from the original wait start (`quiet-rollover-keeps-waiting-v1`; `test_workflows.py::test_quiet_wait_survives_rollover_without_a_model_turn`, `::test_max_idle_counts_across_quiet_rollovers`; both fail on the old coordinator).
 
 **Assessor:**
 - With a distinct candidate user under root, the assessor's staging is not chowned, so it fails closed with `ASSESSOR_FAILED`.
-- `evidence.json` is mode 0644 in a 0755 temporary directory (inferred).
+- `evidence.json` is mode 0644 in a 0755 temporary directory (inferred). **Fixed in v1.0.0:** the evidence file and its staged copy are 0600.
+- **v1 limitation:** the distinct-candidate-user assessor case fails closed (`ASSESSOR_FAILED`). Distinct identities are a Linux-root-only configuration, and failing closed is the safe outcome.
 
 **Upgrade:**
 - An old-version writer that is still running after a migration-0003 upgrade hits a primary-key collision on the event sequence.
 - `lab upgrade` stops all services first. The documented path is safe; a manual partial upgrade is not.
+- **Fixed in v1.0.0:** migration 0004 fences writers that do not declare the current writer generation. An old writer is refused on its next write instead of colliding (`tests/integration/test_writer_fence.py`, including a writer connected across a 0003 → head upgrade).
 
 ## Checked and clean
 
@@ -45,7 +49,7 @@
 - Upgrade from 0002, where the counter is set to max(seq).
 - Grants.
 - `workflow.patched` placement; a wake during `check_news` is not lost.
-- `open_reservations` accounting.
+- `open_reservations` accounting. **Re-checked for v1.0.0, and a defect was found:** `complete_turn` released unsettled reservations under a separate ref, so a late settlement could release them twice. Fixed: releases are booked per original ref (`test_turn_recovery.py::test_late_settlement_after_turn_release_does_not_release_twice`, which fails before the fix).
 - Seatbelt parameter handling, ancestor-path exceptions, inherited file descriptors and the wrapper's exit-code write.
 - The bwrap assessor's isolation settings.
 - `test_temporal_realtime.py`: 17/17 passes, including under 60 CPU burners (load average about 72). The tightest margin is start-to-close: under 4 s asserted, against about 2.2 s of timeouts.

@@ -18,8 +18,8 @@
 
 ## Open
 
-- **3 (medium, inferred):** "needs operator input" is visible only through the workflow `state` query. No ledger event or investigation status shows it. A `lab investigate show` field or event should be added.
-- **9 (low):** the CI uv fallback was unpinned; it is now pinned to `uv==0.13.7`. `continue-on-error` on setup-uv still masks other setup failures, although the fallback step makes the job fail later if uv is missing.
+- **3 (medium, inferred):** "needs operator input" is visible only through the workflow `state` query. No ledger event or investigation status shows it. A `lab investigate show` field or event should be added. **Fixed in `a193d64` (eidos-v0.6.0):** `mark_needs_input` adds an investigation label and an `investigation.needs_input` event; they appear in `get_investigation` and `project_summary`.
+- **9 (low):** the CI uv fallback was unpinned; it is now pinned to `uv==0.13.7`. `continue-on-error` on setup-uv still masks other setup failures, although the fallback step makes the job fail later if uv is missing. **Fixed in v1.0.0:** `scripts/ci/uv_fallback.sh` installs from PyPI only if the GitHub release download really fails; otherwise it fails the job. A separate `uv --version` step follows.
 
 ## Checked clean
 

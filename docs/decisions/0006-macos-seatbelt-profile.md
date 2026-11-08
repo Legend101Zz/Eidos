@@ -26,3 +26,17 @@ Status: accepted for development (2026-11-08). Qualification: GitHub-runner evid
 - A Lima VM profile is not implemented.
 
 **Reversal.** If a future macOS release breaks `sandbox-exec`, `detect_sealed_profile()` returns none. The lab then falls back to `dev:same-user` with recorded waivers, and plans that require sealed execution are refused.
+
+## Amendment (v1.0.0, 2026-11-08): Seatbelt is not hostile-code isolation
+
+Owner decision for v1: macOS isolation is Seatbelt with documented limits, and sealed (hostile-code) evaluation is advertised on Linux (`linux:bwrap-sealed`) only. No Lima VM in v1.
+
+Before this amendment, `evaluate_receipt` treated `macos:seatbelt-sealed` like any `*-sealed` profile. A Seatbelt receipt that passed the six sealed controls therefore satisfied a plan with `sealed: true`, although the candidate ran as the lab's own OS user. That contradicted A11 ("a same-user receipt cannot satisfy a plan requiring sealed execution").
+
+Now:
+- Each profile declares `same_os_user` and `hostile_code`. Only hostile-code profiles satisfy `requires_sealed` (`sealed: true`, or a named hostile-code profile).
+- A lab whose strongest profile is not hostile-code refuses such plans at freeze and at launch.
+- Receipts carry `same_os_user` and `hostile_code_isolation`, derived by the service from the profile name.
+- Seatbelt still satisfies control-level requirements, and it stays the default for candidate code and model-chosen commands on macOS.
+
+The limits listed above stay as they are and are restated in `docs/release/SUPPORTED.md`: launchd/XPC by other routes, mach IPC, signals, possible hard links, the deprecated `sandbox-exec`, and the same-user assessor.

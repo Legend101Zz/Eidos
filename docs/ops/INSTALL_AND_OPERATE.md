@@ -4,15 +4,16 @@ Eidos runs entirely on your own machine. It does not need a cloud account, an OC
 
 ## Supported profiles
 
-| Profile | Status |
+The authoritative v1 scope is **`docs/release/SUPPORTED.md`**. In short:
+
+| Profile | v1 status |
 |---|---|
-| Linux x86_64, CPU | Runtime-verified in the hosted build sandbox (Ubuntu 24.04, Python 3.12, PostgreSQL 16, Temporal 1.32.2). That is a build environment, not a researcher machine. |
-| `linux:bwrap-sealed` isolation | Runtime-verified with hostile probes. When the lab runs as root with the `eidos-cand` user, candidate code runs as that distinct OS identity if it can execute the project interpreter. Provision sealed-evaluation environments under a world-readable prefix (e.g. `UV_PYTHON_INSTALL_DIR=/opt/eidos/python uv python install 3.12`, venv under `/opt/eidos/envs/`, `chmod -R a+rX`); `separate-identity` then passes (verified). |
-| macOS (arm64/x86_64) host-native `dev:same-user` | **Unqualified on a researcher machine.** GitHub-hosted macOS arm64 runner evidence only: wheel install, `lab init/start/doctor/project/status/stop`, worker SDK tests, research smoke (`.github/workflows/ci.yml`, job `macos-arm64-smoke`). Owner kit: `docs/ops/MACOS_OWNER_QUALIFICATION.md`. |
-| macOS `macos:seatbelt-sealed` (candidate code) | **Implemented; GitHub-runner evidence only.** `sandbox-exec` with a generated Seatbelt profile: the lab home and common credential directories are unreadable (except the attempt's own files), writes go only to staging/scratch/resume and a private tmp, no network, cleared environment. Same OS user, so `separate-identity` fails; mach IPC (e.g. the Keychain via securityd) is not filtered. Apple deprecates `sandbox-exec`; every run's receipt records the probe results, so a broken control shows up as `failed`, not assumed. CI runs the hostile probes plus a same-user planted-effect control (`scripts/ci/seatbelt_probes.py`). The macOS assessor process still runs `dev:same-user`. |
-| macOS `macos:lima-vm-sealed` | **Not implemented.** Needed only where a plan requires `separate-identity` or VM-level isolation on macOS. |
-| CUDA / MPS devices | Discovered and reported. **Unqualified.** Exact restore across devices is never claimed. |
-| Windows / WSL | Not supported in v1. |
+| Linux x86_64, CPU | Supported. Hosted CI (Ubuntu 24.04, Python 3.12, PostgreSQL 16, Temporal 1.32.2), 10 jobs. |
+| macOS arm64, CPU and MPS | Supported. Qualified on the owner's Apple M4 (macOS 26.3.1): owner kit, MPS parity and cross-device resume (`docs/mac/STATUS.md`). |
+| `linux:bwrap-sealed` | Supported; **the only profile for sealed (hostile-code) evaluation**. When the lab runs as root with the `eidos-cand` user, candidate code runs as that distinct OS identity if it can execute the project interpreter. Provision sealed-evaluation environments under a world-readable prefix (e.g. `UV_PYTHON_INSTALL_DIR=/opt/eidos/python uv python install 3.12`, venv under `/opt/eidos/envs/`, `chmod -R a+rX`); `separate-identity` then passes. |
+| `macos:seatbelt-sealed` | Supported, **same OS user**. `sandbox-exec` with a generated profile: the lab home, credential directories and `$HOME` are unreadable (except the attempt's own files); writes go only to staging/scratch/resume and a private tmp; no network; cleared environment; no inspection of other processes. It does **not** contain a hostile same-user program (launchd/XPC by other routes, mach IPC, signals). Plans requiring sealed execution are **refused** on macOS, and a Seatbelt receipt never satisfies them. The macOS assessor also runs under Seatbelt as the same user; its receipt reports `same_os_user: true`. |
+| `macos:lima-vm-sealed` | Not supported in v1 (not implemented). |
+| CUDA, distributed training, Windows/WSL | Not supported in v1. |
 
 ## Prerequisites
 
@@ -56,7 +57,7 @@ For task bundles that follow `eidos-task-bundle/0.1`, see `lab task import` / `l
 
 ## MCP
 
-Run `lab mcp` (stdio). Registration snippets for clients are in `docs/ops/mcp-clients.md`. External clients have not been qualified yet.
+Run `lab mcp` (stdio). Registration snippets for clients are in `docs/ops/mcp-clients.md`. Supported clients in v1: **Claude Code** and **Codex CLI** (verified for read and write paths, `docs/mac/receipts/a14-*.json`) and the **MCP Python SDK** client. Claude Desktop is not supported in v1.
 
 ## Operations
 
@@ -87,6 +88,7 @@ Behaviour as implemented in `src/eidos/supervisor/maintenance.py`.
    * sets `lab_python` to the interpreter that ran the upgrade, so services restart on the new code (the old interpreter is reported as `lab_python.before`);
    * re-detects the sealed profile (`linux:bwrap-sealed` or `macos:seatbelt-sealed`) and updates `sealed_available`;
    * records the new version and, if the lab had been running, starts it again (a stopped lab stays stopped).
+   * **Old writers are fenced.** From migration 0004 every write to a ledger table must come from a writer that declares the current writer generation (the command service does, per transaction). An older Eidos process that is still running after the upgrade (for example after a manual, partial upgrade) gets `eidos ledger writer fenced ... stop it and use lab upgrade` on its next write, instead of colliding with the new schema (for example the event-sequence counter of migration 0003). Stop any such process; nothing it attempted was committed. Test: `tests/integration/test_writer_fence.py`.
 4. Verify with `lab doctor` and `lab status`. In-flight workflows replay on the new workers; recorded histories must replay on new workflow code (`tests/integration/test_workflows.py`). Old scientific records are never rewritten.
 A cross-release test (v0.1.0 wheels to head, 33 checks) runs in CI as `upgrade-across-releases`.
 
