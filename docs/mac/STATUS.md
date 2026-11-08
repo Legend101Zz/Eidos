@@ -125,3 +125,51 @@ act as an investigator (it cannot here); larger or hosted OpenAI-compatible mode
 Fix to the cloud-written script: `live_provider_check.py` could only run Anthropic (it required `ANTHROPIC_API_KEY`
 and hard-coded `anthropic:` for the unknown-model scenario); it now takes `--base-url`/`--api-key-env` and runs the
 same scenarios on any provider.
+
+## Item 5: real-model investigations with Anthropic (A8)
+
+**Evidence class: real-LLM DEVELOPMENT runs on macOS arm64** (no builder intervention during any run; investigator
+saw only the bundle: brief, task.json, project.py, train/validation; no test data, labels or reference solution).
+
+### Security precondition (before any paid call)
+
+| Check | How | Result |
+|---|---|---|
+| contained commands | `EIDOS_RESEARCH_PYTHON=$S/venvs/research/bin/python pytest -q tests/integration/test_contained_commands.py tests/integration/test_sealed_home_read.py` at the merged head | 5 + 5 passed |
+| driver path, end to end | `live_bundle_investigation.py --model replay:<script>` (offline, no key) with a fake `ANTHROPIC_API_KEY` in the driver's environment; scripted decisions: a hostile probe, the D02 baseline, scoring | probe: key hidden, planted `$HOME` file and `$HOME` listing refused, network refused (env of the command: 9 variables); baseline trained; validation accuracy 0.838; all under `macos:seatbelt-sealed` |
+| lab job path | kit-4 `sealed_probe` (item 1) | held after b7d9ed1 |
+| **lab services** | lab started with a fake key marker; `ps eww` over the user's processes | **FAILED before e36bfb1**: the key was in the supervisor, the PostgreSQL postmaster and the investigator worker. Fixed in **e36bfb1** (supervisor gets credentials over stdin, scrubbed env for every service, `lab start --credentials-stdin`); after it only `eidos.apps.role investigator-worker` held it (both env and stdin paths), and during the real full-lab run as well |
+
+### Runs (all `anthropic:claude-sonnet-5-5`, served `claude-sonnet-5-5`; list price $2/$10 per Mtok)
+
+| Run | Command | SHA | Requests | Tokens in/out | Cost | Outcome |
+|---|---|---|---|---|---|---|
+| 5.1 lab-free D02 | `with_anthropic_key.py -- .venv/bin/python scripts/qualify/live_bundle_investigation.py --bundle $S/bundles/D02 --python $S/venvs/research/bin/python --max-requests 40 --max-turns 8` | e36bfb1 | 8 | 29,434 / 8,073 | $0.1396 (settled 14c) | turn cap (8 turns, 1 request each), all 8 decisions accepted, 0 refused; baseline reproduced (val acc 0.838), a seed variant 0.830, then a model-authored modification failed (`exit 2/3`); no conclusion (`a8-live-D02.json`) |
+| 5.1b lab-free D12 (null) | same with D12 | e36bfb1 | 8 | 28,783 / 9,860 | $0.1562 (settled 16c) | turn cap; 8 accepted, 0 refused; val acc 0.5 (chance) twice; authored one candidate project file, its runs failed; no improvement claimed (`a8-live-D12.json`) |
+| 5.2 full lab D02 | `with_anthropic_key.py --stdin-credential ... -- /bin/bash scripts/qualify/full_lab_live.sh --bundle $S/bundles/D02 ...` (`CREDENTIALS_STDIN=1`, `PRICE={"input":2,"output":10}`) | 4d494ce scripts; lab wheels from e36bfb1 sources | 20 | 172,477 / 12,130 | $0.4663 (lab `model_usd` used 0.466254; settled 47c) | 5 turns (cap), 5 decisions accepted, 0 refused, every decision `wait_for_jobs` after one `run_component`; the turn-1 baseline job **failed** because `eidos.project.command` places inputs in the work dir only via `config.files` (the lab-free driver defaults it, so the identical call works there) and the failed job carried `error: null` (stderr only in the `command-stderr` artifact); turns 2-5 probed the staging layout; no conclusion. `key_found_in_lab_files: []` (`a8-full-lab-D02.json`, worker log `a8-full-lab-D02-investigator-worker.log`) |
+
+Ledger (`eidosctl ancillary`): reserved 365/365/310c, settled **14 + 16 + 47 = 77c**; ancillary available now 867c of
+1000c (was 944c). Claude Code / Codex runs (item 2) used the Max subscription / Codex account, not Console credits.
+
+Fixes:
+- **e36bfb1 (core, security)**: provider key only in the investigator worker (see above); regression tests
+  `tests/unit/test_supervisor_credentials.py` (4).
+- 4d494ce (script) `full_lab_live.sh`: key over stdin; `PRICE="${PRICE:-{...}}"` appended a stray `}` whenever PRICE
+  was set (broke `--settings`); unquoted `$LAB`; builtins helper used `lab` from PATH; the wait loop never ended for a
+  needs-input investigation (90 min); doctor output to `/tmp`.
+
+Observations: under Seatbelt, torch's libomp prints `OMP: Warning #179: Function Can't set size of /tmp file failed`
+(it ignores TMPDIR; harmless). The lab-free driver's results over-state what the same model does in the full lab
+because of the `files` default difference above.
+
+## Other evidence from this session
+
+Full macOS test run by a Sonnet subagent (own PostgreSQL on 5499, Temporal CLI dev server, private lab ports), at
+b7d9ed1 and again at e36bfb1: unit 43, integration 67 (+3 legitimate bwrap/`/opt/eidos` skips), mcp 18 (+1 skip;
+19/19 against a live lab), reporting 7, components 59 (no skips), sdk 20, eidos-pytorch 19 (torch 2.15.0 Mac wheel),
+`fresh_install.sh` ok, `e2e_journey.sh` JOURNEY PASS, switch journey 154/154, `upgrade_across_releases.sh` 33/33,
+`research_smoke.sh` ok, seatbelt and assessor probes ok, lint + import contracts clean. Logs: `$S/suite/logs{,2}/`.
+
+Storage: internal free 24.9 GiB at start; see the final report for the end figure. One internal-disk write not under
+my control: `~/Library/Caches/ollama/updates/.../Ollama-darwin.zip` (218 MB, 16:26, while my Ollama server ran with
+`HOME` on the SSD; probably Ollama's updater). Left in place (owner's Ollama setup); see REQUESTS.md.

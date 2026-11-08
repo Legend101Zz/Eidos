@@ -82,7 +82,17 @@ ANTHROPIC_API_KEY=... PYTHONPATH=src:packages/eidos-wire/src $PY scripts/qualify
     bash scripts/qualify/full_lab_live.sh --bundle $SSD/bundles/D02 --python $PY --out $SSD/receipts/full-lab-D02.json
   ```
 
+  Preferred (as run on the Mac, 2026-11-08): the key on stdin, so it is in no environment but the investigator
+  worker's (`lab start --credentials-stdin`, e36bfb1); `LAB` may be an absolute path with spaces:
+
+  ```bash
+  python3 helpers/with_anthropic_key.py --stdin-credential --keep EIDOS_HOME --set LAB="$S/venvs/lab/bin/lab" \
+    --set PRICE='{"input": 2.0, "output": 10.0}' --set CREDENTIALS_STDIN=1 -- /bin/bash scripts/qualify/full_lab_live.sh \
+    --bundle $S/bundles/D02 --python $PY --out $S/runs/live/full-lab-D02.json
+  ```
+  (the helper reads the Keychain item and writes one `ANTHROPIC_API_KEY=...` line to the script's stdin).
 - Hard caps: 5 turns × 2 decisions × 4 requests = 40 requests, `model_usd=3` at PRICE, `model_tokens=600000`.
+- The wait ends early when the investigation parks as "needs operator input" (recorded in the receipt).
 - The receipt contains the served model ids and per-decision usage.
 - `key_found_in_lab_files` must be `[]`; if it is not, the script exits 1.
 
