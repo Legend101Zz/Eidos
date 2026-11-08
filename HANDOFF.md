@@ -21,7 +21,16 @@
   - **A8:** first real-LLM development runs, claude-sonnet-5-5, USD 0.77 in total: lab-free D02 no improvement; lab-free D12 null, no false claim; full-lab D02 no conclusion within 5 turns.
     - The full-lab run exposed an input-staging defect. Because of it, the **lab-free driver's results overstated the full lab**.
     - Fixed in a39ab1a: `eidos.project.command` 1.0.7 stages declared inputs by one documented rule shared with the driver; contracts, optional inputs and an example are shown in the investigator's context; failure messages name the work-dir contents.
-    - A capped full-lab D02 re-run by the Mac session is pending.
+    - **Full-lab D02 re-run** (Mac, receipt `docs/mac/receipts/a8-full-lab-D02-rerun.json`):
+      - 15 requests, USD 0.31.
+      - The baseline succeeded first try (val acc 0.838), and the key was confined to the investigator worker.
+      - It **stalled at turn 3** (operator stop, a labelled builder intervention) on three defects:
+        - a wait after a call that failed;
+        - `environment` passed as an object;
+        - `author_component` meaning different things in the lab and in the lab-free driver.
+      - **No claim was made.**
+      - All three are fixed in 851a019 (ADR 0007 amendment): such a wait is treated like a refused proposal; environment names are validated and listed; and there is a distinct `author_source` tool for candidate project files, with the same meaning in both. A final Mac re-run is pending.
+      - The first run's "error: null" was a receipt-query mistake on the Mac side; the ledger was correct. That request was retracted.
 - **Round 12:**
   - CI and `lab init` no longer depend on GitHub's release CDN: verified cache, then pinned download, then source build with recorded provenance.
   - Adversarial review 3 fixes, including a key leak through symlinked outputs in the lab-free driver.

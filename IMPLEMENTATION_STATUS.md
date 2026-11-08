@@ -415,9 +415,23 @@ Lesson: three of the four failures came from round 5 making sealed the default p
   6. Recorded but not done: `build_fixtures.py` rewrites tracked fixtures when numpy is present, and there is no pytest for the Seatbelt probes.
   7. Matrix updated.
 
+## Round 15 (2026-11-08): full-lab re-run findings 8–10 fixed
+
+- **Merge:** `mac/local-qualification` (648cd6b) merged again; it carries the re-run receipt and STATUS.
+- **Re-run summary:** the a39ab1a fix worked (baseline val acc 0.838 on the first try), then the run stalled at turn 3.
+- **Fixes (851a019):**
+  - **8.** `execute_decision` reports `nothing_outstanding` together with the failed calls. The turn then counts it like a refused proposal (patched `failed-calls-no-wait-v1`), so the bounded retry-then-surface rule applies.
+  - **9.** `environment` must be the name of a registered environment. Anything else is refused at acceptance, and the message lists the names. The names are also shown in the context, and the tool text gives the type and an example.
+  - **10.** New tool `author_source`: candidate project files that become `run_component inputs.source`. It is the same in the lab and the lab-free driver. `author_component` (build a component) exists only in the lab, and the driver refuses it.
+- **Tests:**
+  - turn-recovery: 10 passed, including the failed-call wait and the environment/`author_source` tests;
+  - workflows: 10 passed, including `test_wait_after_failed_calls_is_not_a_park` and the replay of recorded histories;
+  - unit + MCP + reporting: 68 passed, 1 skipped;
+  - staging regression: 2 passed.
+
 ## Next concrete action
 
-1. **CI for the head.** The Mac session then re-runs ONE capped full-lab D02 real-LLM investigation, with a higher turn cap, against a39ab1a or later. The lead folds the receipt in.
+1. **CI for the head.** The Mac session then does the final capped full-lab D02 re-run against 851a019 or later, and the lead folds the receipt in.
 2. **Backlog:**
    - `build_fixtures.py` must not rewrite tracked fixtures;
    - a pytest wrapper for the Seatbelt probes on macOS CI;
