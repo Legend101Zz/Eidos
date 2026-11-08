@@ -31,7 +31,7 @@ from journey_lib import Blocked, Journey  # noqa: E402
 from staging import stage_component  # noqa: E402
 
 ADAPTER = "eidos_adapter:ADAPTER"
-TRAIN, EVALUATE, EDIT = "eidos.pytorch.train@1.0.0", "eidos.pytorch.evaluate@1.0.0", "eidos.pytorch.weight-edit@1.0.0"
+TRAIN, EVALUATE, EDIT = "eidos.pytorch.train@1.2.0", "eidos.pytorch.evaluate@1.0.0", "eidos.pytorch.weight-edit@1.0.0"
 BEHAVIOR, SCORER = "eidos.pytorch.behavior-check@1.0.0", "lab.pairs.by_group@1.0.0"
 ASSESSOR, TEMPLATE = "eidos.assessors.paired-ci@1.0.0", "eidos.templates.improves-under-budget@1.1.0"
 RUNNER = "eidos.qualification-runner@1.0.0"
@@ -537,7 +537,8 @@ def step5(j: Journey, a: argparse.Namespace) -> None:
                    "seeds": [41, 53, 67], "baseline": {"description": "unedited step-45 model"},
                    "candidate": planted["candidate"],
                    # Explicit choice: this development journey confirms on the same OS user (exploratory).
-                   "required_isolation": {"profile": "dev:same-user", "controls": [], "note": "exploratory journey"}}
+                   "required_isolation": {"profile": "dev:same-user", "controls": [], "note": "exploratory journey",
+                                      "waiver": "development journey; exploratory, not a qualified sealed run"}}
         up = j.client.upload(j.project, data=json.dumps(request).encode(), media_type="application/json",
                              schema="plan-request/1", role="input", name="plan-request")
         tj = j.run("plan:template-expand", TEMPLATE, inputs={"request": up["result"]["artifact_id"]}, config={})
