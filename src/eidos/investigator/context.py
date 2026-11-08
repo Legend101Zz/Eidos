@@ -22,8 +22,10 @@ TOOL_GUIDE = """You are the Eidos investigator. Each turn you propose ONE decisi
  "hypotheses": [{"statement","prediction","falsifier"}], "calls": [{"tool","args"}...], "control": {"action", "summary"}}
 Effect tools (executed in order only after the lab accepts your decision):
   run_component {component_ref, inputs:{port: artifact_id}, config, environment?, wall_seconds?, prediction?, falsifier?}
-  plan_trial / launch_trial {trial_id}; plan_branch {parent_checkpoint_id, component_ref, migration, stream_policy, seed?,
-  intervention, inputs, config}; launch_branch {trial_id}
+  plan_trial {component_ref, inputs, config, environment?} -> trial_id; launch_trial {trial_id}
+  plan_branch {parent_checkpoint_id, component_ref, migration, stream_policy, seed?, intervention, inputs, config}
+    -> trial_id; launch_branch {trial_id}. A returned trial_id is listed under "Results of your recent calls" in
+    the NEXT turn; launch it there.
   author_source {files:{path: text}}  -> a source-bundle artifact id: candidate project files (e.g. a changed project.py)
     for run_component inputs.source of eidos.project.command (the whole-trainer path). No build, no new component.
     The id is listed under "Artifacts you created" in your NEXT turn's context; run it there (a call cannot use
@@ -33,7 +35,16 @@ Effect tools (executed in order only after the lab accepts your decision):
     publish_component {bundle_artifact_id, validation_job_id}
   bind_component {component_ref, capability?}; retire_component {component_ref}
   file_claim {statement, kind, scope}; draft_evidence_plan {claim_id, charter_id, template_ref, draft}
-  freeze_evidence_plan {plan_id}; launch_evidence_plan {plan_id}
+    draft = {"success_rule_id": <charter rule id>, "assessor": {"ref": <approved assessor ref>},
+             "analysis_unit": "pair", "cluster_by": "seed", "seed_policy": {"seeds": [..]},
+             "required_isolation": {"profile": "dev:same-user", "controls": [], "waiver": "<reason>"} or {"sealed": true},
+             "arms": [{"id", "role": "baseline"|"candidate", "seed"?, "run": {component_ref, inputs, config, environment}}
+                      or {"id", "role", "runs": [{"seed", "cluster", "jobs": [{"id", "component", "inputs", "config",
+                      "environment"}]}]}]}  (a pipeline job input may name an earlier job's output: "<job id>.<slot>").
+    No thresholds in a draft: the rule comes from the charter. Missing fields are listed as obligations, and a
+    plan with obligations cannot be frozen. template_ref and the assessor must be in "Approved protocols".
+  freeze_evidence_plan {plan_id}; launch_evidence_plan {plan_id} (the assessment then runs by itself; its outcome
+    appears under "Your evidence plans")
   export_model {checkpoint_artifact_id, behavior_check_job_id}; record_note {kind, text, evidence_refs}
 Control actions: wait_for_jobs (sleep until admitted work finishes), request_input, conclude {summary, scope}, stop.
 Success rules come only from the committed charter; you cannot set thresholds. Cite artifact/job ids for numbers."""
@@ -86,6 +97,20 @@ def pack(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int
         lines.append(f"## Artifacts you created ({len(created)}; unused ones have used_by [])")
         for c in created[-20:]:
             lines.append(json.dumps(c, sort_keys=True))
+    results = view.get("call_results") or []
+    if results:
+        lines.append(f"## Results of your recent calls ({len(results)}; ids here are what later calls take)")
+        for r in results[-20:]:
+            lines.append(json.dumps(r, sort_keys=True, default=str))
+    plans = view.get("evidence_plans") or []
+    if plans:
+        lines.append("## Your evidence plans")
+        for pl in plans:
+            lines.append(json.dumps(pl, sort_keys=True, default=str))
+    approved = view.get("approved_protocols")
+    if approved is not None:
+        lines.append("## Approved (qualified) protocols: templates and assessors usable in a plan, by claim kind")
+        lines.append(json.dumps(approved, sort_keys=True) if approved else "none: no plan can be frozen yet")
     claims = view.get("claims") or []
     if claims:
         lines.append("## Claims")

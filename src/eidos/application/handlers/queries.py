@@ -374,7 +374,7 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
         environments = []
     # Artifacts the investigator itself created (e.g. author_source bundles), with whether a job has used them.
     # Their ids otherwise only travel inside events, which the context does not carry (Mac request 11).
-    created = []
+    created, call_results = [], []
     for t in turns:
         for d in ctx.tx.decisions(t["id"]):
             if not d["accepted"]:
@@ -387,13 +387,47 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
                 if r.get("ok") and r.get("tool") in ("author_source", "author_component") and aid:
                     created.append({"artifact_id": aid, "tool": r["tool"], "turn": t["seq"],
                                     "used_by": [j["id"] for j in jobs if aid in (j.get("inputs") or {}).values()]})
+                # The ids an effect call returned (trial_id, plan_id, validation job, export id, ...) and its errors:
+                # a later call needs them, and they otherwise travel only inside events (G5 live run).
+                call_results.append({"turn": t["seq"], "tool": r.get("tool"), "ok": bool(r.get("ok")),
+                                     **({"result": _compact_result(r.get("result"))} if r.get("ok") else
+                                        {"code": r.get("code"), "error": _compact_result(r.get("error"))})})
+    plans = []
+    assessments = {a.body.get("plan_id"): a for a in ctx.tx.list_records(ctx.project_id, "assessment")
+                   if cutoff_ts is None or a.created_at <= cutoff_ts}
+    for pl in ctx.tx.list_records(ctx.project_id, "evidence_plan"):
+        if pl.body.get("investigation_id") != inv.id or (cutoff_ts is not None and pl.created_at > cutoff_ts):
+            continue
+        _expose_record(ctx, pl)
+        asm = assessments.get(pl.id)
+        if asm is not None:
+            _expose_record(ctx, asm)
+        launch = pl.body.get("launch") or {}
+        plans.append({"plan_id": pl.id, "status": pl.status, "claim": (pl.body.get("claim_ref") or {}).get("id"),
+                      "success_rule_ref": pl.body.get("success_rule_ref"), "obligations": pl.body.get("obligations"),
+                      "jobs": launch.get("jobs"), "blocked": launch.get("blocked"),
+                      "assessment": None if asm is None else {"assessment_id": asm.id, "outcome": asm.body.get("outcome"),
+                                                              "conformance": asm.body.get("conformance")}})
+    approved = sorted({(ap.body["release_ref"], tuple(ap.body.get("scope") or ()))
+                       for ap in ctx.tx.list_records(ctx.project_id, "approval", status="active")})
     return {"investigation": {"id": inv.id, "status": inv.status, "body": inv_body}, "horizon": horizon,
-            "environments": environments, "created_artifacts": created[-50:],
+            "environments": environments, "created_artifacts": created[-50:], "call_results": call_results[-30:],
+            "evidence_plans": plans[-10:],
+            "approved_protocols": [{"release_ref": r, "scope": list(sc)} for r, sc in approved],
             "charter": charter, "jobs": jobs,
             "events": [{"seq": e["seq"], "type": e["type"], "subject": e["subject"]} for e in events[-200:]],
             "turns": [{"id": t["id"], "seq": t["seq"], "status": t["status"], "result": t["result"]} for t in turns],
             "claims": [{"id": c.id, "statement": c.body["statement"], "status": c.status, "labels": c.labels} for c in claims],
             "budgets": ctx.tx.budgets(inv_scope(inv.id))}
+
+
+def _compact_result(x, limit: int = 600):
+    """A call result or error for the context: drop bulky locks, keep ids and messages, cap the size."""
+    import json as _json
+    if isinstance(x, dict):
+        x = {k: v for k, v in x.items() if k not in ("lock", "manifest", "estimated_cost")}
+    text = _json.dumps(x, sort_keys=True, default=str)
+    return x if len(text) <= limit else text[:limit] + "...(truncated)"
 
 
 @query("list_projects", "project:read", project_scoped=False)
