@@ -173,3 +173,13 @@ b7d9ed1 and again at e36bfb1: unit 43, integration 67 (+3 legitimate bwrap/`/opt
 Storage: internal free 24.9 GiB at start; see the final report for the end figure. One internal-disk write not under
 my control: `~/Library/Caches/ollama/updates/.../Ollama-darwin.zip` (218 MB, 16:26, while my Ollama server ran with
 `HOME` on the SSD; probably Ollama's updater). Left in place (owner's Ollama setup); see REQUESTS.md.
+
+## Final (2026-11-08)
+
+Merged `origin/build/eidos-local-v1` (no new commits after fa8c19e's successors already merged). On the final head:
+ruff (src tests scripts) clean, import contracts 5/5, unit 43, contained/home/seatbelt-policy 15, eidos-pytorch 19
+(torch 2.15.0 arm64, MPS tests ran on MPS), components 59 (no skips). The full lab-level suites (integration, journeys,
+fresh install, upgrade) ran green at e36bfb1 (subagent); later commits changed only scripts, docs and one test.
+All servers started by this session (lab, kit labs, Ollama on 11535, test PostgreSQL on 5499) are stopped.
+Internal disk free: 24.9 GiB at start, 24.5 GiB at end (≈0.33 GiB, of which 218 MB is the Ollama update cache noted
+in REQUESTS.md; the rest is system/client-session noise; no Eidos data on the internal disk).
