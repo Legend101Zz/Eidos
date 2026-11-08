@@ -83,3 +83,29 @@ def test_transient_deadlock_is_retried_once_and_commits_once(lab, monkeypatch):
     assert calls["n"] == 2 and not r.get("replayed")
     again = lab.cmd(lab.admin, "create_project", {"project_id": pid}, key="k-" + pid)
     assert again.get("replayed") is True
+
+
+def test_needs_input_is_durable_visible_and_cleared_by_an_operator_action(lab):
+    """Review 3 open item: surfacing for input is a ledger state (label + event), visible in the investigation
+    and project summary, and cleared (with an event) by steering."""
+    pid = f"p{uuid.uuid4().hex[:8]}"
+    lab.cmd(lab.admin, "create_project", {"project_id": pid})
+    lab.cmd(lab.admin, "commit_study_charter", {"charter": {"study_id": f"s{pid}", "question": "q",
+                                                            "exploration_only": True}}, project=pid)
+    inv = lab.cmd(lab.admin, "start_investigation", {"question": "q", "charter_id": f"charter:s{pid}"},
+                  project=pid)["result"]["investigation_id"]
+    wf = lab.principal(f"wf-{pid}", ["workflow"], [pid])
+    r = lab.cmd(wf, "mark_needs_input", {"investigation_id": inv, "reason": "refused", "refused_turns": 3}, project=pid)
+    assert not r["result"]["already"]
+    again = lab.cmd(wf, "mark_needs_input", {"investigation_id": inv, "reason": "refused"}, project=pid)
+    assert again["result"]["already"]
+    shown = lab.q(lab.admin, "get_investigation", {"investigation_id": inv}, project=pid)
+    assert shown["needs_input"]["refused_turns"] == 3 and shown["status"] == "active"
+    assert lab.q(lab.admin, "project_summary", {}, project=pid)["investigations_needing_input"] == [inv]
+    lab.cmd(lab.admin, "steer_investigation", {"investigation_id": inv, "instruction": "try a different approach"},
+            project=pid)
+    shown = lab.q(lab.admin, "get_investigation", {"investigation_id": inv}, project=pid)
+    assert not shown["needs_input"]
+    types = [e["type"] for e in lab.q(lab.admin, "list_events", {"investigation_id": inv, "limit": 500},
+                                      project=pid)["events"]]
+    assert "investigation.needs_input" in types and "investigation.input_received" in types

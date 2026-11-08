@@ -77,6 +77,7 @@ def steer_investigation(ctx: Ctx, p: dict) -> dict:
     body["steering"] = [*body.get("steering", []), entry]
     rec = ctx.tx.put_record("investigation", inv.id, ctx.project_id, body, created_by=ctx.principal.id,
                             status=inv.status, expected_revision=ctx.expected_revision)
+    _clear_needs_input(ctx, inv, inv.status, "steered")
     ctx.event("investigation.steered", inv.id, {"revision": rec.revision, "by": ctx.principal.id},
               investigation_id=inv.id, wake=True)
     return {"investigation_id": inv.id, "revision": rec.revision}
@@ -92,6 +93,7 @@ def _set_state(ctx: Ctx, p: dict, status: str, etype: str) -> dict:
     body = dict(inv.body)
     body["control"] = {"status": status, "running_job_policy": policy, "by": ctx.principal.id}
     rec = ctx.tx.put_record("investigation", inv.id, ctx.project_id, body, created_by=ctx.principal.id, status=status)
+    _clear_needs_input(ctx, inv, status, etype.split(".")[-1])
     affected = []
     if status in ("paused", "stopped") and policy != "drain":
         for job in ctx.tx.list_jobs(ctx.project_id, investigation_id=inv.id,
@@ -109,6 +111,28 @@ def _set_state(ctx: Ctx, p: dict, status: str, etype: str) -> dict:
 @command("pause_investigation", "control")
 def pause_investigation(ctx: Ctx, p: dict) -> dict:
     return _set_state(ctx, p, "paused", "investigation.paused")
+
+
+def _clear_needs_input(ctx: Ctx, inv, status: str, action: str) -> None:
+    if (inv.labels or {}).get("needs_input"):
+        ctx.tx.set_status("investigation", inv.id, status, labels={"needs_input": None})
+        ctx.event("investigation.input_received", inv.id, {"by": ctx.principal.id, "action": action,
+                  "was": inv.labels["needs_input"]}, investigation_id=inv.id)
+
+
+@command("mark_needs_input", "turn")
+def mark_needs_input(ctx: Ctx, p: dict) -> dict:
+    """The coordinator surfaces an investigation that keeps producing refused proposals: durable and visible
+    (investigation label, event) until an operator steers, resumes or stops it."""
+    inv = ctx.tx.require("investigation", p["investigation_id"], lock=True)
+    if (inv.labels or {}).get("needs_input"):
+        return {"investigation_id": inv.id, "needs_input": inv.labels["needs_input"], "already": True}
+    from datetime import UTC, datetime
+    mark = {"since": datetime.now(UTC).isoformat(), "reason": str(p.get("reason", ""))[:300],
+            "refused_turns": int(p.get("refused_turns", 0))}
+    ctx.tx.set_status("investigation", inv.id, inv.status, labels={"needs_input": mark})
+    ctx.event("investigation.needs_input", inv.id, mark, investigation_id=inv.id)
+    return {"investigation_id": inv.id, "needs_input": mark, "already": False}
 
 
 @command("resume_investigation", "control")

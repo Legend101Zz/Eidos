@@ -74,9 +74,14 @@ class FakeInvestigator:
     async def check_news(self, a: dict) -> dict:
         return {"news": True}
 
+    @activity.defn(name="mark_needs_input")
+    async def mark_needs_input(self, a: dict) -> dict:
+        self.marked = getattr(self, "marked", 0) + 1
+        return {"already": False}
+
     def acts(self):
         return [self.begin_turn, self.build_context, self.decide, self.execute_decision, self.complete_turn,
-                self.check_news]
+                self.check_news, self.mark_needs_input]
 
 
 async def test_coordinator_rolls_over_and_carries_counters(env):
@@ -292,7 +297,7 @@ async def test_idle_polls_without_news_spend_no_model_turns(env):
 
     wid = f"inv-idle-{uuid.uuid4().hex[:6]}"
     async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
-            Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=[*fake.acts()[:-1], check_news]):
+            Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=[*fake.acts()[:-2], check_news, fake.mark_needs_input]):
         h = await env.client.start_workflow(InvestigationWorkflow.run, {"investigation_id": wid, "project_id": "p",
                                             "idle_poll_seconds": 1}, id=wid, task_queue=WORKFLOW_QUEUE)
         await asyncio.sleep(5)
@@ -321,7 +326,8 @@ async def test_refused_proposal_turns_retry_boundedly_then_surface_for_input(env
             return {"news": seen["operator"]}
         return {"news": True}
 
-    acts = [fake.begin_turn, fake.build_context, decide, fake.execute_decision, fake.complete_turn, check_news]
+    acts = [fake.begin_turn, fake.build_context, decide, fake.execute_decision, fake.complete_turn, check_news,
+            fake.mark_needs_input]
     wid = f"inv-invalid-{uuid.uuid4().hex[:6]}"
     async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
             Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=acts):
@@ -332,6 +338,7 @@ async def test_refused_proposal_turns_retry_boundedly_then_surface_for_input(env
         assert all(c["stop_reason"] == "invalid-proposals" for c in fake.completed)
         state = await h.query("state")
         assert "needs operator input" in state["status"], state
+        assert fake.marked == 1  # surfaced durably (ledger label + event) exactly once
         await h.signal("wake", 1)  # a job/evidence wake does not restart the loop
         await asyncio.sleep(3)
         assert fake.turns == 3 and seen["operator_only"] >= 2
@@ -356,7 +363,8 @@ async def test_needs_input_survives_continue_as_new(env):
     async def check_news(a: dict) -> dict:
         return {"news": seen["operator"]} if a.get("operator_only") else {"news": True}
 
-    acts = [fake.begin_turn, fake.build_context, decide, fake.execute_decision, fake.complete_turn, check_news]
+    acts = [fake.begin_turn, fake.build_context, decide, fake.execute_decision, fake.complete_turn, check_news,
+            fake.mark_needs_input]
     wid = f"inv-rollover-{uuid.uuid4().hex[:6]}"
     async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
             Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=acts):

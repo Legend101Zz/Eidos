@@ -92,10 +92,22 @@ def main() -> int:
         svc = {k: proc_stats(v["pid"]) for k, v in st["services"].items() if v.get("pid")}
         hist = None
         if tcli and taddr:
+            # The list output carries no history size; describe each running execution (bounded to 25).
             r = subprocess.run([tcli, "workflow", "list", "--address", taddr, "--query", "ExecutionStatus='Running'",
-                                "-o", "json", "--limit", "200"], capture_output=True, text=True)
+                                "-o", "json", "--limit", "25"], capture_output=True, text=True)
+            lengths, sizes = [], []
             try:
-                hist = max((int(w.get("historyLength", 0)) for w in json.loads(r.stdout or "[]")), default=0)
+                for w in json.loads(r.stdout or "[]"):
+                    wid = (w.get("execution") or {}).get("workflowId") or w.get("workflowId")
+                    if not wid:
+                        continue
+                    d = subprocess.run([tcli, "workflow", "describe", "--address", taddr, "-w", wid, "-o", "json"],
+                                       capture_output=True, text=True)
+                    info = (json.loads(d.stdout or "{}").get("workflowExecutionInfo") or {})
+                    lengths.append(int(info.get("historyLength") or 0))
+                    sizes.append(int(info.get("historySizeBytes") or 0))
+                hist = {"max_length": max(lengths, default=0), "max_size_bytes": max(sizes, default=0),
+                        "running": len(lengths)}
             except ValueError:
                 hist = None
         samples.append({"t": round(time.time(), 1), "services": svc, "pg_bytes": du(cfg.root / "services" / "pg"),
@@ -125,6 +137,7 @@ def main() -> int:
            "service_restarts": restarts, "fd_growth_ratio": growth("fds"), "rss_growth_ratio": growth("rss_kb"),
            "pg_bytes_first_last": [samples[0]["pg_bytes"], samples[-1]["pg_bytes"]],
            "max_open_history_last": samples[-1]["max_open_history"],
+           "max_open_history_peak": max((s["max_open_history"] or {}).get("max_length", 0) for s in samples),
            "submit_to_terminal_s": {"p50": lat[len(lat) // 2] if lat else None,
                                     "p95": lat[int(len(lat) * 0.95)] if lat else None, "n": len(lat)},
            "samples": samples}

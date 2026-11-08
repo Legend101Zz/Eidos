@@ -124,6 +124,12 @@ class InvestigationWorkflow:
                     self._status = f"retrying after refused proposals ({invalid_turns}/{MAX_INVALID_RETRY_TURNS})"
                     continue
                 needs_input = invalid_turns > MAX_INVALID_RETRY_TURNS
+            if needs_input and workflow.patched("needs-input-visible-v1"):
+                await workflow.execute_activity(
+                    "mark_needs_input", {"investigation_id": inv, "project_id": a["project_id"], "turn_counter": counter,
+                                         "refused_turns": invalid_turns,
+                                         "reason": "repeated refused proposals after bounded retries"},
+                    task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
             if not res.get("started") or reason in WAIT_REASONS or reason == "error":
                 self._status = "needs operator input (repeated refused proposals)" if needs_input else f"waiting ({reason})"
                 waited_since = workflow.now()
