@@ -95,3 +95,33 @@ Fixes:
 
 What was wrong in the cloud-written smoke: its retry path could never work (global determinism leaked from the first
 call), and it did not test checkpoint save/restore across devices or device reporting, which A13 needs.
+
+## Item 4: OpenAI-compatible provider, local endpoint (part of A9)
+
+**Evidence class: real-LLM development (local model, no cost)** for the `openai-compatible` adapter path.
+**Schema conformance of `qwen2.5:3b-instruct`: failed** (a model finding, not tuned for).
+
+Setup: private `ollama serve` (Ollama 0.9.6) started by this session with `HOME=$S/ollama-home`,
+`OLLAMA_MODELS=$S/ollama-models`, `OLLAMA_HOST=127.0.0.1:11535` (the owner's `~/.ollama` and server untouched); one
+model pulled, `qwen2.5:3b-instruct` (1.9 GB, on the SSD); server stopped by its PID afterwards.
+
+Command (SHA c1efd8e+ with the script change committed below):
+`PYTHONPATH=src:packages/eidos-wire/src .venv/bin/python scripts/qualify/live_provider_check.py --model openai-compatible:qwen2.5:3b-instruct --base-url http://127.0.0.1:11535/v1`
+
+Result (`receipts/a9-openai-compatible-ollama-qwen2.5-3b.json`), 13 requests, 3/8 scenarios pass:
+
+| Scenario | Outcome |
+|---|---|
+| conformance-fresh / after-baselines / large-catalog / read-tools-available | model-call-failed: `UnexpectedModelBehavior: Exceeded maximum output retries (1)` (the model did not produce a valid structured decision) |
+| conformance-failed-job | a schema-valid but empty decision (no calls, no control): not a pass |
+| provider-timeout | pass: `ModelTimeoutError`, retryable |
+| request-limit-with-tool-loop | pass: bounded `request-budget-exhausted` outcome |
+| unknown-model-id | pass: `ModelNotFoundError` 404, non-retryable |
+
+What this shows: the adapter's OpenAI-compatible transport, timeout/404 classification, disabled transport retries
+and request bounding work against a real OpenAI-compatible server. What it does not show: that a ≤3B local model can
+act as an investigator (it cannot here); larger or hosted OpenAI-compatible models remain unqualified.
+
+Fix to the cloud-written script: `live_provider_check.py` could only run Anthropic (it required `ANTHROPIC_API_KEY`
+and hard-coded `anthropic:` for the unknown-model scenario); it now takes `--base-url`/`--api-key-env` and runs the
+same scenarios on any provider.
