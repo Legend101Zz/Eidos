@@ -353,7 +353,7 @@ Lesson: three of the four failures came from round 5 making sealed the default p
 
 ## Next concrete action
 
-1. The controller runs `docs/ops/MAC_QUALIFICATION_RUNBOOK.md` on the owner's Mac and returns the receipts: MCP clients, MPS, lab-free D02/D12, full-lab D02 and the security test. The lead fixes what they show.
+1. **Work split (2026-11-08):** a local Mac session (Claude Code on the owner's M4) owns all Mac-only qualification on branch `mac/local-qualification`, started from `80c1e2d`. Its results go in `docs/mac/`, which the lead never edits. This build session fixes the core/shared defects it reports, merges its branch when the controller says so (merge commit, no force), and folds its evidence into HANDOFF.md and ACCEPTANCE_MATRIX.md.
 2. CI on the head of `build/eidos-local-v1`. If all nine jobs are green, tag `eidos-v0.5.3`. The release-asset 504s were infrastructure.
 3. Backlog:
    - Temporal download retries on the v0.1.0 side of the upgrade job;
