@@ -180,18 +180,45 @@ def search_components(ctx: Ctx, p: dict) -> dict:
             continue
         if eff and eff not in m.get("scientific_effects", []):
             continue
-        rows.append(catalog_row(r["ref"], m, r["status"], r.get("qualification")))
+        rows.append(catalog_row(r["ref"], m, r["status"], r.get("qualification"),
+                                card_summary=None if m.get("summary") else _card_summary(ctx, m, r.get("bundle_digest"))))
     start = int(p.get("cursor") or 0)
     limit = min(int(p.get("limit", 20)), 100)
     page = rows[start:start + limit]
     return {"components": page, "total": len(rows), "next_cursor": start + limit if start + limit < len(rows) else None}
 
 
-def catalog_row(ref: str, m: dict, status: str, qualification: Any = None) -> dict:
+_CARD_CACHE: dict[str, str] = {}
+
+
+def _card_summary(ctx: Ctx, m: dict, bundle_digest: str | None) -> str:
+    """For a release whose manifest has no ``summary``: the method card's Question and Config paragraphs
+    (built-in eidos.pytorch.* releases document their config only there). Cached per bundle digest."""
+    if not bundle_digest or not m.get("card"):
+        return ""
+    if bundle_digest in _CARD_CACHE:
+        return _CARD_CACHE[bundle_digest]
+    text = ""
+    try:
+        with open(ctx.store.path_for(bundle_digest)) as fh:
+            card = (json.load(fh).get("files") or {}).get(m["card"]) or ""
+        paras = [x.strip().replace("\n", " ") for x in card.split("\n\n")]
+        keep = [x for x in paras if x.startswith(("**Question.**", "**Config.**", "**Inputs.**", "**Outputs.**"))]
+        text = " ".join(keep)
+    except Exception:  # noqa: BLE001 - a missing or odd bundle just means no summary
+        text = ""
+    if len(_CARD_CACHE) > 2000:
+        _CARD_CACHE.clear()
+    _CARD_CACHE[bundle_digest] = text[:900]
+    return _CARD_CACHE[bundle_digest]
+
+
+def catalog_row(ref: str, m: dict, status: str, qualification: Any = None, *, card_summary: str | None = None) -> dict:
     """What the catalog (and so the investigator's context) shows about a release: its ports, including
-    optional inputs, its config contract (with descriptions and examples) and a bounded summary."""
+    optional inputs, its config contract (with descriptions and examples) and a bounded summary (from the
+    manifest, else from the method card)."""
     return {"ref": ref, "implements": m["implements"], "kind": m["kind"], "status": status,
-            "effects": m["scientific_effects"], "summary": str(m.get("summary", ""))[:600],
+            "effects": m["scientific_effects"], "summary": str(m.get("summary", ""))[:600] or (card_summary or ""),
             "input": m.get("input"), "optional_input": m.get("optional_inputs"), "output": m.get("output"),
             "qualification": qualification, **({"config_schema": m["config_schema"]} if m.get("config_schema") else {})}
 

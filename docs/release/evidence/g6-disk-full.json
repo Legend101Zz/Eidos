@@ -1,0 +1,117 @@
+{
+  "receipt": "eidos-disk-full/1",
+  "volume": "2 GiB APFS disk image (hdiutil, user-level attach)",
+  "device": "/dev/disk8s1",
+  "df": {
+    "baseline": "/dev/disk8s1     2097112 235608   1853264    12%    2471 18532640    0%   /Volumes/EidosDiskFull",
+    "during-A": "/dev/disk8s1     2097112 1956956    131916    94%    2503 1319160    0%   /Volumes/EidosDiskFull",
+    "after-A": "/dev/disk8s1     2097112 2023592     65280    97%    2514 652800    0%   /Volumes/EidosDiskFull",
+    "after-B": "/dev/disk8s1     2097112 2041084     47788    98%    2549 477880    1%   /Volumes/EidosDiskFull",
+    "after-free": "/dev/disk8s1     2097112 370924   1717948    18%    2548 17179480    0%   /Volumes/EidosDiskFull",
+    "final": "/dev/disk8s1     2097112 372300   1716572    18%    2599 17165720    0%   /Volumes/EidosDiskFull"
+  },
+  "jobs": {
+    "A": "job_3c26015814db4e17",
+    "B": "job_1fcad84763b244b0",
+    "C": "job_6b36bb44eead45c2"
+  },
+  "A_error": {
+    "category": "resource",
+    "message": "refusing 0 bytes: 67244032 free, reserve 536870912"
+  },
+  "B_error": {
+    "category": "resource",
+    "message": "refusing 237 bytes: 48955392 free, reserve 536870912"
+  },
+  "checks": [
+    {
+      "check": "A: during the job the store refuses new bytes (upload -> DISK_PRESSURE)",
+      "ok": true,
+      "stderr": "{\n  \"error\": {\n    \"code\": \"DISK_PRESSURE\",\n    \"message\": \"refusing 1048576 bytes: 134033408 free, reserve 536870912\",\n    \"next_action\": \"Free disk space or raise the reserve; committed evidence is unaffected.\"\n  }\n}\n"
+    },
+    {
+      "check": "A: lab status shows disk pressure while the volume is below the reserve",
+      "ok": true,
+      "disk": {
+        "free_bytes": 135114752,
+        "pressure": true,
+        "refusing_new_bytes": true,
+        "reserve_bytes": 536870912
+      }
+    },
+    {
+      "check": "A: lab status says new bytes are being refused (below the reserve)",
+      "ok": true
+    },
+    {
+      "check": "A: lab doctor fails the disk check while new bytes are refused",
+      "ok": true,
+      "disk": {
+        "status": "fail",
+        "detail": "free 128 MiB, reserve 512 MiB; below the reserve: new artifacts and job outputs are refused (DISK_PRESSURE) until space is freed"
+      }
+    },
+    {
+      "check": "A: the output publication was refused and the attempt ended failed with a resource error",
+      "ok": true,
+      "status": "failed",
+      "error": {
+        "category": "resource",
+        "message": "refusing 0 bytes: 67244032 free, reserve 536870912"
+      }
+    },
+    {
+      "check": "A: nothing was half-published (no outputs recorded)",
+      "ok": true,
+      "outputs": []
+    },
+    {
+      "check": "A: a single attempt, terminal (reconciled, not left running)",
+      "ok": true,
+      "attempts": [
+        "failed"
+      ]
+    },
+    {
+      "check": "B: the ENOSPC job ended (failed or refused), not running",
+      "ok": true,
+      "status": "failed",
+      "error": {
+        "category": "resource",
+        "message": "refusing 237 bytes: 48955392 free, reserve 536870912"
+      },
+      "run_err": ""
+    },
+    {
+      "check": "B: lab services still answer after the volume was full",
+      "ok": true,
+      "status_err": null
+    },
+    {
+      "check": "C: after freeing space the pressure display clears",
+      "ok": true,
+      "disk": {
+        "free_bytes": 1759178752,
+        "pressure": false,
+        "refusing_new_bytes": false,
+        "reserve_bytes": 536870912
+      }
+    },
+    {
+      "check": "C: uploads are accepted again",
+      "ok": true,
+      "out": "{\n  \"command\": \"register_artifact\",\n  \"command_key\": \"upload:142a45b53263a09bbdfb665ca0cda862:upload-probe.bin\",\n  \"events\": [\n    46\n  ],\n  \"replayed\": false,\n  \"result\": {\n    \"artifact_id\": \"art_46"
+    },
+    {
+      "check": "C: a new job succeeds",
+      "ok": true,
+      "status": "succeeded"
+    },
+    {
+      "check": "final: lab doctor has no failed checks",
+      "ok": true,
+      "fails": []
+    }
+  ],
+  "ok": true
+}

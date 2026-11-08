@@ -129,7 +129,8 @@ def catalog(ctx: Ctx, *, include_inactive: bool = False) -> list[dict]:
     for rec in ctx.tx.list_records(ctx.project_id, "component_release", limit=5000):
         if include_inactive or rec.status == "active":
             out.append({"ref": rec.id, "digest": rec.body["digest"], "status": rec.status, "manifest": rec.body["manifest"],
-                        "environment": rec.body["environment"], "qualification": rec.body.get("qualification")})
+                        "environment": rec.body["environment"], "qualification": rec.body.get("qualification"),
+                        "bundle_digest": rec.body.get("bundle_digest")})
     return out
 
 
