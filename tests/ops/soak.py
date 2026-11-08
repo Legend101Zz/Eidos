@@ -50,9 +50,19 @@ def main() -> int:
     invs: list[str] = []
     stop = threading.Event()
 
+    errors: list[str] = []
+
     def submit_loop():
         i = 0
         while not stop.is_set():
+            try:
+                i = one(i)
+            except Exception as exc:  # noqa: BLE001 - recorded; the soak continues
+                errors.append(repr(exc)[:300])
+                time.sleep(2)
+
+    def one(i):
+        if True:
             i += 1
             t0 = time.time()
             j = c.command("run_component", {"component_ref": ref, "wall_seconds": 120, "config": {
@@ -71,6 +81,7 @@ def main() -> int:
                                 project=project)["result"]["investigation_id"]
                 invs.append(inv)
             time.sleep(1)
+        return i
 
     th = threading.Thread(target=submit_loop, daemon=True)
     th.start()
@@ -118,7 +129,9 @@ def main() -> int:
                                     "p95": lat[int(len(lat) * 0.95)] if lat else None, "n": len(lat)},
            "samples": samples}
     bad = [k for k, v in res["fd_growth_ratio"].items() if v > 2] + [k for k, v in res["rss_growth_ratio"].items() if v > 2]
-    res["ok"] = (not any(restarts.values())) and set(final.values()) <= {"succeeded"} and not bad
+    res["errors"] = errors[:20]
+    res["error_count"] = len(errors)
+    res["ok"] = (not any(restarts.values())) and set(final.values()) <= {"succeeded"} and not bad and not errors
     res["flags"] = bad
     out.write_text(json.dumps(res, indent=2))
     print(json.dumps({k: v for k, v in res.items() if k != "samples"}, indent=2))
