@@ -12,7 +12,7 @@ PG_BIN="${PG_BIN:-/opt/homebrew/opt/postgresql@16/bin}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 export EIDOS_HOME="$WORK/svclab"; OUT="$WORK/service-failure-out"
 mkdir -p "$OUT" "$WORK/svc-project"
-[ -f "$EIDOS_HOME/config/lab.json" ] || "$LAB" init --home "$EIDOS_HOME" --api-port 38765 --pg-port 35544 --temporal-port 37633 --pg-bin "$PG_BIN" > /dev/null
+[ -f "$EIDOS_HOME/config/lab.json" ] || "$LAB" init --home "$EIDOS_HOME" --api-port 30765 --pg-port 30544 --temporal-port 30633 --pg-bin "$PG_BIN" > /dev/null
 trap '"$LAB" stop --running-jobs cancel >/dev/null 2>&1 || true' EXIT
 "$LAB" start > /dev/null
 P=svc

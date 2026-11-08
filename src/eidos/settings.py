@@ -25,6 +25,28 @@ SERVICE_ROLES = {
 }
 
 
+TEMPORAL_PORT_BLOCK = 9
+# Temporal Server records each service's membership port in a PostgreSQL smallint column, so every port of
+# its block must be <= 32767; a higher block makes the server exit at startup ("out of range for type smallint").
+TEMPORAL_MAX_PORT = 32767
+
+
+def check_ports(api_port: int, pg_port: int, temporal_port: int) -> None:
+    """Refuse port choices the lab's services cannot use, before anything is created."""
+    for name, port in (("api", api_port), ("pg", pg_port), ("temporal", temporal_port)):
+        if not 1024 <= int(port) <= 65535:
+            raise ValueError(f"--{name}-port {port} must be between 1024 and 65535")
+    last = int(temporal_port) + TEMPORAL_PORT_BLOCK - 1
+    if last > TEMPORAL_MAX_PORT:
+        raise ValueError(f"--temporal-port {temporal_port}: Temporal uses {TEMPORAL_PORT_BLOCK} consecutive ports "
+                         f"({temporal_port}-{last}) and stores them as PostgreSQL smallint, so the block must end at or "
+                         f"below {TEMPORAL_MAX_PORT}; choose a temporal port <= {TEMPORAL_MAX_PORT - TEMPORAL_PORT_BLOCK + 1}")
+    block = range(int(temporal_port), last + 1)
+    clash = [n for n, port in (("api", api_port), ("pg", pg_port)) if int(port) in block]
+    if clash:
+        raise ValueError(f"--{clash[0]}-port lies inside the Temporal port block {temporal_port}-{last}")
+
+
 @dataclass
 class LabConfig:
     home: str

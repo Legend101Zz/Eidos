@@ -7,8 +7,9 @@ from __future__ import annotations
 import asyncio
 import json
 
-import eidos.supervisor.daemon as D
 from test_supervisor_credentials import _cfg
+
+import eidos.supervisor.daemon as D
 
 
 def test_dead_postgres_is_restarted_and_a_crash_loop_is_reported(tmp_path, monkeypatch):
@@ -47,3 +48,21 @@ def test_pg_start_error_is_recorded_and_retried(tmp_path, monkeypatch):
     sup = D.Supervisor(_cfg(tmp_path))
     asyncio.run(sup._check_postgres())
     assert "shared memory" in sup._pg_last_error and sup._pg_state == "running"
+
+
+def test_temporal_port_block_must_fit_in_a_smallint():
+    """Found on the Mac (G6): a Temporal block at 37633 made temporal-server exit ("value 37638 is out of range
+    for type smallint") and `lab start` failed with a generic timeout. `lab init`/`lab restore` refuse it now."""
+    import pytest
+
+    from eidos.settings import check_ports
+    check_ports(8765, 5544, 7633)
+    check_ports(28765, 25544, 32759)  # block ends exactly at 32767
+    with pytest.raises(ValueError, match="smallint"):
+        check_ports(38765, 35544, 37633)
+    with pytest.raises(ValueError, match="smallint"):
+        check_ports(8765, 5544, 32760)
+    with pytest.raises(ValueError, match="inside the Temporal port block"):
+        check_ports(7635, 5544, 7633)
+    with pytest.raises(ValueError, match="between 1024"):
+        check_ports(80, 5544, 7633)

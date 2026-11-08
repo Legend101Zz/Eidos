@@ -137,6 +137,11 @@ def restore(bundle: Path, home: str, *, api_port: int = 8765, pg_port: int = 554
     """Restore into a fresh lab directory, then re-enroll credentials. Scheduling resumes only at
     `lab start`, where the reconciler re-dispatches unfinished work and the runner treats handles
     from another boot as lost."""
+    from eidos.settings import check_ports
+    try:
+        check_ports(api_port, pg_port, temporal_port)
+    except ValueError as exc:
+        raise svc.ServiceError(str(exc)) from None
     import secrets as _secrets
     import sys
     bundle = Path(bundle)

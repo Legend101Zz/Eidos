@@ -66,6 +66,11 @@ def init_lab(home: str, *, api_port: int = 8765, pg_port: int = 5544, temporal_p
     root = Path(home)
     if (root / "config" / "lab.json").exists():
         raise svc.ServiceError(f"{home} is already an Eidos lab")
+    from eidos.settings import check_ports
+    try:
+        check_ports(api_port, pg_port, temporal_port)
+    except ValueError as exc:
+        raise svc.ServiceError(str(exc)) from None
     for d in ("config", "services", "artifacts", "jobs", "logs", "run", "backups", "envs", "reports", "cache"):
         (root / d).mkdir(parents=True, exist_ok=True)
     os.chmod(root / "config", 0o700)
