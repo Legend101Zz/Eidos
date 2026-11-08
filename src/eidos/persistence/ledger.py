@@ -39,6 +39,11 @@ def _like_prefix(prefix: str) -> str:
     return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 
 
+# Declared on every write transaction; migration 0004's fence refuses writers below the ledger's
+# ``writer_fence.min_generation`` (an old version still running after an upgrade).
+WRITER_GENERATION = 4
+
+
 def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:20]}"
 
@@ -51,6 +56,7 @@ class SqlLedger:
     def transaction(self) -> Iterator[LedgerTx]:
         with self.engine.begin() as conn:
             conn.exec_driver_sql("SET LOCAL search_path TO ledger")
+            conn.exec_driver_sql(f"SET LOCAL eidos.writer_generation TO '{WRITER_GENERATION}'")
             yield LedgerTx(conn)
 
     def dispose(self) -> None:

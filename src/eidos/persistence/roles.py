@@ -105,6 +105,8 @@ def apply_grants(roles: DbRoles) -> None:
         for t in MUTABLE:
             conn.exec_driver_sql(f"GRANT SELECT, INSERT, UPDATE ON ledger.{t} TO {w}")
         conn.exec_driver_sql(f"GRANT SELECT ON ledger.alembic_version TO {w}, {r}")
+        if conn.exec_driver_sql("SELECT to_regclass('ledger.writer_fence')").scalar():  # migration 0004+
+            conn.exec_driver_sql(f"GRANT SELECT ON ledger.writer_fence TO {w}, {r}")
         conn.exec_driver_sql(f"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ledger TO {w}")
         for t in APPEND_ONLY + MUTABLE:
             if t != "principals":
