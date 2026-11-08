@@ -273,15 +273,38 @@ Each script and driver was either run once at the current code or shown to be co
 | `scripts/research/cards.py` | run with `--cards cheap --seeds 11` | D01, D07, D12, D04 PASS |
 | `scripts/qualify/live_bundle_investigation.py` | `--model test` dry run on a D02 bundle | ok (2 requests, turn cap) |
 | `scripts/qualify/live_provider_check.py` | needs a key and refuses without one | correct refusal. The controller ran it live (receipts #1–#3). |
-| `tests/journeys/switch_journey.py` | **Drifted, not running** | Being restored by the helper on `task/switch-restore`. |
+| `tests/journeys/switch_journey.py` | Had drifted and stopped running; **restored** (merged from `task/switch-restore`) and runs as the new CI job `switch-journey` | 154/154 checks, 8/8 steps, 254 s (lead re-run at `2fedb42`, no steer workaround) |
 
 Lesson: three of the four failures came from round 5 making sealed the default profile. No CI job exercised checkpoint-and-stop, sealed-runner concurrency or the kit's fixture budget, so they failed silently.
 
+## Round 8 (2026-11-08, final)
+
+- **Tag:** `eidos-v0.5.1` → `12b4822`.
+- **Drift sweep:** see above. Three silent failures were fixed: checkpoint-and-stop under bwrap, sealed-runner concurrency, and the fixture budget in the macOS owner kit. `tests/mcp` and `tests/reporting` were added to CI.
+- **Switch-order acceptance journey restored:** 154 checks, with the same scientific assertions.
+  - Both-correct 0.2625 → 0.844 after the edit at 45, and 0.7185 → 1.0 at 180.
+  - The exact no-change fingerprint holds, the wrong builder is refused, and the promotion gate holds.
+  - The assessment is `inconclusive` (effect 0.6452). The withdrawal drill and the step-7 worker kill and recovery pass.
+  - The step-45 parent is now the final checkpoint of a run stopped at 45, because intermediate slots are not branchable. Its digest equals the control's step-45 checkpoint.
+  - Runs that load test-tree extension code use `dev:same-user` with recorded waivers.
+- **Fixture-policy stall fixed (`2fedb42`):** the `switch-order-scripted` policy parked on `wait_for_jobs` with nothing outstanding, so it idled until the max-idle timer. It now concludes in the claim/export decision, and the journey's steer workaround is removed.
+- **Final local verification at `2fedb42`:**
+  - unit + integration + MCP + reporting: **117 passed, 1 skipped**. The skip is the live-lab MCP test, which the e2e journey covers.
+  - components: **59 passed**;
+  - worker compat: **MATRIX OK** (34 passed);
+  - ruff clean; import contracts **5/5**;
+  - switch journey **154/154**; e2e journey 9/9 (sweep run).
+
 ## Next concrete action
 
-1. The controller relays CI for the head (currently `378ff0f`). If it is green, tag `eidos-v0.5.1` there; it is the first tag on which qualified assessment works again.
-2. Owner decisions in `HANDOFF.md`: the macOS kit, real-LLM D02/D12 runs, OpenAI-compatible qualification, external MCP clients, and Seatbelt vs Lima. Note that Seatbelt does not isolate against hostile same-user programs.
-3. Optional engineering:
-   - repair the `switch_journey.py` drift;
-   - fix the review 2 idle-poll rollover issue (carry `waited_since` across Continue-As-New, and skip the turn after a quiet rollover);
-   - Lima VM profile.
+1. The controller relays CI for the final head of `build/eidos-local-v1`, which includes the new `switch-journey` job (9 jobs). If it is green, tag `eidos-v0.5.2` there.
+2. Owner decisions (`HANDOFF.md`):
+   - run the macOS kit;
+   - real-LLM D02/D12 runs;
+   - OpenAI-compatible provider qualification;
+   - external MCP clients;
+   - Seatbelt vs a Lima VM, which needs an owner Mac because GitHub arm64 runners have no nested virtualization.
+3. Engineering backlog:
+   - `wait_for_jobs` with nothing outstanding idles until max-idle for any investigator, not only fixtures;
+   - the review-2 idle-poll rollover issue;
+   - a CI test for checkpoint-and-stop under bwrap (today only the manual ops script covers it).

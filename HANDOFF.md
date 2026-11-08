@@ -15,7 +15,12 @@
 - **Known defect in `eidos-v0.2.0`…`eidos-v0.5.0`, fixed after v0.5.0 in `8771bb3`:** `submit_assessment` crashed for every evidence plan, because pipeline arms store lists of jobs. As a result, no qualified assessment could be recorded on those tags. The clean-install journey's new qualified-assessment step found it, and it now guards against it in CI.
 - **`eidos-v0.5.1` → `12b4822`** (CI green) is the first tag since v0.1.0 with working qualified assessment. `eidos-v0.5.0` stays as recorded, with this bug.
 - **Also affected:** checkpoint-and-stop under the default sealed profile was broken from round 5 (`eidos-v0.4.0`) up to and including `eidos-v0.5.1`; it is fixed in `1a1c621`.
-- Commits after `eidos-v0.5.1` are listed in `IMPLEMENTATION_STATUS.md`. Only CI-green SHAs get tagged.
+- **After `eidos-v0.5.1`:**
+  - drift-sweep fixes;
+  - `tests/mcp` and `tests/reporting` in CI;
+  - the restored 154-check switch-order journey, now CI job `switch-journey`;
+  - the fixture-policy stall fix.
+  The final head needs a CI relay before tagging `eidos-v0.5.2`. Details: `IMPLEMENTATION_STATUS.md` § Round 8. Only CI-green SHAs get tagged.
 - No `eidos-v1.0.0` tag exists, because the v1 acceptance criteria are not all met (see below).
 
 ## What v0.5.0 is
@@ -83,6 +88,7 @@ Full guide: `docs/ops/INSTALL_AND_OPERATE.md`. CI layout: `docs/ops/CI.md`. Exac
 | External MCP hosts | No Claude Code/Desktop or Codex host in the sandbox. | Use the snippets in `docs/ops/mcp-clients.md`. The SDK client is already verified over stdio and HTTP. |
 | CUDA/MPS restore classes, distributed training | Hardware. | Unauthorized here. |
 | `macos:lima-vm-sealed` profile (the design's VM isolation on macOS) | **Owner/hardware item, not built.** It cannot be exercised in CI: GitHub's runner reference, under "Limitations for arm64 macOS runners", says nested virtualization is not supported because of a limitation of Apple's Virtualization Framework. The arm64 standard runner has 3 M1 CPUs, 7 GB RAM and a 14 GB SSD. Source: relayed by the controller. | Build and qualify it on an owner Mac with Lima, bwrap inside the VM and no broad host mounts. It is needed for macOS plans that require `separate-identity` or isolation from hostile same-user programs. |
+| Investigator idles when it waits with nothing outstanding | A turn ending in `wait_for_jobs` with no running jobs gets no news, so the loop sleeps until `max_idle_turn_seconds` (6 h). The fixture policy is fixed, but a real LLM could do the same. | Treat `wait_for_jobs` with nothing outstanding as an immediate re-turn, with a bounded count, or as a stop. |
 | Drift-sweep fixes after `eidos-v0.5.1` | Three silent failures, all fixed and green in CI on `2e61edf`: checkpoint-and-stop under bwrap, sealed-runner concurrency, and the fixture budget in the macOS owner kit. | See `IMPLEMENTATION_STATUS.md` § Drift sweep. These are not in any tag before the final one. |
 | Review 2 open questions | Recorded, not fixed: idle-poll behaviour across rollover; the assessor with a distinct candidate user; old writers during upgrade. | `docs/dev-runs/adversarial-review-2-2026-11-08.md` |
 | Interruption-table rows still `not-started` | Not built yet. | See ACCEPTANCE_MATRIX §C. These rows are: storage lag, question change/withdrawal, assessor dedupe, method withdrawn during confirmation, lost branch reply, node preemption. |
