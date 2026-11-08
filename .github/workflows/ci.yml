@@ -116,11 +116,11 @@ jobs:
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         id: setup_uv
         continue-on-error: true
-      - name: uv fallback when the GitHub release CDN fails (PyPI wheel)
+      - name: uv fallback, only when the GitHub release download is unavailable (other setup-uv failures fail the job)
         if: steps.setup_uv.outcome == 'failure'
-        run: |
-          python3 -m pip install --user --break-system-packages uv==0.13.7 || python3 -m pip install --user uv==0.13.7
-          echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
+        run: bash scripts/ci/uv_fallback.sh
+      - name: uv is available
+        run: uv --version
       - name: Temporal archive cache location
         run: echo "EIDOS_TEMPORAL_ARCHIVE_CACHE=$RUNNER_TEMP/eidos-temporal" >> "$GITHUB_ENV"
       - name: Cache the pinned Temporal server archive (key covers the pinned version/digest table)
@@ -161,11 +161,11 @@ jobs:
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         id: setup_uv
         continue-on-error: true
-      - name: uv fallback when the GitHub release CDN fails (PyPI wheel)
+      - name: uv fallback, only when the GitHub release download is unavailable (other setup-uv failures fail the job)
         if: steps.setup_uv.outcome == 'failure'
-        run: |
-          python3 -m pip install --user --break-system-packages uv==0.13.7 || python3 -m pip install --user uv==0.13.7
-          echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
+        run: bash scripts/ci/uv_fallback.sh
+      - name: uv is available
+        run: uv --version
       - name: Temporal archive cache location
         run: echo "EIDOS_TEMPORAL_ARCHIVE_CACHE=$RUNNER_TEMP/eidos-temporal" >> "$GITHUB_ENV"
       - name: Cache the pinned Temporal server archive (key covers the pinned version/digest table)
@@ -279,11 +279,11 @@ jobs:
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         id: setup_uv
         continue-on-error: true
-      - name: uv fallback when the GitHub release CDN fails (PyPI wheel)
+      - name: uv fallback, only when the GitHub release download is unavailable (other setup-uv failures fail the job)
         if: steps.setup_uv.outcome == 'failure'
-        run: |
-          python3 -m pip install --user --break-system-packages uv==0.13.7 || python3 -m pip install --user uv==0.13.7
-          echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
+        run: bash scripts/ci/uv_fallback.sh
+      - name: uv is available
+        run: uv --version
       - name: Temporal archive cache location
         run: echo "EIDOS_TEMPORAL_ARCHIVE_CACHE=$RUNNER_TEMP/eidos-temporal" >> "$GITHUB_ENV"
       - name: Cache the pinned Temporal server archive (key covers the pinned version/digest table)
@@ -323,11 +323,11 @@ jobs:
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         id: setup_uv
         continue-on-error: true
-      - name: uv fallback when the GitHub release CDN fails (PyPI wheel)
+      - name: uv fallback, only when the GitHub release download is unavailable (other setup-uv failures fail the job)
         if: steps.setup_uv.outcome == 'failure'
-        run: |
-          python3 -m pip install --user --break-system-packages uv==0.13.7 || python3 -m pip install --user uv==0.13.7
-          echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
+        run: bash scripts/ci/uv_fallback.sh
+      - name: uv is available
+        run: uv --version
       - name: Temporal archive cache location
         run: echo "EIDOS_TEMPORAL_ARCHIVE_CACHE=$RUNNER_TEMP/eidos-temporal" >> "$GITHUB_ENV"
       - name: Cache the pinned Temporal server archive (key covers the pinned version/digest table)
@@ -371,11 +371,11 @@ jobs:
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         id: setup_uv
         continue-on-error: true
-      - name: uv fallback when the GitHub release CDN fails (PyPI wheel)
+      - name: uv fallback, only when the GitHub release download is unavailable (other setup-uv failures fail the job)
         if: steps.setup_uv.outcome == 'failure'
-        run: |
-          python3 -m pip install --user --break-system-packages uv==0.13.7 || python3 -m pip install --user uv==0.13.7
-          echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
+        run: bash scripts/ci/uv_fallback.sh
+      - name: uv is available
+        run: uv --version
       - name: Temporal archive cache location
         run: echo "EIDOS_TEMPORAL_ARCHIVE_CACHE=$RUNNER_TEMP/eidos-temporal" >> "$GITHUB_ENV"
       - name: Cache the pinned Temporal server archive (key covers the pinned version/digest table)
