@@ -1,0 +1,25 @@
+{
+  "host_profile": "macos:seatbelt-sealed",
+  "failures": [],
+  "outcome": "protocol-passed",
+  "isolation": {
+    "profile": "macos:seatbelt-sealed",
+    "config_digest": "sha256:8bbdca13b060a5d2c8fbc285189846bcff172799961ca2724b36b8d9aadc1b1b",
+    "role": "assessor",
+    "release": "eidos.assessors.paired-ci@1.0.0",
+    "controls": {
+      "no-label-read": "passed",
+      "no-credential-read": "passed",
+      "no-network-egress": "passed",
+      "no-control-socket": "passed",
+      "no-scorer-capability": "passed",
+      "no-process-inspection": "passed",
+      "no-host-write": "passed",
+      "separate-identity": "failed"
+    },
+    "probe_uid_inside": 501,
+    "outer_uid": 501,
+    "probe_digest": "sha256:67aba27ef4e28de658e62633133034cc0041fafcc469be5e28a765d22a86be18"
+  },
+  "evidence": "researcher Mac (Apple M4, macOS 26.3.1), scripts/ci/assessor_sandbox_probe.py at 48d4338"
+}

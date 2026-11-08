@@ -1,0 +1,209 @@
+{
+  "kit": "eidos-macos-owner-kit/1",
+  "label": "researcher-machine qualification run (local Mac session, owner-approved), Apple M4 24 GiB, storage on external SSD",
+  "git": "eidos-v0.5.2-16-g36aaffa",
+  "macos": "26.3.1",
+  "machine": "arm64",
+  "python": "3.12.8",
+  "steps": [
+    {
+      "step": "preflight",
+      "rc": 0,
+      "seconds": 0
+    },
+    {
+      "step": "build",
+      "rc": 0,
+      "seconds": 1
+    },
+    {
+      "step": "install",
+      "rc": 0,
+      "seconds": 22
+    },
+    {
+      "step": "not_from_checkout",
+      "rc": 0,
+      "seconds": 0
+    },
+    {
+      "step": "init",
+      "rc": 0,
+      "seconds": 18
+    },
+    {
+      "step": "start",
+      "rc": 0,
+      "seconds": 9
+    },
+    {
+      "step": "doctor",
+      "rc": 0,
+      "seconds": 1
+    },
+    {
+      "step": "project",
+      "rc": 0,
+      "seconds": 7
+    },
+    {
+      "step": "charter",
+      "rc": 0,
+      "seconds": 0
+    },
+    {
+      "step": "investigation",
+      "rc": 0,
+      "seconds": 0
+    },
+    {
+      "step": "job",
+      "rc": 0,
+      "seconds": 2
+    },
+    {
+      "step": "sealed_probe",
+      "rc": 0,
+      "seconds": 3
+    },
+    {
+      "step": "inspect",
+      "rc": 0,
+      "seconds": 1
+    },
+    {
+      "step": "stop",
+      "rc": 0,
+      "seconds": 2
+    },
+    {
+      "step": "uninstall",
+      "rc": 0,
+      "seconds": 4
+    }
+  ],
+  "doctor": [
+    {
+      "check": "python",
+      "detail": "3.12.8",
+      "status": "ok"
+    },
+    {
+      "check": "postgres-binaries",
+      "detail": "postgres (PostgreSQL) 16.14 (Homebrew)",
+      "status": "ok"
+    },
+    {
+      "check": "postgres-running",
+      "detail": "/Volumes/Mrigesh SSD/eidos-mac/tmp/eidos-macos-qual.Pv4YK6/lab/services/pg/data",
+      "status": "ok"
+    },
+    {
+      "check": "ledger-migration",
+      "detail": "revision 0003",
+      "status": "ok"
+    },
+    {
+      "check": "temporal-binary",
+      "detail": "/Volumes/Mrigesh SSD/eidos-mac/tmp/eidos-macos-qual.Pv4YK6/lab/services/temporal/bin/temporal-server (pinned 1.32.2, regular server, PostgreSQL persistence)",
+      "status": "ok"
+    },
+    {
+      "check": "api",
+      "detail": "{\"status\": \"ok\", \"api\": \"eidos-api/1\", \"relay\": {\"dispatched\": 0, \"errors\": 0, \"last_error\": null, \"last_reconcile\": {\"at\": 1794133200.5484319, \"redispatched\": []}, \"paused\": false}}",
+      "status": "ok"
+    },
+    {
+      "check": "outbox-relay",
+      "detail": "{\"dispatched\": 0, \"errors\": 0, \"last_error\": null, \"last_reconcile\": {\"at\": 1794133200.5484319, \"redispatched\": []}, \"paused\": false}",
+      "status": "ok"
+    },
+    {
+      "check": "service:postgres",
+      "detail": "pid=None restarts=None",
+      "status": "ok"
+    },
+    {
+      "check": "service:temporal",
+      "detail": "pid=74118 restarts=0",
+      "status": "ok"
+    },
+    {
+      "check": "service:api",
+      "detail": "pid=74197 restarts=0",
+      "status": "ok"
+    },
+    {
+      "check": "service:workflow-worker",
+      "detail": "pid=74226 restarts=0",
+      "status": "ok"
+    },
+    {
+      "check": "service:investigator-worker",
+      "detail": "pid=74227 restarts=0",
+      "status": "ok"
+    },
+    {
+      "check": "service:training-runner",
+      "detail": "pid=74228 restarts=0",
+      "status": "ok"
+    },
+    {
+      "check": "service:assessor-worker",
+      "detail": "pid=74229 restarts=0",
+      "status": "ok"
+    },
+    {
+      "check": "service:sealed-runner",
+      "detail": "pid=74230 restarts=0",
+      "status": "ok"
+    },
+    {
+      "check": "disk",
+      "detail": "free 474063 MiB, reserve 512 MiB",
+      "status": "ok"
+    },
+    {
+      "check": "sealed-profile:seatbelt",
+      "detail": "macos:seatbelt-sealed available (sandbox-exec; same OS user; per-run probes decide which controls hold)",
+      "status": "ok"
+    },
+    {
+      "check": "sealed-profile:separate-identity",
+      "detail": "no distinct candidate user (separate-identity control will fail)",
+      "status": "warn"
+    },
+    {
+      "check": "sealed-profile:lima-vm",
+      "detail": "macOS Lima VM profile is not qualified in this release",
+      "status": "warn"
+    },
+    {
+      "check": "secret-permissions",
+      "detail": "/Volumes/Mrigesh SSD/eidos-mac/tmp/eidos-macos-qual.Pv4YK6/lab/config/secrets",
+      "status": "ok"
+    }
+  ],
+  "job_profile": "macos:seatbelt-sealed",
+  "sealed_probe": {
+    "profile": "macos:seatbelt-sealed",
+    "result": {
+      "key_hidden": true,
+      "home_file_refused": true,
+      "home_listing_refused": true,
+      "external_network_refused": true,
+      "lab_api_refused": true
+    }
+  },
+  "job_status": "succeeded",
+  "investigation": {
+    "status": "active",
+    "turns": [
+      [
+        1,
+        "input-requested"
+      ]
+    ]
+  },
+  "passed": true
+}

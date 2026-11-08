@@ -1,0 +1,40 @@
+{
+  "evidence": "lab job path (eidos.project.command@1.0.6 under macos:seatbelt-sealed), wheels from 48d4338, lab started with a fake ANTHROPIC_API_KEY; probe reads a planted ~/.eidos-planted-homeprobe file and ~/.claude.json (length only, contents not recorded)",
+  "finding": "home directory readable by a sealed job; fixed in b7d9ed1",
+  "probe": {
+    "env_keys": [
+      "HOME",
+      "LC_CTYPE",
+      "PATH",
+      "PWD",
+      "PYTHONHASHSEED",
+      "PYTHONPATH",
+      "SHLVL",
+      "TMPDIR",
+      "_",
+      "__CF_USER_TEXT_ENCODING"
+    ],
+    "home_env": "/Volumes/Mrigesh SSD/eidos-mac/tmp/eidos-macos-qual.oYR0hM/lab/jobs/job_92fa9090428142f4/job_92fa9090428142f4_a1/tmp",
+    "key_visible": false,
+    "home_planted_read": [
+      "ok",
+      "planted home secret\n"
+    ],
+    "home_listing": [
+      "ok",
+      "205"
+    ],
+    "claude_json_read": [
+      "ok",
+      "174090"
+    ],
+    "net_external": [
+      "refused",
+      "PermissionError: [Errno 1] Operation not permitted"
+    ],
+    "net_lab_api": [
+      "refused",
+      "PermissionError: [Errno 1] Operation not permitted"
+    ]
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "evidence": "researcher Mac (Apple M4, macOS 26.3.1, arm64), local Mac session 2026-11-08",
+  "note": "scripts/ci/seatbelt_probes.py at 48d4338 (before b7d9ed1)",
+  "platform": "macOS-26.3.1-arm64-arm-64bit",
+  "seatbelt_available": true,
+  "host_egress_reachable": true,
+  "failures": [],
+  "sealed_controls": {
+    "no-label-read": "passed",
+    "no-credential-read": "passed",
+    "no-network-egress": "passed",
+    "no-control-socket": "passed",
+    "no-scorer-capability": "passed",
+    "no-process-inspection": "passed",
+    "no-host-write": "passed",
+    "separate-identity": "failed"
+  },
+  "negative_control_same_user": {
+    "no-label-read": "failed",
+    "no-credential-read": "failed",
+    "no-network-egress": "failed",
+    "no-control-socket": "failed",
+    "no-scorer-capability": "passed",
+    "no-process-inspection": "failed",
+    "no-host-write": "failed",
+    "separate-identity": "failed"
+  },
+  "permitted_computation": {
+    "exit_code": 0,
+    "input": "input bytes",
+    "staging": true,
+    "scratch": true,
+    "resume": true,
+    "tmp": true,
+    "project_write_refused": true,
+    "artifact_dir_listing_refused": true,
+    "home_ssh_listing_refused_or_absent": true
+  },
+  "policy_param_count": 24
+}
