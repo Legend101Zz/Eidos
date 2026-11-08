@@ -205,11 +205,19 @@ def upgrade(cfg: LabConfig) -> dict:
     before = current_revision(roles_from_config(cfg))
     migrate(roles_from_config(cfg))
     after = current_revision(roles_from_config(cfg))
+    import sys
+
     import eidos
+    from eidos.runtime.launcher import detect_sealed_profile
+    previous_python = cfg.lab_python
     cfg.version = eidos.__version__
+    cfg.lab_python = sys.executable  # services restart on the installation that ran the upgrade
+    cfg.sealed_profile = detect_sealed_profile() or ""
+    cfg.sealed_available = bool(cfg.sealed_profile)
     cfg.save()
     if was_running:
         start(cfg)
     else:
         svc.pg_stop(cfg)
-    return {"ledger_revision": {"before": before, "after": after}, "version": cfg.version, "restarted": was_running}
+    return {"ledger_revision": {"before": before, "after": after}, "version": cfg.version, "restarted": was_running,
+            "lab_python": {"before": previous_python, "after": cfg.lab_python}}
