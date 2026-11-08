@@ -223,9 +223,6 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
     return {"accepted": True, "decision_id": did, "calls": calls, "control": decision["control"]}
 
 
-LAUNCHING_TOOLS = ("run_component", "launch_trial", "launch_branch", "launch_evidence_plan", "author_component")
-
-
 def _check_something_to_wait_for(ctx: Ctx, inv, decision: dict) -> None:
     """``wait_for_jobs`` with nothing outstanding would park the investigation until the max-idle timer
     (no job, evidence or assessment event will arrive). Refuse it as an invalid proposal; the refusal is
@@ -236,7 +233,9 @@ def _check_something_to_wait_for(ctx: Ctx, inv, decision: dict) -> None:
         return
     if control.get("bounded_outcome"):  # the runtime's own no-effect outcome (e.g. request budget spent):
         return                          # refusing it would only buy more model requests in this turn
-    if any(c["tool"] in LAUNCHING_TOOLS for c in decision["calls"]):
+    if decision["calls"]:
+        # Refusing would also drop this decision's effects (e.g. a publish). Their events wake the loop
+        # (see check_news NEWS_TYPES), so only a pure wait with nothing outstanding is refused.
         return
     idle = ("succeeded", "failed", "cancelled", "pruned", "planned")  # planned trials run only when launched
     if any(j["status"] not in idle for j in ctx.tx.list_jobs(ctx.project_id, investigation_id=inv.id, limit=100000)):

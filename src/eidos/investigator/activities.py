@@ -261,7 +261,9 @@ class InvestigatorActivities:
     NEWS_TYPES = ["job.succeeded", "job.failed", "job.cancelled", "job.pruned", "evidence.ready", "assessment.committed",
                   "investigation.steered", "investigation.charter_attached", "investigation.resumed",
                   "investigation.paused", "investigation.stopped", "component.published", "component.withdrawn",
-                  "charter.amended", "exposure.recorded"]
+                  "charter.amended", "exposure.recorded",
+                  # effects of the investigator's own calls that need a fresh view to act on
+                  "claim.filed", "model.exported", "component.retired", "evidence_plan.frozen", "evidence_plan.drafted"]
 
     @activity.defn(name="check_news")
     def check_news(self, a: dict) -> dict:
