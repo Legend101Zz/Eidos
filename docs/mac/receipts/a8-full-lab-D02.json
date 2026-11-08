@@ -420,7 +420,8 @@
     "key_handling": "Keychain -> helper -> stdin -> lab start --credentials-stdin; during the run `ps eww` showed an ANTHROPIC_API_KEY variable only in eidos.apps.role investigator-worker; byte scan of every lab file: []",
     "refused_proposals": 0,
     "builder_intervention": "none during the run",
-    "outcome": "5 turns (max_turns cap), no conclusion. Turn 1 baseline job failed: eidos.project.command copies inputs into the work dir only via config.files, which the investigator did not pass (the lab-free driver defaults it); the failed job recorded error=null (stderr only in the command-stderr artifact), so turns 2-5 were spent on staging/listing probes",
-    "investigator_inputs": "bundle only (brief, task.json, project.py, train/validation artifacts); no test data or labels, no reference solution"
+    "outcome": "5 turns (max_turns cap), no conclusion. Turn 1 baseline job failed: eidos.project.command copies inputs into the work dir only via config.files, which the investigator did not pass (the lab-free driver defaults it); the failure (job.terminal.error with the stderr tail) was in the investigator's context, yet turns 2-5 were spent on staging/listing probes",
+    "investigator_inputs": "bundle only (brief, task.json, project.py, train/validation artifacts); no test data or labels, no reference solution",
+    "correction_2026_11_08": "An earlier version said the failed job recorded error=null; that came from the receipt query reading attempts[-1].error. The ledger has the error in job.terminal.error and the investigator view included it."
   }
 }
