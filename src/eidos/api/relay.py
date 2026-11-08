@@ -100,6 +100,10 @@ class OutboxRelay:
         with self.ledger.transaction() as tx:
             tx.mark_outbox(oid, ok=ok, error=err)
 
+    def _last_turn_seq(self, investigation_id: str) -> int:
+        with self.ledger.transaction() as tx:
+            return max((int(t["seq"]) for t in tx.list_turns(investigation_id)), default=0)
+
     def _job(self, job_id: str) -> dict | None:
         with self.ledger.transaction() as tx:
             return tx.get_job(job_id)
@@ -112,6 +116,11 @@ class OutboxRelay:
     async def dispatch(self, topic: str, p: dict) -> None:
         if topic in ("investigation.start", "investigation.wake"):
             arg = {"investigation_id": p["investigation_id"], "project_id": p["project_id"], **self.inv_args}
+            # A coordinator started again for an investigation that already has turns continues after its last
+            # turn; starting at 0 replayed old turn indices (G5 live run: COMMAND_KEY_CONFLICT on complete_turn).
+            last = await asyncio.to_thread(self._last_turn_seq, p["investigation_id"])
+            if last:
+                arg["turn_counter"] = last
             await self._start("InvestigationWorkflow", arg, investigation_workflow_id(p["investigation_id"]),
                               WORKFLOW_QUEUE, start_signal="wake", start_signal_args=[p.get("event_seq", 0)])
         elif topic == "job.dispatch":
@@ -143,7 +152,11 @@ class OutboxRelay:
                 invs = []
                 for pr in tx.list_projects():
                     tx.project_id = pr["id"]
-                    invs += [(pr["id"], r.id) for r in tx.list_records(pr["id"], "investigation", status="active")]
+                    # An investigation that needs the operator (its coordinator stopped on a limit) is not restarted
+                    # here; steering or resuming it wakes it through the outbox.
+                    invs += [(pr["id"], r.id) for r in tx.list_records(pr["id"], "investigation", status="active",
+                                                                       limit=100000)
+                             if not (r.labels or {}).get("needs_input")]
                 return jobs, invs
         jobs, invs = await asyncio.to_thread(load)
         redispatched = []

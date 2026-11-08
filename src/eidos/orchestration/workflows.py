@@ -73,6 +73,16 @@ class InvestigationWorkflow:
             if news.get("news"):
                 return
 
+    async def _surface_end(self, a: dict, inv: str, counter: int, reason: str) -> None:
+        """The coordinator stops on its own (budget or turn limit, repeated failures) while the investigation is
+        still active: record that it needs the operator (visible label and event). The reconciler then leaves it
+        alone instead of restarting a coordinator that would only stop again (G5 live run)."""
+        if workflow.patched("terminal-outcome-needs-input-v1"):
+            await workflow.execute_activity(
+                "mark_needs_input", {"investigation_id": inv, "project_id": a["project_id"], "turn_counter": counter,
+                                     "reason": f"coordinator stopped: {reason}; raise the limit and resume, or stop"},
+                task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
+
     async def _resume_quiet_wait(self, a: dict, inv: str, history_limit: int, idle: int) -> None:
         """Continue a quiet wait that rolled over (Continue-As-New) without news: no model turn
         until a wake, ledger news or the max-idle timer, which counts from the original wait start."""
@@ -141,10 +151,13 @@ class InvestigationWorkflow:
                 res = {"started": True, "stop_reason": "error"}
                 if consecutive_errors >= 3:
                     self._status = "failed"
+                    await self._surface_end(a, inv, counter, "three consecutive turn failures")
                     return {"status": "failed", "reason": "three consecutive turn failures", "turn_counter": counter}
             reason = res.get("stop_reason") or res.get("reason") or ""
             if reason in TERMINAL_REASONS or reason.startswith("investigation is stopped") or reason == "max-turns-reached":
                 self._status = "finished"
+                if reason in ("budget-exhausted", "max-turns-reached"):
+                    await self._surface_end(a, inv, counter, reason)
                 return {"status": "finished", "reason": reason, "turn_counter": counter}
             needs_input = False
             if workflow.patched("invalid-turn-retry-v1"):

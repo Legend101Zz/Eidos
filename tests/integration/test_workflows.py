@@ -187,7 +187,7 @@ async def test_stress_many_turns_bounded_histories_and_oversized_results(env):
 
         def acts(self):
             return [self.begin_turn, self.build_context, self.decide, self.execute_decision, self.complete_turn,
-                    self.check_news]
+                    self.check_news, self.mark_needs_input]
 
     fake = Big(stop_after=int(os.environ.get("EIDOS_STRESS_TURNS", "16")))
     wid = f"inv-stress-{uuid.uuid4().hex[:6]}"
@@ -371,6 +371,26 @@ async def test_max_idle_counts_across_quiet_rollovers(env):
         assert time.monotonic() - t0 >= 11
         assert d.run_id != first_run
         await env.client.get_workflow_handle(wid).terminate()
+
+
+async def test_budget_exhausted_coordinator_surfaces_for_the_operator(env):
+    """G5 live run: a coordinator that stopped on budget exhaustion left no trace for the operator and was restarted
+    by the reconciler in a loop. It now marks the investigation as needing input before it finishes."""
+    fake = FakeInvestigator()
+
+    @activity.defn(name="begin_turn")
+    async def begin_turn(a: dict) -> dict:
+        return {"started": False, "reason": "budget-exhausted"}
+
+    acts = [begin_turn, fake.build_context, fake.decide, fake.execute_decision, fake.complete_turn, fake.check_news,
+            fake.mark_needs_input]
+    wid = f"inv-budget-{uuid.uuid4().hex[:6]}"
+    async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
+            Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=acts):
+        res = await env.client.execute_workflow(InvestigationWorkflow.run, {"investigation_id": wid, "project_id": "p"},
+                                                id=wid, task_queue=WORKFLOW_QUEUE)
+    assert res["status"] == "finished" and res["reason"] == "budget-exhausted"
+    assert fake.marked == 1
 
 
 async def test_refused_proposal_turns_retry_boundedly_then_surface_for_input(env):
