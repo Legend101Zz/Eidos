@@ -200,7 +200,7 @@ def run_contained(argv: list[str], *, cwd: str, writable: list[str], readonly: l
                           | {str(Path(python).resolve().parent.parent), str(Path(python).parent.parent)})
     spec = LaunchSpec(argv=argv, cwd=cwd, attempt_dir=adir, env=dict(env or {}), profile=profile,
                       readonly=list(readonly), writable=list(writable), python_prefixes=prefixes,
-                      deny_read=[str(Path.home()), *credential_dirs()] if profile != "dev:same-user" else [])
+                      deny_read=sealed_deny_read() if profile != "dev:same-user" else [])
     h = launch(spec)
     deadline = time.monotonic() + timeout
     while h.exit_code() is None and time.monotonic() < deadline:
@@ -232,6 +232,13 @@ def detect_sealed_profile() -> str | None:
     if seatbelt_available():
         return "macos:seatbelt-sealed"
     return None
+
+
+def sealed_deny_read(*roots: str | None) -> list[str]:
+    """Read-denied roots for a sealed launch: the given lab roots, the whole home directory and the
+    user credential stores. Paths the launch itself needs (project root, interpreter prefixes, inputs,
+    its own attempt directory) are re-allowed beneath these roots by the profile builder."""
+    return [*(str(r) for r in roots if r), str(Path.home()), *credential_dirs()]
 
 
 def credential_dirs() -> list[str]:
@@ -361,7 +368,9 @@ def denied(fn):
     except Exception:
         return True
 res["no-label-read"] = denied(lambda: open(cfg["label_path"], "rb").read(1))
-res["no-credential-read"] = denied(lambda: open(cfg["credential_path"], "rb").read(1))
+# the lab credential, and the user's home directory (dotfiles, client tokens, keys) as a whole
+res["no-credential-read"] = denied(lambda: open(cfg["credential_path"], "rb").read(1)) and \
+    (not cfg.get("home") or denied(lambda: os.listdir(cfg["home"])))
 def write_host():
     with open(cfg["host_write_path"], "w") as f:
         f.write("x")
@@ -399,7 +408,8 @@ def run_probes(spec: LaunchSpec, *, label_path: str, credential_path: str, host_
     peer = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"], env={**os.environ, "EIDOS_PEER": marker},
                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     cfg = {"label_path": label_path, "credential_path": credential_path, "host_write_path": host_write_path,
-           "net_host": net_host, "net_port": net_port, "api_port": api_port, "peer_pid": peer.pid, "peer_marker": marker}
+           "net_host": net_host, "net_port": net_port, "api_port": api_port, "peer_pid": peer.pid, "peer_marker": marker,
+           "home": str(Path.home())}
     python = spec.argv[0]
     probe_spec = LaunchSpec(argv=[python, "-I", "-c", PROBE, json.dumps(cfg)], cwd=spec.cwd,
                             attempt_dir=str(Path(spec.attempt_dir) / "probe"), env={}, profile=spec.profile,

@@ -29,9 +29,9 @@ from pathlib import Path
 from eidos.domain.isolation import SEALED_CONTROLS
 from eidos.runtime.launcher import (
     LaunchSpec,
-    credential_dirs,
     launch,
     run_probes,
+    sealed_deny_read,
     seatbelt_available,
     seatbelt_policy,
 )
@@ -98,7 +98,7 @@ except OSError:
 def spec(profile: str, attempt_dir: Path, argv: list[str] | None = None) -> LaunchSpec:
     return LaunchSpec(argv=argv or [sys.executable], cwd=str(project), attempt_dir=str(attempt_dir), profile=profile,
                       readonly=[str(project), str(inp)], writable=[str(staging), str(scratch), str(resume)],
-                      python_prefixes=sorted({sys.prefix, sys.base_prefix}), deny_read=[str(lab), *credential_dirs()],
+                      python_prefixes=sorted({sys.prefix, sys.base_prefix}), deny_read=sealed_deny_read(str(lab)),
                       env={"PYTHONHASHSEED": "0"})
 
 
