@@ -231,7 +231,8 @@ def _check_something_to_wait_for(ctx: Ctx, inv, decision: dict) -> None:
     (no job, evidence or assessment event will arrive). Refuse it as an invalid proposal; the refusal is
     fed back within the turn and counts against the turn's invalid-proposal limit."""
     control = decision.get("control") or {}
-    if control.get("action") != "wait_for_jobs":
+    implicit_wait = not control.get("action") and not decision["calls"]  # the turn ends "waiting" on it too
+    if control.get("action") != "wait_for_jobs" and not implicit_wait:
         return
     if control.get("bounded_outcome"):  # the runtime's own no-effect outcome (e.g. request budget spent):
         return                          # refusing it would only buy more model requests in this turn

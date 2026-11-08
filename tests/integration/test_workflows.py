@@ -301,3 +301,41 @@ async def test_idle_polls_without_news_spend_no_model_turns(env):
         await asyncio.sleep(2)
         assert fake.turns == 2  # a wake starts a turn
         await h.terminate()
+
+
+async def test_refused_proposal_turns_retry_boundedly_then_surface_for_input(env):
+    """A turn ending on the invalid-proposal limit gets bounded immediate retry turns; after that the
+    investigation waits for operator news only (job wakes and quiet polls do not start turns)."""
+    import asyncio
+    fake = FakeInvestigator()
+    seen = {"operator_only": 0, "operator": False}
+
+    @activity.defn(name="decide")
+    async def decide(a: dict) -> dict:
+        return {"accepted": False, "reason": "invalid", "decision_id": f"{a['turn_id']}-d{a['slot']}"}
+
+    @activity.defn(name="check_news")
+    async def check_news(a: dict) -> dict:
+        if a.get("operator_only"):
+            seen["operator_only"] += 1
+            return {"news": seen["operator"]}
+        return {"news": True}
+
+    acts = [fake.begin_turn, fake.build_context, decide, fake.execute_decision, fake.complete_turn, check_news]
+    wid = f"inv-invalid-{uuid.uuid4().hex[:6]}"
+    async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
+            Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=acts):
+        h = await env.client.start_workflow(InvestigationWorkflow.run, {"investigation_id": wid, "project_id": "p",
+                                            "idle_poll_seconds": 1}, id=wid, task_queue=WORKFLOW_QUEUE)
+        await asyncio.sleep(6)
+        assert fake.turns == 3, fake.turns  # the turn plus two bounded retries
+        assert all(c["stop_reason"] == "invalid-proposals" for c in fake.completed)
+        state = await h.query("state")
+        assert "needs operator input" in state["status"], state
+        await h.signal("wake", 1)  # a job/evidence wake does not restart the loop
+        await asyncio.sleep(3)
+        assert fake.turns == 3 and seen["operator_only"] >= 2
+        seen["operator"] = True  # e.g. the operator steered
+        await asyncio.sleep(3)
+        assert fake.turns >= 4
+        await h.terminate()

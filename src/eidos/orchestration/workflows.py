@@ -30,6 +30,7 @@ MODEL = RetryPolicy(initial_interval=timedelta(seconds=2), backoff_coefficient=2
                     non_retryable_error_types=NON_RETRYABLE)
 
 HB = timedelta(seconds=30)  # investigator activities heartbeat every 5 s; a killed worker is noticed in ~30 s
+MAX_INVALID_RETRY_TURNS = 2
 WAIT_REASONS = ("waiting", "input-requested", "stale-revision", "calls-exhausted-waiting", "invalid-proposals")
 MAX_CONSECUTIVE_INVALID = 2
 TERMINAL_REASONS = ("concluded", "budget-exhausted", "max-turns-reached", "stopped", "investigation is stopped",
@@ -62,6 +63,7 @@ class InvestigationWorkflow:
         turns_per_run = int(a.get("turns_per_run", 20))
         idle = int(a.get("idle_poll_seconds", 60))
         consecutive_errors = 0
+        invalid_turns = 0  # consecutive turns that ended on the invalid-proposal limit
         while True:
             if workflow.info().get_current_history_length() > history_limit or self._turns >= turns_per_run:
                 self._status = "rolling-over"
@@ -87,8 +89,18 @@ class InvestigationWorkflow:
             if reason in TERMINAL_REASONS or reason.startswith("investigation is stopped") or reason == "max-turns-reached":
                 self._status = "finished"
                 return {"status": "finished", "reason": reason, "turn_counter": counter}
+            needs_input = False
+            if workflow.patched("invalid-turn-retry-v1"):
+                # A turn that ended on refused proposals gets a bounded, immediate retry with a fresh view
+                # (the refusals are in the ledger the next context is built from); after that it surfaces
+                # to the operator instead of idling until the max-idle timer.
+                invalid_turns = invalid_turns + 1 if reason == "invalid-proposals" else 0
+                if 0 < invalid_turns <= MAX_INVALID_RETRY_TURNS:
+                    self._status = f"retrying after refused proposals ({invalid_turns}/{MAX_INVALID_RETRY_TURNS})"
+                    continue
+                needs_input = invalid_turns > MAX_INVALID_RETRY_TURNS
             if not res.get("started") or reason in WAIT_REASONS or reason == "error":
-                self._status = f"waiting ({reason})"
+                self._status = "needs operator input (repeated refused proposals)" if needs_input else f"waiting ({reason})"
                 waited_since = workflow.now()
                 max_idle = int(a.get("max_idle_turn_seconds", 6 * 3600))
                 while True:
@@ -99,17 +111,20 @@ class InvestigationWorkflow:
                             lambda seen=seen: self._wakes > seen
                             or workflow.info().get_current_history_length() > history_limit,
                             timeout=timedelta(seconds=idle))
-                        break
+                        if not needs_input or workflow.info().get_current_history_length() > history_limit:
+                            break
+                        seen = self._wakes  # job/evidence wakes do not end a needs-input wait; operator news does
                     except TimeoutError:
                         pass
                     if not workflow.patched("idle-poll-needs-news-v1"):
                         break  # histories recorded before this change started a turn on every timeout
                     # A quiet poll costs no model call: start a turn only if something happened.
                     news = await workflow.execute_activity(
-                        "check_news", {"investigation_id": inv, "project_id": a["project_id"]},
+                        "check_news", {"investigation_id": inv, "project_id": a["project_id"],
+                                       **({"operator_only": True} if needs_input else {})},
                         task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
-                    if news.get("news") or (workflow.now() - waited_since).total_seconds() > max_idle \
-                            or workflow.info().get_current_history_length() > history_limit:
+                    if news.get("news") or workflow.info().get_current_history_length() > history_limit \
+                            or (not needs_input and (workflow.now() - waited_since).total_seconds() > max_idle):
                         break
 
 

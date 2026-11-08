@@ -323,10 +323,16 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
     horizon is returned, so replays cannot see the future."""
     inv = ctx.tx.require("investigation", p["investigation_id"])
     horizon = int(p["horizon"])
-    events = ctx.tx.events_after(ctx.project_id, 0, investigation_id=inv.id, upto=horizon, limit=5000)
+    # Recent events for display (a window ending at the horizon); job visibility and the record cutoff are
+    # computed separately so a long project history cannot truncate them (the window used to start at seq 0).
+    events = ctx.tx.events_after(ctx.project_id, max(0, horizon - 5000), investigation_id=inv.id, upto=horizon,
+                                 limit=5000)
+    finished = {e["subject"] for e in ctx.tx.events_after(
+        ctx.project_id, 0, investigation_id=inv.id, upto=horizon, limit=1_000_000,
+        types=["job.succeeded", "job.failed", "job.cancelled", "job.pruned", "job.outcome_unknown"])}
     # Records as of the horizon: pick the latest revision whose creating event is <= horizon.
     hist = ctx.tx.record_history("investigation", inv.id)
-    cutoff_ts = max((e["created_at"] for e in events), default=None)
+    cutoff_ts = ctx.tx.event_time(horizon) if horizon else None
     inv_body = hist[0]["body"]
     for h in hist:
         if cutoff_ts is None or h["created_at"] <= cutoff_ts:
@@ -335,8 +341,7 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
     for j in ctx.tx.list_jobs(ctx.project_id, investigation_id=inv.id):
         if cutoff_ts is not None and j["created_at"] > cutoff_ts:
             continue
-        terminal_visible = any(e["subject"] == j["id"] and e["type"].startswith("job.") and e["type"] != "job.admitted"
-                               for e in events)
+        terminal_visible = j["id"] in finished
         if terminal_visible:
             _expose_job(ctx, j)
         outputs = [o for o in ctx.tx.publications(j["id"]) if cutoff_ts is None or o["created_at"] <= cutoff_ts]

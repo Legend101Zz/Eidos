@@ -256,6 +256,8 @@ class InvestigatorActivities:
         except LabError as exc:
             return {"tool": tool, "index": idx, "ok": False, "code": exc.code, "error": exc.error}
 
+    OPERATOR_TYPES = ["investigation.steered", "investigation.charter_attached", "investigation.resumed",
+                      "investigation.paused", "investigation.stopped", "charter.amended"]
     NEWS_TYPES = ["job.succeeded", "job.failed", "job.cancelled", "job.pruned", "evidence.ready", "assessment.committed",
                   "investigation.steered", "investigation.charter_attached", "investigation.resumed",
                   "investigation.paused", "investigation.stopped", "component.published", "component.withdrawn",
@@ -268,8 +270,9 @@ class InvestigatorActivities:
         if inv["status"] != "active":
             return {"news": True, "reason": f"investigation is {inv['status']}"}
         horizon = max((t["horizon"] for t in inv["turns"]), default=0)
+        types = self.OPERATOR_TYPES if a.get("operator_only") else self.NEWS_TYPES
         ev = self.wf.query("list_events", {"investigation_id": a["investigation_id"], "cursor": horizon,
-                                           "types": self.NEWS_TYPES, "limit": 1}, project=a["project_id"])
+                                           "types": types, "limit": 1}, project=a["project_id"])
         return {"news": bool(ev["events"]), "after_horizon": horizon}
 
     @activity.defn(name="complete_turn")

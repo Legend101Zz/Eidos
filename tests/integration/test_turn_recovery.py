@@ -265,3 +265,28 @@ def test_wait_for_jobs_with_nothing_outstanding_is_refused_within_the_turn(lab):
                                                                             "environment": "lab", "config": {}}}],
         "control": {"action": "wait_for_jobs"}}}, project=pid)["result"]
     assert ok["accepted"], ok
+
+
+def test_wait_refused_when_launched_jobs_finished_before_the_decision_and_next_view_sees_them(lab):
+    """Timing variant: the job launched in slot 0 finishes before slot 1 proposes to wait for it. The wait is
+    refused (nothing outstanding) and the next turn's view reports the job as finished, so a policy that
+    decides from the view can proceed."""
+    pid, inv, acts = setup(lab)
+    env = ActivityEnvironment()
+    b = env.run(acts.begin_turn, {"investigation_id": inv, "project_id": pid, "index": 1})
+    base = {"turn_id": b["turn_id"], "project_id": pid, "investigation_id": inv}
+    env.run(acts.build_context, base)
+    d0 = env.run(acts.decide, {**base, "slot": 0})
+    env.run(acts.execute_decision, {**base, "decision_id": d0["decision_id"]})
+    jobs = lab.q(lab.admin, "list_jobs", {"investigation_id": inv}, project=pid)
+    with lab.ledger.transaction() as tx:  # the job finishes immediately (fast runner)
+        tx.project_id = pid
+        for j in jobs:
+            tx.update_job(j["id"], status="succeeded", terminal={"receipt": {}})
+            tx.append_event(pid, "job.succeeded", j["id"], {}, investigation_id=inv)
+    d1 = env.run(acts.decide, {**base, "slot": 1})
+    assert not d1["accepted"] and d1["reason"] == "invalid", d1
+    env.run(acts.complete_turn, {**base, "stop_reason": "invalid-proposals"})
+    h = lab.q(lab.admin, "project_summary", {}, project=pid)["horizon"]
+    view = lab.q(lab.admin, "investigation_view", {"investigation_id": inv, "horizon": h}, project=pid)
+    assert {j["status"] for j in view["jobs"]} == {"succeeded"}, view["jobs"]
