@@ -32,5 +32,8 @@ def test_cached_archive_with_wrong_digest_is_rejected(tmp_path, monkeypatch):
     cache.mkdir()
     (cache / f"temporal-server-{pinned}.tgz").write_bytes(b"poisoned")
     monkeypatch.setenv("EIDOS_TEMPORAL_ARCHIVE_CACHE", str(cache))
+    calls = []
+    monkeypatch.setattr(svc, "_download", lambda url, dest: (calls.append(url), dest.write_bytes(b"still bad")))
     with pytest.raises(svc.ServiceError, match="digest"):
         svc.install_temporal(LabConfig(home=str(tmp_path / "lab")))
+    assert calls and not (cache / f"temporal-server-{pinned}.tgz").exists()  # bad entry dropped, download tried

@@ -114,3 +114,20 @@ def test_lab_free_driver_runs_the_d02_baseline_contained(tmp_path):
                            "inputs": {"predictions": pred, "reference": "art_validation"}, "config": {}})
     assert s["ok"] and 0.5 < s["metrics"].get("accuracy", 0) <= 1.0, s
     assert {i["profile"] for i in lab.isolation} == {detect_sealed_profile()}
+
+
+@sealed
+def test_lab_free_driver_refuses_symlinked_outputs(tmp_path, monkeypatch):
+    """Review 3 finding 1: a contained command left out/x -> /proc/self/environ; the host followed it."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-planted")
+    sys.path.insert(0, str(ROOT / "scripts" / "qualify"))
+    from live_bundle_investigation import LocalLab
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    for n in ("train.npz", "validation.npz"):
+        (bundle / n).write_bytes(b"x")
+    (bundle / "task.json").write_text("{}")
+    lab = LocalLab(bundle, sys.executable, tmp_path / "work", 60)
+    r = lab.run_component({"component_ref": "eidos.project.command@1.0.4", "inputs": {}, "config": {
+        "argv": ["python", "-c", "import os; os.symlink('/proc/self/environ', '{out}/predictions.npz')"]}})
+    assert not r["ok"] and "not a regular file" in r["error"]

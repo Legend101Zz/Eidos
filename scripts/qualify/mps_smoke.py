@@ -37,11 +37,10 @@ def child(device: str, steps: int, seed: int, builder: str, deterministic: bool)
     _paths()
     import dataclasses
 
+    import eidos_adapter as ea
     import torch
 
     from eidos_pytorch.training import train_loop
-
-    import eidos_adapter as ea
 
     out: dict = {"device_requested": device, "torch": torch.__version__}
     if device == "mps" and not torch.backends.mps.is_available():

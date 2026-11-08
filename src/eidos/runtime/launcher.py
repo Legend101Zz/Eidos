@@ -182,7 +182,8 @@ def run_contained(argv: list[str], *, cwd: str, writable: list[str], readonly: l
 
     Sealed profiles: empty environment plus ``env``, no network, writes only to ``writable``, the user's
     home and credential stores unreadable (except listed paths). Without a sealed profile the call is
-    refused unless ``allow_same_user`` is set; then the environment is still the allowlist (no secrets)."""
+    refused unless ``allow_same_user`` is set; then the environment is the allowlist, but other same-user
+    processes (this launcher, the supervisor) remain inspectable, so a provider key held by them is exposed."""
     import tempfile
     profile = detect_sealed_profile()
     waiver = None
@@ -190,14 +191,26 @@ def run_contained(argv: list[str], *, cwd: str, writable: list[str], readonly: l
         if not allow_same_user:
             raise IsolationUnavailable("no sealed profile (bwrap/seatbelt) on this host; pass allow_same_user to "
                                        "run untrusted commands as the same user (recorded as a waiver)")
-        profile, waiver = "dev:same-user", "allow_same_user requested; no sealed profile available"
+        profile, waiver = "dev:same-user", ("allow_same_user requested; no sealed profile available: the command runs as the "
+                                            "same user and can read other same-user processes, including any provider "
+                                            "key in their environment")
     adir = attempt_dir or tempfile.mkdtemp(prefix="eidos-contained-")
     prefixes: list[str] = []
     if python and profile != "dev:same-user":
         out = subprocess.run([python, "-I", "-c", "import json,sys; print(json.dumps([p for p in sys.path if p]))"],
                              capture_output=True, text=True, env=job_environment(os.environ))
-        prefixes = sorted(set(json.loads(out.stdout) if out.returncode == 0 else [])
-                          | {str(Path(python).resolve().parent.parent), str(Path(python).parent.parent)})
+        reported = set(json.loads(out.stdout) if out.returncode == 0 else [])
+        # the real installation and the venv the interpreter lives in (refused below if it holds HOME)
+        reported |= {str(Path(python).resolve().parent.parent), str(Path(python).absolute().parent.parent)}
+        home = os.path.realpath(str(Path.home()))
+        protected = [home, *(os.path.realpath(d) for d in credential_dirs())]
+        prefixes = []
+        for pre in sorted(reported):
+            rp = os.path.realpath(pre)
+            if any(rp == d or d.startswith(rp.rstrip("/") + "/") for d in protected):
+                raise IsolationUnavailable(f"interpreter path {pre} contains the home directory or a credential store; "
+                                           "use an interpreter installed in its own prefix")
+            prefixes.append(pre)
     spec = LaunchSpec(argv=argv, cwd=cwd, attempt_dir=adir, env=dict(env or {}), profile=profile,
                       readonly=list(readonly), writable=list(writable), python_prefixes=prefixes,
                       deny_read=[str(Path.home()), *credential_dirs()] if profile != "dev:same-user" else [])

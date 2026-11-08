@@ -207,7 +207,13 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
         ctx.event("decision.unapplied", did, {"reason": "stale-revision"}, investigation_id=inv.id)
         return {"accepted": False, "decision_id": did, "reason": "stale-revision", "observed_revision": inv.revision}
     try:
-        decision = turn_rules.validate_decision(p.get("proposal") or {}, max_calls=turn["spec"]["limits"]["max_calls"])
+        proposal = dict(p.get("proposal") or {})
+        if isinstance(proposal.get("control"), dict):  # only the trusted runtime path may mark a bounded outcome
+            ctl = {k: v for k, v in proposal["control"].items() if k != "bounded_outcome"}
+            if p.get("bounded_outcome") and (p.get("usage") or {}).get("limit_reached"):
+                ctl["bounded_outcome"] = str(p["bounded_outcome"])[:64]
+            proposal["control"] = ctl
+        decision = turn_rules.validate_decision(proposal, max_calls=turn["spec"]["limits"]["max_calls"])
         _check_component_contracts(ctx, decision["calls"])
         _check_something_to_wait_for(ctx, inv, decision)
     except Invalid as exc:

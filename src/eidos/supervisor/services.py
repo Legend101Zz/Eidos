@@ -182,7 +182,10 @@ def install_temporal(cfg: LabConfig, source: str | None = None) -> str:
     cache_dir = os.environ.get("EIDOS_TEMPORAL_ARCHIVE_CACHE")
     cached = Path(cache_dir, f"temporal-server-{pinned}.tgz") if cache_dir and pinned else None
     if not tgz.exists() and cached and cached.exists():
-        shutil.copyfile(cached, tgz)
+        if hashlib.sha256(cached.read_bytes()).hexdigest() == pinned:
+            shutil.copyfile(cached, tgz)
+        else:
+            cached.unlink()  # a bad cache entry must not be sticky
     if not tgz.exists():
         _download(url, tgz)
     digest = hashlib.sha256(tgz.read_bytes()).hexdigest()
@@ -191,7 +194,9 @@ def install_temporal(cfg: LabConfig, source: str | None = None) -> str:
         raise ServiceError(f"temporal server download digest {digest} != pinned {pinned}")
     if cached and not cached.exists():
         cached.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(tgz, cached)
+        tmp = cached.with_suffix(".part")
+        shutil.copyfile(tgz, tmp)
+        tmp.replace(cached)
     (dest.parent / "server.sha256").write_text(f"{digest}  {url}\n")
     (dest.parent / "provenance.json").write_text(json.dumps({"kind": "release-archive", "url": url, "sha256": digest,
                                                               "verified_against_pinned": True}, indent=2))
