@@ -16,9 +16,10 @@
    `{train: train.npz, validation: validation.npz, task: task.json}`. The same investigator call works lab-free and
    fails in the lab. Align them (default the mapping in the component, or stop defaulting in the driver and say so in
    the catalog summary).
-5. **Failed `project.command` jobs carry `error: null`**: a non-zero exit is reported as `failed` with no message; the
-   reason is only in the `command-stderr` artifact, so the investigator cannot see why (it spent 4 turns probing).
-   Put a bounded stderr tail into the attempt error.
+5. ~~Failed `project.command` jobs carry `error: null`~~ **Retracted (2026-11-08, re-run task):** the ledger stores the
+   failure in `job.terminal.error` (category `user-code`, message with the stderr tail) and the investigator's context
+   included it; `error: null` came from this session's own receipt query, which read `attempts[-1].error` (attempt
+   records have no `error` field). The cloud's a39ab1a feedback improvement (work-dir listing + stderr tail) still helps.
 6. Test hygiene from the macOS suite run: `components/build_fixtures.py` rewrites two tracked fixtures when numpy is
    importable (`branch-no-change-exact.json`, `branch-undeclared-state.json` gain `"rng.numpy": "copy"`); the
    listener thread in `test_contained_commands.py` raised `ConnectionAbortedError` on macOS at teardown (warning only;
@@ -27,6 +28,19 @@
    (real-LLM development runs exist: lab-free D02/D12 and one full-lab D02), A9 (OpenAI-compatible adapter path against a
    local endpoint; small model fails conformance), A13 (MPS runtime-verified; CUDA unqualified), A14 (Claude Code and
    Codex verified; Desktop unqualified).
+
+8. **Investigation stalls when every effect call fails and the decision waits** (re-run, 2026-11-08): a decision with
+   an `author_component` call that returns `INVALID` and control `wait_for_jobs` ends the turn `waiting` with nothing
+   outstanding; failed calls are not news, so it idles until max idle (6 h). Treat a waiting turn whose calls all
+   failed (or that has nothing outstanding after execution) like a refused-proposal turn (bounded immediate retry with
+   the failure in the next view), or count failed call receipts as news.
+9. **Document `environment` as a name** in the investigator context and `describe_component` for `author_component`
+   / `validate_component` (the model passed `{"base": "project-root"}`), and reject a non-string at proposal
+   validation so it is fed back within the turn.
+10. **`author_component` means different things** in the lab (build a component: validate → publish → run) and in
+   the lab-free driver (candidate project files for `run_component inputs.source`). The investigator in the full lab
+   used the lab-free meaning (authored a replacement `project.py`). Align the driver with the lab, or document the
+   whole-trainer path (`project.command` `files`/`source`) in the context.
 
 ## For the owner
 

@@ -146,7 +146,7 @@ saw only the bundle: brief, task.json, project.py, train/validation; no test dat
 |---|---|---|---|---|---|---|
 | 5.1 lab-free D02 | `with_anthropic_key.py -- .venv/bin/python scripts/qualify/live_bundle_investigation.py --bundle $S/bundles/D02 --python $S/venvs/research/bin/python --max-requests 40 --max-turns 8` | e36bfb1 | 8 | 29,434 / 8,073 | $0.1396 (settled 14c) | turn cap (8 turns, 1 request each), all 8 decisions accepted, 0 refused; baseline reproduced (val acc 0.838), a seed variant 0.830, then a model-authored modification failed (`exit 2/3`); no conclusion (`a8-live-D02.json`) |
 | 5.1b lab-free D12 (null) | same with D12 | e36bfb1 | 8 | 28,783 / 9,860 | $0.1562 (settled 16c) | turn cap; 8 accepted, 0 refused; val acc 0.5 (chance) twice; authored one candidate project file, its runs failed; no improvement claimed (`a8-live-D12.json`) |
-| 5.2 full lab D02 | `with_anthropic_key.py --stdin-credential ... -- /bin/bash scripts/qualify/full_lab_live.sh --bundle $S/bundles/D02 ...` (`CREDENTIALS_STDIN=1`, `PRICE={"input":2,"output":10}`) | 4d494ce scripts; lab wheels from e36bfb1 sources | 20 | 172,477 / 12,130 | $0.4663 (lab `model_usd` used 0.466254; settled 47c) | 5 turns (cap), 5 decisions accepted, 0 refused, every decision `wait_for_jobs` after one `run_component`; the turn-1 baseline job **failed** because `eidos.project.command` places inputs in the work dir only via `config.files` (the lab-free driver defaults it, so the identical call works there) and the failed job carried `error: null` (stderr only in the `command-stderr` artifact); turns 2-5 probed the staging layout; no conclusion. `key_found_in_lab_files: []` (`a8-full-lab-D02.json`, worker log `a8-full-lab-D02-investigator-worker.log`) |
+| 5.2 full lab D02 | `with_anthropic_key.py --stdin-credential ... -- /bin/bash scripts/qualify/full_lab_live.sh --bundle $S/bundles/D02 ...` (`CREDENTIALS_STDIN=1`, `PRICE={"input":2,"output":10}`) | 4d494ce scripts; lab wheels from e36bfb1 sources | 20 | 172,477 / 12,130 | $0.4663 (lab `model_usd` used 0.466254; settled 47c) | 5 turns (cap), 5 decisions accepted, 0 refused, every decision `wait_for_jobs` after one `run_component`; the turn-1 baseline job **failed** because `eidos.project.command` places inputs in the work dir only via `config.files` (the lab-free driver defaults it, so the identical call works there) and its failure (`job.terminal.error`, with the stderr tail) was in the investigator's context [correction: an earlier version of this line said `error: null`; that came from my receipt query reading `attempts[-1].error`, see the re-run section]; turns 2-5 probed the staging layout; no conclusion. `key_found_in_lab_files: []` (`a8-full-lab-D02.json`, worker log `a8-full-lab-D02-investigator-worker.log`) |
 
 Ledger (`eidosctl ancillary`): reserved 365/365/310c, settled **14 + 16 + 47 = 77c**; ancillary available now 867c of
 1000c (was 944c). Claude Code / Codex runs (item 2) used the Max subscription / Codex account, not Console credits.
@@ -183,3 +183,49 @@ fresh install, upgrade) ran green at e36bfb1 (subagent); later commits changed o
 All servers started by this session (lab, kit labs, Ollama on 11535, test PostgreSQL on 5499) are stopped.
 Internal disk free: 24.9 GiB at start, 24.5 GiB at end (≈0.33 GiB, of which 218 MB is the Ollama update cache noted
 in REQUESTS.md; the rest is system/client-session noise; no Eidos data on the internal disk).
+
+## Re-run: full-lab D02 after the cloud's project.command fix (2026-11-08)
+
+Merged `origin/build/eidos-local-v1` at 2df52bb (fast-forward; includes merge 99be3ba and the a39ab1a fix:
+`eidos.project.command` 1.0.7 stages declared inputs by default). Fresh wheels with `uv build --no-cache` into
+`$S/dist-2df52bb`, lab venv reinstalled `--no-cache --reinstall`.
+
+Key re-check before the paid run (fake marker via `lab start --credentials-stdin`, then a probe job through
+`eidos.project.command@1.0.7`): only `eidos.apps.role investigator-worker` held the marker; the job's environment had 10
+variables and no key; `$HOME`, `~/.claude.json`, external network and the lab API were refused; no lab file contained it.
+
+Run: `full_lab_live.sh` with `MAX_TURNS=12 MAX_CALLS_PER_TURN=1 MAX_REQ_PER_DECISION=5` (≤ 60 requests; refused-proposal
+retries count as turns) `MODEL_USD=2 MODEL_TOKENS=1000000`, `anthropic:claude-sonnet-5-5`, key via stdin
+(`receipts/a8-full-lab-D02-rerun.json`). The script now takes these caps from the environment (defaults unchanged)
+and records job errors/metrics, call arguments and rationales.
+
+| | First run (5.2) | Re-run |
+|---|---|---|
+| Wheels / component | e36bfb1 sources, project.command 1.0.6 | 2df52bb, project.command 1.0.7 |
+| Caps | 5 turns × 2 × 4 = 40 req, $3 | 12 turns × 1 × 5 = 60 req, $2 |
+| Baseline job | **failed** (inputs not staged without `config.files`) | **succeeded first time**, val acc 0.8384 (scored in turn 2) |
+| Turns / decisions | 5 / 5 accepted, 0 refused | 3 / 3 accepted, 0 refused |
+| Jobs | 5 (1 failed baseline, 4 staging probes) | 2 (baseline, scoring), both succeeded |
+| What it did | probed the work-dir layout | baseline → score → `author_component` for a standardized-input MLP trainer |
+| End | max turns, no conclusion | **stalled** after turn 3; operator stop (labelled builder intervention); no conclusion |
+| Claim | none | none (it stated "probably under-trained" as a hypothesis; nothing filed, nothing to support) |
+| Requests / tokens | 20 / 172,477 in, 12,130 out | 15 / 122,044 in, 6,706 out |
+| Cost (settled) | $0.4663 (47c) | $0.3111 (32c; reserved 250c) |
+| Key in lab files | [] | [] |
+
+Why the re-run stalled (new defect, platform-independent): the turn-3 `author_component` call was **INVALID** (the
+model passed `environment: {"base": "project-root"}`; `validate_component` resolves `environment` as a registered
+environment name, and the context line `author_component {files:{path: text}, environment}` does not say so). No
+validation job was created, but the decision's control was `wait_for_jobs` and the turn ended `waiting`. The
+idle-trap rule only refuses pure waits at acceptance time, and a failed call is not in `NEWS_TYPES`, so nothing
+woke the investigation (max idle 6 h). Also, in the full lab `author_component` builds a *component* (validate →
+publish), while the lab-free driver treats it as "candidate project files for `run_component inputs.source`": the
+investigator used the lab-free meaning.
+
+Why the first run's receipt showed `error: null` (traced): it did not. The ledger stored the failure in
+`job.terminal.error` (category `user-code`, message with the stderr tail, worker traceback), and the
+investigator's view source and packed contexts contained it. The `null` came from my own post-run query, which read
+`attempts[-1].error`; attempt records have no `error` field. REQUESTS.md item 5 is retracted; STATUS and the first
+receipt are annotated.
+
+Ledger: ancillary spent 165c of 1000c (this re-run 32c); available 835c.
