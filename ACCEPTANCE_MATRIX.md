@@ -96,6 +96,8 @@ Closed since v0.1.0; each item names its evidence:
   - The drift sweep found and fixed three silent failures: checkpoint-and-stop under bwrap (A15), sealed-runner concurrency, and the fixture budget in the owner kit.
   - Final local suite at `2fedb42`: 117 passed / 1 skipped; components 59; worker matrix OK.
 
+- **Round 9:** tag `eidos-v0.5.2` → `e4558e2`. A8/B2: `wait_for_jobs` with nothing outstanding is refused within the turn instead of idling until max-idle (`64ad288`; regression test in `test_turn_recovery.py`). Full suite at `64ad288`: 118 passed / 1 skipped.
+
 Still open:
 - **Adversarial review:** all listed open items are fixed (round 5). What remains is platform-bound.
   - A distinct candidate identity needs a readable interpreter.

@@ -295,16 +295,24 @@ Lesson: three of the four failures came from round 5 making sealed the default p
   - ruff clean; import contracts **5/5**;
   - switch journey **154/154**; e2e journey 9/9 (sweep run).
 
+## Round 9 (2026-11-08, final)
+
+- **Tag `eidos-v0.5.2` → `e4558e2`:** CI green on nine jobs.
+- **Idle-trap fix (`64ad288`):** `accept_decision` refuses `wait_for_jobs` when the investigation has nothing outstanding. That means no non-terminal job, no executing evidence plan, and no launching call (run/launch/author) in the same decision.
+  - The refusal is the existing invalid-proposal path: the message reaches the next slot of the same turn and counts against `MAX_CONSECUTIVE_INVALID`.
+  - Runtime bounded outcomes (`control.bounded_outcome`, set when the per-decision request budget is spent) are exempt, so a refusal cannot buy extra model requests.
+  - The `note-then-wait` fixture now uses `request_input`.
+  - The check is command-side only, so no workflow code changed and the recorded histories replay as before.
+  - Regression test: `tests/integration/test_turn_recovery.py::test_wait_for_jobs_with_nothing_outstanding_is_refused_within_the_turn`. It fails without the fix.
+- **Verification at `64ad288`:**
+  - unit + integration + MCP + reporting **118 passed, 1 skipped**;
+  - switch journey **154/154** (265 s, no steer);
+  - e2e journey **9/9** (121 s);
+  - cross-release upgrade **33/33** (35 s);
+  - ruff clean; import contracts 5/5.
+
 ## Next concrete action
 
-1. The controller relays CI for the final head of `build/eidos-local-v1`, which includes the new `switch-journey` job (9 jobs). If it is green, tag `eidos-v0.5.2` there.
-2. Owner decisions (`HANDOFF.md`):
-   - run the macOS kit;
-   - real-LLM D02/D12 runs;
-   - OpenAI-compatible provider qualification;
-   - external MCP clients;
-   - Seatbelt vs a Lima VM, which needs an owner Mac because GitHub arm64 runners have no nested virtualization.
-3. Engineering backlog:
-   - `wait_for_jobs` with nothing outstanding idles until max-idle for any investigator, not only fixtures;
-   - the review-2 idle-poll rollover issue;
-   - a CI test for checkpoint-and-stop under bwrap (today only the manual ops script covers it).
+1. The controller relays CI for the head of `build/eidos-local-v1`, which is `64ad288` plus documentation. If all nine jobs are green, a later session or the owner tags it `eidos-v0.5.3`.
+2. Owner decisions (`HANDOFF.md`): the macOS kit, real-LLM D02/D12 runs, OpenAI-compatible provider qualification, external MCP clients, and Seatbelt vs Lima. Lima needs an owner Mac, because GitHub arm64 runners have no nested virtualization.
+3. Engineering backlog: the review-2 idle-poll rollover issue, and a CI test for checkpoint-and-stop under bwrap.
