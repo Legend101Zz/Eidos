@@ -420,9 +420,9 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
                                      **({"result": _compact_result(r.get("result"))} if r.get("ok") else
                                         {"code": r.get("code"), "error": _compact_result(r.get("error"))})})
     plans = []
-    assessments = {a.body.get("plan_id"): a for a in ctx.tx.list_records(ctx.project_id, "assessment")
+    assessments = {a.body.get("plan_id"): a for a in ctx.tx.list_records(ctx.project_id, "assessment", limit=100000)
                    if cutoff_ts is None or a.created_at <= cutoff_ts}
-    for pl in ctx.tx.list_records(ctx.project_id, "evidence_plan"):
+    for pl in ctx.tx.list_records(ctx.project_id, "evidence_plan", limit=100000):
         if pl.body.get("investigation_id") != inv.id or (cutoff_ts is not None and pl.created_at > cutoff_ts):
             continue
         _expose_record(ctx, pl)
@@ -436,7 +436,7 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
                       "assessment": None if asm is None else {"assessment_id": asm.id, "outcome": asm.body.get("outcome"),
                                                               "conformance": asm.body.get("conformance")}})
     approved = sorted({(ap.body["release_ref"], tuple(ap.body.get("scope") or ()))
-                       for ap in ctx.tx.list_records(ctx.project_id, "approval", status="active")})
+                       for ap in ctx.tx.list_records(ctx.project_id, "approval", status="active", limit=100000)})
     return {"investigation": {"id": inv.id, "status": inv.status, "body": inv_body}, "horizon": horizon,
             "environments": environments, "created_artifacts": created[-50:], "call_results": call_results[-30:],
             "evidence_plans": plans[-10:],

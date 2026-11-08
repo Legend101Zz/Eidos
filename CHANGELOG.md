@@ -13,7 +13,7 @@ The v1 **software** release: acceptance areas A1–A15 within the scope of `docs
 ### Isolation honesty (G3)
 - **A same-OS-user Seatbelt receipt no longer satisfies a plan that requires sealed execution.** Profiles now carry `same_os_user` and `hostile_code`. Only `linux:bwrap-sealed` (and the unimplemented Lima profile) are hostile-code profiles.
 - On a lab without a hostile-code profile (macOS Seatbelt, or no sealed profile), `freeze_evidence_plan` and `launch_evidence_plan` refuse plans that require sealed execution, with a clear message.
-- Isolation receipts and the assessor's receipt record `same_os_user` and `hostile_code_isolation`. The service derives them from the profile, never from the launcher's payload.
+- Isolation receipts and the assessor's receipt record `same_os_user` and `hostile_code_isolation`, derived from the profile name. For job receipts the command service derives them and overwrites any value in the launcher's payload. For the assessor, the assessment activity derives them. Assessments also record each arm's realized isolation profiles and `same_os_user`.
 - Fixed: a requirement that named only a profile (`required_isolation.profile` with no controls) was satisfied by any receipt.
 
 ### Ledger and upgrades (G7)
@@ -33,7 +33,7 @@ The v1 **software** release: acceptance areas A1–A15 within the scope of `docs
 - The tool guide documents the evidence-plan draft and the trial/branch arguments.
 
 ### Local operations (found on the Mac)
-- The supervisor now restarts a PostgreSQL cluster that died (crash recovery). Five restarts in five minutes leave it `failed` in `run/status.json` and in `lab doctor`.
+- The supervisor now restarts a PostgreSQL cluster that died (crash recovery). A sixth death within five minutes leaves it `failed` in `run/status.json` and in `lab doctor`.
 - `lab status` reports `disk.refusing_new_bytes`, and `lab doctor` fails the disk check while the store refuses uploads and job outputs (below the reserve). It used to warn only.
 - `lab init` and `lab restore` refuse a Temporal port block that ends above 32767 (Temporal stores ports as PostgreSQL `smallint`, and the server exited at startup) and API/PostgreSQL ports inside the Temporal block.
 - `tests/ops/*.sh` quote the lab executable, so they run from paths with spaces.

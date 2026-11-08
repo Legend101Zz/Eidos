@@ -40,7 +40,7 @@ DECLARE
   need integer;
   have integer;
 BEGIN
-  IF current_user = (SELECT nspowner::regrole::text FROM pg_namespace WHERE nspname = 'ledger')
+  IF current_user = (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'ledger')
      OR (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) THEN
     RETURN NULL;  -- migrations and the database administrator
   END IF;

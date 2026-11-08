@@ -8,9 +8,9 @@ v1.0.0 makes no scientific claim. Whether Eidos helps an LLM do model research (
 
 | Area | Supported in v1 | Evidence |
 |---|---|---|
-| Operating systems | **Linux x86_64** and **macOS arm64** (Apple Silicon) | Linux: hosted CI (10 jobs). macOS: the owner's M4 (macOS 26.3.1) and the macOS CI runner. See `docs/mac/STATUS.md`. |
+| Operating systems | **Linux x86_64** and **macOS arm64** (Apple Silicon) | Linux: hosted CI (9 Linux jobs of the 10-job workflow). macOS: the owner's M4 (macOS 26.3.1) and the macOS CI runner. See `docs/mac/STATUS.md`. |
 | Devices | **CPU** on both platforms; **MPS** on macOS | CPU: switch journey and components. MPS: cpu/mps parity and cross-device resume (`docs/mac/receipts/a13-mps-smoke.json`). |
-| Model providers | **Anthropic** (`anthropic:<model>`) and **OpenAI-compatible endpoints** (`openai-compatible:<model>` with a `base_url`) | Anthropic: live receipts and full-lab runs with `claude-sonnet-5-5`. OpenAI-compatible: qualified against a capable **local** model on Ollama (`docs/mac/STATUS.md`, G4). |
+| Model providers | **Anthropic** (`anthropic:<model>`) and **OpenAI-compatible endpoints** (`openai-compatible:<model>` with a `base_url`) | Anthropic: live receipts and full-lab runs with `claude-sonnet-5-5`. OpenAI-compatible: adapter path verified against a local Ollama endpoint (errors, timeout, request limit, unknown model). For schema conformance with a capable local model, see gate G4 in `ACCEPTANCE_MATRIX.md` § E. |
 | MCP clients | **Claude Code**, **Codex CLI**, and the **MCP Python SDK** client (stdio and loopback HTTP) | `docs/mac/receipts/a14-*.json`; `tests/mcp`; the CI e2e journey. |
 | Candidate-code isolation, Linux | **`linux:bwrap-sealed`**: the only profile for **sealed (hostile-code) evaluation** | Hostile probes in `tests/integration/test_isolation_probes.py`; the sealed runner. |
 | Candidate-code isolation, macOS | **`macos:seatbelt-sealed`**: Seatbelt (`sandbox-exec`), **same OS user** (limits below) | `scripts/ci/seatbelt_probes.py` (macOS CI and the owner's Mac). |

@@ -109,6 +109,11 @@ def compile_plan(
         "alternatives_unresolved": list(draft.get("alternatives_unresolved", [])),
         "disclosures": draft.get("disclosures", {}),
     }
+    ri = plan["required_isolation"]
+    if ri is not None and not isinstance(ri, dict):
+        raise Invalid("required_isolation must be an object, e.g. {\"sealed\": true} or "
+                      "{\"profile\": \"dev:same-user\", \"controls\": [], \"waiver\": \"<reason>\"}",
+                      details={"got": ri})
     for key in ("analysis_unit", "seed_policy", "assessor", "required_isolation"):
         if not plan[key] and key not in plan["obligations"]:
             plan["obligations"].append(key)

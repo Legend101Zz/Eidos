@@ -80,8 +80,8 @@ class InvestigationWorkflow:
         since = float(rw["since"])
         max_idle = int(a.get("max_idle_turn_seconds", 6 * 3600))
         self._status = f"waiting ({rw.get('reason') or 'quiet'})"
+        seen = self._wakes  # once: a wake during check_news is still seen by the next wait
         while True:
-            seen = self._wakes
             try:
                 await workflow.wait_condition(lambda seen=seen: self._wakes > seen
                                               or workflow.info().get_current_history_length() > history_limit,

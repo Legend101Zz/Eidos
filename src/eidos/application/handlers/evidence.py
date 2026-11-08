@@ -345,7 +345,10 @@ def submit_assessment(ctx: Ctx, p: dict) -> dict:
     result["isolation_waivers"] = realized.get("isolation_waivers", [])  # always visible in the assessment
     result["assessor_isolation"] = (p.get("evaluation") or {}).get("assessor_isolation")
     result.update({"plan_id": plan.id, "claim_ref": plan.body["claim_ref"], "dependencies": sorted(set(deps)),
-                   "assessed_by": ctx.principal.id, "realized": {k: {"status": v["status"]} for k, v in realized["arms"].items()}})
+                   "assessed_by": ctx.principal.id, "realized": {k: {"status": v["status"], "isolation_profiles": v.get("isolation_profiles", []),
+                                    "same_os_user": any(isolation.profile_traits(pr)["same_os_user"]
+                                                        for pr in v.get("isolation_profiles", []))}
+                                for k, v in realized["arms"].items()}})
     ctx.tx.put_record("assessment", aid, ctx.project_id, result, created_by=ctx.principal.id, status=result["outcome"],
                       parent_id=plan.body["claim_ref"]["id"], labels={"health": "intact"})
     for ids in evidence_set.values():

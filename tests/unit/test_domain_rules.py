@@ -348,3 +348,19 @@ def test_malformed_branch_request_is_invalid_not_a_crash():
             branching.validate_branch(parent, req)
         assert e.value.details["parent_state_entries"] == ["model", "optimizer"]
         assert "example" in e.value.details
+
+
+def test_required_isolation_must_be_an_object():
+    """Review (v1.0.0): a truthy non-dict required_isolation passed compile and crashed at freeze/launch."""
+    import pytest
+
+    from eidos.domain.errors import Invalid
+    ch = {"study_id": "s", "question": "q", "metrics": {"m": {"direction": "increase"}},
+          "success_rules": [{"id": "r", "metric": "m", "min_effect": 0.1,
+                             "comparison": {"baseline_arm_role": "baseline", "candidate_arm_role": "candidate"}}]}
+    draft = {"success_rule_id": "r", "required_isolation": "sealed",
+             "arms": [{"id": "b", "role": "baseline"}, {"id": "c", "role": "candidate"}]}
+    with pytest.raises(Invalid, match="required_isolation must be an object"):
+        evidence.compile_plan(draft=draft, claim={"kind": "improves", "scope": {}}, claim_ref={"id": "c", "revision": 1},
+                              charter=ch, charter_ref={"id": "charter:s", "revision": 1, "digest": charter.charter_digest(ch)},
+                              template_ref={"ref": "t", "digest": "d"})
