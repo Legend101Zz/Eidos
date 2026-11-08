@@ -308,6 +308,71 @@ async def test_idle_polls_without_news_spend_no_model_turns(env):
         await h.terminate()
 
 
+async def test_quiet_wait_survives_rollover_without_a_model_turn(env):
+    """Review 2 (idle poll): quiet polls grow the history; crossing ``history_limit`` rolls the
+    coordinator over. That rollover must not start a model turn without news, and the max-idle
+    timer counts from the original wait start, not from the rollover."""
+    import asyncio
+    fake = FakeInvestigator(stop_after=5)
+    checks = {"n": 0}
+
+    @activity.defn(name="check_news")
+    async def check_news(a: dict) -> dict:
+        checks["n"] += 1
+        return {"news": False}
+
+    wid = f"inv-quiet-roll-{uuid.uuid4().hex[:6]}"
+    async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
+            Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=[*fake.acts()[:-2], check_news, fake.mark_needs_input]):
+        h = await env.client.start_workflow(InvestigationWorkflow.run, {"investigation_id": wid, "project_id": "p",
+                                            "idle_poll_seconds": 1, "history_limit": 60,
+                                            "max_idle_turn_seconds": 3600}, id=wid, task_queue=WORKFLOW_QUEUE)
+        first_run = h.result_run_id
+        for _ in range(40):
+            await asyncio.sleep(1)
+            d = await env.client.get_workflow_handle(wid).describe()
+            if d.run_id != first_run and checks["n"] >= 12:
+                break
+        d = await env.client.get_workflow_handle(wid).describe()
+        assert d.run_id != first_run, "expected at least one Continue-As-New during the quiet wait"
+        assert fake.turns == 1, fake.turns  # no model turn from the rollover itself
+        await env.client.get_workflow_handle(wid).signal("wake", 1)
+        for _ in range(10):
+            await asyncio.sleep(1)
+            if fake.turns == 2:
+                break
+        assert fake.turns == 2  # a wake still starts a turn after the rollover
+        await env.client.get_workflow_handle(wid).terminate()
+
+
+async def test_max_idle_counts_across_quiet_rollovers(env):
+    import asyncio
+    fake = FakeInvestigator(stop_after=5)
+
+    @activity.defn(name="check_news")
+    async def check_news(a: dict) -> dict:
+        return {"news": False}
+
+    wid = f"inv-idle-roll-{uuid.uuid4().hex[:6]}"
+    async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
+            Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=[*fake.acts()[:-2], check_news, fake.mark_needs_input]):
+        h = await env.client.start_workflow(InvestigationWorkflow.run, {"investigation_id": wid, "project_id": "p",
+                                            "idle_poll_seconds": 1, "history_limit": 60,
+                                            "max_idle_turn_seconds": 12}, id=wid, task_queue=WORKFLOW_QUEUE)
+        import time
+        t0 = time.monotonic()
+        first_run = h.result_run_id
+        for _ in range(30):
+            await asyncio.sleep(1)
+            if fake.turns >= 2:
+                break
+        d = await env.client.get_workflow_handle(wid).describe()
+        assert fake.turns == 2, fake.turns  # exactly one idle turn, after ~12 s measured from the first wait
+        assert time.monotonic() - t0 >= 11
+        assert d.run_id != first_run
+        await env.client.get_workflow_handle(wid).terminate()
+
+
 async def test_refused_proposal_turns_retry_boundedly_then_surface_for_input(env):
     """A turn ending on the invalid-proposal limit gets bounded immediate retry turns; after that the
     investigation waits for operator news only (job wakes and quiet polls do not start turns)."""

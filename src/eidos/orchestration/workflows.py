@@ -73,6 +73,33 @@ class InvestigationWorkflow:
             if news.get("news"):
                 return
 
+    async def _resume_quiet_wait(self, a: dict, inv: str, history_limit: int, idle: int) -> None:
+        """Continue a quiet wait that rolled over (Continue-As-New) without news: no model turn
+        until a wake, ledger news or the max-idle timer, which counts from the original wait start."""
+        rw = a["resume_wait"]
+        since = float(rw["since"])
+        max_idle = int(a.get("max_idle_turn_seconds", 6 * 3600))
+        self._status = f"waiting ({rw.get('reason') or 'quiet'})"
+        while True:
+            seen = self._wakes
+            try:
+                await workflow.wait_condition(lambda seen=seen: self._wakes > seen
+                                              or workflow.info().get_current_history_length() > history_limit,
+                                              timeout=timedelta(seconds=idle))
+            except TimeoutError:
+                pass
+            if self._wakes > seen:
+                return
+            if workflow.info().get_current_history_length() > history_limit:
+                self._status = "rolling-over"
+                await workflow.wait_condition(workflow.all_handlers_finished)
+                workflow.continue_as_new({**a, "rollovers": int(a.get("rollovers", 0)) + 1})
+            news = await workflow.execute_activity(
+                "check_news", {"investigation_id": inv, "project_id": a["project_id"]},
+                task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
+            if news.get("news") or workflow.now().timestamp() - since > max_idle:
+                return
+
     @workflow.run
     async def run(self, a: dict[str, Any]) -> dict[str, Any]:
         inv = a["investigation_id"]
@@ -83,6 +110,11 @@ class InvestigationWorkflow:
         consecutive_errors = 0
         invalid_turns = int(a.get("invalid_turns", 0))  # consecutive turns ended on the invalid-proposal limit
         while True:
+            if a.get("resume_wait") and self._turns == 0 and workflow.patched("quiet-rollover-keeps-waiting-v1"):
+                # Review 2: a rollover during a quiet wait used to start a model turn with no news and
+                # reset the max-idle timer. Keep waiting instead, from the original wait start.
+                await self._resume_quiet_wait(a, inv, history_limit, idle)
+                a = {k: v for k, v in a.items() if k != "resume_wait"}
             if invalid_turns > MAX_INVALID_RETRY_TURNS and a.get("invalid_turns") and self._turns == 0 \
                     and workflow.patched("needs-input-survives-rollover-v1"):
                 # A rollover while waiting for operator input: keep waiting (no turn without operator news).
@@ -134,6 +166,7 @@ class InvestigationWorkflow:
                 self._status = "needs operator input (repeated refused proposals)" if needs_input else f"waiting ({reason})"
                 waited_since = workflow.now()
                 max_idle = int(a.get("max_idle_turn_seconds", 6 * 3600))
+                quiet_news = False
                 while True:
                     try:
                         # Signals add history while waiting; leave the wait (and roll over at the loop
@@ -154,9 +187,19 @@ class InvestigationWorkflow:
                         "check_news", {"investigation_id": inv, "project_id": a["project_id"],
                                        **({"operator_only": True} if needs_input else {})},
                         task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
+                    quiet_news = bool(news.get("news"))
                     if news.get("news") or workflow.info().get_current_history_length() > history_limit \
                             or (not needs_input and (workflow.now() - waited_since).total_seconds() > max_idle):
                         break
+                if not needs_input and not quiet_news and self._wakes == seen \
+                        and workflow.info().get_current_history_length() > history_limit \
+                        and (workflow.now() - waited_since).total_seconds() <= max_idle \
+                        and workflow.patched("quiet-rollover-keeps-waiting-v1"):
+                    self._status = "rolling-over"
+                    await workflow.wait_condition(workflow.all_handlers_finished)
+                    workflow.continue_as_new({**a, "turn_counter": counter, "rollovers": int(a.get("rollovers", 0)) + 1,
+                                              "invalid_turns": invalid_turns,
+                                              "resume_wait": {"since": waited_since.timestamp(), "reason": reason}})
 
 
 @workflow.defn(name="TurnWorkflow")
