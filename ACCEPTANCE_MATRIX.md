@@ -89,7 +89,7 @@ Closed since v0.1.0; each item names its evidence:
   - the macOS assessor runs under Seatbelt;
   - adversarial review 2: five findings fixed with regression tests (`docs/dev-runs/adversarial-review-2-2026-11-08.md`);
   - A15 installation upgrade across releases: v0.1.0 wheels → head, 33 checks (`scripts/ci/upgrade_across_releases.sh`, CI job);
-  - A1/A14 clean-install journey through the CLI and the MCP SDK client: D01 fixture investigation and validated answer, branch, export (`scripts/journeys/e2e_journey.sh`, CI job). The qualified assessment in this journey is being added.
+  - A1/A14 clean-install journey through the CLI and the MCP SDK client: D01 fixture investigation and validated answer, branch, export (`scripts/journeys/e2e_journey.sh`, CI job). The journey now includes a qualified assessment (assessor and template qualified with executed controls, claim, frozen plan, six evidence jobs, AssessmentWorkflow outcome, MCP `get_assessment`); 9/9 at `993b8fd`. **A5 regression found and fixed:** assessments of evidence plans failed on v0.2.0–v0.5.0 (`8771bb3`).
 
 Still open:
 - **Adversarial review:** all listed open items are fixed (round 5). What remains is platform-bound.

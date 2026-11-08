@@ -7,7 +7,7 @@ deterministic scripts, no model, no provider call.
 
 Rerun: `bash scripts/journeys/e2e_journey.sh` (see the header for env; CI job `e2e-journey`). Driver: `scripts/journeys/e2e_journey.py`
 (runs with the installed venv's python; the checkout's `src/` is not importable). Machine-readable record: `$CI_WORK/out/journey-record.json`
-(step, interface, status, ids, detail, seconds). Local run: 9/9 steps pass, wall time 122 s including the wheel build (research env pre-built). This run needed the one-line-class `evidence.py` fix listed under defects (applied locally, not part of this commit).
+(step, interface, status, ids, detail, seconds). Local run: 9/9 steps pass, wall time 122 s including the wheel build (research env pre-built). The lead re-ran it at `993b8fd`, with both defects below fixed: 9/9 pass, 116 s.
 
 | step | interface | status | s | ids |
 |---|---|---|---|---|
@@ -61,7 +61,9 @@ be a legitimate result of this step; it checks that the success rule is the char
 The plan runs with an `isolation_waiver` because same-user execution is weaker than the available `linux:bwrap-sealed` profile; the waiver is
 visible in the plan. The numbers are development evidence, not a research result. The original journey's withdrawal drill is not repeated.
 
-## Defects found by this journey (not fixed here; `src/` is out of scope)
+## Defects found by this journey (both fixed by the lead in `8771bb3`)
+
+**Impact on earlier freezes:** defect 1 was introduced with the pipeline change `64f49e6`. So **every evidence-plan assessment run through the AssessmentWorkflow failed on `eidos-v0.2.0`…`eidos-v0.5.0`**. The journey's 149 checks for assessment predate that change. No test assessed a pipeline-era plan end to end until this journey.
 
 1. **`submit_assessment` fails for every evidence plan** (`src/eidos/application/handlers/evidence.py:322`): `launch.jobs` now maps an arm to a
    *list* of job ids (pipeline arms), but the loop treats the value as one id, so `get_job(list)` returns `None` and the handler raises

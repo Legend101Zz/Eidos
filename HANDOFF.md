@@ -12,6 +12,7 @@
   - the clean-install end-to-end journey through the CLI and the MCP SDK client (`docs/dev-runs/e2e-journey.md`);
   - `lab upgrade` now switches to the new interpreter;
   - `lab component install` is now idempotent.
+- **Known defect in `eidos-v0.2.0`…`eidos-v0.5.0`, fixed after v0.5.0 in `8771bb3`:** `submit_assessment` crashed for every evidence plan, because pipeline arms store lists of jobs. As a result, no qualified assessment could be recorded on those tags. The clean-install journey's new qualified-assessment step found it, and it now guards against it in CI.
 - Commits after `eidos-v0.5.0` are listed in `IMPLEMENTATION_STATUS.md`. Only CI-green SHAs get tagged.
 - No `eidos-v1.0.0` tag exists, because the v1 acceptance criteria are not all met (see below).
 
