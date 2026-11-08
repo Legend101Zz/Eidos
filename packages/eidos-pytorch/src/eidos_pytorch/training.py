@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 import random
 import time
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
@@ -60,8 +61,14 @@ TRAIN_STEP_PHASES = (
 )
 
 
-def seed_everything(seed: int, deterministic: bool = True) -> None:
-    """Seed Python, numpy (if importable) and torch; optionally force deterministic algorithms."""
+# Device types for which PyTorch lacks deterministic kernels for common ops (e.g. MPS has no deterministic
+# embedding backward in torch 2.15): a deterministic request there runs in warn-only mode and the receipt says so.
+WARN_ONLY_DETERMINISM_DEVICES = ("mps",)
+
+
+def seed_everything(seed: int, deterministic: bool = True, *, warn_only: bool = False) -> None:
+    """Seed Python, numpy (if importable) and torch; optionally force deterministic algorithms
+    (``warn_only``: ops without a deterministic implementation warn instead of raising)."""
     torch = torch_module()
     random.seed(seed)
     try:
@@ -73,7 +80,7 @@ def seed_everything(seed: int, deterministic: bool = True) -> None:
     torch.manual_seed(seed)
     if deterministic:
         os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
-        torch.use_deterministic_algorithms(True)
+        torch.use_deterministic_algorithms(True, warn_only=warn_only)
 
 
 def default_count_examples(batch: Any) -> int:
@@ -165,10 +172,43 @@ def train_loop(
             raise AdapterError(f"phases not fired by this training path: {phases.order()}")
     comps = dict(components or {})
     started = time.time()
+    # Determinism is scoped to this call: the previous global setting is restored on exit, so a later
+    # non-deterministic call in the same process is not silently forced deterministic.
+    prev_det = (torch.are_deterministic_algorithms_enabled(), torch.is_deterministic_algorithms_warn_only_enabled())
+    dev_type = torch.device(device).type if device is not None else "cpu"
+    warn_only = bool(deterministic) and dev_type in WARN_ONLY_DETERMINISM_DEVICES
+    determinism: Dict[str, Any] = {"requested": bool(deterministic),
+                                   "mode": ("warn-only" if warn_only else "strict") if deterministic else "unchanged",
+                                   "nondeterministic_ops": []}
     if seed is not None:
-        seed_everything(seed, deterministic)
+        seed_everything(seed, deterministic, warn_only=warn_only)
     elif deterministic:
-        torch.use_deterministic_algorithms(True)
+        torch.use_deterministic_algorithms(True, warn_only=warn_only)
+    caught: List[Any] = []
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("default")
+            result = _train_body(
+                adapter=adapter, config=config, batch_fn=batch_fn, steps=steps, batches_per_update=batches_per_update,
+                checkpoint_every=checkpoint_every, checkpoint_dir=checkpoint_dir, checkpoint_at_end=checkpoint_at_end,
+                resume_from=resume_from, phases=phases, comps=comps, scaler=scaler, evaluate=evaluate,
+                evaluate_every=evaluate_every, count_examples=count_examples, device=device, should_stop=should_stop,
+                torch=torch, caps=caps, use_step_fn=use_step_fn, started=started)
+    finally:
+        torch.use_deterministic_algorithms(prev_det[0], warn_only=prev_det[1])
+        for w in caught:  # keep warnings visible to the caller; record the nondeterministic ops
+            msg = str(w.message)
+            if "deterministic" in msg and msg[:200] not in determinism["nondeterministic_ops"]:
+                determinism["nondeterministic_ops"].append(msg[:200])
+            warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
+    result.receipt["device"] = dev_type
+    result.receipt["determinism"] = determinism
+    return result
+
+
+def _train_body(*, adapter, config, batch_fn, steps, batches_per_update, checkpoint_every, checkpoint_dir,
+                checkpoint_at_end, resume_from, phases, comps, scaler, evaluate, evaluate_every, count_examples,
+                device, should_stop, torch, caps, use_step_fn, started) -> TrainResult:
     phases.fire("before-model-construction", step=0, config=config)
     model = adapter.build(config)
     if device is not None:

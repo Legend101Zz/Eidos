@@ -382,3 +382,75 @@ def test_devices_shape():
     d = devices()
     assert d["cpu"]["available"] and d["exact_restore_across_devices"] is False
     assert {"cuda", "mps", "torch"} <= set(d)
+
+
+# ---- determinism scope and devices (found on an Apple-Silicon Mac, 2026-11-08) ----------------------
+_mps = pytest.mark.skipif(not (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()),
+                          reason="needs an MPS device")
+
+
+def _det_state():
+    return torch.are_deterministic_algorithms_enabled(), torch.is_deterministic_algorithms_warn_only_enabled()
+
+
+def test_train_loop_scopes_determinism_and_records_it():
+    before = _det_state()
+    try:
+        torch.use_deterministic_algorithms(False)
+        res = train_loop(lab_models.SwitchAdapter(), {}, lab_models.switch_batch_fn, steps=2, seed=1, deterministic=True)
+        # a deterministic call must not leave the process deterministic (a later call on a device without
+        # deterministic kernels would then fail although it asked for deterministic=False)
+        assert _det_state() == (False, False)
+        assert res.receipt["determinism"] == {"requested": True, "mode": "strict", "nondeterministic_ops": []}
+        assert res.receipt["device"] == "cpu"
+        torch.use_deterministic_algorithms(True)
+        res = train_loop(lab_models.SwitchAdapter(), {}, lab_models.switch_batch_fn, steps=1, seed=1)
+        assert _det_state() == (True, False) and res.receipt["determinism"]["mode"] == "unchanged"
+    finally:
+        torch.use_deterministic_algorithms(before[0], warn_only=before[1])
+
+
+def test_restore_rng_notes_mps_state_without_mps(monkeypatch):
+    import eidos_pytorch.checkpoint as C
+    monkeypatch.setattr(C, "_mps_available", lambda torch: False)
+    notes = C.restore_rng({"rng.mps": torch.zeros(4, dtype=torch.uint8)})
+    assert notes == ["MPS RNG state present but MPS is unavailable; skipped"]
+
+
+def _to(device):
+    return lambda i: {k: v.to(device) for k, v in lab_models.switch_batch_fn(i).items()}
+
+
+@_mps
+def test_deterministic_training_on_mps_is_warn_only_and_recorded():
+    before = _det_state()
+    # nn.Embedding backward has no deterministic MPS kernel: strict mode raised RuntimeError here
+    res = train_loop(lab_models.SwitchAdapter(), {}, _to("mps"), steps=2, seed=1, deterministic=True, device="mps")
+    d = res.receipt["determinism"]
+    assert res.receipt["device"] == "mps" and d["requested"] and d["mode"] == "warn-only"
+    assert any("embedding" in m for m in d["nondeterministic_ops"]), d
+    assert _det_state() == before
+    assert next(res.model.parameters()).device.type == "mps"
+
+
+@_mps
+def test_checkpoint_captures_and_restores_the_mps_rng(tmp_path):
+    from eidos_pytorch.checkpoint import capture_rng, restore_rng
+    torch.mps.manual_seed(7)
+    state = capture_rng()
+    assert "rng.mps" in state
+    a = torch.rand(5, device="mps").cpu()
+    assert restore_rng(state) == []
+    assert torch.equal(torch.rand(5, device="mps").cpu(), a)
+
+
+@_mps
+def test_checkpoint_saved_on_mps_resumes_on_cpu(tmp_path):
+    res = train_loop(lab_models.SwitchAdapter(), {}, _to("mps"), steps=3, seed=1, device="mps",
+                     checkpoint_dir=str(tmp_path), checkpoint_at_end=True)
+    state = load_checkpoint(res.checkpoints[-1])
+    assert all(t.device.type == "cpu" for t in state["entries"]["model"].values())
+    cont = train_loop(lab_models.SwitchAdapter(), {}, _to("cpu"), steps=5, seed=1, device="cpu",
+                      resume_from=res.checkpoints[-1])
+    assert cont.receipt["resumed_from_step"] == 3 and cont.receipt["end_step"] == 5
+    assert next(cont.model.parameters()).device.type == "cpu"
