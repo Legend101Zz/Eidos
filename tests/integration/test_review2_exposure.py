@@ -46,6 +46,13 @@ def test_outcome_revealing_reads_record_exposures(lab):
         before = len(_exposures(lab, pid, r.id))
         fn()
         assert len(_exposures(lab, pid, r.id)) > before, f"{name} recorded no exposure"
+    with lab.ledger.transaction() as tx:
+        tx.project_id = pid
+        tx.insert_artifact({"id": "art_ev", "project_id": pid, "digest": "0" * 64, "size": 1,
+                            "media_type": "application/json", "origin": "job", "producer_job": "job_ev"})
+    before = len(_exposures(lab, pid, r.id))
+    lab.q(r, "get_artifact", {"artifact_id": "art_ev"}, project=pid)   # also the download path's authorization
+    assert len(_exposures(lab, pid, r.id)) > before, "evidence-arm artifact read recorded no exposure"
     lab.q(r, "get_record", {"kind": "assessment", "id": "assess_y"}, project=pid)
     last = _exposures(lab, pid, r.id)[-1]
     assert last["study_id"] == "study-z", last

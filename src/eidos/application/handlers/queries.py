@@ -29,6 +29,10 @@ def _artifact(ctx: Ctx, aid: str) -> dict:
         raise NotFound(f"artifact {aid} not found")
     if not can_read_artifact(ctx, art):
         raise Forbidden(f"artifact {aid} is {art['access_class']}; this principal may not read it")
+    if art.get("producer_job"):  # outputs of evidence arms reveal outcomes (metadata, preview and download)
+        job = ctx.tx.get_job(art["producer_job"])
+        if job:
+            _expose_job(ctx, job)
     return art
 
 

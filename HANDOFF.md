@@ -80,7 +80,7 @@ Full guide: `docs/ops/INSTALL_AND_OPERATE.md`. CI layout: `docs/ops/CI.md`. Exac
 | OpenAI-compatible provider qualification | Needs an endpoint and a key. | Controller runs at most 10 calls (`IMPLEMENTATION_STATUS.md` § Live-provider runs). |
 | External MCP hosts | No Claude Code/Desktop or Codex host in the sandbox. | Use the snippets in `docs/ops/mcp-clients.md`. The SDK client is already verified over stdio and HTTP. |
 | CUDA/MPS restore classes, distributed training | Hardware. | Unauthorized here. |
-| Review 2 open questions | Recorded, not fixed: exposure on artifact preview/download of evidence outputs; idle-poll behaviour across rollover; the assessor with a distinct candidate user; old writers during upgrade. | `docs/dev-runs/adversarial-review-2-2026-11-08.md` |
+| Review 2 open questions | Recorded, not fixed: idle-poll behaviour across rollover; the assessor with a distinct candidate user; old writers during upgrade. | `docs/dev-runs/adversarial-review-2-2026-11-08.md` |
 | Interruption-table rows still `not-started` | Not built yet. | See ACCEPTANCE_MATRIX §C. These rows are: storage lag, question change/withdrawal, assessor dedupe, method withdrawn during confirmation, lost branch reply, node preemption. |
 | Sleep/suspend, multi-day runs | Not exercised. | Owner machine. |
 | Independent evaluation (A16) | External workstream. | Use `eval-*` tags for evaluation configurations, and freeze runs only from a clean tagged tree. |

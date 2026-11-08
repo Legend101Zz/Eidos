@@ -25,7 +25,7 @@
 - Conclusion: macOS candidates are **not isolated from a hostile same-user program**. Seatbelt raises the bar against accidental or unsophisticated access, and a VM profile is the real answer. This is recorded in ADR 0006 and HANDOFF.
 
 **Exposure:**
-- `artifact_preview` and artifact downloads of evidence-arm outputs do not record exposure (inferred).
+- ~~`artifact_preview` and artifact downloads of evidence-arm outputs do not record exposure.~~ Fixed after v0.5.0: artifact metadata, preview and download of a job's outputs go through `_artifact`, which records the producing evidence-arm job's exposure (`test_review2_exposure.py`).
 
 **Idle poll:**
 - Quiet polls grow the workflow history. Past `history_limit`, the Continue-As-New run starts a model turn with no news (about every 3 h with defaults).
