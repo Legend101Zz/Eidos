@@ -38,9 +38,15 @@ RUNNER = "eidos.qualification-runner@1.0.0"
 EVAL_CFG = {"adapter": ADAPTER, "evaluation": {"split": "test", "data_seed": 76102, "pairs": 4000}}
 EDIT_CFG = {"edits": [{"entry": "readout.weight", "index": [0, -1], "op": "set", "value": 0.0}],
             "reason": "silence the recorder weight"}
-LAB_ENV_COMPONENTS = ("eidos.assessors.paired-ci", "eidos.qualification-runner")
+LAB_ENV_COMPONENTS = ("eidos.assessors.paired-ci", "eidos.qualification-runner", "eidos.templates.improves-under-budget",
+                      "lab.pairs.by_group")
 TORCH_COMPONENTS = ("eidos.pytorch.train", "eidos.pytorch.evaluate", "eidos.pytorch.weight-edit",
                     "eidos.pytorch.behavior-check")
+# Jobs now default to the strongest available profile (bwrap-sealed), which cannot see the checkout's journey support
+# directories named by `python_path`. These two runs execute journey-owned extension code from the checkout, so they ask for
+# same-user execution explicitly with a recorded waiver (the sealed default is unchanged for everything else).
+SAME_USER = {"isolation_profile": "dev:same-user",
+             "isolation_waiver": "journey: extension code lives in the checkout's tests/journeys/support, outside the sealed mount"}
 BM, RA = "paired-report/1:both-correct-rate", "paired-report/1:reference-accuracy"
 
 CHARTER = {
@@ -110,13 +116,15 @@ def step1(j: Journey, a: argparse.Namespace) -> None:
         r = j.run("absent-phase", TRAIN, config={
             "adapter": "limited_adapter:ADAPTER", "builder": "OrderedSwitchNet", "steps": 2, "seed": 1,
             "python_path": [str(ext_dir)],
-            "extensions": [{"spec": "unscale_probe:create", "name": "unscale-probe"}]}, expect="failed")
+            "extensions": [{"spec": "unscale_probe:create", "name": "unscale-probe"}]}, expect="failed",
+            **SAME_USER)
         msg = ((r["job"].get("terminal") or {}).get("error") or {}).get("message", "")
         j.check("absent hook phase rejected (job fails naming the phase)", "after-gradient-unscale" in msg, message=msg[:300])
         # contrast: the real adapter fires every phase, so the same extension runs.
         r = j.run("phase-present", TRAIN, config={
             "adapter": ADAPTER, "builder": "OrderedSwitchNet", "steps": 2, "seed": 1,
-            "python_path": [str(ext_dir)], "extensions": [{"spec": "unscale_probe:create", "name": "unscale-probe"}]})
+            "python_path": [str(ext_dir)], "extensions": [{"spec": "unscale_probe:create", "name": "unscale-probe"}]},
+            **SAME_USER)
         j.check("same extension runs when the adapter provides the phase",
                 (r["receipt"].get("extensions") or {}).get("unscale-probe", {}).get("calls") == 2,
                 extensions=r["receipt"].get("extensions"))
@@ -228,8 +236,19 @@ def step3(j: Journey, a: argparse.Namespace) -> None:
         ctrl = j.run("train:control-180", TRAIN, config={**base_cfg, "steps": 180, "checkpoint_every": 45,
                                                          "publish_intermediate_checkpoints": True})
         ck = {s: aid for s, aid in ctrl["out"].items() if s.startswith("checkpoint")}
-        ck45, ck180 = ck.get("checkpoint-step-00000045"), ck.get("checkpoint")
-        j.check("train published checkpoints at step 45 and 180", bool(ck45 and ck180), slots=sorted(ck))
+        ck180 = ck.get("checkpoint")
+        # Only a declared checkpoint slot (`checkpoint`) is branchable now; intermediate `checkpoint-step-N` slots are
+        # registered as plain outputs. The step-45 parent is therefore the final checkpoint of an identical run that stops
+        # at step 45 (same seed/config, steps=45). The control still publishes its own step-45 checkpoint, and the journey
+        # checks the two are the same training state, so branching from the stopped run is branching from the control's step 45.
+        stop45 = j.run("train:stop-at-45", TRAIN, config={**base_cfg, "steps": 45, "checkpoint_every": 45})
+        ck45 = stop45["out"].get("checkpoint")
+        j.check("train published checkpoints at step 45 (stopped run) and 180 (control)", bool(ck45 and ck180), slots=sorted(ck))
+        j.check("the stopped step-45 run and the control's step-45 checkpoint are the same training state",
+                bool(ck.get("checkpoint-step-00000045")) and
+                j.query("get_artifact", {"artifact_id": ck45})["digest"] ==
+                j.query("get_artifact", {"artifact_id": ck["checkpoint-step-00000045"]})["digest"],
+                stopped=ck45, control_intermediate=ck.get("checkpoint-step-00000045"))
         if not (ck45 and ck180):
             raise Blocked("no checkpoints")
         j.S.update(ck45=ck45, ck180=ck180, control_fp=ctrl["receipt"].get("state_fingerprint"))
@@ -283,8 +302,9 @@ def step3(j: Journey, a: argparse.Namespace) -> None:
         cmp = j.query("compare_trials", {"job_ids": [bjob_id, sibl["job_id"]]})
         j.check("compare_trials marks branch siblings as sharing training history", cmp["shared_training_history"] is True,
                 units=[r["independence_unit"] for r in cmp["rows"]])
-        j.check("a branch and the uninterrupted run it was forked from share training history",
-                j.query("compare_trials", {"job_ids": [bjob_id, ctrl["id"]]})["shared_training_history"] is True)
+        # the run the branch was forked from is now the stopped-at-45 run (see the checkpoint note above)
+        j.check("a branch and the run it was forked from share training history",
+                j.query("compare_trials", {"job_ids": [bjob_id, stop45["id"]]})["shared_training_history"] is True)
 
         # ---- deliberate migration: weight edit at two stages --------------------------------------
         edits = {}
@@ -331,7 +351,8 @@ def step3(j: Journey, a: argparse.Namespace) -> None:
         ext_dir = str(REPO / "components" / "lab.learning.group-balanced-ema")
         ext = {"spec": "group_ema.rule:create", "name": "group-balanced-ema", "config": {"decay": 0.9}}
         lr = j.run("train:group-balanced-ema", TRAIN, config={**base_cfg, "steps": 45, "balance_groups": True,
-                                                            "python_path": [ext_dir], "extensions": [ext]})
+                                                            "python_path": [ext_dir], "extensions": [ext]},
+                    **SAME_USER)
         exr = (lr["receipt"].get("extensions") or {}).get("group-balanced-ema") or {}
         j.check("stateful learning rule ran (updates counted, state checkpointed)",
                 exr.get("updates") == 45 and any("group-balanced-ema" in k for k in
@@ -344,7 +365,7 @@ def step3(j: Journey, a: argparse.Namespace) -> None:
         pl = j.cmd_result("plan_branch", {"parent_checkpoint_id": ck45, "component_ref": TRAIN, "migration": ent,
                                           "stream_policy": "paired", "intervention": {"kind": "change-learning"},
                                           "config": {**base_cfg, "steps": 90, "balance_groups": True,
-                                                     "python_path": [ext_dir], "extensions": [ext]}, "wall_seconds": 600})
+                                                     "python_path": [ext_dir], "extensions": [ext]}, "wall_seconds": 600, **SAME_USER})
         j.check("adding the learning rule at a branch is warm-start with an explicit init for its state",
                 pl["restore_class"] == "warm-start", restore_class=pl["restore_class"])
         plj = j.wait_job(j.cmd_result("launch_branch", {"trial_id": pl["trial_id"]})["job_id"])
@@ -571,8 +592,10 @@ def step5(j: Journey, a: argparse.Namespace) -> None:
         j.check("plan frozen", bool(fp.get("plan_digest")), plan_digest=fp.get("plan_digest"))
         lp = j.cmd_result("launch_evidence_plan", {"plan_id": pd["plan_id"]})
         j.rec["evidence_jobs"] = lp["jobs"]
-        for arm_id, jid in lp["jobs"].items():
-            jb = j.wait_job(jid)
+        # launch_evidence_plan maps an arm to the list of its job ids (one per pipeline step; here one run per arm)
+        for arm_id, jids in lp["jobs"].items():
+            assert len(jids) == 1, (arm_id, jids)
+            jb = j.wait_job(jids[0])
             j.record_job(f"evidence:{arm_id}", jb)
         j.check("all evidence arms succeeded", all(j.rec["jobs"][f"evidence:{k}"]["status"] == "succeeded" for k in lp["jobs"]))
         asm = poll(lambda: (lambda r: r[0] if r else None)(
@@ -628,7 +651,8 @@ def step5(j: Journey, a: argparse.Namespace) -> None:
 def _second_plan(j: Journey, c: dict) -> str:
     plan = j.query("get_record", {"kind": "evidence_plan", "id": j.S["plan"]})["body"]
     draft = {"success_rule_id": "early-repair", "assessor": {"ref": ASSESSOR}, "arms": plan["arms"],
-             "analysis_unit": "pair", "cluster_by": "seed", "seed_policy": plan["seed_policy"]}
+             "analysis_unit": "pair", "cluster_by": "seed", "seed_policy": plan["seed_policy"],
+             "required_isolation": plan["required_isolation"]}
     r = j.cmd_result("draft_evidence_plan", {"claim_id": j.S["claim"], "charter_id": c["charter_id"], "charter_revision": 1,
                                               "template_ref": TEMPLATE, "draft": draft, "plan_id": f"plan2:{j.project}"})
     return r["plan_id"]
@@ -651,7 +675,9 @@ def step6(j: Journey, a: argparse.Namespace) -> None:
             src = REPO / "components" / name
             if name in TORCH_COMPONENTS:
                 src, _ = stage_component(src, stage)
-            rc, data, err = j.cli("component", "install", img, str(src))
+            # `project create` already installed the lab-env built-ins (by_group among them); installing the identical
+            # bundle again in the lab environment is idempotent.
+            rc, data, err = j.cli("component", "install", img, str(src), "--env", "lab" if name in LAB_ENV_COMPONENTS else "default")
             j.check(f"install {name} into the image project", rc == 0 and bool(data and data.get("component_ref")), err=err[-300:])
         # run in the second project through its own project id
         def run_img(label, ref, inputs, config):
@@ -755,6 +781,7 @@ def step7(j: Journey, a: argparse.Namespace) -> None:
                 ("active", "concluded"), status=shown and shown.get("status"))
         # ---- wait for the loop to finish ---------------------------------------------------------------------
         end = time.monotonic() + 900
+        idle_state = {"turns": -1, "since": time.monotonic(), "steered": False}
         status = None
         while time.monotonic() < end:
             shown = j.query("get_investigation", {"investigation_id": inv})
@@ -763,6 +790,21 @@ def step7(j: Journey, a: argparse.Namespace) -> None:
                 break
             if len([t for t in shown["turns"] if t["status"] == "completed"]) >= 30:
                 break
+            # Idle polls no longer start a turn without news (job/evidence/assessment events). The scripted policy's last
+            # stage files the claim and requests the export in a "wait" turn that launches no job, so nothing wakes the
+            # loop for its concluding turn. A steer is the operator's wake-up; it carries no content the fixture policy reads.
+            done_turns = len([t for t in shown["turns"] if t["status"] == "completed"])
+            if done_turns != idle_state["turns"]:
+                idle_state.update(turns=done_turns, since=time.monotonic())
+            elif (not idle_state["steered"] and time.monotonic() - idle_state["since"] > 20 and status == "active"
+                  and all(x["status"] in ("succeeded", "failed", "cancelled") for x in shown["jobs"])
+                  and {"claim.filed", "model.exported"} <= {e["type"] for e in j.query(
+                      "list_events", {"investigation_id": inv, "cursor": 0, "limit": 500})["events"]
+                      if e.get("investigation_id") == inv}):
+                j.cmd("steer_investigation", {"investigation_id": inv, "instruction": "continue: evidence and export are recorded"})
+                idle_state["steered"] = True
+                j.note("step 7: claim and export were recorded in a no-job wait turn and the loop idled (no news since the last "
+                       "turn's horizon); woke it with steer_investigation. See docs/dev-runs/switch-journey.md, defects.")
             time.sleep(2)
         stop.set()
         th.join(timeout=5)
