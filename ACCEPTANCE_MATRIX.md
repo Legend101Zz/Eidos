@@ -26,7 +26,7 @@ Paths are relative to the repository root. Verification commands are listed in
 | A8 | Bounded autonomous investigation: diagnosis, new component, trial/branch, assessment, export via internal loop; disconnect; crash after committed tool effect; same recorded key; hand off; one logical admission; charges visible; next turn reconstructs from evidence | `src/eidos/orchestration`, `src/eidos/investigator` | `test_turn_recovery.py`; `tests/journeys/switch_journey.py` (EIDOS_JOURNEY=1; 149 checks passed 2026-11-07; record docs/dev-runs/switch-journey.md) step 7 (scripted policy authors+publishes a component, branch/edit, claim, export; investigator-worker SIGKILL → one admission per call, charges visible); D01/D02/D12 runs | fixture-only; real LLM unqualified |
 | A9 | Runtime compatibility and recovery: real providers, large catalogs, cancellation, component change between turns, overflow rejection, parent history rollover, child/runtime + parent workflow upgrades; budgets and live jobs survive | `src/eidos/orchestration`, `src/eidos/investigator/runtime_*` | `tests/integration/test_workflows.py` (rollover, replay guard, retries/cancel), `tests/unit/test_pydantic_ai_runtime.py` | implemented. Anthropic adapter qualified for development, lab-free (live receipts #1–#3; #3 passed 8/8). OpenAI-compatible endpoints unqualified. No real-LLM lab investigation yet. |
 | A10 | Worker independence: SDK in old/current project envs incl. a Pydantic v1 project; no server deps installed; torch unchanged; wire fixtures across schema versions | `packages/eidos-wire`, `packages/eidos-worker-sdk`, `schemas/` | `tests/worker_compat/run_matrix.sh` | runtime-verified (py3.9+pydantic1, py3.12+torch2.15) |
-| A11 | Achieved isolation: positive and hostile probes per advertised profile; same-user receipt cannot satisfy sealed plan; missing/false receipt blocks protocol-passed; candidate never gets scorer authority | `src/eidos/runtime/isolation`, sealed runner | `tests/integration/test_isolation_probes.py`; sealed job on live lab | linux:bwrap runtime-verified incl. separate-identity with a candidate-readable interpreter under /opt (fails, reported, for root-owned interpreters); macOS/Lima unqualified |
+| A11 | Achieved isolation: positive and hostile probes per advertised profile; same-user receipt cannot satisfy sealed plan; missing/false receipt blocks protocol-passed; candidate never gets scorer authority | `src/eidos/runtime/isolation`, sealed runner | `tests/integration/test_isolation_probes.py`; sealed job on live lab | linux:bwrap runtime-verified, including separate-identity with a candidate-readable interpreter under /opt (it fails, and is reported, for root-owned interpreters). macos:seatbelt-sealed is implemented: profile generation and selection are unit-tested (`tests/unit/test_seatbelt_policy.py`), and the hostile probes plus a same-user planted-effect control run in the macOS CI job (`scripts/ci/seatbelt_probes.py`; GitHub-runner evidence, first result pending 2026-11-08). macOS researcher machine and Lima are unqualified. |
 | A12 | Turn evaluation: reconstruct historical view, alternate context/model policies without future leakage, isolated benchmark commands, unexecuted counterfactuals distinguished | `src/eidos/investigator/replay.py` | `tests/integration/test_turn_recovery.py::test_offline_replay...` | runtime-verified |
 | A13 | Training and architecture changes: weight edit, stateful learning rule, architecture patch, synthetic data generation, whole custom trainer; restore classes per device profile; strict-load/wrong-builder fixture fails behavioral acceptance | `packages/eidos-pytorch`, `components/`, `examples/` | components tests; `tests/journeys/switch_journey.py` (EIDOS_JOURNEY=1; 149 checks passed 2026-11-07; record docs/dev-runs/switch-journey.md) steps 3-4 (ema rule, builder change, generator, wrong builder behavior_match=false with strict load ok); task bundles via whole-project command | runtime-verified on CPU; CUDA/MPS unqualified |
 | A14 | Operator/API integrity: authenticated HTTP + stdio, capability/version conformance, cross-project access/exfiltration, lost-reply dedup, stale revisions, cooperative cancellation, detach/reattach; real external clients | `src/eidos/api`, `src/eidos/mcp` | `tests/mcp/*`, `tests/integration/test_command_path.py` | runtime-verified with SDK client; external clients unqualified |
@@ -52,7 +52,7 @@ Paths are relative to the repository root. Verification commands are listed in
 | Interruption | Test | Status |
 |---|---|---|
 | Client disconnects after start → same command key returns same receipt | `test_command_path.py`, `tests/mcp/test_mcp_live.py` | runtime-verified |
-| LLM timeout after possible charge → request ID + possible spend recorded | `tests/unit/test_runtime_accounting.py` | not-started |
+| LLM timeout after possible charge → request ID + possible spend recorded | `tests/unit/test_pydantic_ai_runtime.py::test_provider_error_maps_to_retryable_failure_with_possible_spend`; live receipts #2–#3 (timeout classified retryable) | unit-verified (fixture model) + live classification verified |
 | Investigator dies during training → reattach via handle | `tests/ops/runner_reattach.sh` (runner killed mid-job; same attempt finished, 2026-11-07) | runtime-verified (runner crash); investigator crash in journey |
 | Node preempted / rank lost | single-node: process kill + reconcile | not-started; distributed unqualified |
 | Duplicate/reordered/stale completion → epoch + unique publication key | `test_command_path.py::test_fencing...` | runtime-verified |
@@ -64,11 +64,12 @@ Paths are relative to the repository root. Verification commands are listed in
 | Controller upgrade during multi-day work → replay tests, versioning | `test_workflows.py::test_recorded_histories_replay...`, `lab upgrade` | partially verified |
 | Turn dies after tool effect commits → same key, existing receipt | `test_turn_recovery.py` | runtime-verified (activity level); worker kill in journey |
 | Payload overflow / history limit → reject + rollover | `test_workflows.py`, envelope checks | runtime-verified (dev server) |
-| Component/investigator upgrade during turn | integration | not-started |
+| Activity heartbeat lost / worker vanishes mid-activity / start-to-close exceeded / retry exhaustion | `tests/integration/test_temporal_realtime.py` (real timers; dev server and the lab's regular server, 4/4 on 2026-11-08) | runtime-verified |
+| Component/investigator upgrade during turn | `test_workflows.py::test_inflight_turn_with_invalid_proposal_replays_after_upgrade` (workflow code upgrade with an in-flight turn) | partially verified (component release swap during a live turn not exercised) |
 | Machine sleep/reboot/power loss → reconcile, don't trust PID | `tests/ops/abrupt_stop.sh` (kill -9 services ± job; boot id + start time) | runtime-verified for kill/power-loss equivalent; sleep not exercised |
 | Disk full / incomplete backup / service corruption | `test_disk_pressure.py`; backup refuses missing blobs | partially verified |
 
-## D. Known limitations (updated 2026-11-07, after eidos-v0.1.0)
+## D. Known limitations (updated 2026-11-08, after eidos-v0.4.0; see also `HANDOFF.md`)
 
 Closed since v0.1.0; each item names its evidence:
 - **checkpoint-and-stop pause/cancel policy:** SIGUSR1 → checkpoint at a committed step → `cancelled` with a published checkpoint. Evidence: `tests/ops/checkpoint_and_stop.sh`, verified live at step 22,654.
@@ -81,8 +82,14 @@ Closed since v0.1.0; each item names its evidence:
 - **Live-provider receipt #1 defects fixed:** strict-mode-safe args, required-arg validation, partial usage on failure, 4xx non-retryable, bounded request budget.
 - **All 14 public development cards:** reference smoke through Eidos jobs plus reference-assisted builder checks; `qualify.py` 27/27. Evidence: `docs/dev-runs/research-cards.md`.
 
+- **Real-time Temporal timeouts and retries (round 6):** heartbeat timeout, start-to-close, retry policy, non-retryable errors, and a worker SIGKILLed mid-activity taken over by another worker. Evidence: `tests/integration/test_temporal_realtime.py`, on the dev server and the regular server.
+- **macOS sealed candidate profile (round 6):** `macos:seatbelt-sealed` implemented. Probes are in the macOS CI job; see "Still open" for its limits.
+
 Still open:
-- **Adversarial review:** all listed open items are fixed (round 5). What remains is platform-bound: macOS has no sealed profile, and a distinct candidate identity needs a readable interpreter. See `docs/dev-runs/adversarial-review-2026-11-07.md`.
+- **Adversarial review:** all listed open items are fixed (round 5). What remains is platform-bound.
+  - A distinct candidate identity needs a readable interpreter.
+  - On macOS, seatbelt runs as the same user, so `separate-identity` fails; mach IPC is unfiltered; `sandbox-exec` is deprecated; the assessor runs same-user; Lima VM is not implemented.
+  - See `docs/dev-runs/adversarial-review-2026-11-07.md`.
 - **macOS:** an owner-run qualification kit is ready (`scripts/qualify/macos_owner_kit.sh`, `docs/ops/MACOS_OWNER_QUALIFICATION.md`). Its Linux dry run passes every step; the owner decides whether to run it.
 - **Real LLM providers:** a script is ready for the controller (`scripts/qualify/live_provider_check.py`).
 - **Not qualified:** macOS on a researcher machine (a runner smoke job exists), Lima VM, CUDA/MPS, and external MCP hosts (Claude Code/Desktop, Codex). The official SDK client is verified over stdio and HTTP.

@@ -1,6 +1,8 @@
 # Eidos local v1: implementation status
 
-Updated 2026-11-07 by the lead session, on branch `build/eidos-local-v1`.
+Updated 2026-11-08 by the lead session, on branch `build/eidos-local-v1`.
+- Start here: `HANDOFF.md`, which lists what v0.4.0 is and isn't, the evidence classes, open items and pending owner decisions.
+- Latest freeze: tag `eidos-v0.4.0` → `c57dba9`. Commits after it are listed in `HANDOFF.md`.
 - Criterion-level status: `ACCEPTANCE_MATRIX.md`.
 - Build sandbox: `docs/ops/SANDBOX_CAPABILITIES.md`.
 - Public research release runs: `docs/dev-runs/research-public-v0.1.0.md`.
@@ -15,8 +17,8 @@ Updated 2026-11-07 by the lead session, on branch `build/eidos-local-v1`.
 | Ledger: PostgreSQL schema, project-scoped records, append-only triggers, role grants | runtime-verified (`tests/integration/test_command_path.py`) |
 | Command service | ~55 commands and ~22 queries. Idempotency, revisions, fences, budgets and outbox are runtime-verified. |
 | HTTP API, artifact CAS, upload/download, maintenance mode, disk-pressure refusal | runtime-verified |
-| Temporal workflows (coordinator with Continue-As-New, bounded turns, independent jobs, assessment) | runtime-verified on the **regular Temporal Server 1.32.2 + PostgreSQL**. Rollover, retries and recorded-history replay are tested on the dev server (tests only). |
-| Runner/launcher | Reattach-safe handles: pid + start time + boot id, exit file. dev profile and **linux:bwrap-sealed** profile runtime-verified, with hostile probes. |
+| Temporal workflows (coordinator with Continue-As-New, bounded turns, independent jobs, assessment) | runtime-verified on the **regular Temporal Server 1.32.2 + PostgreSQL**. Rollover, retries and recorded-history replay are tested on the dev server (tests only). Real-time timeout/retry behaviour (heartbeat timeout, start-to-close, retry policy, non-retryable errors, worker SIGKILLed mid-activity taken over by a second worker) passes on the dev server **and** on the lab's regular server: `tests/integration/test_temporal_realtime.py`. |
+| Runner/launcher | Reattach-safe handles: pid + start time + boot id, exit file. The dev profile and **linux:bwrap-sealed** are runtime-verified, with hostile probes. **macos:seatbelt-sealed** (`sandbox-exec`) is implemented and unit-tested for profile generation. Its probes run in the macOS CI job (GitHub-runner evidence; first run pending at the time of writing). |
 | Investigator | context-policy/1, fixture runtime, recovery activities, offline turn replay. Fixture-only. |
 | Pydantic AI adapter | **Anthropic qualified (development, lab-free):** receipt #3 passed 8/8 after the fixes from receipts #1 and #2. OpenAI-compatible endpoints are unqualified. |
 | Supervisor | init, start, stop, status, doctor, logs, backup, restore and upgrade runtime-verified on Linux. Restore was done into a fresh directory on new ports with re-enrolled credentials. |
@@ -28,7 +30,7 @@ Updated 2026-11-07 by the lead session, on branch `build/eidos-local-v1`.
 
 ## Active helper assignments and worktrees
 
-None. All task branches are merged and the worktrees are removed. Tag `eidos-v0.1.0` is the current development freeze; it is not v1 acceptance.
+None. All task branches are merged and the worktrees are removed. Tags `eidos-v0.1.0`…`eidos-v0.4.0` are development freezes, not v1 acceptance.
 
 ## How to run
 
@@ -38,13 +40,24 @@ uv sync
 .venv/bin/ruff check src tests && .venv/bin/lint-imports
 .venv/bin/python -m pytest tests/unit -q
 EIDOS_TEST_PG_ADMIN=postgresql+psycopg://postgres:devpass@127.0.0.1:5432/postgres .venv/bin/python -m pytest tests/integration -q
+.venv/bin/python -m pytest tests/unit tests/integration tests/mcp tests/reporting -q      # 113 passed, 1 skipped (2026-11-08)
+EIDOS_TEMPORAL_TARGET=127.0.0.1:7633 .venv/bin/python -m pytest tests/integration/test_temporal_realtime.py -q   # against a running lab's regular server
+EIDOS_NUMPY_PYTHON=<numpy env python> EIDOS_TORCH_PYTHON=<torch env python> .venv/bin/python -m pytest tests/components -q
 bash tests/worker_compat/run_matrix.sh
 bash tests/components/run.sh
+OUT=/tmp/sb python scripts/ci/seatbelt_probes.py      # macOS only: seatbelt hostile probes + same-user planted-effect control
 export EIDOS_HOME=/workspace/.eidos-dev/lead/lab   # lead lab
 .venv/bin/lab init --home $EIDOS_HOME --temporal-source /opt/temporal/server && .venv/bin/lab start && .venv/bin/lab doctor
 ```
 
-## Last verified results (2026-11-07)
+## Last verified results (2026-11-08)
+
+- At `3aa9192`: unit + integration + MCP + reporting **113 passed, 1 skipped**. That count includes 4 real-time Temporal tests and 5 seatbelt policy/selection tests.
+- `test_temporal_realtime.py` also passed 4/4 against the lead lab's regular Temporal Server (`EIDOS_TEMPORAL_TARGET=127.0.0.1:7633`).
+- Ruff is clean and Import Linter keeps 5/5 contracts.
+- CI on `c57dba9` (tag `eidos-v0.4.0`): six jobs green. CI on `3aa9192` and later: not read here (API rate limit). The controller should check it.
+
+Earlier:
 
 - Round 2 (c75c814): unit 27, integration incl. workflows and pipelines, MCP 19. Every suite passes.
 - Earlier: unit + integration + mcp + reporting **70 passed** (78e4597). Switch journey: 149 checks passed. A fresh wheel install (`uv build` → new venv → init/start/doctor) was all ok.
@@ -201,8 +214,30 @@ These are separate commits in the journey merge:
 - **Component tests in CI.**
 - **Verified:** unit + integration + MCP + reporting 104 passed; workflow tests incl. stress and two frozen histories 7 passed; components 59 passed locally (CI job added); ruff clean; import contracts 5/5. A live D02 fixture investigation on the upgraded lab concluded with 0 tokens left reserved.
 
+## Round 6 (2026-11-08): final scripted round
+
+- **Tag:** `eidos-v0.4.0` on `c57dba9`, annotated and pushed.
+- **Real-time Temporal tests:** `tests/integration/test_temporal_realtime.py`, 4 tests in about 13–21 s with real timers and no time skipping.
+  - heartbeat timeout → retry on attempt 2 in under 6 s;
+  - start-to-close timeout with finite attempts;
+  - retry policy (3 attempts) and a non-retryable error (1 attempt);
+  - worker A (a subprocess) SIGKILLed mid-activity → worker B finishes it on attempt 2 via a 2 s heartbeat timeout.
+  - They pass on the dev server and on the lab's regular server.
+- **macOS candidate sandbox, `macos:seatbelt-sealed`:**
+  - Code: `src/eidos/runtime/launcher.py` (`seatbelt_policy`, `seatbelt_argv`, `detect_sealed_profile`), `src/eidos/domain/isolation.py`, runner/roots/settings/doctor.
+  - Paths are passed as `-D` parameters. Reads of the lab home and credential directories are denied, except the attempt's own files inside them; an ancestor path such as a project root cannot reopen them.
+  - Writes are allowed only to staging, scratch, resume, a private tmp, /dev and the logs. Network is denied and the environment is cleared.
+  - The same OS user runs the candidate, so `separate-identity` fails. Mach IPC is not filtered.
+  - Supervisor init detects it on darwin, so `strongest_profile` selects it and the sealed runner serves it. Weaker profiles still need a recorded waiver.
+  - Unit tests: `tests/unit/test_seatbelt_policy.py`.
+  - The macOS CI job runs `scripts/ci/seatbelt_probes.py`: hostile probes with a live control-socket listener, a same-user planted-effect control, and a permitted computation.
+  - **Not done:** the macOS assessor still runs `dev:same-user`; Lima VM is not implemented.
+- **Handoff:** `HANDOFF.md` written; this file and `ACCEPTANCE_MATRIX.md` updated.
+
 ## Next concrete action
 
-1. The controller confirms CI is green (now six jobs, including `components`) on the current head. Then tag `eidos-v0.4.0` there.
-2. Owner-gated: macOS kit, lab-free real-LLM D02/D12 runs.
-3. Remaining v1 gaps need hardware, clients or keys. See ACCEPTANCE_MATRIX §D.
+1. The controller reads CI for the head of `build/eidos-local-v1`. Above all, check the macOS step "Seatbelt candidate-sandbox probes". The evidence is the `seatbelt_probes.json` artifact in `macos-arm64-evidence`.
+   - **If the step is green:** tag `eidos-v0.4.1` at that head, and record the result in ACCEPTANCE_MATRIX A11.
+   - **If it is red:** the JSON names the failing control. Fix the generated profile in `seatbelt_policy`. Until then, macOS runs must use `dev:same-user` with a waiver, or run on a lab where `sealed_profile` is empty.
+2. Owner decisions, listed in `HANDOFF.md`: the macOS kit, real-LLM lab-free D02/D12 runs, OpenAI-compatible qualification, external MCP clients, and seatbelt vs Lima.
+3. The remaining v1 gaps need hardware, clients or keys. See ACCEPTANCE_MATRIX §C/§D.

@@ -1,0 +1,94 @@
+# Eidos handoff (2026-11-08, after eidos-v0.4.0)
+
+## Identity
+
+- Repository: `Legend101Zz/Eidos`. Branch: `build/eidos-local-v1`. The controller maintains the draft PR `build/eidos-local-v1 → main`.
+- Latest freeze: annotated tag **`eidos-v0.4.0` → `c57dba9`**. All six CI jobs were green there: lint-and-unit, integration, fresh-install, worker-compat, macOS arm64, components.
+  - Earlier tags, never moved: `eidos-v0.1.0` → `78e4597`, `eidos-v0.2.0` → `37bd0c5`, `eidos-v0.3.0` → `8a33793`.
+- **These commits come after the tag** and are not part of any freeze:
+  - `2709265`: real-time Temporal timeout and retry tests.
+  - `3aa9192`: the `macos:seatbelt-sealed` candidate sandbox, its probe step in the macOS CI job, and unit tests.
+  - The handoff/status documentation commit that adds this file.
+- Their CI results had not been read when this was written (the GitHub API was rate-limited from the sandbox). If they are green, tag a new `eidos-v0.4.1`. Never move `eidos-v0.4.0`.
+- No `eidos-v1.0.0` tag exists, because the v1 acceptance criteria are not all met (see below).
+
+## What v0.4.0 is
+
+A development freeze of the complete local-v1 software stack described in `docs/design/eidos-claude-handoff/` (Revision 4). It contains:
+
+- **Ledger and commands:** a PostgreSQL ledger with role grants and append-only triggers. Every planner, assessor, investigator and worker write goes through one authoritative command service with idempotency, revisions, fences and budgets.
+- **Orchestration:** on the regular Temporal Server.
+  - A coordinator workflow with Continue-As-New, bounded investigator turns and persisted decisions and ordered calls.
+  - Stable command keys.
+  - Jobs whose lifetime is independent of turns.
+  - Patched, guarded upgrades.
+- **Runner and launcher:** reattach-safe handles (pid + start time + boot id), lost-attempt reconciliation, resume after worker death, and checkpoint-and-stop.
+- **Isolation:** `linux:bwrap-sealed` with hostile probes and recorded waivers, and a sandboxed assessor.
+- **Thin worker packages:** `eidos-wire`, `eidos-worker-sdk` and `eidos-pytorch` (stdlib only, using the project's own torch).
+- **Study rules:** charters and evidence plans, qualification gated on executed planted-effect and null-case receipts, checkpoint branching, versioned context policies and offline turn replay.
+- **Exposure tracking.**
+- **Local operations:** supervisor, CLI, MCP (stdio + loopback HTTP), HTML reports, doctor/status/logs, backup/restore, upgrade.
+- **Components:** 13 built-in components.
+- **Research handoff:** an adapter for the public research release (`eidos-task-bundle/0.1` → `eidos-answer/0.2`).
+
+## What v0.4.0 is not
+
+- **Not v1 acceptance.** macOS researcher machines, real-LLM lab investigations, external MCP hosts, CUDA/MPS and the other gaps listed below are open.
+- **Not evidence that Eidos helps an LLM do model research.** That is the research question, and it is untested. A16 belongs to the independent evaluation workstream.
+- **Not autonomous real-LLM behaviour.** Every investigator decision recorded in lab runs came from a deterministic fixture policy.
+- **Not a frozen scientific study.** No final evaluation has been run, and no private evaluation material was sought or accessed.
+
+## Install and run
+
+```bash
+uv build --all-packages -o dist && uv tool install --find-links dist eidos-lab   # or pip install from dist/
+lab init                      # private PostgreSQL cluster + pinned Temporal Server under ~/.eidos (or --home)
+lab start && lab doctor       # supervisor; doctor reports isolation profiles, disk, secrets, services
+lab project create myproj
+lab project register-env myproj --python /path/to/.venv/bin/python --root /path/to/project
+lab investigate start myproj --question "..." --runtime pydantic-ai --model anthropic:<model>
+lab investigate events myproj --investigation <id> --follow
+lab report myproj --investigation <id>
+lab mcp                       # stdio MCP server; client snippets in docs/ops/mcp-clients.md
+lab backup / lab restore BUNDLE --home NEW_DIR / lab upgrade / lab stop --running-jobs detach
+```
+
+Full guide: `docs/ops/INSTALL_AND_OPERATE.md`. CI layout: `docs/ops/CI.md`. Exact test commands: `IMPLEMENTATION_STATUS.md` § How to run.
+
+## Evidence classes
+
+| Class | What |
+|---|---|
+| **Runtime-verified (hosted Linux, Ubuntu 24.04 x86_64, CPU)** | Everything in "What v0.4.0 is", exercised against real PostgreSQL 16, the regular Temporal Server 1.32.2 and real processes. Also: the switch-order journey (149 checks), D01/D02/D12 bundle runs, a fresh wheel install, abrupt-stop/reattach/checkpoint-and-stop ops scripts and a performance smoke. **New:** real-time Temporal heartbeat-timeout, start-to-close, retry-policy and worker-SIGKILL tests pass on the dev server and against the lab's regular server (`tests/integration/test_temporal_realtime.py`, 4/4, 2026-11-08). |
+| **Fixture-only** | All investigator decisions inside lab runs: the D01/D02/D12 investigations and journey step 7. |
+| **Development-qualified, lab-free** | The Anthropic path through the Pydantic AI adapter. Controller-run live receipt #3 passed 8/8. |
+| **GitHub-runner evidence (macOS arm64)** | Wheel install, `lab init/start/doctor/project/status/stop`, worker SDK tests and research smoke. **New, pending its first CI run:** `macos:seatbelt-sealed` hostile probes with a same-user planted-effect control (`scripts/ci/seatbelt_probes.py`). |
+| **Unqualified** | macOS researcher machine; Lima VM; CUDA/MPS; OpenAI-compatible providers; external MCP hosts (Claude Code/Desktop, Codex); sleep/suspend; multi-day runs; distributed training; performance on a declared reference machine. |
+| **Scientifically unproven** | Any claim that Eidos improves verified outcomes under comparable budgets (A16). |
+
+## Open items
+
+| Item | Blocker | Next step |
+|---|---|---|
+| macOS researcher-machine qualification | Needs the owner's Mac. A hosted runner is not a researcher machine. | Owner runs `scripts/qualify/macos_owner_kit.sh` (`docs/ops/MACOS_OWNER_QUALIFICATION.md`). |
+| macOS sealed isolation | `macos:seatbelt-sealed` is implemented, but only CI runner evidence exists. It runs as the same OS user (no `separate-identity`), mach IPC is unfiltered, and `sandbox-exec` is deprecated by Apple. The macOS assessor still runs same-user. Lima VM is not implemented. | Read the macOS CI job result. If the probes fail, runs fall back to `dev:same-user` with recorded waivers, and the failure is recorded in the receipt. Owner decides whether seatbelt is acceptable or Lima is required. |
+| Real-LLM autonomous lab investigation | No provider key in the build sandbox, and the controller's budget is separate. | Owner/controller authorizes the lab-free D02/D12 runs (`scripts/qualify/live_bundle_investigation.py`, ≤ 40 requests per bundle), then a full-lab run. |
+| OpenAI-compatible provider qualification | Needs an endpoint and a key. | Controller runs at most 10 calls (`IMPLEMENTATION_STATUS.md` § Live-provider runs). |
+| External MCP hosts | No Claude Code/Desktop or Codex host in the sandbox. | Use the snippets in `docs/ops/mcp-clients.md`. The SDK client is already verified over stdio and HTTP. |
+| CUDA/MPS restore classes, distributed training | Hardware. | Unauthorized here. |
+| Interruption-table rows still `not-started` | Not built yet. | See ACCEPTANCE_MATRIX §C. These rows are: storage lag, question change/withdrawal, assessor dedupe, method withdrawn during confirmation, lost branch reply, node preemption. |
+| Sleep/suspend, multi-day runs | Not exercised. | Owner machine. |
+| Independent evaluation (A16) | External workstream. | Use `eval-*` tags for evaluation configurations, and freeze runs only from a clean tagged tree. |
+
+## Owner decisions pending
+
+1. Run the macOS owner kit on a researcher Mac.
+2. Authorize the real-LLM lab-free D02 and D12 runs, then a full-lab investigation.
+3. Choose and fund an OpenAI-compatible endpoint for adapter qualification.
+4. Exercise external MCP clients: Claude Code/Desktop and Codex.
+5. Decide whether `macos:seatbelt-sealed` is acceptable as the macOS sealed profile for plans that do not require `separate-identity`, or whether a Lima VM profile must be built.
+
+## Budget visibility
+
+- At the controller's last check-in, session spend was USD 91.58 of the USD 150 cap, and ancillary spend was USD 0.56 of USD 10.
+- This round added the work listed above. The controller holds the authoritative figure.
