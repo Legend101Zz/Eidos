@@ -85,6 +85,12 @@ Closed since v0.1.0; each item names its evidence:
 - **Real-time Temporal timeouts and retries (round 6):** heartbeat timeout, start-to-close, retry policy, non-retryable errors, and a worker SIGKILLed mid-activity taken over by another worker. Evidence: `tests/integration/test_temporal_realtime.py`, on the dev server and the regular server.
 - **macOS sealed candidate profile (round 6):** `macos:seatbelt-sealed` is implemented. Its hostile probes and the planted-effect control passed on a GitHub macOS arm64 runner (CI run `42429763457`). See "Still open" for its limits.
 
+- **Round 7 (eidos-v0.5.0, CI green on `e822744`):**
+  - the macOS assessor runs under Seatbelt;
+  - adversarial review 2: five findings fixed with regression tests (`docs/dev-runs/adversarial-review-2-2026-11-08.md`);
+  - A15 installation upgrade across releases: v0.1.0 wheels → head, 33 checks (`scripts/ci/upgrade_across_releases.sh`, CI job);
+  - A1/A14 clean-install journey through the CLI and the MCP SDK client: D01 fixture investigation and validated answer, branch, export (`scripts/journeys/e2e_journey.sh`, CI job). The qualified assessment in this journey is being added.
+
 Still open:
 - **Adversarial review:** all listed open items are fixed (round 5). What remains is platform-bound.
   - A distinct candidate identity needs a readable interpreter.

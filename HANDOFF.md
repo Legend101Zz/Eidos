@@ -1,19 +1,21 @@
-# Eidos handoff (2026-11-08, after eidos-v0.4.0)
+# Eidos handoff (2026-11-08, eidos-v0.5.0)
 
 ## Identity
 
 - Repository: `Legend101Zz/Eidos`. Branch: `build/eidos-local-v1`. The controller maintains the draft PR `build/eidos-local-v1 → main`.
-- Latest freeze: annotated tag **`eidos-v0.4.0` → `c57dba9`**. All six CI jobs were green there: lint-and-unit, integration, fresh-install, worker-compat, macOS arm64, components.
-  - Earlier tags, never moved: `eidos-v0.1.0` → `78e4597`, `eidos-v0.2.0` → `37bd0c5`, `eidos-v0.3.0` → `8a33793`.
-- **Current freeze: annotated tag `eidos-v0.4.1` → `e328608`.** It adds three commits after `eidos-v0.4.0`:
-  - `2709265`: real-time Temporal timeout and retry tests.
-  - `3aa9192`: the `macos:seatbelt-sealed` candidate sandbox, its probe step in the macOS CI job, and unit tests.
-  - `e328608`: this handoff and the status documents.
-- CI run `42429763457` on `e328608` passed all six jobs. The macOS step "Seatbelt candidate-sandbox probes" passed (job `128575933627`).
-- **After `eidos-v0.4.1`** there is one documentation-only commit, which records this CI result and the tag. There are no code changes after the tag.
+- **Current freeze: annotated tag `eidos-v0.5.0` → `e822744`.** All eight CI jobs are green there: lint-and-unit, integration, fresh-install, upgrade-across-releases, e2e-journey, components, macOS arm64, worker-compat.
+- Earlier tags, never moved: `eidos-v0.1.0` → `78e4597`, `v0.2.0` → `37bd0c5`, `v0.3.0` → `8a33793`, `v0.4.0` → `c57dba9`, `v0.4.1` → `e328608`.
+- **Since v0.4.1:**
+  - the macOS assessor runs under Seatbelt;
+  - adversarial review 2, with five findings fixed (`docs/dev-runs/adversarial-review-2-2026-11-08.md`);
+  - the cross-release upgrade test (v0.1.0 wheels → head);
+  - the clean-install end-to-end journey through the CLI and the MCP SDK client (`docs/dev-runs/e2e-journey.md`);
+  - `lab upgrade` now switches to the new interpreter;
+  - `lab component install` is now idempotent.
+- Commits after `eidos-v0.5.0` are listed in `IMPLEMENTATION_STATUS.md`. Only CI-green SHAs get tagged.
 - No `eidos-v1.0.0` tag exists, because the v1 acceptance criteria are not all met (see below).
 
-## What v0.4.0 is
+## What v0.5.0 is
 
 A development freeze of the complete local-v1 software stack described in `docs/design/eidos-claude-handoff/` (Revision 4). It contains:
 
@@ -24,7 +26,7 @@ A development freeze of the complete local-v1 software stack described in `docs/
   - Jobs whose lifetime is independent of turns.
   - Patched, guarded upgrades.
 - **Runner and launcher:** reattach-safe handles (pid + start time + boot id), lost-attempt reconciliation, resume after worker death, and checkpoint-and-stop.
-- **Isolation:** `linux:bwrap-sealed` with hostile probes and recorded waivers, and a sandboxed assessor.
+- **Isolation:** `linux:bwrap-sealed` with hostile probes and recorded waivers, and a sandboxed assessor. On macOS, `macos:seatbelt-sealed` covers both candidates and the assessor. Its limits are below.
 - **Thin worker packages:** `eidos-wire`, `eidos-worker-sdk` and `eidos-pytorch` (stdlib only, using the project's own torch).
 - **Study rules:** charters and evidence plans, qualification gated on executed planted-effect and null-case receipts, checkpoint branching, versioned context policies and offline turn replay.
 - **Exposure tracking.**
@@ -32,7 +34,7 @@ A development freeze of the complete local-v1 software stack described in `docs/
 - **Components:** 13 built-in components.
 - **Research handoff:** an adapter for the public research release (`eidos-task-bundle/0.1` → `eidos-answer/0.2`).
 
-## What v0.4.0 is not
+## What v0.5.0 is not
 
 - **Not v1 acceptance.** macOS researcher machines, real-LLM lab investigations, external MCP hosts, CUDA/MPS and the other gaps listed below are open.
 - **Not evidence that Eidos helps an LLM do model research.** That is the research question, and it is untested. A16 belongs to the independent evaluation workstream.
@@ -60,10 +62,10 @@ Full guide: `docs/ops/INSTALL_AND_OPERATE.md`. CI layout: `docs/ops/CI.md`. Exac
 
 | Class | What |
 |---|---|
-| **Runtime-verified (hosted Linux, Ubuntu 24.04 x86_64, CPU)** | Everything in "What v0.4.0 is", exercised against real PostgreSQL 16, the regular Temporal Server 1.32.2 and real processes. Also: the switch-order journey (149 checks), D01/D02/D12 bundle runs, a fresh wheel install, abrupt-stop/reattach/checkpoint-and-stop ops scripts and a performance smoke. **New:** real-time Temporal heartbeat-timeout, start-to-close, retry-policy and worker-SIGKILL tests pass on the dev server and against the lab's regular server (`tests/integration/test_temporal_realtime.py`, 4/4, 2026-11-08). |
+| **Runtime-verified (hosted Linux, Ubuntu 24.04 x86_64, CPU)** | Everything in "What v0.5.0 is", exercised against real PostgreSQL 16, the regular Temporal Server 1.32.2 and real processes. Also: the switch-order journey (149 checks), D01/D02/D12 bundle runs, a fresh wheel install, abrupt-stop/reattach/checkpoint-and-stop ops scripts and a performance smoke. **New:** real-time Temporal heartbeat-timeout, start-to-close, retry-policy and worker-SIGKILL tests pass on the dev server and against the lab's regular server (`tests/integration/test_temporal_realtime.py`, 4/4, 2026-11-08). **New in v0.5.0:**<br>• cross-release upgrade, 33 checks: records, artifacts and the event sequence are byte-identical, an open investigation continues, report and doctor pass (CI job `upgrade-across-releases`);<br>• the clean-install end-to-end journey, 8/8 steps (CI job `e2e-journey`): D01 import, fixture investigation and validated answer through the CLI; branch and export through the CLI; start, detach and read-back through the MCP SDK client. |
 | **Fixture-only** | All investigator decisions inside lab runs: the D01/D02/D12 investigations and journey step 7. |
 | **Development-qualified, lab-free** | The Anthropic path through the Pydantic AI adapter. Controller-run live receipt #3 passed 8/8. |
-| **GitHub-runner evidence (macOS arm64)** | Wheel install, `lab init/start/doctor/project/status/stop`, worker SDK tests and research smoke. **New:** `macos:seatbelt-sealed` passed on a GitHub macOS 15 arm64 runner (`scripts/ci/seatbelt_probes.py`, CI run `42429763457`):<br>• all six sealed controls held under the sandbox;<br>• the same-user planted-effect control detected the accesses;<br>• the permitted computation read its input copy and wrote staging, scratch, resume and tmp, while project-root writes were refused. |
+| **GitHub-runner evidence (macOS arm64)** | Wheel install, `lab init/start/doctor/project/status/stop`, worker SDK tests and research smoke. **New:** `macos:seatbelt-sealed` passed on a GitHub macOS 15 arm64 runner (`scripts/ci/seatbelt_probes.py`, CI run `42429763457`):<br>• all six sealed controls held under the sandbox;<br>• the same-user planted-effect control detected the accesses;<br>• the permitted computation read its input copy and wrote staging, scratch, resume and tmp, while project-root writes were refused.<br>**v0.5.0 (CI on `e822744`):** the hardened profile passed, including `no-process-inspection` against a same-user peer. The assessor ran under Seatbelt with a planted-effect assessment and all controls passed (`scripts/ci/assessor_sandbox_probe.py`). |
 | **Unqualified** | macOS researcher machine; Lima VM; CUDA/MPS; OpenAI-compatible providers; external MCP hosts (Claude Code/Desktop, Codex); sleep/suspend; multi-day runs; distributed training; performance on a declared reference machine. |
 | **Scientifically unproven** | Any claim that Eidos improves verified outcomes under comparable budgets (A16). |
 
@@ -72,11 +74,12 @@ Full guide: `docs/ops/INSTALL_AND_OPERATE.md`. CI layout: `docs/ops/CI.md`. Exac
 | Item | Blocker | Next step |
 |---|---|---|
 | macOS researcher-machine qualification | Needs the owner's Mac. A hosted runner is not a researcher machine. | Owner runs `scripts/qualify/macos_owner_kit.sh` (`docs/ops/MACOS_OWNER_QUALIFICATION.md`). |
-| macOS sealed isolation | `macos:seatbelt-sealed` passed its probes on a GitHub runner only; no researcher Mac and no full lab job under seatbelt have been tested. It runs as the same OS user (no `separate-identity`), mach IPC is unfiltered, and `sandbox-exec` is deprecated by Apple. The macOS assessor still runs same-user. Lima VM is not implemented. | Run the owner kit on a Mac with a sealed job. Owner decides whether seatbelt is acceptable or Lima is required. |
+| macOS sealed isolation | `macos:seatbelt-sealed` covers candidates and the assessor, but it has passed its probes on a GitHub runner only; no researcher Mac and no full lab job under Seatbelt have been tested. It runs as the same OS user (no `separate-identity`), and **does not isolate against a hostile same-user program**: other launchd/XPC routes and signals stay open (review 2). Apple deprecates `sandbox-exec`. Lima VM is not implemented. | Run the owner kit on a Mac with a sealed job. Owner decides whether seatbelt is acceptable or Lima is required. |
 | Real-LLM autonomous lab investigation | No provider key in the build sandbox, and the controller's budget is separate. | Owner/controller authorizes the lab-free D02/D12 runs (`scripts/qualify/live_bundle_investigation.py`, ≤ 40 requests per bundle), then a full-lab run. |
 | OpenAI-compatible provider qualification | Needs an endpoint and a key. | Controller runs at most 10 calls (`IMPLEMENTATION_STATUS.md` § Live-provider runs). |
 | External MCP hosts | No Claude Code/Desktop or Codex host in the sandbox. | Use the snippets in `docs/ops/mcp-clients.md`. The SDK client is already verified over stdio and HTTP. |
 | CUDA/MPS restore classes, distributed training | Hardware. | Unauthorized here. |
+| Review 2 open questions | Recorded, not fixed: exposure on artifact preview/download of evidence outputs; idle-poll behaviour across rollover; the assessor with a distinct candidate user; old writers during upgrade. | `docs/dev-runs/adversarial-review-2-2026-11-08.md` |
 | Interruption-table rows still `not-started` | Not built yet. | See ACCEPTANCE_MATRIX §C. These rows are: storage lag, question change/withdrawal, assessor dedupe, method withdrawn during confirmation, lost branch reply, node preemption. |
 | Sleep/suspend, multi-day runs | Not exercised. | Owner machine. |
 | Independent evaluation (A16) | External workstream. | Use `eval-*` tags for evaluation configurations, and freeze runs only from a clean tagged tree. |
