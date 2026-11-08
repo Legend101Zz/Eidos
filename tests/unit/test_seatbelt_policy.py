@@ -86,6 +86,29 @@ def test_seatbelt_receipt_cannot_claim_separate_identity():
     assert "separate-identity" not in PROFILES["macos:seatbelt-sealed"]["controls"]
     receipt = {"launcher": "svc-sealed-launcher", "profile": "macos:seatbelt-sealed",
                "controls": {c: "passed" for c in PROFILES["macos:seatbelt-sealed"]["controls"]} | {"separate-identity": "failed"}}
-    assert evaluate_receipt({"sealed": True}, receipt, trusted_launchers={"svc-sealed-launcher"})["ok"]
+    # G3 (v1.0.0): Seatbelt runs candidate code as the same OS user, so its receipt can satisfy
+    # control-level requirements but never a plan requiring sealed (hostile-code) execution.
+    sealed = evaluate_receipt({"sealed": True}, receipt, trusted_launchers={"svc-sealed-launcher"})
+    assert not sealed["ok"]
+    assert any("same-OS-user receipt" in f["finding"] and f.get("same_os_user") is True for f in sealed["findings"])
+    assert not evaluate_receipt({"profile": "linux:bwrap-sealed"}, receipt, trusted_launchers={"svc-sealed-launcher"})["ok"]
+    controls_only = {"controls": list(PROFILES["macos:seatbelt-sealed"]["controls"])}
+    assert evaluate_receipt(controls_only, receipt, trusted_launchers={"svc-sealed-launcher"})["ok"]
     need_identity = {"controls": ["no-label-read", "separate-identity"]}
     assert not evaluate_receipt(need_identity, receipt, trusted_launchers={"svc-sealed-launcher"})["ok"]
+
+
+def test_seatbelt_lab_refuses_plans_requiring_sealed_execution():
+    from eidos.domain.isolation import HOSTILE_CODE_PROFILES, profile_traits, requires_sealed, sealed_refusal
+    assert "macos:seatbelt-sealed" not in HOSTILE_CODE_PROFILES and "linux:bwrap-sealed" in HOSTILE_CODE_PROFILES
+    assert profile_traits("macos:seatbelt-sealed") == {"profile": "macos:seatbelt-sealed", "same_os_user": True,
+                                                        "hostile_code_isolation": False}
+    assert profile_traits("linux:bwrap-sealed")["hostile_code_isolation"] is True
+    assert profile_traits("bogus")["same_os_user"] is True  # unknown profiles are never trusted as sealed
+    assert requires_sealed({"sealed": True}) and requires_sealed({"profile": "linux:bwrap-sealed"})
+    assert not requires_sealed({"profile": "dev:same-user", "controls": []}) and not requires_sealed(None)
+    msg = sealed_refusal({"sealed": True}, "macos:seatbelt-sealed")
+    assert msg and "same OS user" in msg and "linux:bwrap-sealed" in msg
+    assert sealed_refusal({"sealed": True}, "dev:same-user")
+    assert sealed_refusal({"sealed": True}, "linux:bwrap-sealed") is None
+    assert sealed_refusal({"profile": "dev:same-user", "controls": []}, "macos:seatbelt-sealed") is None

@@ -156,12 +156,18 @@ class AssessorActivities:
             self.assessor.download(p, desc["body"]["bundle_artifact_id"], bundle)
             src = materialize_bundle(str(bundle), base / "src")
             ev = base / "evidence.json"
-            ev.write_text(json.dumps(evidence))
+            # Review 2: evidence was 0644 inside a 0755 directory; only the lab user (the assessor's
+            # identity) needs to read it.
+            fd = os.open(ev, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w") as fh:
+                fh.write(json.dumps(evidence))
             if ev.stat().st_size > int(self.max_evidence_bytes):
                 raise ApplicationError("evidence exceeds the assessor input cap", type="ASSESSOR_INPUT_TOO_LARGE",
                                        non_retryable=True)
             inv = make_invocation(base / "run", entry, inputs={"evidence": (ev.read_bytes(), "application/json")},
                                   config={}, source_dir=str(src))
+            for staged in inv.inputs.values():
+                os.chmod(staged.path, 0o600)  # the staged copy of the evidence, likewise owner-only
             inv_path = base / "run" / "invocation.json"
             if not inv_path.exists():
                 inv.write(inv_path)
@@ -178,8 +184,11 @@ class AssessorActivities:
                               env={"PYTHONPATH": os.pathsep.join([*SDK_PATHS, lab_src, str(src)])},
                               python_prefixes=python_prefixes(self.lab_python) if profile != "dev:same-user" else [],
                               deny_read=deny if profile != "dev:same-user" else [])
+            from eidos.domain.isolation import profile_traits
+            # same_os_user is reported so a macOS (Seatbelt) or development assessment says plainly that
+            # the assessor ran as the lab's own OS user (docs/release/SUPPORTED.md).
             receipt = {"profile": profile, "config_digest": profile_config_digest(spec), "role": "assessor",
-                       "release": ref}
+                       "release": ref, **{k: v for k, v in profile_traits(profile).items() if k != "profile"}}
             if profile != "dev:same-user":
                 # A planted label where lab-held labels live (inside a denied root), never in the
                 # assessor's own working directory, which it may read.

@@ -6,7 +6,7 @@ import json
 import uuid
 
 from eidos.application.handlers.investigations import confirm_scope, inv_scope
-from eidos.application.handlers.runs import admit_job, resolve_lock
+from eidos.application.handlers.runs import admit_job, resolve_lock, strongest_profile
 from eidos.application.service import Ctx, command
 from eidos.domain import evidence as ev
 from eidos.domain import isolation, qualification
@@ -115,6 +115,7 @@ def freeze_evidence_plan(ctx: Ctx, p: dict) -> dict:
     a_ref = (plan.body.get("assessor") or {}).get("ref")
     a_ok = bool(a_ref) and approval_for(ctx, a_ref, kind) is not None
     ev.check_freezable(plan.body, template_approved=t_ok, assessor_approved=a_ok)
+    _refuse_unsupported_sealed(ctx, plan.body)
     if not plan.body["arms"]:
         raise Invalid("a plan needs arms before freezing")
     body = dict(plan.body)
@@ -123,6 +124,17 @@ def freeze_evidence_plan(ctx: Ctx, p: dict) -> dict:
     rec = ctx.tx.put_record("evidence_plan", plan.id, ctx.project_id, body, created_by=ctx.principal.id, status="frozen")
     ctx.event("evidence_plan.frozen", plan.id, {"digest": rec.digest}, investigation_id=body.get("investigation_id"))
     return {"plan_id": plan.id, "revision": rec.revision, "plan_digest": rec.digest}
+
+
+def _refuse_unsupported_sealed(ctx: Ctx, body: dict) -> None:
+    """A plan requiring sealed (hostile-code) execution is refused on a lab whose strongest profile
+    runs candidate code as the same OS user (macOS Seatbelt, or no sealed profile at all)."""
+    strongest = strongest_profile(ctx)
+    msg = isolation.sealed_refusal(body.get("required_isolation"), strongest)
+    if msg:
+        raise Invalid(msg, details={"strongest_available": strongest, **isolation.profile_traits(strongest),
+                                    "required_isolation": body.get("required_isolation"),
+                                    "supported_sealed_profiles": list(isolation.HOSTILE_CODE_PROFILES[:1])})
 
 
 def _pipeline_steps(arm: dict) -> list[dict]:
@@ -219,6 +231,7 @@ def launch_evidence_plan(ctx: Ctx, p: dict) -> dict:
     plan = ctx.tx.require("evidence_plan", p["plan_id"], lock=True)
     if plan.status != "frozen":
         raise Invalid(f"only a frozen plan can be launched (plan is {plan.status})")
+    _refuse_unsupported_sealed(ctx, plan.body)  # e.g. a plan frozen on Linux, lab restored on macOS
     inv_id = plan.body.get("investigation_id")
     scope = None
     if inv_id:

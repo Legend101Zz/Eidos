@@ -256,6 +256,11 @@ def record_isolation_receipt(ctx: Ctx, p: dict) -> dict:
     receipt["launcher"] = ctx.principal.id
     receipt["job_id"] = job["id"]
     receipt["job_profile"] = job["lock"].get("isolation_profile")
+    # Derived by the service from the profile name, never taken from the launcher's payload.
+    from eidos.domain.isolation import profile_traits
+    traits = profile_traits(receipt.get("profile"))
+    receipt["same_os_user"] = traits["same_os_user"]
+    receipt["hostile_code_isolation"] = traits["hostile_code_isolation"]
     if ctx.tx.get_record("isolation_receipt", p["attempt_id"]) is not None:  # write-once per attempt
         raise Invalid(f"isolation receipt for {p['attempt_id']} already recorded")
     rec = ctx.tx.put_record("isolation_receipt", p["attempt_id"], ctx.project_id, receipt, created_by=ctx.principal.id,
