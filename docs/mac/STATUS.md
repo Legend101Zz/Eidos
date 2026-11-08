@@ -269,3 +269,64 @@ Why it stalled (diagnosed, platform-independent; REQUESTS 11-13):
    plus output retries; the last two responses were cut at 4,096 output tokens). The run total (31) stayed under 60.
 
 Ledger: ancillary spent 260c of 1000c (this run 95c); available 740c.
+
+## Re-run 3 (last): full-lab D02 at 4e4c758 (after the fixes for REQUESTS 11-13)
+
+Merged 4e4c758 (fast-forward); fresh wheels `uv build --no-cache` into `$S/dist-4e4c758`, lab venv reinstalled
+`--no-cache --reinstall`. Fake-marker check first: only the investigator worker held it; probe job env without key;
+`$HOME`, `~/.claude.json`, network and lab API refused; no lab file. Same caps and command as re-runs 1-2
+(`receipts/a8-full-lab-D02-rerun3.json`). **No intervention.**
+
+| | First run | Re-run 1 (2df52bb) | Re-run 2 (4bf5974) | **Re-run 3 (4e4c758)** |
+|---|---|---|---|---|
+| Baseline job | failed | ok first time | ok first time (+ seeds 12, 13) | ok first time (val 0.8384); seeds 12, 13 as controls |
+| "Artifacts you created" in context | n/a | n/a | absent (ids dropped) | **present** in every context; from turn 3 it listed the turn-2 source (`used_by []`) |
+| `author_source` / `author_component` | — / — | — / 1 INVALID | 4 / 0, none run | **1 / 0, run on seeds 11, 12, 13** |
+| Turns / refused | 5 / 0 | 3 / 0 | 6 / 0 (1 turn invalid → retry) | 6 / 0 |
+| Jobs | 5 (1 failed) | 2 | 4 | **12, all succeeded** (6 training, 6 scoring) |
+| End | turn cap | stalled, operator stop | parked, operator stop | **concluded at turn 6** |
+| Claim / conclusion | none | none | none | conclusion (no filed claim): the authored recipe (128-unit MLP, 300 Adam steps, wd, train-set standardization) beats the baseline on validation by ~10-13 points |
+| Supported? | — | — | — | the numbers match the recorded jobs exactly (candidate 0.958/0.958/0.961 vs baseline 0.838/0.830/0.855, n=359, 3 seeds); supported only as an exploration-only development observation on validation. The model itself listed the caveats: validation used for both selection and reporting, no pre-registered comparator, no paired-CI assessment, bundled change not attributed, baseline under-trained. No hidden labels used or compared. **Not scientific evidence** |
+| Requests / tokens | 20 / 172k, 12k | 15 / 122k, 6.7k | 31 / 329k, 28.8k | 26 / 305k, 13.1k |
+| Cost (settled) | $0.4663 (47c) | $0.3111 (32c) | $0.9465 (95c) | **$0.7406 (75c)**, reserved 250c |
+| Key in lab files | [] | [] | [] | [] |
+
+Per-decision request cap is exact in this run (5, 5, 5, 1, 5, 5).
+
+## Final wrap-up (2026-11-08)
+
+- Branch `mac/local-qualification` merged with `origin/build/eidos-local-v1` at 4e4c758 (the cloud had merged this
+  branch; fast-forward).
+- Console spend recorded through `eidosctl ancillary`: this session settled 14 + 16 + 47 + 32 + 95 + 75 = **279c**
+  (ancillary total 335c of 1000c including 56c from before this session; 665c available). Claude Code / Codex runs used
+  the Max subscription / Codex account.
+- Servers started by this session, all stopped: the Mac lab (`$S/lab`: supervisor, PostgreSQL, Temporal, workers),
+  the kit labs (removed by the kit), Ollama on 127.0.0.1:11535 (PID 92794, killed by PID), the subagent's test
+  PostgreSQL on 5499 and its labs on 19765/19544/19633+. Still running and **not** ours: the owner's Homebrew
+  PostgreSQL (PID 813) and Ollama.app's own `ollama serve` (PID 883).
+- Internal disk free: 24.9 GiB at start (26,112,068 KB), **23.96 GiB at end** (25,123,712 KB), a drop of 0.94 GiB.
+  Attributable: `~/Library/Caches/ollama/updates/…/Ollama-darwin.zip` 218 MB (very likely Ollama.app's own updater,
+  PID 883 is running) and ~8 MB of Claude Code session logs; no Codex session files were written (`--ephemeral`);
+  no Eidos data, venv, cache or lab is on the internal disk. The rest is not attributable to files this session
+  created (system/other sessions), so nothing was deleted.
+
+### SSD paths the owner may delete later (nothing deleted by this session)
+
+All under `/Volumes/Mrigesh SSD/eidos-mac/` (sizes at wrap-up):
+
+| Path | Size | What |
+|---|---|---|
+| `suite/` (keep `suite/logs*/` if wanted) | 5.6 GB | subagent test scratch: venvs, PG data, journey labs/outputs |
+| `ollama-models/` | 1.8 GB | `qwen2.5:3b-instruct` pulled for item 4 |
+| `ollama-home/` | 8 KB | HOME used for the private Ollama server |
+| `venvs/research/` | 1.0 GB | research env (torch 2.15.0, numpy) |
+| `venvs/torchtest/` | 658 MB | eidos-pytorch test env |
+| `venvs/lab/` | 204 MB | lab venv (wheels from 4e4c758) |
+| `lab/` | 261 MB | the Mac lab home (`EIDOS_HOME`; projects `macq`, `live*`; run artifacts) |
+| `uv-cache/`, `pip-cache/`, `pycache/` | 1.3 GB, 236 MB, 1.1 GB | caches |
+| `uv-python/` | 52 MB | uv-managed Python 3.12 |
+| `temporal-cache/` | 96 MB | sha256-verified Temporal 1.32.2 darwin-arm64 archive |
+| `dist-*/` | ~10 MB | built wheels per SHA |
+| `tmp/` | 15 MB | pytest and probe temp dirs |
+| `bundles/`, `runs/`, `receipts/` | <1 MB | task bundles and raw run outputs (receipts are copied into `docs/mac/receipts/`) |
+| `helpers/with_anthropic_key.py` | 4 KB | key helper (reads the Keychain inside the process only) |
