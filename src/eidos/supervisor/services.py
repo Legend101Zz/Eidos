@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import glob
 import hashlib
+import json
 import os
 import platform
 import pwd
@@ -157,9 +158,18 @@ def install_temporal(cfg: LabConfig, source: str | None = None) -> str:
     if (dest / "temporal-server").exists():
         return str(dest)
     if source and Path(source, "temporal-server").exists():
+        # Explicit operator choice (e.g. a server built from source when the release CDN is down): not the
+        # checksum-verified release, so its provenance is recorded as supplied.
         dest.mkdir(parents=True, exist_ok=True)
+        hashes = {}
         for name in ("temporal-server", "temporal-sql-tool"):
             shutil.copy2(Path(source, name), dest / name)
+            hashes[name] = hashlib.sha256((dest / name).read_bytes()).hexdigest()
+        declared = Path(source, "provenance.json")
+        prov = {"kind": "operator-supplied", "source_dir": str(source), "sha256": hashes,
+                "declared": json.loads(declared.read_text()) if declared.exists() else None,
+                "pinned_release_version": TEMPORAL_VERSION}
+        (dest.parent / "provenance.json").write_text(json.dumps(prov, indent=2))
         return str(dest)
     key = temporal_platform()
     if key not in TEMPORAL_RELEASES:
@@ -183,6 +193,8 @@ def install_temporal(cfg: LabConfig, source: str | None = None) -> str:
         cached.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(tgz, cached)
     (dest.parent / "server.sha256").write_text(f"{digest}  {url}\n")
+    (dest.parent / "provenance.json").write_text(json.dumps({"kind": "release-archive", "url": url, "sha256": digest,
+                                                              "verified_against_pinned": True}, indent=2))
     with tarfile.open(tgz) as tf:
         for member in ("temporal-server", "temporal-sql-tool"):
             tf.extract(member, dest, filter="data")
