@@ -16,9 +16,9 @@ set -uo pipefail
 KEEP=0; [ "${1:-}" = "--keep" ] && KEEP=1
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 TS=$(date -u +%Y%m%dT%H%M%SZ)
-W="$(mktemp -d /tmp/eidos-macos-qual.XXXXXX)"
+W="$(mktemp -d "${TMPDIR:-/tmp}/eidos-macos-qual.XXXXXX")"  # honour TMPDIR (e.g. an external SSD)
 chmod 755 "$W"  # PostgreSQL may run under a separate account when the lab runs as root
-RECEIPT="$HOME/eidos-macos-receipt-$TS.json"
+RECEIPT="${EIDOS_KIT_RECEIPT:-$HOME/eidos-macos-receipt-$TS.json}"
 STEPS="$W/steps.jsonl"; : > "$STEPS"
 export EIDOS_HOME="$W/lab" UV_CACHE_DIR="${UV_CACHE_DIR:-$W/uv-cache}"
 step() {  # step <name> <command...>: run, time and record pass/fail (stdout/stderr kept in $W/logs)
