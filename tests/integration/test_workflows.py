@@ -339,3 +339,32 @@ async def test_refused_proposal_turns_retry_boundedly_then_surface_for_input(env
         await asyncio.sleep(3)
         assert fake.turns >= 4
         await h.terminate()
+
+
+async def test_needs_input_survives_continue_as_new(env):
+    """Review 3 finding 2: quiet polls during a needs-input wait grow history; the rollover must keep waiting
+    for operator news instead of starting fresh turns."""
+    import asyncio
+    fake = FakeInvestigator()
+    seen = {"operator": False}
+
+    @activity.defn(name="decide")
+    async def decide(a: dict) -> dict:
+        return {"accepted": False, "reason": "invalid", "decision_id": f"{a['turn_id']}-d{a['slot']}"}
+
+    @activity.defn(name="check_news")
+    async def check_news(a: dict) -> dict:
+        return {"news": seen["operator"]} if a.get("operator_only") else {"news": True}
+
+    acts = [fake.begin_turn, fake.build_context, decide, fake.execute_decision, fake.complete_turn, check_news]
+    wid = f"inv-rollover-{uuid.uuid4().hex[:6]}"
+    async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
+            Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=acts):
+        h = await env.client.start_workflow(InvestigationWorkflow.run, {"investigation_id": wid, "project_id": "p",
+                                            "idle_poll_seconds": 1, "history_limit": 80}, id=wid, task_queue=WORKFLOW_QUEUE)
+        await asyncio.sleep(25)  # several rollovers' worth of quiet polls
+        assert fake.turns == 3, fake.turns
+        seen["operator"] = True
+        await asyncio.sleep(4)
+        assert fake.turns >= 4
+        await h.terminate()

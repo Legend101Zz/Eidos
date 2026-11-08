@@ -100,6 +100,12 @@ Closed since v0.1.0; each item names its evidence:
 
 - **Round 10:** CI was red on `8301799` (switch-journey step 7 parked). It is fixed by ADR 0007: only pure waits are refused, and refused-proposal turns get bounded retries before surfacing for input. The stale-wheel test hazard is fixed (`--no-cache`). Switch journey 154/154 ×2 on fresh wheels; suite 120 passed / 1 skipped.
 
+- **Round 12:**
+  - A15 suspend/resume (SIGSTOP of all lab processes and the job for 150 s): one attempt, no duplicate effects, accounting recorded, doctor clean (`tests/ops/suspend_resume.sh`). A real macOS sleep stays a Mac item.
+  - Soak: `tests/ops/soak.py`; see IMPLEMENTATION_STATUS.
+  - B9: Temporal provenance is recorded, and CDN-independent install paths exist.
+  - Review 3: 7 fixes.
+
 Still open:
 - **Adversarial review:** all listed open items are fixed (round 5). What remains is platform-bound.
   - A distinct candidate identity needs a readable interpreter.

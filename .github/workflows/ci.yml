@@ -117,7 +117,7 @@ jobs:
       - name: uv fallback when the GitHub release CDN fails (PyPI wheel)
         if: steps.setup_uv.outcome == 'failure'
         run: |
-          python3 -m pip install --user --break-system-packages uv || python3 -m pip install --user uv
+          python3 -m pip install --user --break-system-packages uv==0.13.7 || python3 -m pip install --user uv==0.13.7
           echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
       - name: Temporal archive cache location
         run: echo "EIDOS_TEMPORAL_ARCHIVE_CACHE=$RUNNER_TEMP/eidos-temporal" >> "$GITHUB_ENV"
@@ -126,6 +126,8 @@ jobs:
         with:
           path: ${{ runner.temp }}/eidos-temporal
           key: eidos-temporal-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/eidos/supervisor/services.py') }}
+      - name: Temporal server (verified cache, pinned download, or source build via the Go module proxy)
+        run: bash scripts/ci/temporal_server.sh
       - name: PostgreSQL 16 binaries
         run: |
           ls /usr/lib/postgresql/*/bin/initdb 2>/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-16; }
@@ -160,7 +162,7 @@ jobs:
       - name: uv fallback when the GitHub release CDN fails (PyPI wheel)
         if: steps.setup_uv.outcome == 'failure'
         run: |
-          python3 -m pip install --user --break-system-packages uv || python3 -m pip install --user uv
+          python3 -m pip install --user --break-system-packages uv==0.13.7 || python3 -m pip install --user uv==0.13.7
           echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
       - name: Temporal archive cache location
         run: echo "EIDOS_TEMPORAL_ARCHIVE_CACHE=$RUNNER_TEMP/eidos-temporal" >> "$GITHUB_ENV"
@@ -169,6 +171,8 @@ jobs:
         with:
           path: ${{ runner.temp }}/eidos-temporal
           key: eidos-temporal-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/eidos/supervisor/services.py') }}
+      - name: Temporal server (verified cache, pinned download, or source build via the Go module proxy)
+        run: bash scripts/ci/temporal_server.sh
       - name: Platform
         run: |
           uname -a; sw_vers; python3 -c 'import platform; print(platform.machine())'
@@ -276,7 +280,7 @@ jobs:
       - name: uv fallback when the GitHub release CDN fails (PyPI wheel)
         if: steps.setup_uv.outcome == 'failure'
         run: |
-          python3 -m pip install --user --break-system-packages uv || python3 -m pip install --user uv
+          python3 -m pip install --user --break-system-packages uv==0.13.7 || python3 -m pip install --user uv==0.13.7
           echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
       - name: Temporal archive cache location
         run: echo "EIDOS_TEMPORAL_ARCHIVE_CACHE=$RUNNER_TEMP/eidos-temporal" >> "$GITHUB_ENV"
@@ -285,6 +289,8 @@ jobs:
         with:
           path: ${{ runner.temp }}/eidos-temporal
           key: eidos-temporal-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/eidos/supervisor/services.py') }}
+      - name: Temporal server (verified cache, pinned download, or source build via the Go module proxy)
+        run: EXTRACT_TO_SOURCE=1 bash scripts/ci/temporal_server.sh
       - name: PostgreSQL 16 binaries
         run: |
           ls /usr/lib/postgresql/*/bin/initdb 2>/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-16; }
@@ -318,7 +324,7 @@ jobs:
       - name: uv fallback when the GitHub release CDN fails (PyPI wheel)
         if: steps.setup_uv.outcome == 'failure'
         run: |
-          python3 -m pip install --user --break-system-packages uv || python3 -m pip install --user uv
+          python3 -m pip install --user --break-system-packages uv==0.13.7 || python3 -m pip install --user uv==0.13.7
           echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
       - name: Temporal archive cache location
         run: echo "EIDOS_TEMPORAL_ARCHIVE_CACHE=$RUNNER_TEMP/eidos-temporal" >> "$GITHUB_ENV"
@@ -327,6 +333,8 @@ jobs:
         with:
           path: ${{ runner.temp }}/eidos-temporal
           key: eidos-temporal-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/eidos/supervisor/services.py') }}
+      - name: Temporal server (verified cache, pinned download, or source build via the Go module proxy)
+        run: bash scripts/ci/temporal_server.sh
       - name: PostgreSQL 16 binaries
         run: |
           ls /usr/lib/postgresql/*/bin/initdb 2>/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-16; }
@@ -364,7 +372,7 @@ jobs:
       - name: uv fallback when the GitHub release CDN fails (PyPI wheel)
         if: steps.setup_uv.outcome == 'failure'
         run: |
-          python3 -m pip install --user --break-system-packages uv || python3 -m pip install --user uv
+          python3 -m pip install --user --break-system-packages uv==0.13.7 || python3 -m pip install --user uv==0.13.7
           echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
       - name: Temporal archive cache location
         run: echo "EIDOS_TEMPORAL_ARCHIVE_CACHE=$RUNNER_TEMP/eidos-temporal" >> "$GITHUB_ENV"
@@ -373,6 +381,8 @@ jobs:
         with:
           path: ${{ runner.temp }}/eidos-temporal
           key: eidos-temporal-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/eidos/supervisor/services.py') }}
+      - name: Temporal server (verified cache, pinned download, or source build via the Go module proxy)
+        run: bash scripts/ci/temporal_server.sh
       - name: PostgreSQL 16 binaries
         run: |
           ls /usr/lib/postgresql/*/bin/initdb 2>/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-16; }
@@ -389,4 +399,30 @@ jobs:
             ${{ runner.temp }}/eidos-switch/lab/logs
           retention-days: 3
           if-no-files-found: ignore
+
+  temporal-source-fallback:
+    # Proves the CDN-independent path: build the pinned server from source (Go module proxy, go.sum-verified)
+    # and run the full lab lifecycle on it; lab doctor reports provenance operator-supplied/source-built.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    name: temporal-source-fallback (pinned server built from source, full lab lifecycle)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: uv from PyPI (pinned; no GitHub release download)
+        run: |
+          python3 -m pip install --user --break-system-packages uv==0.13.7 || python3 -m pip install --user uv==0.13.7
+          echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
+      - name: PostgreSQL 16 binaries
+        run: |
+          ls /usr/lib/postgresql/*/bin/initdb 2>/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-16; }
+      - name: Build the pinned Temporal server from source
+        run: FORCE_SOURCE_BUILD=1 bash scripts/ci/temporal_server.sh
+      - name: Lab lifecycle on the source-built server
+        run: |
+          bash scripts/ci/build_and_install.sh
+          export PATH="$RUNNER_TEMP/eidos-ci/venv/bin:$PATH"
+          bash scripts/ci/lab_cycle.sh all
+          grep -q '"source-built"' "$RUNNER_TEMP/eidos-ci/lab/services/temporal/provenance.json"
+          grep -q 'provenance: operator-supplied' "$RUNNER_TEMP/eidos-ci/ci-results/doctor.json"
 

@@ -133,6 +133,10 @@ class LocalLab:
             return self._fail(ref, inputs, config, f"exit {r['returncode']}: {r['stderr'][-1500:]}")
         outputs = []
         for p in sorted(out.iterdir()):
+            # Outputs are written by contained code: never follow a symlink or special file on the host
+            # (e.g. out/x -> /proc/self/environ would hand the driver's environment to the next command).
+            if p.is_symlink() or not p.is_file() or out.resolve() not in p.resolve().parents:
+                return self._fail(ref, inputs, config, f"output {p.name} is not a regular file inside out/")
             aid = f"art_{len(self.artifacts):04d}"
             self.artifacts[aid] = p
             outputs.append({"slot": p.stem, "artifact_id": aid, "role": "model-export" if p.suffix == ".pt" else "output",

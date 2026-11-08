@@ -351,9 +351,32 @@ Lesson: three of the four failures came from round 5 making sealed the default p
 - **New CLI options:** `lab investigate start --settings JSON --max-model-calls-per-turn N`.
 - **Verified here:** unit + integration + MCP + reporting **124 passed, 1 skipped** at `80c1e2d`.
 
+## Round 12 (2026-11-08): non-Mac completion work
+
+- **CDN independence (`8a96b49`):** `scripts/ci/temporal_server.sh` tries, in order:
+  1. a verified archive cache;
+  2. the pinned download, sha256-checked;
+  3. a source build via the Go module proxy, which writes `provenance.json` with kind source-built.
+  - `lab init --temporal-source` records the binaries as `operator-supplied`, with the declared provenance; `lab doctor` shows it.
+  - CI lab jobs restore the archive from `actions/cache`; uv falls back to PyPI `uv==0.13.7`.
+  - The new CI job `temporal-source-fallback` proves the source path. It cannot be proven here, because this sandbox blocks the Go toolchain download.
+  - User docs: `docs/ops/TEMPORAL_SERVER_SOURCES.md`.
+- **Adversarial review 3:** 7 findings fixed with tests (`5df8938`), including a high-severity key leak through symlinked outputs in the lab-free driver. 1 medium item remains open (needs-input is not visible outside the workflow query). Record: `docs/dev-runs/adversarial-review-3-2026-11-08.md`.
+- **A15 suspend/resume on Linux (`tests/ops/suspend_resume.sh`):** 14 lab processes plus the running job were SIGSTOPped for 150 s, longer than the heartbeat, the lease and the activity heartbeat timeout, then SIGCONTed.
+  - The job **succeeded on its single original attempt**, with no duplicate publications.
+  - 217 s of compute was accounted, including the suspension.
+  - `lab doctor` was clean.
+  - Log: `/mnt/session/outputs/ops/suspend.log`.
+- **Soak:** `tests/ops/soak.py`, 20 min. Results are below, under "Soak result".
+- **Licences, NOTICES, troubleshooting, ops docs (merged from `task/ops-docs`):**
+  - `docs/ops/LICENSES.md` covers 81 distributions. Copyleft: psycopg is LGPL-3.0, certifi is MPL-2.0. No GPL/AGPL and no unknown licences.
+  - `NOTICES.md`: no third-party code was copied.
+  - `docs/ops/TROUBLESHOOTING.md`, and updated upgrade/backup/restore procedures.
+  - The `pyproject.toml` files no longer claim Apache-2.0. The project licence is an **owner decision**.
+
 ## Next concrete action
 
-1. The controller runs `docs/ops/MAC_QUALIFICATION_RUNBOOK.md` on the owner's Mac and returns the receipts: MCP clients, MPS, lab-free D02/D12, full-lab D02 and the security test. The lead fixes what they show.
+1. **Work split (2026-11-08):** a local Mac session (Claude Code on the owner's M4) owns all Mac-only qualification on branch `mac/local-qualification`, started from `80c1e2d`. Its results go in `docs/mac/`, which the lead never edits. This build session fixes the core/shared defects it reports, merges its branch when the controller says so (merge commit, no force), and folds its evidence into HANDOFF.md and ACCEPTANCE_MATRIX.md.
 2. CI on the head of `build/eidos-local-v1`. If all nine jobs are green, tag `eidos-v0.5.3`. The release-asset 504s were infrastructure.
 3. Backlog:
    - Temporal download retries on the v0.1.0 side of the upgrade job;

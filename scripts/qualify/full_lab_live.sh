@@ -7,8 +7,8 @@
 # from this script so that the key reaches the supervisor's environment only. The supervisor passes provider
 # credentials only to the investigator worker (scrub_secrets for every other service). Jobs get an
 # allowlisted environment (job_environment), and the key is never written to lab config or job envs.
-# This script checks that afterwards: it greps the lab directory and every job's recorded environment
-# for the key.
+# This script checks the lab directory afterwards with a byte scan of every file, including PostgreSQL heap
+# files, logs and job attempt directories.
 # Caps (hard): max_turns=5 x max_model_calls_per_turn=2 x max_requests_per_decision=4 = 40 requests; model_usd=3
 # (priced at the configured per-Mtok rates), model_tokens=600000; 4096 output tokens per request.
 set -euo pipefail
@@ -63,7 +63,18 @@ for t in d["turns"]:
          "control": (x["body"] or {}).get("control"), "error": (x["body"] or {}).get("error")} for x in tt["decisions"]]})
 key = os.environ["ANTHROPIC_API_KEY"]
 home = os.environ["EIDOS_HOME"]
-leak = subprocess.run(["grep", "-rIl", "--", key, home], capture_output=True, text=True).stdout.split()
+# Byte scan of every file under the lab home, including binary PostgreSQL heap files and logs. The key is
+# never placed on a command line.
+needle, leak = key.encode(), []
+for root, _dirs, files in os.walk(home):
+    for f in files:
+        fp = os.path.join(root, f)
+        try:
+            with open(fp, "rb") as fh:
+                if needle in fh.read():
+                    leak.append(fp)
+        except OSError:
+            pass
 rec = {"receipt": "eidos-full-lab-live/1", "label": "full-lab real-LLM development run (owner Mac)", "project": p,
        "investigation": inv, "status": d["status"], "budgets": d.get("budgets"), "turns": turns,
        "jobs": [{k: j[k] for k in ("id", "status", "kind", "component")} for j in d["jobs"]],

@@ -180,7 +180,10 @@ def doctor(cfg: LabConfig) -> list[dict[str, Any]]:
         except Exception as exc:
             add("ledger-migration", False, str(exc)[:300])
     tbin = Path(cfg.temporal_bin) / "temporal-server"
-    add("temporal-binary", tbin.exists(), f"{tbin} (pinned {svc.TEMPORAL_VERSION}, regular server, PostgreSQL persistence)")
+    prov_file = Path(cfg.temporal_bin).parent / "provenance.json"
+    prov = json.loads(prov_file.read_text()).get("kind", "unknown") if prov_file.exists() else "unrecorded"
+    add("temporal-binary", tbin.exists(), f"{tbin} (pinned {svc.TEMPORAL_VERSION}, regular server, PostgreSQL persistence; "
+        f"provenance: {prov})")
     st = status(cfg)
     api = st.get("api", {})
     add("api", api.get("status") == "ok", json.dumps(api)[:300])

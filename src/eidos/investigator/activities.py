@@ -200,6 +200,7 @@ class InvestigatorActivities:
             r = self.wf.command("accept_decision", {"turn_id": a["turn_id"], "slot": a["slot"], "proposal": res.proposal,
                                 "usage": res.usage, "usage_recorded": True, "model_settings": res.model_settings,
                                 "prompt_revision": res.prompt_revision,
+                                "bounded_outcome": ((res.proposal or {}).get("control") or {}).get("bounded_outcome"),
                                 "response_artifact_id": resp["result"]["artifact_id"]},
                                 project=p, key=f"accept:{a['turn_id']}:{a['slot']}:{attempt}")["result"]
         except LabError as exc:
