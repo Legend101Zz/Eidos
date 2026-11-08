@@ -33,6 +33,12 @@ Flag assumptions (documentation was not reachable from the build sandbox; confir
 * Codex: `codex exec --json --skip-git-repo-check -c key=value ...` with TOML values: `mcp_servers.eidos.command="..."`, `mcp_servers.eidos.args=["mcp"]`, `mcp_servers.eidos.env={EIDOS_HOME="..."}`; JSONL events of type `mcp_tool_call`. Codex may ask for approval of MCP tool calls; in `exec` this normally auto-declines, so if the Codex receipt shows zero tool calls, add `-c approval_policy="never"` and re-run, and say so in the report.
 * The server's only environment is `EIDOS_HOME`; the credential is the lab's admin token file. On macOS the clients spawn `lab` without your shell PATH: the configs use absolute paths.
 
+**Confirmed on the owner's Mac (2026-11-08, Claude Code 2.1.318, codex-cli 0.157.0; receipts `docs/mac/receipts/a14-*.json`):**
+* All Claude Code flags above work; `--max-turns` is accepted although `claude --help` does not list it. Runs now add `--no-session-persistence`. In `-p` mode Claude Code reaches MCP tools through `ToolSearch` and reads resources with `ReadMcpResourceTool` (both appear in the stream as `tool_use`).
+* Codex needed **no** `approval_policy` override: both read and write MCP calls ran with the default settings. Codex **does** read MCP resources (`list_mcp_resource_templates`, `read_mcp_resource`), so the resource read is no longer only advisory in practice. Runs now add `--ephemeral`.
+* `run_clients.sh --write` adds one write-path run per client (`steer_investigation` with a fresh marker and command key); the receipt requires exactly one steering entry with that marker in the lab record. `--only claude|codex` runs one client. The verifier now judges the client's final answer (Claude `result` event, Codex last `agent_message`) and compares its JSON line with the lab (status, component count) instead of searching the whole stream.
+* Claude Desktop is not installed on the Mac: `check_desktop_snippet.py SNIPPET --project P --investigation I` checks the snippet statically and launches exactly its command/args/env (no shell, minimal PATH) for `initialize`, `tools/list`, resource templates and one `get_investigation`. This is not a Desktop run; the Desktop step stays an owner item.
+
 **Claude Desktop (manual, later):** merge `$S/mcp-configs/claude-desktop-snippet.json` into `~/Library/Application Support/Claude/claude_desktop_config.json` yourself (the scripts never touch it), restart Claude Desktop, ask it to list components in project `<project>`, then `bash scripts/qualify/mcp_clients/check_desktop_log.sh`. PASS needs a successful `initialize` result (with `serverInfo`) and a `tools/list` result naming `start_investigation` in `~/Library/Logs/Claude/mcp-server-eidos.log`. The log wording is assumed from the MCP JSON-RPC traffic.
 
 ## 4. MPS vs CPU (c)
@@ -76,7 +82,17 @@ ANTHROPIC_API_KEY=... PYTHONPATH=src:packages/eidos-wire/src $PY scripts/qualify
     bash scripts/qualify/full_lab_live.sh --bundle $SSD/bundles/D02 --python $PY --out $SSD/receipts/full-lab-D02.json
   ```
 
+  Preferred (as run on the Mac, 2026-11-08): the key on stdin, so it is in no environment but the investigator
+  worker's (`lab start --credentials-stdin`, e36bfb1); `LAB` may be an absolute path with spaces:
+
+  ```bash
+  python3 helpers/with_anthropic_key.py --stdin-credential --keep EIDOS_HOME --set LAB="$S/venvs/lab/bin/lab" \
+    --set PRICE='{"input": 2.0, "output": 10.0}' --set CREDENTIALS_STDIN=1 -- /bin/bash scripts/qualify/full_lab_live.sh \
+    --bundle $S/bundles/D02 --python $PY --out $S/runs/live/full-lab-D02.json
+  ```
+  (the helper reads the Keychain item and writes one `ANTHROPIC_API_KEY=...` line to the script's stdin).
 - Hard caps: 5 turns × 2 decisions × 4 requests = 40 requests, `model_usd=3` at PRICE, `model_tokens=600000`.
+- The wait ends early when the investigation parks as "needs operator input" (recorded in the receipt).
 - The receipt contains the served model ids and per-decision usage.
 - `key_found_in_lab_files` must be `[]`; if it is not, the script exits 1.
 

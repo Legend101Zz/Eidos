@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 from pathlib import Path
 
 import typer
@@ -25,13 +26,28 @@ def init(home: Path = typer.Option(None, help="lab data root (default $EIDOS_HOM
     cfg = init_lab(str(home), api_port=api_port, pg_port=pg_port, temporal_port=temporal_port, pg_bin=pg_bin,
                    temporal_source=temporal_source)
     out({"home": cfg.home, "api_url": cfg.api_url, "sealed_available": cfg.sealed_available,
-         "sealed_profile": cfg.sealed_profile or None, "admin_token_file": str(cfg.secret_path("admin.token")), "next": f"EIDOS_HOME={cfg.home} lab start"})
+         "sealed_profile": cfg.sealed_profile or None, "admin_token_file": str(cfg.secret_path("admin.token")), "next": f"EIDOS_HOME={shlex.quote(str(cfg.home))} lab start"})
 
 
 @app.command("start")
-def start():
+def start(credentials_stdin: bool = typer.Option(
+        False, "--credentials-stdin",
+        help="read provider credentials as NAME=VALUE lines from stdin; like credentials in this command's "
+             "environment, they reach only the investigator worker (never another service, a file or argv)")):
+    import re
+    import sys
+
     from eidos.supervisor.ops import start as _start
-    out(_start(_cfg()))
+    creds: dict[str, str] = {}
+    if credentials_stdin:
+        for line in sys.stdin.read().splitlines():
+            if not line.strip():
+                continue
+            name, sep, value = line.partition("=")
+            if not sep or not re.fullmatch(r"[A-Z_][A-Z0-9_]*", name.strip()):
+                raise typer.BadParameter("--credentials-stdin expects NAME=VALUE lines (NAME in [A-Z0-9_])")
+            creds[name.strip()] = value.strip()
+    out(_start(_cfg(), credentials=creds))
 
 
 @app.command("stop")

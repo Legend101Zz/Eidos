@@ -1,0 +1,972 @@
+{
+  "driver": "eidos-live-bundle/1",
+  "label": "lab-free real-LLM development run (not a full Eidos lab run)",
+  "task_id": "D12",
+  "bundle_hashes": {
+    "brief.md": "9b8bdb8d8657f3d61945e0508784837dab3c709435d2adeee7425bf919fbb3ba",
+    "project.py": "083f6227c61a7aeeb623fb614693e399bb5e7d1b0fdffb639c4da463e1301561",
+    "requirements.lock": "be1d27623dd05e7d6c630152f4d3c4850786238b28530e9f2a88124027ecec41",
+    "train.npz": "e646fd73167f57f8570b95d53f6acd7f3c96f386bb1d5873a686423ede622994",
+    "validation.npz": "55a73d29f0418a73aa802617ed79641e3f87c1d460112783f4128bfb6e77ee1f"
+  },
+  "model_requested": "anthropic:claude-sonnet-5-5",
+  "caps": {
+    "max_requests": 40,
+    "max_turns": 8,
+    "max_output_tokens": 4096,
+    "temperature": "unset"
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "context_chars": 4129,
+      "usage": {
+        "provider": "anthropic",
+        "model": "anthropic:claude-sonnet-5-5",
+        "input_tokens": 2781,
+        "output_tokens": 561,
+        "calls": 1,
+        "request_ids": [
+          "msg_011CgqNh6paPoY3k2tn7cztm"
+        ],
+        "served_models": [
+          "claude-sonnet-5-5"
+        ],
+        "per_request": [
+          {
+            "model": "claude-sonnet-5-5",
+            "input_tokens": 2781,
+            "output_tokens": 561,
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "served_models": [
+        "claude-sonnet-5-5"
+      ],
+      "proposal": {
+        "rationale": "No jobs exist yet, so there is no evidence about the baseline. The first step is to reproduce the baseline run (seed 11) with eidos.project.command on the declared artifacts, which gives a reference for later comparison. Next turn I will score its validation predictions with eidos.task.score-classification. This is a reproduction step and makes no improvement claim.",
+        "purpose": "reproduction",
+        "hypotheses": [
+          {
+            "statement": "The baseline project.py train command runs to completion with seed 11 and produces a predictions artifact with ids and predictions arrays for the validation set.",
+            "prediction": "The run exits with code 0 and stages a predictions file with ids int64 [N] and predictions int64 [N].",
+            "falsifier": "A nonzero exit, a missing predictions output, or a wrong schema or dtype in the output."
+          }
+        ],
+        "calls": [
+          {
+            "tool": "run_component",
+            "args": {
+              "component_ref": "eidos.project.command@1.0.6",
+              "inputs": {
+                "train": "art_train",
+                "validation": "art_validation",
+                "task": "art_task"
+              },
+              "config": {
+                "argv": [
+                  "python",
+                  "project.py",
+                  "train",
+                  "--inputs",
+                  "{work}",
+                  "--out",
+                  "{out}",
+                  "--seed",
+                  "{seed}"
+                ],
+                "seed": 11
+              },
+              "prediction": "exit 0 and a predictions artifact is staged",
+              "falsifier": "nonzero exit or missing or malformed predictions"
+            }
+          }
+        ],
+        "control": {
+          "action": "wait_for_jobs",
+          "summary": "Wait for the baseline reproduction run to finish, then score its validation predictions."
+        }
+      },
+      "accepted": true,
+      "receipts": [
+        {
+          "ok": true,
+          "job_id": "job_000",
+          "outputs": [
+            {
+              "slot": "model",
+              "artifact_id": "art_0003",
+              "role": "model-export",
+              "schema": null
+            },
+            {
+              "slot": "receipt",
+              "artifact_id": "art_0004",
+              "role": "output",
+              "schema": null
+            },
+            {
+              "slot": "validation_predictions",
+              "artifact_id": "art_0005",
+              "role": "output",
+              "schema": "prediction-array/1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "turn": 2,
+      "context_chars": 4872,
+      "usage": {
+        "provider": "anthropic",
+        "model": "anthropic:claude-sonnet-5-5",
+        "input_tokens": 3113,
+        "output_tokens": 443,
+        "calls": 1,
+        "request_ids": [
+          "msg_011CgqNhcxYqtbtxYofxfvqz"
+        ],
+        "served_models": [
+          "claude-sonnet-5-5"
+        ],
+        "per_request": [
+          {
+            "model": "claude-sonnet-5-5",
+            "input_tokens": 3113,
+            "output_tokens": 443,
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "served_models": [
+        "claude-sonnet-5-5"
+      ],
+      "proposal": {
+        "rationale": "A baseline job (job_000) succeeded and produced validation predictions (art_0005), but no accuracy has been measured yet. The first step is to score those predictions against art_validation with the qualified scorer. That gives a baseline number and lets us decide on any improvement experiment. I am not concluding yet because there is no evidence to scope.",
+        "purpose": "measurement-development",
+        "hypotheses": [
+          {
+            "statement": "The baseline project's validation predictions (art_0005) have valid format and a measurable accuracy above chance, giving a reference point for later comparison.",
+            "prediction": "The scorer returns a validation accuracy clearly above 1/num_classes, with no schema or id-mismatch errors.",
+            "falsifier": "The scorer fails on schema or id mismatch, or accuracy is at or below chance, which would mean the baseline output is broken and needs diagnosis before any improvement search."
+          }
+        ],
+        "calls": [
+          {
+            "tool": "run_component",
+            "args": {
+              "component_ref": "eidos.task.score-classification@1.0.0",
+              "inputs": {
+                "predictions": "art_0005",
+                "reference": "art_validation"
+              },
+              "config": {}
+            }
+          }
+        ],
+        "control": {
+          "action": "wait_for_jobs",
+          "summary": "Wait for the baseline scoring job to finish before choosing the next experiment."
+        }
+      },
+      "accepted": true,
+      "receipts": [
+        {
+          "ok": true,
+          "job_id": "job_001",
+          "metrics": {
+            "accuracy": 0.5,
+            "n": 256,
+            "correct": 128
+          }
+        }
+      ]
+    },
+    {
+      "turn": 3,
+      "context_chars": 5163,
+      "usage": {
+        "provider": "anthropic",
+        "model": "anthropic:claude-sonnet-5-5",
+        "input_tokens": 3242,
+        "output_tokens": 922,
+        "calls": 1,
+        "request_ids": [
+          "msg_011CgqNhxDwF4bHiKKn25exQ"
+        ],
+        "served_models": [
+          "claude-sonnet-5-5"
+        ],
+        "per_request": [
+          {
+            "model": "claude-sonnet-5-5",
+            "input_tokens": 3242,
+            "output_tokens": 922,
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "served_models": [
+        "claude-sonnet-5-5"
+      ],
+      "proposal": {
+        "rationale": "The only evidence is baseline seed 11 (job_000, art_0005) scoring accuracy 0.5 (128/256) on validation in job_001. That is plausibly chance level on a binary task, and there is a single seed and no variance estimate. Before authoring anything, I will rerun the unchanged baseline with seed 12 to measure seed sensitivity. I will score it next turn, because the prediction artifact id is not known until the job finishes. No improvement claim is supportable from one run.",
+        "purpose": "reproduction",
+        "hypotheses": [
+          {
+            "statement": "The baseline project.py is at chance level (about 0.5 validation accuracy) regardless of seed, so it does not learn a usable signal.",
+            "prediction": "Seed 12 gives validation accuracy within about 0.05 of 0.5 (roughly granular 115-141 correct of 256).",
+            "falsifier": "Seed 12 gives validation accuracy outside 0.45-0.55, which would show seed-dependent behavior rather than a stable chance-level baseline."
+          }
+        ],
+        "calls": [
+          {
+            "tool": "run_component",
+            "args": {
+              "component_ref": "eidos.project.command@1.0.6",
+              "inputs": {
+                "task": "art_task",
+                "train": "art_train",
+                "validation": "art_validation"
+              },
+              "config": {
+                "argv": [
+                  "python",
+                  "project.py",
+                  "train",
+                  "--inputs",
+                  "{work}",
+                  "--out",
+                  "{out}",
+                  "--seed",
+                  "{seed}"
+                ],
+                "seed": 12
+              },
+              "prediction": "accuracy near 0.5 at seed 12",
+              "falsifier": "accuracy outside 0.45-0.55"
+            }
+          }
+        ],
+        "control": {
+          "action": "wait_for_jobs",
+          "summary": "Wait for the seed-12 baseline reproduction, then score it with eidos.task.score-classification against art_validation."
+        }
+      },
+      "accepted": true,
+      "receipts": [
+        {
+          "ok": true,
+          "job_id": "job_002",
+          "outputs": [
+            {
+              "slot": "model",
+              "artifact_id": "art_0006",
+              "role": "model-export",
+              "schema": null
+            },
+            {
+              "slot": "receipt",
+              "artifact_id": "art_0007",
+              "role": "output",
+              "schema": null
+            },
+            {
+              "slot": "validation_predictions",
+              "artifact_id": "art_0008",
+              "role": "output",
+              "schema": "prediction-array/1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "turn": 4,
+      "context_chars": 5906,
+      "usage": {
+        "provider": "anthropic",
+        "model": "anthropic:claude-sonnet-5-5",
+        "input_tokens": 3574,
+        "output_tokens": 741,
+        "calls": 1,
+        "request_ids": [
+          "msg_011CgqNif2rCHwvYfw5ZZKvj"
+        ],
+        "served_models": [
+          "claude-sonnet-5-5"
+        ],
+        "per_request": [
+          {
+            "model": "claude-sonnet-5-5",
+            "input_tokens": 3574,
+            "output_tokens": 741,
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "served_models": [
+        "claude-sonnet-5-5"
+      ],
+      "proposal": {
+        "rationale": "Seed 11 baseline scored 0.5 accuracy (128/256, job_001), with examples_seen=0 and steps=0 in both runs. That suggests the baseline does no learning, such as a constant or random predictor. Seed 12 predictions (art_0008) are not yet scored. Scoring them is the cheapest next step to test whether the baseline is seed-invariant and degenerate. This also gives a second reproduction point before I author any improved trainer.",
+        "purpose": "reproduction",
+        "hypotheses": [
+          {
+            "statement": "The baseline project does not learn from the training data (examples_seen=0), so its validation accuracy is at chance (~0.5) regardless of seed.",
+            "prediction": "Scoring art_0008 (seed 12) against art_validation gives accuracy near 0.5 (roughly 0.44-0.56 on n=256).",
+            "falsifier": "Seed 12 accuracy falls clearly outside the chance band, for example above 0.58 or below 0.42. That would mean seed-dependent behavior rather than a flat non-learning baseline."
+          }
+        ],
+        "calls": [
+          {
+            "tool": "run_component",
+            "args": {
+              "component_ref": "eidos.task.score-classification@1.0.0",
+              "inputs": {
+                "predictions": "art_0008",
+                "reference": "art_validation"
+              },
+              "config": {}
+            }
+          }
+        ],
+        "control": {
+          "action": "wait_for_jobs",
+          "summary": "Score seed-12 baseline predictions to check seed-invariance of the chance-level baseline."
+        }
+      },
+      "accepted": true,
+      "receipts": [
+        {
+          "ok": true,
+          "job_id": "job_003",
+          "metrics": {
+            "accuracy": 0.5,
+            "n": 256,
+            "correct": 128
+          }
+        }
+      ]
+    },
+    {
+      "turn": 5,
+      "context_chars": 6197,
+      "usage": {
+        "provider": "anthropic",
+        "model": "anthropic:claude-sonnet-5-5",
+        "input_tokens": 3703,
+        "output_tokens": 1969,
+        "calls": 1,
+        "request_ids": [
+          "msg_011CgqNj9PvR329vtXcX9STZ"
+        ],
+        "served_models": [
+          "claude-sonnet-5-5"
+        ],
+        "per_request": [
+          {
+            "model": "claude-sonnet-5-5",
+            "input_tokens": 3703,
+            "output_tokens": 1969,
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "served_models": [
+        "claude-sonnet-5-5"
+      ],
+      "proposal": {
+        "rationale": "Both baseline seeds (job_000 seed 11, job_002 seed 12) score exactly 0.5 accuracy (128/256; job_001, job_003), and the receipts report examples_seen=0 and steps=0. That points to a baseline that never trains, probably a constant or random predictor, rather than a weak model. I can't see project.py or the on-disk data layout, so I can't responsibly author a trainer yet. The cheapest informative step is a read-only diagnostic project bundle that reports file layout, array shapes and dtypes, and label balance, which a later trainer can be built on. This is measurement-development only and makes no improvement claim.",
+        "purpose": "measurement-development",
+        "hypotheses": [
+          {
+            "statement": "The baseline is not learning (examples_seen=0), so its 0.5 validation accuracy reflects a constant or random predictor on a balanced binary task, not a capacity limit.",
+            "prediction": "The diagnostic will show a balanced two-class y (about 128 per class in validation), and the input files will be readable as npz or npy with x [N,D], y and ids.",
+            "falsifier": "Label counts are strongly imbalanced or have more than 2 classes, or the files are not in a readable npz or npy layout. Then the 0.5 baseline is not explained by a non-training constant predictor."
+          }
+        ],
+        "calls": [
+          {
+            "tool": "author_component",
+            "args": {
+              "files": {
+                "project.py": "import os,json,argparse\nimport numpy as np\na=argparse.ArgumentParser();a.add_argument('cmd');a.add_argument('--inputs');a.add_argument('--out');a.add_argument('--seed',type=int,default=0);g=a.parse_args()\nos.makedirs(g.out,exist_ok=True)\nr={'files':[]}\nfor d,_,fs in os.walk(g.inputs):\n    for f in fs:\n        p=os.path.join(d,f);e={'path':p,'size':os.path.getsize(p)}\n        try:\n            if f.endswith('.npz'):\n                z=np.load(p)\n                for k in z.files:\n                    e[k]=[list(z[k].shape),str(z[k].dtype)]\n                if 'y' in z.files:\n                    e['ybincount']=np.bincount(z['y']).tolist()\n        except Exception as x:\n            e['err']=str(x)\n        r['files'].append(e)\njson.dump(r,open(os.path.join(g.out,'diag.json'),'w'),indent=1)\nprint(json.dumps(r))\n"
+              },
+              "environment": {}
+            }
+          }
+        ],
+        "control": {
+          "action": "wait_for_jobs",
+          "summary": "Wait for the diagnostic bundle validation, then run it via eidos.project.command with inputs.source to inspect the data layout before authoring a real trainer."
+        }
+      },
+      "accepted": true,
+      "receipts": [
+        {
+          "ok": true,
+          "bundle_artifact_id": "src_000",
+          "note": "use as run_component inputs.source"
+        }
+      ]
+    },
+    {
+      "turn": 6,
+      "context_chars": 6197,
+      "usage": {
+        "provider": "anthropic",
+        "model": "anthropic:claude-sonnet-5-5",
+        "input_tokens": 3703,
+        "output_tokens": 2062,
+        "calls": 1,
+        "request_ids": [
+          "msg_011CgqNkFXnhbUEjJewD5r1g"
+        ],
+        "served_models": [
+          "claude-sonnet-5-5"
+        ],
+        "per_request": [
+          {
+            "model": "claude-sonnet-5-5",
+            "input_tokens": 3703,
+            "output_tokens": 2062,
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "served_models": [
+        "claude-sonnet-5-5"
+      ],
+      "proposal": {
+        "rationale": "Both baseline seeds (job_001 and job_003) score 0.5 (128/256) on validation, and examples_seen=0 and steps=0 in both runs. That looks like chance level for a trivial or untrained predictor, not a measured limit of the data. I have not seen the project layout, the input file format, or what project.py does. Authoring a trainer blind would be guesswork. The cheapest informative step is a read-only diagnostic through the project-command component. It lists the working-copy files and dumps the head of project.py to {out}/inspect.txt, so the next turn can author a real classifier against the actual layout.",
+        "purpose": "measurement-development",
+        "hypotheses": [
+          {
+            "statement": "The baseline project.py does no learning (examples_seen=0, steps=0) and emits constant or degenerate predictions, so 0.5 accuracy reflects a trivial predictor and not a data ceiling.",
+            "prediction": "project.py contains no fitting loop, or predicts a constant or random class. Inspecting it shows no use of the train x/y arrays for fitting.",
+            "falsifier": "project.py fits a model on the train arrays and still scores exactly 0.5 on validation. That would point to uninformative features or a label problem, not a missing trainer."
+          }
+        ],
+        "calls": [
+          {
+            "tool": "run_component",
+            "args": {
+              "component_ref": "eidos.project.command@1.0.6",
+              "inputs": {
+                "task": "art_task",
+                "train": "art_train",
+                "validation": "art_validation"
+              },
+              "config": {
+                "argv": [
+                  "python",
+                  "-c",
+                  "import os,sys;w,o=sys.argv[1],sys.argv[2];L=[os.path.join(r,x)+' '+str(os.path.getsize(os.path.join(r,x))) for r,d,f in os.walk(w) for x in f];p=os.path.join(w,'project.py');P=open(p).read()[:6000] if os.path.exists(p) else '';open(os.path.join(o,'inspect.txt'),'w').write(chr(10).join(L)+chr(10)*2+P)",
+                  "{work}",
+                  "{out}"
+                ],
+                "seed": 11
+              },
+              "prediction": "inspect.txt reveals the file layout and that project.py performs no real training",
+              "falsifier": "project.py shows a real fitting procedure"
+            }
+          }
+        ],
+        "control": {
+          "action": "wait_for_jobs",
+          "summary": "Inspect project layout and baseline trainer before authoring any candidate."
+        }
+      },
+      "accepted": true,
+      "receipts": [
+        {
+          "ok": true,
+          "job_id": "job_004",
+          "outputs": [
+            {
+              "slot": "inspect",
+              "artifact_id": "art_0009",
+              "role": "output",
+              "schema": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "turn": 7,
+      "context_chars": 6893,
+      "usage": {
+        "provider": "anthropic",
+        "model": "anthropic:claude-sonnet-5-5",
+        "input_tokens": 4046,
+        "output_tokens": 1579,
+        "calls": 1,
+        "request_ids": [
+          "msg_011CgqNmVzi3pc5ukjBgLLfm"
+        ],
+        "served_models": [
+          "claude-sonnet-5-5"
+        ],
+        "per_request": [
+          {
+            "model": "claude-sonnet-5-5",
+            "input_tokens": 4046,
+            "output_tokens": 1579,
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "served_models": [
+        "claude-sonnet-5-5"
+      ],
+      "proposal": {
+        "rationale": "Both baseline seeds score 0.5 accuracy (job_001, job_003: 128/256), and examples_seen=0 and steps=0 suggest the baseline is not learning. I cannot read the inspect artifact art_0009 directly, so I am running a read-only inspection of the private working copy that prints the file list and project.py to stderr and exits nonzero. The job error field should then show the contents. That tells me the data format, the output contract and what the baseline does, so any later authored component is grounded in evidence rather than guesses. This is cheap and local, and it changes nothing.",
+        "purpose": "measurement-development",
+        "hypotheses": [
+          {
+            "statement": "The baseline project.py does not fit a model (examples_seen=0, steps=0) and emits constant or random predictions, which explains the chance-level 0.5 validation accuracy on both seeds.",
+            "prediction": "The printed project.py contains no training loop or fit call, or it emits constant or random labels. The file listing will also show the input array files and the expected output format.",
+            "falsifier": "project.py contains a real training procedure that fits on x and y. In that case the 0.5 accuracy reflects a data or label issue rather than a missing fit."
+          }
+        ],
+        "calls": [
+          {
+            "tool": "run_component",
+            "args": {
+              "component_ref": "eidos.project.command@1.0.6",
+              "inputs": {
+                "task": "art_task",
+                "train": "art_train",
+                "validation": "art_validation"
+              },
+              "config": {
+                "argv": [
+                  "python",
+                  "-c",
+                  "import os,sys;w=sys.argv[1];L=[os.path.join(r,x)+' '+str(os.path.getsize(os.path.join(r,x))) for r,d,f in os.walk(w) for x in f];p=os.path.join(w,'project.py');P=open(p).read()[:5000] if os.path.exists(p) else '';sys.stderr.write(chr(10).join(L)+chr(10)*2+P);sys.exit(3)",
+                  "{work}"
+                ],
+                "seed": 11,
+                "timeout_seconds": 60
+              },
+              "prediction": "Job fails with nonzero exit and the error field exposes the file list and project.py source.",
+              "falsifier": "Error text is empty or truncated so that project.py is not visible."
+            }
+          }
+        ],
+        "control": {
+          "action": "wait_for_jobs",
+          "summary": "Wait for the inspection job so its error output can be read next turn."
+        }
+      },
+      "accepted": true,
+      "receipts": [
+        {
+          "ok": false,
+          "job_id": "job_005",
+          "error": "exit 3: tions.npz')\n    receipt = dict(seed=seed, steps=steps, examples_seen=steps*len(y), device='cpu', threads=1,\n                   elapsed_seconds=time.perf_counter()-started,\n                   model_sha256=hashlib.sha256((out/'model.pt').read_bytes()).hexdigest())\n    (out/'receipt.json').write_text(json.dumps(receipt, indent=2)+'\\n')\n\ndef infer(checkpoint, inputs, output):\n    # This is a local candidate process, never the trusted label-owning scorer.\n    saved = torch.load(checkpoint, ma"
+        }
+      ]
+    },
+    {
+      "turn": 8,
+      "context_chars": 8113,
+      "usage": {
+        "provider": "anthropic",
+        "model": "anthropic:claude-sonnet-5-5",
+        "input_tokens": 4621,
+        "output_tokens": 1583,
+        "calls": 1,
+        "request_ids": [
+          "msg_011CgqNnW2UHs3E2EM5D48HB"
+        ],
+        "served_models": [
+          "claude-sonnet-5-5"
+        ],
+        "per_request": [
+          {
+            "model": "claude-sonnet-5-5",
+            "input_tokens": 4621,
+            "output_tokens": 1583,
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "served_models": [
+        "claude-sonnet-5-5"
+      ],
+      "proposal": {
+        "rationale": "Baseline accuracy is 0.5 on 256 validation examples for seeds 11 and 12 (job_001, job_003), which is chance for a binary task. Both receipts show steps=0 and examples_seen=0 (job_000, job_002), so the baseline appears not to train at all. That would make the baseline a degenerate comparator rather than evidence about method quality. The partial source in job_005's error shows the receipt code uses steps*len(y), but not where steps comes from. I will print only the lines with 'steps', 'add_argument' or 'lr' from project.py, compactly, to see the default and the CLI flags before authoring any change. This is a cheap, local, read-only inspection.",
+        "purpose": "measurement-development",
+        "hypotheses": [
+          {
+            "statement": "The baseline project.py defaults to steps=0 (or exposes a steps flag that defaults to 0), so the chance-level validation accuracy comes from an untrained model rather than a method limit.",
+            "prediction": "The printed lines will show a steps default of 0 or a steps value derived from a config or argument that evaluates to 0.",
+            "falsifier": "The printed lines show a nonzero default steps value and a training loop that the receipt simply fails to count."
+          }
+        ],
+        "calls": [
+          {
+            "tool": "run_component",
+            "args": {
+              "component_ref": "eidos.project.command@1.0.6",
+              "inputs": {
+                "task": "art_task",
+                "train": "art_train",
+                "validation": "art_validation"
+              },
+              "config": {
+                "argv": [
+                  "python",
+                  "-c",
+                  "import os,sys;P=open(os.path.join(sys.argv[1],'project.py')).read();L=[l.strip() for l in P.splitlines() if 'steps' in l or 'add_argument' in l or 'lr' in l];sys.stderr.write('|'.join(L)[:450]);sys.exit(3)",
+                  "{work}"
+                ],
+                "seed": 11,
+                "timeout_seconds": 60
+              }
+            }
+          }
+        ],
+        "control": {
+          "action": "wait_for_jobs",
+          "summary": "Wait for the inspection job to finish and read the steps and CLI argument lines from its error output."
+        }
+      },
+      "accepted": true,
+      "receipts": [
+        {
+          "ok": false,
+          "job_id": "job_006",
+          "error": "exit 3: steps = {'iris':100, 'digits':8, 'null':0}[project]|opt = torch.optim.Adam(model.parameters(), lr=.02)|for _ in range(steps):|receipt = dict(seed=seed, steps=steps, examples_seen=steps*len(y), device='cpu', threads=1,|fit = commands.add_parser('train'); fit.add_argument('--inputs', default='.'); fit.add_argument('--out', required=True); fit.add_argument('--seed', type=int, default=11)|pred = commands.add_parser('infer'); pred.add_argument('--mode"
+        }
+      ]
+    }
+  ],
+  "started_at": 1794136968.86132,
+  "stop": "turn cap reached",
+  "total_requests": 8,
+  "jobs": [
+    {
+      "id": "job_000",
+      "component": "eidos.project.command@1.0.6",
+      "purpose": "open-search",
+      "status": "succeeded",
+      "inputs": {
+        "train": "art_train",
+        "validation": "art_validation",
+        "task": "art_task"
+      },
+      "config": {
+        "argv": [
+          "python",
+          "project.py",
+          "train",
+          "--inputs",
+          "{work}",
+          "--out",
+          "{out}",
+          "--seed",
+          "{seed}"
+        ],
+        "seed": 11
+      },
+      "receipt": {
+        "metrics": {
+          "seed": 11,
+          "steps": 0,
+          "examples_seen": 0,
+          "threads": 1,
+          "elapsed_seconds": 0.7568537500046659
+        },
+        "seconds": 2.15,
+        "source": "bundle"
+      },
+      "error": null,
+      "outputs": [
+        {
+          "slot": "model",
+          "artifact_id": "art_0003",
+          "role": "model-export",
+          "schema": null
+        },
+        {
+          "slot": "receipt",
+          "artifact_id": "art_0004",
+          "role": "output",
+          "schema": null
+        },
+        {
+          "slot": "validation_predictions",
+          "artifact_id": "art_0005",
+          "role": "output",
+          "schema": "prediction-array/1"
+        }
+      ]
+    },
+    {
+      "id": "job_001",
+      "component": "eidos.task.score-classification@1.0.0",
+      "purpose": "open-search",
+      "status": "succeeded",
+      "inputs": {
+        "predictions": "art_0005",
+        "reference": "art_validation"
+      },
+      "config": {},
+      "receipt": {
+        "metrics": {
+          "accuracy": 0.5,
+          "n": 256,
+          "correct": 128
+        }
+      },
+      "error": null,
+      "outputs": []
+    },
+    {
+      "id": "job_002",
+      "component": "eidos.project.command@1.0.6",
+      "purpose": "open-search",
+      "status": "succeeded",
+      "inputs": {
+        "task": "art_task",
+        "train": "art_train",
+        "validation": "art_validation"
+      },
+      "config": {
+        "argv": [
+          "python",
+          "project.py",
+          "train",
+          "--inputs",
+          "{work}",
+          "--out",
+          "{out}",
+          "--seed",
+          "{seed}"
+        ],
+        "seed": 12
+      },
+      "receipt": {
+        "metrics": {
+          "seed": 12,
+          "steps": 0,
+          "examples_seen": 0,
+          "threads": 1,
+          "elapsed_seconds": 0.7371697500057053
+        },
+        "seconds": 2.06,
+        "source": "bundle"
+      },
+      "error": null,
+      "outputs": [
+        {
+          "slot": "model",
+          "artifact_id": "art_0006",
+          "role": "model-export",
+          "schema": null
+        },
+        {
+          "slot": "receipt",
+          "artifact_id": "art_0007",
+          "role": "output",
+          "schema": null
+        },
+        {
+          "slot": "validation_predictions",
+          "artifact_id": "art_0008",
+          "role": "output",
+          "schema": "prediction-array/1"
+        }
+      ]
+    },
+    {
+      "id": "job_003",
+      "component": "eidos.task.score-classification@1.0.0",
+      "purpose": "open-search",
+      "status": "succeeded",
+      "inputs": {
+        "predictions": "art_0008",
+        "reference": "art_validation"
+      },
+      "config": {},
+      "receipt": {
+        "metrics": {
+          "accuracy": 0.5,
+          "n": 256,
+          "correct": 128
+        }
+      },
+      "error": null,
+      "outputs": []
+    },
+    {
+      "id": "job_004",
+      "component": "eidos.project.command@1.0.6",
+      "purpose": "open-search",
+      "status": "succeeded",
+      "inputs": {
+        "task": "art_task",
+        "train": "art_train",
+        "validation": "art_validation"
+      },
+      "config": {
+        "argv": [
+          "python",
+          "-c",
+          "import os,sys;w,o=sys.argv[1],sys.argv[2];L=[os.path.join(r,x)+' '+str(os.path.getsize(os.path.join(r,x))) for r,d,f in os.walk(w) for x in f];p=os.path.join(w,'project.py');P=open(p).read()[:6000] if os.path.exists(p) else '';open(os.path.join(o,'inspect.txt'),'w').write(chr(10).join(L)+chr(10)*2+P)",
+          "{work}",
+          "{out}"
+        ],
+        "seed": 11
+      },
+      "receipt": {
+        "metrics": {},
+        "seconds": 0.13,
+        "source": "bundle"
+      },
+      "error": null,
+      "outputs": [
+        {
+          "slot": "inspect",
+          "artifact_id": "art_0009",
+          "role": "output",
+          "schema": null
+        }
+      ]
+    },
+    {
+      "id": "job_005",
+      "component": "eidos.project.command@1.0.6",
+      "purpose": "open-search",
+      "status": "failed",
+      "inputs": {
+        "task": "art_task",
+        "train": "art_train",
+        "validation": "art_validation"
+      },
+      "config": {
+        "argv": [
+          "python",
+          "-c",
+          "import os,sys;w=sys.argv[1];L=[os.path.join(r,x)+' '+str(os.path.getsize(os.path.join(r,x))) for r,d,f in os.walk(w) for x in f];p=os.path.join(w,'project.py');P=open(p).read()[:5000] if os.path.exists(p) else '';sys.stderr.write(chr(10).join(L)+chr(10)*2+P);sys.exit(3)",
+          "{work}"
+        ],
+        "seed": 11,
+        "timeout_seconds": 60
+      },
+      "receipt": null,
+      "error": {
+        "category": "user-code",
+        "message": "exit 3: tions.npz')\n    receipt = dict(seed=seed, steps=steps, examples_seen=steps*len(y), device='cpu', threads=1,\n                   elapsed_seconds=time.perf_counter()-started,\n                   model_sha256=hashlib.sha256((out/'model.pt').read_bytes()).hexdigest())\n    (out/'receipt.json').write_text(json.dumps(receipt, indent=2)+'\\n')\n\ndef infer(checkpoint, inputs, output):\n    # This is a local candidate process, never the trusted label-owning scorer.\n    saved = torch.load(checkpoint, map_location='cpu', weights_only=True)\n    model = Model(**saved['config']); model.load_state_dict(saved['state_dict']); model.eval()\n    with np.load(inputs, allow_pickle=False) as data:\n        x, ids = data['x'], data['ids']\n    with torch.no_grad():\n        predictions = model(torch.tensor(x)).argmax(-1).numpy()\n    np.savez(output, ids=ids, predictions=predictions)\n\nif __name__ == '__main__':\n    parser = argparse.ArgumentParser()\n    commands = parser.add_subparsers(dest='command', required=True)\n    fit = commands.add_parser('train'); fit.add_argument('--inputs', default='.'); fit.add_argument('--out', required=True); fit.add_argument('--seed', type=int, default=11)\n    pred = commands.add_parser('infer'); pred.add_argument('--model', required=True); pred.add_argument('--inputs', required=True); pred.add_argument('--out', required=True)\n    args = parser.parse_args()\n    if args.command == 'train': train(args.inputs, args.out, args.seed)\n    else: infer(args.model, args.inputs, ar"
+      },
+      "outputs": []
+    },
+    {
+      "id": "job_006",
+      "component": "eidos.project.command@1.0.6",
+      "purpose": "open-search",
+      "status": "failed",
+      "inputs": {
+        "task": "art_task",
+        "train": "art_train",
+        "validation": "art_validation"
+      },
+      "config": {
+        "argv": [
+          "python",
+          "-c",
+          "import os,sys;P=open(os.path.join(sys.argv[1],'project.py')).read();L=[l.strip() for l in P.splitlines() if 'steps' in l or 'add_argument' in l or 'lr' in l];sys.stderr.write('|'.join(L)[:450]);sys.exit(3)",
+          "{work}"
+        ],
+        "seed": 11,
+        "timeout_seconds": 60
+      },
+      "receipt": null,
+      "error": {
+        "category": "user-code",
+        "message": "exit 3: steps = {'iris':100, 'digits':8, 'null':0}[project]|opt = torch.optim.Adam(model.parameters(), lr=.02)|for _ in range(steps):|receipt = dict(seed=seed, steps=steps, examples_seen=steps*len(y), device='cpu', threads=1,|fit = commands.add_parser('train'); fit.add_argument('--inputs', default='.'); fit.add_argument('--out', required=True); fit.add_argument('--seed', type=int, default=11)|pred = commands.add_parser('infer'); pred.add_argument('--mode"
+      },
+      "outputs": []
+    }
+  ],
+  "notes": [],
+  "isolation": [
+    {
+      "argv0": "/Volumes/Mrigesh SSD/eidos-mac/venvs/research/bin/python",
+      "profile": "macos:seatbelt-sealed",
+      "waiver": null,
+      "config_digest": "sha256:63222e55b42e5bd8562d460d3120a9bb3d702e61ab38027a03d3c1678af5894b"
+    },
+    {
+      "argv0": "/Volumes/Mrigesh SSD/eidos-mac/venvs/research/bin/python",
+      "profile": "macos:seatbelt-sealed",
+      "waiver": null,
+      "config_digest": "sha256:63222e55b42e5bd8562d460d3120a9bb3d702e61ab38027a03d3c1678af5894b"
+    },
+    {
+      "argv0": "/Volumes/Mrigesh SSD/eidos-mac/venvs/research/bin/python",
+      "profile": "macos:seatbelt-sealed",
+      "waiver": null,
+      "config_digest": "sha256:63222e55b42e5bd8562d460d3120a9bb3d702e61ab38027a03d3c1678af5894b"
+    },
+    {
+      "argv0": "/Volumes/Mrigesh SSD/eidos-mac/venvs/research/bin/python",
+      "profile": "macos:seatbelt-sealed",
+      "waiver": null,
+      "config_digest": "sha256:63222e55b42e5bd8562d460d3120a9bb3d702e61ab38027a03d3c1678af5894b"
+    },
+    {
+      "argv0": "/Volumes/Mrigesh SSD/eidos-mac/venvs/research/bin/python",
+      "profile": "macos:seatbelt-sealed",
+      "waiver": null,
+      "config_digest": "sha256:63222e55b42e5bd8562d460d3120a9bb3d702e61ab38027a03d3c1678af5894b"
+    },
+    {
+      "argv0": "/Volumes/Mrigesh SSD/eidos-mac/venvs/research/bin/python",
+      "profile": "macos:seatbelt-sealed",
+      "waiver": null,
+      "config_digest": "sha256:63222e55b42e5bd8562d460d3120a9bb3d702e61ab38027a03d3c1678af5894b"
+    },
+    {
+      "argv0": "/Volumes/Mrigesh SSD/eidos-mac/venvs/research/bin/python",
+      "profile": "macos:seatbelt-sealed",
+      "waiver": null,
+      "config_digest": "sha256:63222e55b42e5bd8562d460d3120a9bb3d702e61ab38027a03d3c1678af5894b"
+    }
+  ],
+  "authored_sources": {
+    "src_000": [
+      "project.py"
+    ]
+  },
+  "finished_at": 1794137057.6602392,
+  "usage_total": {
+    "input_tokens": 28783,
+    "output_tokens": 9860
+  },
+  "evidence": {
+    "class": "real-LLM DEVELOPMENT run (lab-free driver), macOS 26.3.1 arm64 (Apple M4)",
+    "sha": "4d494ce",
+    "served_models": [
+      "claude-sonnet-5-5"
+    ],
+    "list_price_usd_per_mtok": {
+      "input": 2.0,
+      "output": 10.0
+    },
+    "cost_usd": 0.1562,
+    "ledger": {
+      "run_id": "anc-1794136960",
+      "settled_cents": 16
+    },
+    "builder_intervention": "none during the run",
+    "refused_proposals": 0,
+    "investigator_inputs": "bundle only (brief, task.json, project.py, train/validation); no test data or labels, no reference solution"
+  }
+}

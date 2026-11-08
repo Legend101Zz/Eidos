@@ -138,11 +138,11 @@ class AssessorActivities:
 
         from eidos.runtime.launcher import (
             LaunchSpec,
-            credential_dirs,
             detect_sealed_profile,
             launch,
             profile_config_digest,
             run_probes,
+            sealed_deny_read,
         )
         from eidos.runtime.runner import SDK_PATHS, materialize_bundle, python_prefixes
         from eidos_wire import OutputManifest
@@ -169,8 +169,8 @@ class AssessorActivities:
             lab_src = str(Path(_eidos.__file__).resolve().parent.parent)
             profile = detect_sealed_profile() or "dev:same-user"
             # The assessor role reads only its release, the evidence and the lab interpreter; on Seatbelt
-            # the lab home, its own credential directory and user credential stores are unreadable.
-            deny = [d for d in (self.lab_root, os.path.dirname(self.credential_path)) if d] + credential_dirs()
+            # the lab home, its own credential directory and the user's home directory are unreadable.
+            deny = sealed_deny_read(self.lab_root, os.path.dirname(self.credential_path))
             readonly = sorted({*SDK_PATHS, lab_src, str(src), str(inv_path), *[i.path for i in inv.inputs.values()]})
             spec = LaunchSpec(argv=[self.lab_python, "-m", "eidos_worker.run", str(inv_path)], cwd=str(src),
                               attempt_dir=str(base / "proc"), profile=profile, readonly=readonly,

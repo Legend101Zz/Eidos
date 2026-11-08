@@ -37,8 +37,11 @@ class Child:
 
 
 class Supervisor:
-    def __init__(self, cfg: LabConfig):
+    def __init__(self, cfg: LabConfig, credentials: dict[str, str] | None = None):
         self.cfg = cfg
+        # Provider credentials, held in memory only (never in this process's environment): added to the
+        # investigator worker's environment at each (re)spawn and to no other service.
+        self._credentials = dict(credentials or {})
         self.children: dict[str, Child] = {}
         self.stopping = False
         py = cfg.lab_python or sys.executable
@@ -52,8 +55,9 @@ class Supervisor:
     def spawn(self, ch: Child) -> None:
         log = open(self.cfg.p("logs", f"{ch.name}.log"), "ab")
         from eidos.runtime.launcher import scrub_secrets
-        base = dict(os.environ) if ch.name == "investigator-worker" else scrub_secrets(os.environ)
-        # Only the model-calling investigator worker holds provider credentials.
+        base = scrub_secrets(os.environ)
+        if ch.name == "investigator-worker":  # only the model-calling investigator worker holds provider credentials
+            base = {**dict(os.environ), **self._credentials}
         env = {**base, "EIDOS_HOME": str(self.cfg.root), "PYTHONUNBUFFERED": "1"}
         cwd = str(self.cfg.p("services", "temporal")) if ch.name == "temporal" else str(self.cfg.root)
         ch.proc = subprocess.Popen(ch.argv, stdout=log, stderr=log, stdin=subprocess.DEVNULL, env=env, cwd=cwd,
@@ -140,8 +144,28 @@ class Supervisor:
         self.write_status("stopped")
 
 
+def read_credentials(stream) -> dict[str, str]:
+    """Credentials handed over by ``ops.start`` on stdin (a JSON object); empty for a terminal or /dev/null."""
+    try:
+        if stream is None or stream.isatty():
+            return {}
+        raw = stream.read()
+    except (OSError, ValueError):
+        return {}
+    try:
+        data = json.loads(raw or "{}")
+    except ValueError:
+        return {}
+    return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+
+
 def run_forever(cfg: LabConfig) -> None:
-    sup = Supervisor(cfg)
+    from eidos.runtime.launcher import scrub_secrets
+    creds = read_credentials(sys.stdin)
+    # also take any credential the supervisor was (still) started with out of its environment
+    for k in [k for k in os.environ if k not in scrub_secrets(os.environ)]:
+        creds.setdefault(k, os.environ.pop(k))
+    sup = Supervisor(cfg, credentials=creds)
     loop = asyncio.new_event_loop()
     stop_event = asyncio.Event()
 

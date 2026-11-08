@@ -12,6 +12,9 @@ Install (from a checkout, in a small venv):
 Run:
     ANTHROPIC_API_KEY=... PYTHONPATH=src:packages/eidos-wire/src \
         /tmp/eidos-live/bin/python scripts/qualify/live_provider_check.py --model anthropic:claude-sonnet-5-5 > receipt.json
+OpenAI-compatible endpoint (same scenarios; the key, if the endpoint needs one, only from --api-key-env):
+    PYTHONPATH=src:packages/eidos-wire/src python scripts/qualify/live_provider_check.py \
+        --model openai-compatible:qwen2.5:3b-instruct --base-url http://127.0.0.1:11535/v1 > receipt.json
 """
 
 from __future__ import annotations
@@ -99,20 +102,28 @@ SCENARIOS = [
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="anthropic:claude-sonnet-5-5")
+    ap.add_argument("--base-url", help="OpenAI-compatible endpoint, e.g. http://127.0.0.1:11535/v1")
+    ap.add_argument("--api-key-env", help="environment variable holding the endpoint key (default: provider's own)")
     args = ap.parse_args()
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print(json.dumps({"error": "ANTHROPIC_API_KEY is not set; nothing was called"}))
+    provider = args.model.partition(":")[0]
+    key_env = args.api_key_env or ("ANTHROPIC_API_KEY" if provider == "anthropic" else "OPENAI_API_KEY")
+    if provider == "anthropic" and not os.environ.get(key_env):
+        print(json.dumps({"error": f"{key_env} is not set; nothing was called"}))
         return 2
+    if provider == "openai-compatible" and not args.base_url:
+        print(json.dumps({"error": "--base-url is required for openai-compatible"}))
+        return 2
+    endpoint = {"api_key_env": key_env, **({"base_url": args.base_url} if args.base_url else {})}
     from eidos.domain.turns import validate_decision
     from eidos.investigator.context import pack
     from eidos.investigator.pydantic_ai_runtime import PydanticAIRuntime, build_model
     from eidos.investigator.runtime import DecisionRequest, ModelCallFailed
 
     spent = {"requests": 0}
-    receipt = {"check": "eidos-live-provider/1", "model_requested": args.model, "caps": {
+    receipt = {"check": "eidos-live-provider/1", "model_requested": args.model, "base_url": args.base_url, "caps": {
         "max_total_requests": MAX_TOTAL_REQUESTS, "max_output_tokens": MAX_OUTPUT_TOKENS, "temperature": "unset"},
         "started_at": time.time(), "scenarios": []}
-    m = build_model({"model": args.model})
+    m = build_model({"model": args.model, **endpoint})
     receipt["transport_retries_disabled"] = getattr(getattr(m, "client", None), "max_retries", None) == 0
 
     def run(name, cfg_extra, view, catalog_n, tools, budget_needed, expect):
@@ -120,7 +131,7 @@ def main() -> int:
             receipt["scenarios"].append({"name": name, "skipped": "request cap would be exceeded"})
             return
         cfg = {"model": args.model, "max_output_tokens": MAX_OUTPUT_TOKENS, "output_retries": 1,
-               "max_requests_per_decision": budget_needed, "request_timeout": 120, **cfg_extra}
+               "max_requests_per_decision": budget_needed, "request_timeout": 120, **endpoint, **cfg_extra}
         packed = pack(view, _catalog(catalog_n))
         req = DecisionRequest(turn_id=f"live:{name}", slot=0, context=packed["text"], turn_so_far=[],
                               limits={"max_calls": 6}, read_tools=tools or {}, view=view)
@@ -171,7 +182,7 @@ def main() -> int:
     run("request-limit-with-tool-loop", {}, _view([_job(0, 0.84)],
         steering=[{"by": "check", "instruction": "Inspect art_vp0 with inspect_evidence before deciding."}]), 6, tools, 1,
         "bounded-or-decision")
-    run("unknown-model-id", {"model": "anthropic:eidos-no-such-model"}, _view(), 6, None, 1, "model-call-failed:false")
+    run("unknown-model-id", {"model": f"{provider}:eidos-no-such-model"}, _view(), 6, None, 1, "model-call-failed:false")
     receipt["total_requests_counted"] = spent["requests"]
     receipt["finished_at"] = time.time()
     receipt["summary"] = {"scenarios": len(receipt["scenarios"]),

@@ -3,7 +3,7 @@
 A checkpoint *state* is ``{"manifest": {...}, "entries": {name: value}}``. Entry names:
 
 ``model`` ``optimizer`` ``scheduler`` ``grad_scaler`` ``rng.python`` ``rng.torch`` ``rng.numpy``
-``rng.cuda`` ``data_cursor`` ``step`` and ``component.<name>`` (component-owned state).
+``rng.cuda`` ``rng.mps`` ``data_cursor`` ``step`` and ``component.<name>`` (component-owned state).
 
 The manifest has ``schema`` (``"eidos-checkpoint/1"``), ``state_entries`` (sorted entry names),
 ``parameters``/``buffers`` (name -> shape/dtype), ``optimizer_param_names`` (parameter names in
@@ -64,7 +64,14 @@ def capture_rng() -> Dict[str, Any]:
         rng["rng.numpy"] = [name, [int(k) for k in keys], int(pos), int(has_gauss), float(cached)]
     if torch.cuda.is_available():
         rng["rng.cuda"] = [s.clone() for s in torch.cuda.get_rng_state_all()]
+    if _mps_available(torch):
+        rng["rng.mps"] = torch.mps.get_rng_state().clone()
     return rng
+
+
+def _mps_available(torch: Any) -> bool:
+    mps = getattr(getattr(torch, "backends", None), "mps", None)
+    return bool(mps is not None and mps.is_available() and hasattr(torch, "mps"))
 
 
 def restore_rng(entries: Mapping[str, Any]) -> List[str]:
@@ -88,6 +95,11 @@ def restore_rng(entries: Mapping[str, Any]) -> List[str]:
             torch.cuda.set_rng_state_all([s.clone().cpu() for s in entries["rng.cuda"]])
         else:
             notes.append("CUDA RNG state present but device count/availability differs; skipped")
+    if "rng.mps" in entries:
+        if _mps_available(torch):
+            torch.mps.set_rng_state(entries["rng.mps"].clone().cpu())
+        else:
+            notes.append("MPS RNG state present but MPS is unavailable; skipped")
     return notes
 
 
