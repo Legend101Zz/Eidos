@@ -3,7 +3,8 @@
 ## Identity
 
 - Repository: `Legend101Zz/Eidos`. Branch: `build/eidos-local-v1`. The controller maintains the draft PR `build/eidos-local-v1 → main`.
-- **Current freeze: annotated tag `eidos-v0.5.2` → `e4558e2`.** CI was green on all nine jobs, including `switch-journey` (154/154). It is the first tag with both qualified assessment and sealed checkpoint-and-stop working, and with the restored acceptance journey in CI.
+- **Current freeze: annotated tag `eidos-v0.6.0` → `c7b6681`.** CI was green on all ten jobs. It is the first tag with CI independent of GitHub's release CDN, and it includes the review-3 fixes, the Linux suspend/soak evidence and the licence audit.
+- Previous freeze: `eidos-v0.5.2` → `e4558e2`. CI was green on all nine jobs, including `switch-journey` (154/154). It is the first tag with both qualified assessment and sealed checkpoint-and-stop working, and with the restored acceptance journey in CI.
 - **`8301799` (contains `64ad288`) is RED in CI:** the `switch-journey` step 7 investigation parked after turn 5.
   - Cause, reproduced locally: the idle-trap rule refused whole decisions, including the scripted policy's publish+wait. That dropped the publish, so the policy re-proposed it forever. Also, a turn ending on the invalid-proposal limit had no wake.
   - Fixed in `08f9e01` and `63f7cac` (ADR 0007):
@@ -22,7 +23,7 @@
   - The security defect the controller found is fixed (`3a094d8`): model-chosen commands could inherit `ANTHROPIC_API_KEY`, home and network. Untrusted commands now run under the sealed profile with no secrets, and only the investigator worker holds provider keys.
   - Download robustness for CI was added (`3a96f64`).
 - Earlier freeze: annotated tag `eidos-v0.5.0` → `e822744`. All eight CI jobs are green there: lint-and-unit, integration, fresh-install, upgrade-across-releases, e2e-journey, components, macOS arm64, worker-compat.
-- Earlier tags, never moved: `eidos-v0.1.0` → `78e4597`, `v0.2.0` → `37bd0c5`, `v0.3.0` → `8a33793`, `v0.4.0` → `c57dba9`, `v0.4.1` → `e328608`, `v0.5.0` → `e822744`, `v0.5.1` → `12b4822`, `v0.5.2` → `e4558e2`.
+- Earlier tags, never moved: `eidos-v0.1.0` → `78e4597`, `v0.2.0` → `37bd0c5`, `v0.3.0` → `8a33793`, `v0.4.0` → `c57dba9`, `v0.4.1` → `e328608`, `v0.5.0` → `e822744`, `v0.5.1` → `12b4822`, `v0.5.2` → `e4558e2`, `v0.6.0` → `c7b6681`.
 - **Since v0.4.1:**
   - the macOS assessor runs under Seatbelt;
   - adversarial review 2, with five findings fixed (`docs/dev-runs/adversarial-review-2-2026-11-08.md`);

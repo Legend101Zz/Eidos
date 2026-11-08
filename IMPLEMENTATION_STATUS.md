@@ -382,13 +382,21 @@ Lesson: three of the four failures came from round 5 making sealed the default p
   - `docs/ops/TROUBLESHOOTING.md`, and updated upgrade/backup/restore procedures.
   - The `pyproject.toml` files no longer claim Apache-2.0. The project licence is an **owner decision**.
 
+## Round 13 (2026-11-08)
+
+- **Tag `eidos-v0.6.0` → `c7b6681`:** CI green on all ten jobs. It is the first tag with CI independent of GitHub's release CDN.
+- **Review-3 open item closed:** "needs operator input" is now a durable ledger state.
+  - The coordinator calls `mark_needs_input` through a version-guarded activity (`needs-input-visible-v1`). This sets an investigation label and emits an `investigation.needs_input` event.
+  - Steer, resume, pause and stop clear it, emitting `investigation.input_received`.
+  - It is visible in `get_investigation` (`lab investigate show`, MCP `get_investigation`) and in `project_summary.investigations_needing_input` (`lab status`).
+  - Tests: `test_review2_exposure.py::test_needs_input_is_durable_visible_and_cleared_by_an_operator_action`, plus the workflow test asserting exactly one mark.
+- **Soak history capture fixed:** the soak now describes each running workflow execution, since the list output carries no history size. A 4-minute re-run passed (156 jobs). A running coordinator was captured at history length 5 / 926 bytes; later samples had no running workflows. JSON: `/mnt/session/outputs/ops/soak5.json`.
+
 ## Next concrete action
 
 1. **Mac session:** results arrive through the controller. Fix core defects, and merge `mac/local-qualification` when told to (merge commit).
-2. **CI on `e450402`:** confirm macOS arm64 is green (the bash 3.2 fix). If all ten jobs are green, tag `eidos-v0.5.3`.
+2. **CI on the current head:** if all ten jobs are green, it is eligible for `eidos-v0.6.1`. `eidos-v0.6.0` → `c7b6681` already exists.
 3. **Backlog:**
-   - review-3 item 3: make "needs operator input" visible as a ledger event or status;
-   - workflow history sizes in the soak;
    - the review-2 idle-poll rollover issue;
    - a CI test for checkpoint-and-stop under bwrap.
 4. **Owner:** project licence (`docs/ops/LICENSES.md`) and the other decisions in HANDOFF.md.
