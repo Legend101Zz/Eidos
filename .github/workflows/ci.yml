@@ -220,3 +220,35 @@ jobs:
             !${{ runner.temp }}/research-smoke/venv/**
           retention-days: 3
           if-no-files-found: ignore
+
+  upgrade-across-releases:
+    # Same-repo PRs are already built by the push trigger; run pull_request builds only for forks.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    name: upgrade-across-releases (eidos-v0.1.0 wheels -> head, same lab directory)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      UV_CACHE_DIR: /tmp/uv-cache
+      OLD_TAG: eidos-v0.1.0
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - name: PostgreSQL 16 binaries
+        run: |
+          ls /usr/lib/postgresql/*/bin/initdb 2>/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-16; }
+          echo "PG_BIN=$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -n1)" >> "$GITHUB_ENV"
+      - name: Old release lab with real data, upgrade in place, verify
+        run: bash scripts/ci/upgrade_across_releases.sh
+      - name: Upload result and lab logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: upgrade-across-releases
+          path: |
+            ${{ runner.temp }}/eidos-upgrade/out
+            ${{ runner.temp }}/eidos-upgrade/lab/logs
+          retention-days: 3
+          if-no-files-found: ignore
