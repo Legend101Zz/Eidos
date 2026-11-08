@@ -175,7 +175,10 @@ def status(cfg: LabConfig) -> dict[str, Any]:
     except Exception as exc:
         st["api"] = {"status": "unreachable", "error": str(exc)[:200]}
     usage = shutil.disk_usage(cfg.root)
-    st["disk"] = {"free_bytes": usage.free, "reserve_bytes": cfg.min_free_bytes, "pressure": usage.free < cfg.min_free_bytes * 2}
+    # pressure: within twice the reserve (warning); refusing_new_bytes: below the reserve, where the artifact
+    # store refuses uploads and job output publication (DISK_PRESSURE) until space is freed.
+    st["disk"] = {"free_bytes": usage.free, "reserve_bytes": cfg.min_free_bytes, "pressure": usage.free < cfg.min_free_bytes * 2,
+                  "refusing_new_bytes": usage.free < cfg.min_free_bytes}
     return st
 
 
@@ -210,8 +213,10 @@ def doctor(cfg: LabConfig) -> list[dict[str, Any]]:
     for name, s in (st.get("services") or {}).items():
         add(f"service:{name}", s.get("state") == "running", f"pid={s.get('pid')} restarts={s.get('restarts')}",
             level="fail" if name in ("postgres", "temporal", "api") else "warn")
-    add("disk", not st["disk"]["pressure"], f"free {st['disk']['free_bytes'] >> 20} MiB, reserve {cfg.min_free_bytes >> 20} MiB",
-        level="warn")
+    refusing = bool(st["disk"].get("refusing_new_bytes"))
+    add("disk", not st["disk"]["pressure"], f"free {st['disk']['free_bytes'] >> 20} MiB, reserve {cfg.min_free_bytes >> 20} MiB"
+        + ("; below the reserve: new artifacts and job outputs are refused (DISK_PRESSURE) until space is freed"
+           if refusing else ""), level="fail" if refusing else "warn")
     from eidos.runtime.launcher import bwrap_available, candidate_uid, seatbelt_available
     if sys.platform == "darwin":
         ok = seatbelt_available()

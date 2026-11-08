@@ -44,6 +44,9 @@ class Supervisor:
         self._credentials = dict(credentials or {})
         self.children: dict[str, Child] = {}
         self.stopping = False
+        self._pg_restarts: list[float] = []
+        self._pg_state = "running"
+        self._pg_last_error: str | None = None
         py = cfg.lab_python or sys.executable
         self.children["temporal"] = Child("temporal", svc.temporal_argv(cfg))
         self.children["api"] = Child("api", [py, "-m", "eidos.apps.role", "api"])
@@ -68,7 +71,9 @@ class Supervisor:
 
     def write_status(self, phase: str) -> None:
         st = {"phase": phase, "supervisor_pid": os.getpid(), "updated_at": time.time(),
-              "services": {"postgres": {"state": "running" if svc.pg_running(self.cfg) else "stopped"}}}
+              "services": {"postgres": {"state": ("running" if svc.pg_running(self.cfg) else
+                                                     ("failed" if self._pg_state == "failed" else "stopped")),
+                                           "restarts": len(self._pg_restarts), "last_error": self._pg_last_error}}}
         for n, ch in self.children.items():
             st["services"][n] = {"state": ch.state, "pid": ch.proc.pid if ch.proc else None,
                                  "started_at": ch.started_at, "restarts": len(ch.restarts), "last_exit": ch.last_exit}
@@ -107,8 +112,29 @@ class Supervisor:
                 await asyncio.sleep(0.5)
         raise svc.ServiceError("API did not become healthy; see logs/api.log")
 
+    async def _check_postgres(self) -> None:
+        """PostgreSQL is not a child process (pg_ctl daemonizes it), so it is checked here: a cluster that died
+        (killed, crashed) is started again; PostgreSQL's own crash recovery replays its WAL. More than five
+        restarts in five minutes leaves it failed for the operator (lab doctor reports it)."""
+        if self.stopping or self._pg_state == "failed" or await asyncio.to_thread(svc.pg_running, self.cfg):
+            return
+        now = time.time()
+        self._pg_restarts = [t for t in self._pg_restarts if now - t < 300] + [now]
+        if len(self._pg_restarts) > 5:
+            self._pg_state = "failed"
+            return
+        try:
+            await asyncio.to_thread(svc.pg_start, self.cfg)
+            self._pg_last_error = None
+        except Exception as exc:  # noqa: BLE001 - retried on the next check
+            self._pg_last_error = str(exc)[:300]
+
     async def monitor(self) -> None:
+        tick = 0
         while not self.stopping:
+            tick += 1
+            if tick % 3 == 0:
+                await self._check_postgres()
             for ch in self.children.values():
                 if ch.proc and ch.proc.poll() is not None and ch.state == "running":
                     ch.last_exit = ch.proc.returncode

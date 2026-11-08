@@ -320,6 +320,7 @@ def main() -> int:
     ap.add_argument("--wait-minutes", type=int, default=150)
     ap.add_argument("--no-kill", action="store_true")
     ap.add_argument("--skip-setup", action="store_true", help="reuse --project (state file in --workdir)")
+    ap.add_argument("--setup-only", action="store_true", help="operator setup only; no investigation")
     a = ap.parse_args()
     Path(a.workdir).mkdir(parents=True, exist_ok=True)
     os.chdir(REPO)
@@ -335,7 +336,8 @@ def main() -> int:
         sj.step2(j, a)
         setup_protocols(j)
         state.write_text(json.dumps(j.S, default=str))
-    live(j, a)
+    if not a.setup_only:
+        live(j, a)
     j.save()
     bad = [k for k, v in j.rec["steps"].items() if v["status"] != "pass"]
     print("\nSUMMARY", {k: v["status"] for k, v in j.rec["steps"].items()}, "->", a.out)
