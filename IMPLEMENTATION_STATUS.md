@@ -311,8 +311,27 @@ Lesson: three of the four failures came from round 5 making sealed the default p
   - cross-release upgrade **33/33** (35 s);
   - ruff clean; import contracts 5/5.
 
+## Round 10 (2026-11-08): red CI on `8301799`, fixed
+
+- **What failed:** CI on `8301799` was red in `switch-journey`. The step-7 scripted investigation ended turn 5 on `invalid-proposals` and never woke.
+- **Cause, reproduced locally:**
+  - The `64ad288` rule refused **whole decisions**, including the scripted policy's `publish_component` + `wait_for_jobs`. That dropped the publish, so the policy re-proposed it in every later turn.
+  - A turn ending on the invalid-proposal limit also had no wake.
+- **Why local runs had passed:** `uv pip install --find-links dist` with the shared uv cache **silently installed a cached wheel of the same version** instead of the one just built. The local journey runs at `64ad288` and `2fedb42` therefore tested stale code, and CI was the authoritative result. Fixed with `--no-cache` in `build_and_install.sh`, the upgrade script and the macOS kit.
+- **Fixes (`08f9e01`, `63f7cac`, ADR 0007):**
+  - only pure waits (no calls) with nothing outstanding are refused;
+  - a refused-proposal turn gets 2 bounded immediate retries with a fresh view, then the coordinator waits for operator news only and reports "needs operator input" (patched `invalid-turn-retry-v1`);
+  - `investigation_view` job visibility no longer depends on a 5,000-event window starting at seq 0;
+  - the investigator's own effects (`claim.filed`, `model.exported`, `component.retired`, `evidence_plan.*`) count as idle-poll news.
+- **Regression tests:**
+  - `test_workflows.py::test_refused_proposal_turns_retry_boundedly_then_surface_for_input` (3/3 repeated passes);
+  - `test_turn_recovery.py::test_wait_refused_when_launched_jobs_finished_before_the_decision_and_next_view_sees_them`.
+- **Verification on fresh wheels (no cache):**
+  - switch journey **154/154 twice** (271 s, 242 s);
+  - unit + integration + MCP + reporting **120 passed, 1 skipped**. The skipped test is the live-lab MCP test; in one run it failed only because a stale `EIDOS_HOME` pointed at a stopped lab.
+
 ## Next concrete action
 
-1. The controller relays CI for the head of `build/eidos-local-v1`, which is `64ad288` plus documentation. If all nine jobs are green, a later session or the owner tags it `eidos-v0.5.3`.
-2. Owner decisions (`HANDOFF.md`): the macOS kit, real-LLM D02/D12 runs, OpenAI-compatible provider qualification, external MCP clients, and Seatbelt vs Lima. Lima needs an owner Mac, because GitHub arm64 runners have no nested virtualization.
-3. Engineering backlog: the review-2 idle-poll rollover issue, and a CI test for checkpoint-and-stop under bwrap.
+1. The controller relays CI for the current head of `build/eidos-local-v1`. `8301799` is RED, for the cause above. If all nine jobs are green, a later session or the owner tags `eidos-v0.5.3`.
+2. Owner decisions (`HANDOFF.md`): the macOS kit, real-LLM D02/D12 runs, OpenAI-compatible provider qualification, external MCP clients, and Seatbelt vs Lima.
+3. Engineering backlog: the review-2 idle-poll rollover issue, a CI test for checkpoint-and-stop under bwrap, and an audit of any other `uv pip install --find-links` sites for the cached-wheel hazard.

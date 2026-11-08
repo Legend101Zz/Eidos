@@ -98,6 +98,8 @@ Closed since v0.1.0; each item names its evidence:
 
 - **Round 9:** tag `eidos-v0.5.2` → `e4558e2`. A8/B2: `wait_for_jobs` with nothing outstanding is refused within the turn instead of idling until max-idle (`64ad288`; regression test in `test_turn_recovery.py`). Full suite at `64ad288`: 118 passed / 1 skipped.
 
+- **Round 10:** CI was red on `8301799` (switch-journey step 7 parked). It is fixed by ADR 0007: only pure waits are refused, and refused-proposal turns get bounded retries before surfacing for input. The stale-wheel test hazard is fixed (`--no-cache`). Switch journey 154/154 ×2 on fresh wheels; suite 120 passed / 1 skipped.
+
 Still open:
 - **Adversarial review:** all listed open items are fixed (round 5). What remains is platform-bound.
   - A distinct candidate identity needs a readable interpreter.

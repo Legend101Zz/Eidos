@@ -31,7 +31,7 @@ PG_BIN="${PG_BIN:-$( (brew --prefix postgresql@16 2>/dev/null || true) )/bin}"
 LAB="$W/venv/bin/lab"
 step preflight bash -c "{ [ \"\$(uname)\" = Darwin ] || [ \"${EIDOS_KIT_ALLOW_LINUX:-0}\" = 1 ]; } && command -v uv && [ -x '$PG_BIN/pg_ctl' ]"
 step build bash -c "cd '$REPO' && uv build -q --all-packages -o '$W/dist'"
-step install bash -c "uv venv -q -p 3.12 '$W/venv' && uv pip install -q -p '$W/venv/bin/python' --find-links '$W/dist' eidos-lab"
+step install bash -c "uv venv -q -p 3.12 '$W/venv' && uv pip install -q --no-cache -p '$W/venv/bin/python' --find-links '$W/dist' eidos-lab"
 step not_from_checkout "$W/venv/bin/python" -c "import eidos,sys; sys.exit('$REPO' in eidos.__file__)"
 step init "$LAB" init --home "$EIDOS_HOME" --api-port 18765 --pg-port 15544 --temporal-port 17633 --pg-bin "$PG_BIN"
 step start "$LAB" start
