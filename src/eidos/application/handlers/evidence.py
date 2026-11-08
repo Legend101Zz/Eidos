@@ -319,13 +319,14 @@ def submit_assessment(ctx: Ctx, p: dict) -> dict:
                                     assessor_ref=plan.body["assessor"], conformance=conformance,
                                     evaluation=p.get("evaluation") or {"outcome": "inconclusive"})
     deps = []
-    for _arm_id, jid in plan.body["launch"]["jobs"].items():
-        deps.append(jid)
-        job = ctx.tx.get_job(jid)
-        for port in (job["lock"].get("ports") or {}).values():
-            if port.get("ref"):
-                deps.append(port["ref"])
-        deps.append(job["lock"]["component"]["ref"])
+    for _arm_id, jids in plan.body["launch"]["jobs"].items():
+        for jid in jids if isinstance(jids, list) else [jids]:
+            deps.append(jid)
+            job = ctx.tx.get_job(jid)
+            for port in (job["lock"].get("ports") or {}).values():
+                if port.get("ref"):
+                    deps.append(port["ref"])
+            deps.append(job["lock"]["component"]["ref"])
     for ids in evidence_set.values():
         deps.extend(ids)
     result["isolation_waivers"] = realized.get("isolation_waivers", [])  # always visible in the assessment

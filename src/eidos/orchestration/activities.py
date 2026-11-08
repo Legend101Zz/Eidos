@@ -183,7 +183,8 @@ class AssessorActivities:
             if profile != "dev:same-user":
                 # A planted label where lab-held labels live (inside a denied root), never in the
                 # assessor's own working directory, which it may read.
-                canary = Path(os.path.dirname(self.credential_path)) / "assessor-label-canary"
+                canary_dir = Path(self.lab_root, "config") if self.lab_root else Path(os.path.dirname(self.credential_path))
+                canary = canary_dir / "assessor-label-canary"  # not under secrets/: doctor checks those are 0600
                 if not canary.exists():
                     canary.write_text("x")
                 receipt.update(run_probes(spec, label_path=str(canary), credential_path=self.credential_path,
