@@ -367,7 +367,15 @@ Lesson: three of the four failures came from round 5 making sealed the default p
   - 217 s of compute was accounted, including the suspension.
   - `lab doctor` was clean.
   - Log: `/mnt/session/outputs/ops/suspend.log`.
-- **Soak:** `tests/ops/soak.py`, 20 min. Results are below, under "Soak result".
+- **Soak (`tests/ops/soak.py`, 20 min, Linux):** **ok**. The JSON is at `/mnt/session/outputs/ops/soak.json`.
+  - 193 small jobs, all succeeded, plus 19 fixture investigations. 0 service restarts.
+  - Open-fd ratio between the last and first quartile was 1.0 for every service.
+  - RSS growth: Temporal 1.21×, API 1.13×, all others ≤ 1.03×.
+  - The PostgreSQL data directory grew from 91 to 188 MB.
+  - Submit-to-terminal latency: p50 0.54 s, p95 0.55 s.
+  - Workflow history sizes were **not** captured: the CLI query returned 0.
+  - A first attempt aborted when the e2e project's trial budget ran out. The script now records errors and keeps going.
+- **macOS CI fix (`e450402`):** `temporal_server.sh` failed under bash 3.2, because a heredoc inside `<(...)` was brace-expanded. `shellcheck -S error` now runs in lint-and-unit, but note that it does not catch that bash-3.2 parse issue; the macOS job does.
 - **Licences, NOTICES, troubleshooting, ops docs (merged from `task/ops-docs`):**
   - `docs/ops/LICENSES.md` covers 81 distributions. Copyleft: psycopg is LGPL-3.0, certifi is MPL-2.0. No GPL/AGPL and no unknown licences.
   - `NOTICES.md`: no third-party code was copied.
@@ -376,9 +384,11 @@ Lesson: three of the four failures came from round 5 making sealed the default p
 
 ## Next concrete action
 
-1. **Work split (2026-11-08):** a local Mac session (Claude Code on the owner's M4) owns all Mac-only qualification on branch `mac/local-qualification`, started from `80c1e2d`. Its results go in `docs/mac/`, which the lead never edits. This build session fixes the core/shared defects it reports, merges its branch when the controller says so (merge commit, no force), and folds its evidence into HANDOFF.md and ACCEPTANCE_MATRIX.md.
-2. CI on the head of `build/eidos-local-v1`. If all nine jobs are green, tag `eidos-v0.5.3`. The release-asset 504s were infrastructure.
-3. Backlog:
-   - Temporal download retries on the v0.1.0 side of the upgrade job;
+1. **Mac session:** results arrive through the controller. Fix core defects, and merge `mac/local-qualification` when told to (merge commit).
+2. **CI on `e450402`:** confirm macOS arm64 is green (the bash 3.2 fix). If all ten jobs are green, tag `eidos-v0.5.3`.
+3. **Backlog:**
+   - review-3 item 3: make "needs operator input" visible as a ledger event or status;
+   - workflow history sizes in the soak;
    - the review-2 idle-poll rollover issue;
    - a CI test for checkpoint-and-stop under bwrap.
+4. **Owner:** project licence (`docs/ops/LICENSES.md`) and the other decisions in HANDOFF.md.
