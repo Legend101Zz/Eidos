@@ -781,7 +781,6 @@ def step7(j: Journey, a: argparse.Namespace) -> None:
                 ("active", "concluded"), status=shown and shown.get("status"))
         # ---- wait for the loop to finish ---------------------------------------------------------------------
         end = time.monotonic() + 900
-        idle_state = {"turns": -1, "since": time.monotonic(), "steered": False}
         status = None
         while time.monotonic() < end:
             shown = j.query("get_investigation", {"investigation_id": inv})
@@ -790,21 +789,6 @@ def step7(j: Journey, a: argparse.Namespace) -> None:
                 break
             if len([t for t in shown["turns"] if t["status"] == "completed"]) >= 30:
                 break
-            # Idle polls no longer start a turn without news (job/evidence/assessment events). The scripted policy's last
-            # stage files the claim and requests the export in a "wait" turn that launches no job, so nothing wakes the
-            # loop for its concluding turn. A steer is the operator's wake-up; it carries no content the fixture policy reads.
-            done_turns = len([t for t in shown["turns"] if t["status"] == "completed"])
-            if done_turns != idle_state["turns"]:
-                idle_state.update(turns=done_turns, since=time.monotonic())
-            elif (not idle_state["steered"] and time.monotonic() - idle_state["since"] > 20 and status == "active"
-                  and all(x["status"] in ("succeeded", "failed", "cancelled") for x in shown["jobs"])
-                  and {"claim.filed", "model.exported"} <= {e["type"] for e in j.query(
-                      "list_events", {"investigation_id": inv, "cursor": 0, "limit": 500})["events"]
-                      if e.get("investigation_id") == inv}):
-                j.cmd("steer_investigation", {"investigation_id": inv, "instruction": "continue: evidence and export are recorded"})
-                idle_state["steered"] = True
-                j.note("step 7: claim and export were recorded in a no-job wait turn and the loop idled (no news since the last "
-                       "turn's horizon); woke it with steer_investigation. See docs/dev-runs/switch-journey.md, defects.")
             time.sleep(2)
         stop.set()
         th.join(timeout=5)

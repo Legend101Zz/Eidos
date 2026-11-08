@@ -181,7 +181,12 @@ def switch_order_scripted(req: DecisionRequest) -> dict[str, Any]:
                 "kind": "intervention-effect", "scope": {"builder": "OrderedSwitchNet", "seed": 41, "step": 45},
                 "supporting": [base_eval["id"], edited_eval["id"], base_score["id"]]}},
             {"tool": "export_model", "args": {"checkpoint_artifact_id": edited, "behavior_check_job_id": check["id"]}}],
-            "confirmation")
+            "confirmation") | {
+            # Nothing is launched here, so waiting would park the loop until the max-idle timer (claims and
+            # exports are not news); conclude in the same decision once the claim and export are recorded.
+            "control": {"action": "conclude", "summary": "Edited checkpoint exported after a passing behaviour check "
+                        "(fixture policy; no real model reasoned about this)",
+                        "scope": {"model": "OrderedSwitchNet seed 41 step 45"}}}
     return {"rationale": "evidence gathered, claim filed, export requested", "calls": [],
             "control": {"action": "conclude", "summary": "Edited checkpoint exported after a passing behaviour check "
                         "(fixture policy; no real model reasoned about this)",

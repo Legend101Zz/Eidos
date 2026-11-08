@@ -66,7 +66,7 @@ Step 7 is **fixture-only**: a deterministic scripted policy decides every turn, 
 * extension source is mounted via an absolute python_path to components/lab.learning.group-balanced-ema; the published release is not what is loaded (train only mounts 'extension.source/1' from a lock bundle)
 * template draft arms are multi-job pipelines (train+edit+evaluate); launch_evidence_plan runs one component per arm, so arms were resolved to one evaluate run per (arm, seed) over the checkpoints trained in advance
 * step 7 is FIXTURE-ONLY: a deterministic scripted policy ('switch-order-scripted') decides every turn; it validates loop mechanics, not model behaviour
-* step 7: claim and export were recorded in a no-job wait turn and the loop idled (no news since the last turn's horizon); woke it with steer_investigation. See docs/dev-runs/switch-journey.md, defects.
+* (helper run only, superseded) step 7 needed a steer; the defect below is fixed and the lead's re-run needed none.
 
 ## Failed checks
 
@@ -88,7 +88,7 @@ step-7 worker SIGKILL with recovery. The counts went from 149 to 154 because of 
 | `lab project create` installs the four lab-env built-ins | the journey's `LAB_ENV_COMPONENTS` now lists all four, so its installs are the identical bundle in the `lab` environment (idempotent since e822744); the image project installs `lab.pairs.by_group` the same way. |
 | Evidence plans require `required_isolation` | the plan request carries the profile and a waiver (`dev:same-user` is weaker than the available sealed profile); the second plan in the withdrawal check copies `required_isolation` from the first, so the freeze is refused for the suspended assessor (`QUALIFICATION_MISSING`) and not for an unresolved obligation. |
 | `launch_evidence_plan` maps an arm to a list of job ids | the journey iterates the list (one job per arm here). |
-| Step 7 wake-up (see defect 1) | after the scripted policy has filed its claim and requested the export, and the loop has been idle for 20 s, the journey sends one `steer_investigation` to wake it. Guarded by this investigation's own `claim.filed` and `model.exported` events. |
+| Step 7 wake-up (see defect 1; REMOVED after the fix) | after the scripted policy has filed its claim and requested the export, and the loop has been idle for 20 s, the journey sends one `steer_investigation` to wake it. Guarded by this investigation's own `claim.filed` and `model.exported` events. |
 
 ## Product defect found
 
@@ -99,7 +99,10 @@ step-7 worker SIGKILL with recovery. The counts went from 149 to 154 because of 
    (6 h). Evidence: event log of the stalled run: `turn.completed (waiting)` at seq 480 followed by no event for more than five minutes;
    a manual `steer_investigation` immediately produced `turn.started` and the investigation concluded. Either the policy should conclude
    in that turn, or `claim.filed`/`model.exported` should count as news, or a `wait_for_jobs` with nothing outstanding should not park the loop.
-   The journey works around it with a steer and records the workaround as a note.
+   **Fixed by the lead:** the policy now files the claim, requests the export and concludes in one decision. The journey's steer workaround is
+   **removed**, so a recurrence fails step 7 instead of being papered over. The lead re-ran it with `tests/journeys/run_ci.sh`: **154/154 checks, 8/8 steps, 254 s**, with no steer.
+   **Open (product, general):** a real-LLM investigator that ends a turn with `wait_for_jobs` and nothing outstanding would also idle until
+   `max_idle_turn_seconds`. This is recorded in HANDOFF.
 
 The earlier `submit_assessment` regression and the canary-permission finding no longer reproduce in this run (step 5 passes with its assessment;
 no doctor check is part of this journey).
