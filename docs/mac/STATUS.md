@@ -345,6 +345,30 @@ Evidence files: `docs/release/evidence/`.
 | Switch-order acceptance journey on macOS (fresh wheels, Seatbelt default profile) | **154/154**, 196 s wall | `tests/journeys/run_ci.sh` |
 | `lab upgrade` on the A8 lab (venv swap, migrations at 0004) | ok; restarted on the new interpreter | |
 
+### G5: A8 with a real model (`tests/journeys/a8_live.py`, switch-order project, `claude-sonnet-5-5`)
+
+**Operator setup:** switch journey steps 1–2 (project, environments, components, charter committed before exploration); the assessor and the template qualified and promoted with author suites; auto-freeze of approved templates allowed.
+
+**What the investigator got:** a brief describing the model, the symptom and the requested journey. It got no reference solution, no test labels and no scripted decisions.
+
+The key went only to the investigator worker (`lab start --credentials-stdin`; checked with `ps eww`). Afterwards a byte scan of the lab, receipts, logs and docs found no key.
+
+| Run | Result | Cost (settled) | Eidos defects it exposed → fix |
+|---|---|---|---|
+| 1 (`inv-a8-159417`) | diagnosis, author+publish, crash/hand-off ok; `plan_branch` returned HTTP 500; stopped by the operator at turn 8 | $1.5174 (152c) | `validate_branch` TypeError on a malformed migration/intervention → INVALID with the state entries; tool guide: entry convention, extension binding, branch shapes |
+| 2 (`inv-a8-159870`) | diagnosis, new component run, trial, 3 branches ok; ended `budget-exhausted` at turn 11 with $1.16 unused; the reconciler then looped | $2.0412 (205c) | the reservation priced every token at the output rate → tight envelope; terminal outcomes → needs-input, the reconciler skips them and resumes after the last turn |
+| **3 (`inv-a8-161912`)** | **concluded autonomously in 10 turns. All 15 A8 checks pass**: diagnosis; new component authored, validated, published and run; trial; branch; a frozen plan from the approved template, assessed `inconclusive`/`conformant`; behaviour check; export that loads strictly; SIGKILL of the worker after the first committed effect, with supervisor hand-off; one admission per job; unique keys; charges visible | **$1.808 (181c)** | `author_component` with malformed manifest JSON returned HTTP 500 (the model corrected it next turn) → INVALID |
+
+**Run 3 conclusion (the model's own):**
+- **Diagnosis.** Both-correct 0.2625 vs reference accuracy 0.984. Close-order pairs fail (adjacent 0/701). This is consistent with reliance on the recorder shortcut, which it did not test directly.
+- **Repair.** The repair it tried was group-balanced training. As a from-scratch trial it broke the reference guardrail. As a branch from the step-45 checkpoint it improved both-correct.
+- **Assessment.** The assessment was `inconclusive`. The model reported it honestly and listed its confounds (extra training steps, one seed).
+- **Status.** Development evidence only, **not scientific evidence**.
+
+The export check was re-evaluated without a model call (`a8-sonnet-3-recheck.json`) after a bug in the driver's own loader was fixed: it asked for an optimizer target for a weights-only load.
+
+**Session Console spend:** 17 (G4) + 152 + 205 + 181 = **555c of the 600c cap**.
+
 Defects found on the Mac and fixed in this session (each has a regression test or check):
 - The supervisor did not restart a dead PostgreSQL.
 - `lab doctor` only warned while every upload was refused.
