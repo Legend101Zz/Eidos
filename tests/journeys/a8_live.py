@@ -216,12 +216,14 @@ def live(j: Journey, a: argparse.Namespace) -> None:
         stop.set()
         th.join(timeout=5)
         if status == "active":  # turn cap, needs input or wall cap: stop it so nothing keeps spending
-            j.cmd("stop_investigation", {"investigation_id": inv, "running_job_policy": "drain"})
+            r = j.cmd("stop_investigation", {"investigation_id": inv, "running_job_policy": "drain"})
+            j.rec["stopped_by_driver"] = r
             j.note(f"investigation stopped by the driver after the wait (status was active, needs_input="
                    f"{shown.get('needs_input')})")
         time.sleep(5)
         shown = j.query("get_investigation", {"investigation_id": inv})
-        view = j.query("investigation_view", {"investigation_id": inv})
+        view = j.query("investigation_view", {"investigation_id": inv,
+                                               "horizon": j.query("project_summary", {})["horizon"]})
         turns = _turn_rows(j, shown)
         results = view.get("call_results") or []
         ok_calls = {}
@@ -236,7 +238,7 @@ def live(j: Journey, a: argparse.Namespace) -> None:
                                           "conclusion": (shown.get("body") or {}).get("conclusion")},
                      turns=turns, call_results=results, evidence_plans=view.get("evidence_plans"),
                      jobs=[{k: jb.get(k) for k in ("id", "status", "kind", "component", "purpose")} for jb in jobs],
-                     budgets=shown.get("budgets"), kills=kills)
+                     kills=kills)
         st["numbers"].update(turns=len(turns), jobs=len(jobs))
         # ---- A8 elements -------------------------------------------------------------------------------
         succeeded = lambda pref: [x for x in jobs if str(x.get("component") or "").startswith(pref)  # noqa: E731
@@ -292,10 +294,12 @@ def live(j: Journey, a: argparse.Namespace) -> None:
         keys = [cl["command_key"] for cl in accepted_calls]
         j.check("persisted command keys are unique (a retry re-used the recorded key)", len(keys) == len(set(keys)))
         events = j.client.query("list_events", {"investigation_id": inv, "cursor": 0, "limit": 5000}, project=j.project)["events"]
-        admitted = [e["subject"] for e in events if e["type"] == "job.admitted"]
+        inv_job_ids = {x["id"] for x in jobs}
+        admitted = [e["subject"] for e in events if e["type"] == "job.admitted" and e["subject"] in inv_job_ids]
         j.check("one job.admitted event per job (no duplicate admission after the kill)",
                 len(admitted) == len(set(admitted)), admitted=len(admitted), distinct=len(set(admitted)))
-        bud = shown.get("budgets") or {}
+        bud = j.query("budgets", {"investigation_id": inv})["budgets"]
+        j.rec["budgets"] = bud
         j.check("model charges are visible in the budget ledger", (bud.get("model_tokens") or {}).get("used", 0) > 0,
                 model_tokens=bud.get("model_tokens"), model_usd=bud.get("model_usd"))
 
