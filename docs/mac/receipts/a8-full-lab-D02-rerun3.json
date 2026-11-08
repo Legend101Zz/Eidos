@@ -1,0 +1,791 @@
+{
+  "receipt": "eidos-full-lab-live/1",
+  "label": "full-lab real-LLM development run (owner Mac)",
+  "project": "live1794148777",
+  "investigation": "inv_f0b749075fb5",
+  "status": "concluded",
+  "needs_input": null,
+  "budgets": {
+    "confirmation": {},
+    "exploration": {
+      "compute_seconds": {
+        "limit_amount": 6000.0,
+        "reserved": 0.0,
+        "uncertain": 0.0,
+        "used": 20.291
+      },
+      "model_tokens": {
+        "limit_amount": 1000000.0,
+        "reserved": 0.0,
+        "uncertain": 0.0,
+        "used": 318084.0
+      },
+      "model_usd": {
+        "limit_amount": 2.0,
+        "reserved": 0.0,
+        "uncertain": 0.0,
+        "used": 0.740608
+      }
+    }
+  },
+  "turns": [
+    {
+      "seq": 1,
+      "stop_reason": "waiting",
+      "decisions": [
+        {
+          "slot": 0,
+          "accepted": true,
+          "usage": {
+            "calls": 5,
+            "input_tokens": 34673,
+            "model": "anthropic:claude-sonnet-5-5",
+            "output_tokens": 1185,
+            "per_request": [
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 4684,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 242
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 7413,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 118
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 7611,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 80
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 7716,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 91
+              },
+              {
+                "finish_reason": "stop",
+                "input_tokens": 7249,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 654
+              }
+            ],
+            "provider": "anthropic",
+            "request_ids": [
+              "msg_011CgqdijcgKHkJLp4CVxa15",
+              "msg_011Cgqdix723oft5mH9gEJCY",
+              "msg_011Cgqdj6xp7xGQJsPpBuHh9",
+              "msg_011CgqdjG226dR7S9FEoALaS",
+              "msg_011CgqdjR5zDHX6CMWSjCtjB"
+            ],
+            "served_models": [
+              "claude-sonnet-5-5"
+            ],
+            "tool_budget_exhausted": true,
+            "usd": 0.081196
+          },
+          "served_models": [
+            "claude-sonnet-5-5"
+          ],
+          "calls": [
+            "run_component"
+          ],
+          "call_args": [
+            "{\"component_ref\": \"eidos.project.command@1.0.7\", \"config\": {\"argv\": [\"python\", \"project.py\", \"train\", \"--inputs\", \"{work}\", \"--out\", \"{out}\", \"--seed\", \"{seed}\"], \"seed\": 11, \"timeout_seconds\": 120}, \"inputs\": {\"task\": \"art_20b38478fc4441a6\", \"train\": \"art_d555d877387a40a4\", \"validation\": \"art_c5bc93788d1a4fa4\"}, \"wall_seconds\": 130}"
+          ],
+          "rationale": "I have not yet seen project.py, so there is no baseline measurement. The first step is to reproduce the baseline exactly as specified (seed 11) with the whole-trainer component. The charter is exploration-only and the compute budget is ample, so this run is cheap. It gives a validation reference and shows what the receipt exposes, such as metrics and the output predictions. I'll score those predic",
+          "control": {
+            "action": "wait_for_jobs",
+            "summary": "Wait for the baseline reproduction run (seed 11), then score its predictions against validation."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "seq": 2,
+      "stop_reason": "calls-exhausted",
+      "decisions": [
+        {
+          "slot": 0,
+          "accepted": true,
+          "usage": {
+            "calls": 5,
+            "input_tokens": 56784,
+            "model": "anthropic:claude-sonnet-5-5",
+            "output_tokens": 4713,
+            "per_request": [
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 5338,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 323
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 12063,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 880
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 13180,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 94
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 13354,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 104
+              },
+              {
+                "finish_reason": "stop",
+                "input_tokens": 12849,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 3312
+              }
+            ],
+            "provider": "anthropic",
+            "request_ids": [
+              "msg_011CgqdkDE8gWXLyZXDbAJ5S",
+              "msg_011CgqdkY7SEc1wdJ6JmW1Xk",
+              "msg_011CgqdmGyNqgLKnv1mve8C5",
+              "msg_011CgqdmWi7fMp8EUJteMHRh",
+              "msg_011CgqdmniHzQZiQNSERrBX2"
+            ],
+            "served_models": [
+              "claude-sonnet-5-5"
+            ],
+            "tool_budget_exhausted": true,
+            "usd": 0.160698
+          },
+          "served_models": [
+            "claude-sonnet-5-5"
+          ],
+          "calls": [
+            "run_component",
+            "author_source"
+          ],
+          "call_args": [
+            "{\"component_ref\": \"eidos.task.score-classification@1.0.1\", \"config\": {}, \"inputs\": {\"predictions\": \"art_f7a2812cac524a2c_validation_predictions\", \"reference\": \"art_c5bc93788d1a4fa4\"}}",
+            "{\"files\": {\"project.py\": \"import argparse, hashlib, json, time\\nfrom pathlib import Path\\nimport numpy as np\\nimport torch\\nfrom torch import nn\\n\\ntorch.set_num_threads(1)\\n\\nclass Model(nn.Module):\\n    def __init__(self, nin, nout, kind, mean=None, scale=None):\\n        super().__init__()\\n        self.register_buffer('mean', torch.zeros(nin) if mean is None else mean)\\n        self.register_bu"
+          ],
+          "rationale": "The baseline (job_f7a2812cac524a2c) is a raw-pixel linear softmax trained for only 8 full-batch Adam steps (lr .02) with no input normalization (project.py in art_f7a2812cac524a2c_source_snapshot). It looks badly undertrained, so training length, preprocessing and model capacity are all confounded. This turn I score the baseline on validation to get its number, and author one parameterized project",
+          "control": {},
+          "error": null
+        }
+      ]
+    },
+    {
+      "seq": 3,
+      "stop_reason": "waiting",
+      "decisions": [
+        {
+          "slot": 0,
+          "accepted": true,
+          "usage": {
+            "calls": 5,
+            "input_tokens": 58081,
+            "model": "anthropic:claude-sonnet-5-5",
+            "output_tokens": 2921,
+            "per_request": [
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 5548,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 274
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 11546,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 314
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 12788,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 124
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 14300,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 47
+              },
+              {
+                "finish_reason": "stop",
+                "input_tokens": 13899,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 2162
+              }
+            ],
+            "provider": "anthropic",
+            "request_ids": [
+              "msg_011CgqdpDJheLe63t6VdJfVS",
+              "msg_011Cgqdq8cCzJNBsqUC9ct8k",
+              "msg_011CgqdrHfhP2dynhiFUMypM",
+              "msg_011CgqdrU51qMBCFswbaTghq",
+              "msg_011CgqdreEwQ9NtRAaTWhnqZ"
+            ],
+            "served_models": [
+              "claude-sonnet-5-5"
+            ],
+            "tool_budget_exhausted": true,
+            "usd": 0.145372
+          },
+          "served_models": [
+            "claude-sonnet-5-5"
+          ],
+          "calls": [
+            "run_component",
+            "run_component",
+            "run_component",
+            "run_component",
+            "run_component"
+          ],
+          "call_args": [
+            "{\"component_ref\": \"eidos.project.command@1.0.7\", \"config\": {\"argv\": [\"python\", \"project.py\", \"train\", \"--inputs\", \"{work}\", \"--out\", \"{out}\", \"--seed\", \"{seed}\"], \"seed\": 11, \"timeout_seconds\": 120}, \"falsifier\": \"val acc < 0.90\", \"inputs\": {\"source\": \"art_3c231b723c0645df\", \"task\": \"art_20b38478fc4441a6\", \"train\": \"art_d555d877387a40a4\", \"validation\": \"art_c5bc93788d1a4fa4\"}, \"prediction\": \"mlp s",
+            "{\"component_ref\": \"eidos.project.command@1.0.7\", \"config\": {\"argv\": [\"python\", \"project.py\", \"train\", \"--inputs\", \"{work}\", \"--out\", \"{out}\", \"--seed\", \"{seed}\"], \"seed\": 12, \"timeout_seconds\": 120}, \"falsifier\": \"val acc < 0.90\", \"inputs\": {\"source\": \"art_3c231b723c0645df\", \"task\": \"art_20b38478fc4441a6\", \"train\": \"art_d555d877387a40a4\", \"validation\": \"art_c5bc93788d1a4fa4\"}, \"prediction\": \"mlp s",
+            "{\"component_ref\": \"eidos.project.command@1.0.7\", \"config\": {\"argv\": [\"python\", \"project.py\", \"train\", \"--inputs\", \"{work}\", \"--out\", \"{out}\", \"--seed\", \"{seed}\"], \"seed\": 13, \"timeout_seconds\": 120}, \"falsifier\": \"val acc < 0.90\", \"inputs\": {\"source\": \"art_3c231b723c0645df\", \"task\": \"art_20b38478fc4441a6\", \"train\": \"art_d555d877387a40a4\", \"validation\": \"art_c5bc93788d1a4fa4\"}, \"prediction\": \"mlp s",
+            "{\"component_ref\": \"eidos.project.command@1.0.7\", \"config\": {\"argv\": [\"python\", \"project.py\", \"train\", \"--inputs\", \"{work}\", \"--out\", \"{out}\", \"--seed\", \"{seed}\"], \"seed\": 12, \"timeout_seconds\": 120}, \"falsifier\": \"val acc > 0.90 would mean the seed-11 baseline was unrepresentative\", \"inputs\": {\"task\": \"art_20b38478fc4441a6\", \"train\": \"art_d555d877387a40a4\", \"validation\": \"art_c5bc93788d1a4fa4\"}, \"",
+            "{\"component_ref\": \"eidos.project.command@1.0.7\", \"config\": {\"argv\": [\"python\", \"project.py\", \"train\", \"--inputs\", \"{work}\", \"--out\", \"{out}\", \"--seed\", \"{seed}\"], \"seed\": 13, \"timeout_seconds\": 120}, \"falsifier\": \"val acc > 0.90 would mean the seed-11 baseline was unrepresentative\", \"inputs\": {\"task\": \"art_20b38478fc4441a6\", \"train\": \"art_d555d877387a40a4\", \"validation\": \"art_c5bc93788d1a4fa4\"}, \""
+          ],
+          "rationale": "Baseline (job_f7a2812cac524a2c, linear, 8 Adam steps) scores 0.838 on validation (n=359, Wilson 95% [0.797,0.873], job_4096f7a823bf4138). The baseline is badly undertrained and its scale clamp is 1.0 only in the authored variant. My authored bundle art_3c231b723c0645df swaps in a 64-128-10 MLP, 300 steps, train-only standardization. It is unused so far. I will run it on seeds 11, 12, 13 as fresh i",
+          "control": {
+            "action": "wait_for_jobs",
+            "summary": "Waiting on 3 candidate MLP runs and 2 baseline control runs. Next turn: score each validation_predictions artifact with eidos.task.score-classification against art_c5bc93788d1a4fa4 and compare per seed."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "seq": 4,
+      "stop_reason": "waiting",
+      "decisions": [
+        {
+          "slot": 0,
+          "accepted": true,
+          "usage": {
+            "calls": 1,
+            "input_tokens": 6881,
+            "model": "anthropic:claude-sonnet-5-5",
+            "output_tokens": 234,
+            "per_request": [
+              {
+                "finish_reason": "stop",
+                "input_tokens": 6881,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 234
+              }
+            ],
+            "provider": "anthropic",
+            "request_ids": [
+              "msg_011Cgqdsn9V3ypLsNmnz2B4z"
+            ],
+            "served_models": [
+              "claude-sonnet-5-5"
+            ],
+            "usd": 0.016102
+          },
+          "served_models": [
+            "claude-sonnet-5-5"
+          ],
+          "calls": [],
+          "call_args": [],
+          "rationale": "Four runs are still queued or running: the candidate source at seeds 11, 12 and 13, and baseline reruns at seeds 12 and 13. The seed-11 baseline scored 0.838 on validation (job_4096f7a823bf4138). I can't compare the candidate with the baseline until these finish, so I'm waiting for them.",
+          "control": {
+            "action": "wait_for_jobs",
+            "summary": "Wait for the candidate (seeds 11-13) and baseline (seeds 12-13) runs to finish, then score them on validation."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "seq": 5,
+      "stop_reason": "waiting",
+      "decisions": [
+        {
+          "slot": 0,
+          "accepted": true,
+          "usage": {
+            "calls": 5,
+            "input_tokens": 73313,
+            "model": "anthropic:claude-sonnet-5-5",
+            "output_tokens": 1825,
+            "per_request": [
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 7664,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 211
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 14739,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 139
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 15772,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 91
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 17588,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 87
+              },
+              {
+                "finish_reason": "stop",
+                "input_tokens": 17550,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 1297
+              }
+            ],
+            "provider": "anthropic",
+            "request_ids": [
+              "msg_011Cgqdt3jrDMhUGb3jqnkq2",
+              "msg_011CgqdtUeYzoQKWqqPWjFAC",
+              "msg_011Cgqdti1xWX1ZcoXijyqxs",
+              "msg_011CgqdtyfYgPwwnBvPEXJRX",
+              "msg_011CgqduASC7xvkzWPYqN6Lu"
+            ],
+            "served_models": [
+              "claude-sonnet-5-5"
+            ],
+            "tool_budget_exhausted": true,
+            "usd": 0.164876
+          },
+          "served_models": [
+            "claude-sonnet-5-5"
+          ],
+          "calls": [
+            "run_component",
+            "run_component",
+            "run_component",
+            "run_component",
+            "run_component"
+          ],
+          "call_args": [
+            "{\"component_ref\": \"eidos.task.score-classification@1.0.1\", \"config\": {}, \"inputs\": {\"predictions\": \"art_5bcad1963f074375_validation_predictions\", \"reference\": \"art_c5bc93788d1a4fa4\"}}",
+            "{\"component_ref\": \"eidos.task.score-classification@1.0.1\", \"config\": {}, \"inputs\": {\"predictions\": \"art_0cd79b645b6b41e0_validation_predictions\", \"reference\": \"art_c5bc93788d1a4fa4\"}}",
+            "{\"component_ref\": \"eidos.task.score-classification@1.0.1\", \"config\": {}, \"inputs\": {\"predictions\": \"art_3a6505e170dc4ba9_validation_predictions\", \"reference\": \"art_c5bc93788d1a4fa4\"}}",
+            "{\"component_ref\": \"eidos.task.score-classification@1.0.1\", \"config\": {}, \"inputs\": {\"predictions\": \"art_cd76aaa38ae344de_validation_predictions\", \"reference\": \"art_c5bc93788d1a4fa4\"}}",
+            "{\"component_ref\": \"eidos.task.score-classification@1.0.1\", \"config\": {}, \"inputs\": {\"predictions\": \"art_9b07e6d7fc374d25_validation_predictions\", \"reference\": \"art_c5bc93788d1a4fa4\"}}"
+          ],
+          "rationale": "All six training jobs have succeeded: baseline seeds 11-13 (8 steps, 8624 examples seen) and candidate seeds 11-13 (art_3c231b723c0645df, MLP with 300 full-batch Adam steps). Only baseline seed 11 is scored so far (accuracy 0.8384, n=359, job_4096f7a823bf4138). I'm scoring the other five prediction sets to get per-seed validation accuracy for both arms. The candidate changes training length and ma",
+          "control": {
+            "action": "wait_for_jobs",
+            "summary": "Wait for the five scoring jobs, then compare per-seed validation accuracy for the candidate and the baseline."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "seq": 6,
+      "stop_reason": "concluded",
+      "decisions": [
+        {
+          "slot": 0,
+          "accepted": true,
+          "usage": {
+            "calls": 5,
+            "input_tokens": 75297,
+            "model": "anthropic:claude-sonnet-5-5",
+            "output_tokens": 2177,
+            "per_request": [
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 9665,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 210
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 14187,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 122
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 14443,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 59
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 15879,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 233
+              },
+              {
+                "finish_reason": "stop",
+                "input_tokens": 21123,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 1553
+              }
+            ],
+            "provider": "anthropic",
+            "request_ids": [
+              "msg_011CgqduwEjV9ASekgtb2cqG",
+              "msg_011Cgqdv8JVE9PfTPKqt3C7J",
+              "msg_011CgqdvHtwMCXpSgADtYWqM",
+              "msg_011CgqdvTioBfA7Ge4nee3La",
+              "msg_011CgqdvgFbgB8iWGPNiHV6e"
+            ],
+            "served_models": [
+              "claude-sonnet-5-5"
+            ],
+            "tool_budget_exhausted": true,
+            "usd": 0.172364
+          },
+          "served_models": [
+            "claude-sonnet-5-5"
+          ],
+          "calls": [],
+          "call_args": [],
+          "rationale": "All six validation scores are in. Baseline recipe (linear, 8 steps, no standardization), seeds 11/12/13: 0.8384 (job_4096f7a823bf4138), 0.8301 (job_3abb52e3b31d4eec), 0.8552 (job_d23737a505a04995). Candidate recipe (authored source art_3c231b723c0645df: 1x128 ReLU MLP with dropout 0.1, 300 Adam steps, lr 0.01, wd 1e-4, train-set standardization with a std floor of 1.0), seeds 11/12/13: 0.9582 (job",
+          "control": {
+            "action": "conclude",
+            "scope": {
+              "claim": "recipe-level improvement, bundled changes, not attributed to architecture alone",
+              "exploration_only": true,
+              "n": 359,
+              "seeds": [
+                11,
+                12,
+                13
+              ],
+              "split": "validation only",
+              "task": "digits",
+              "test_used": false
+            },
+            "summary": "On the validation split (n=359, seeds 11/12/13) the authored recipe in art_3c231b723c0645df beats the baseline by roughly 10 to 13 accuracy points. Candidate: 0.958, 0.958, 0.961 (jobs job_cc10b70b39414855, job_d2b3554317f4429b, job_61f8076efbbf4ea6). Baseline: 0.838, 0.830, 0.855 (jobs job_4096f7a823bf4138, job_3abb52e3b31d4eec, job_d23737a505a04995). Caveats: this is validation-only exploration evidence with no test feedback and no pre-registered comparator or threshold. It covers 3 fresh seeds, and no formal paired-CI assessment was run. The gain comes from a bundled change (MLP, 300 steps, lr 0.01, wd, standardization), so it is not attributed to any single factor. Part of the gain may come from the baseline being undertrained at 8 steps. A further ablation would be needed to attribute it, for example linear with 300 steps and standardization."
+          },
+          "error": null
+        }
+      ]
+    }
+  ],
+  "jobs": [
+    {
+      "id": "job_f7a2812cac524a2c",
+      "status": "succeeded",
+      "kind": "artifact-op",
+      "component": "eidos.project.command@1.0.7",
+      "error": null,
+      "metrics": {
+        "elapsed_seconds": 1.2077906249905936,
+        "examples_seen": 8624,
+        "seed": 11,
+        "steps": 8,
+        "threads": 1
+      },
+      "returncode": 0,
+      "outputs": [
+        "command-stderr",
+        "command-stdout",
+        "log",
+        "model",
+        "receipt",
+        "source_snapshot",
+        "validation_predictions"
+      ]
+    },
+    {
+      "id": "job_4096f7a823bf4138",
+      "status": "succeeded",
+      "kind": "artifact-op",
+      "component": "eidos.task.score-classification@1.0.1",
+      "error": null,
+      "metrics": {
+        "accuracy": 0.8384401114206128,
+        "n": 359
+      },
+      "returncode": null,
+      "outputs": [
+        "log",
+        "per_example",
+        "report"
+      ]
+    },
+    {
+      "id": "job_5bcad1963f074375",
+      "status": "succeeded",
+      "kind": "artifact-op",
+      "component": "eidos.project.command@1.0.7",
+      "error": null,
+      "metrics": {
+        "elapsed_seconds": 1.3656372920086142,
+        "examples_seen": 323400,
+        "lr": 0.01,
+        "seed": 11,
+        "steps": 300,
+        "threads": 1,
+        "wd": 0.0001
+      },
+      "returncode": 0,
+      "outputs": [
+        "command-stderr",
+        "command-stdout",
+        "log",
+        "model",
+        "receipt",
+        "validation_predictions"
+      ]
+    },
+    {
+      "id": "job_0cd79b645b6b41e0",
+      "status": "succeeded",
+      "kind": "artifact-op",
+      "component": "eidos.project.command@1.0.7",
+      "error": null,
+      "metrics": {
+        "elapsed_seconds": 1.366060916974675,
+        "examples_seen": 323400,
+        "lr": 0.01,
+        "seed": 12,
+        "steps": 300,
+        "threads": 1,
+        "wd": 0.0001
+      },
+      "returncode": 0,
+      "outputs": [
+        "command-stderr",
+        "command-stdout",
+        "log",
+        "model",
+        "receipt",
+        "validation_predictions"
+      ]
+    },
+    {
+      "id": "job_3a6505e170dc4ba9",
+      "status": "succeeded",
+      "kind": "artifact-op",
+      "component": "eidos.project.command@1.0.7",
+      "error": null,
+      "metrics": {
+        "elapsed_seconds": 1.042397915996844,
+        "examples_seen": 323400,
+        "lr": 0.01,
+        "seed": 13,
+        "steps": 300,
+        "threads": 1,
+        "wd": 0.0001
+      },
+      "returncode": 0,
+      "outputs": [
+        "command-stderr",
+        "command-stdout",
+        "log",
+        "model",
+        "receipt",
+        "validation_predictions"
+      ]
+    },
+    {
+      "id": "job_cd76aaa38ae344de",
+      "status": "succeeded",
+      "kind": "artifact-op",
+      "component": "eidos.project.command@1.0.7",
+      "error": null,
+      "metrics": {
+        "elapsed_seconds": 0.751517208002042,
+        "examples_seen": 8624,
+        "seed": 12,
+        "steps": 8,
+        "threads": 1
+      },
+      "returncode": 0,
+      "outputs": [
+        "command-stderr",
+        "command-stdout",
+        "log",
+        "model",
+        "receipt",
+        "source_snapshot",
+        "validation_predictions"
+      ]
+    },
+    {
+      "id": "job_9b07e6d7fc374d25",
+      "status": "succeeded",
+      "kind": "artifact-op",
+      "component": "eidos.project.command@1.0.7",
+      "error": null,
+      "metrics": {
+        "elapsed_seconds": 0.7848421669914387,
+        "examples_seen": 8624,
+        "seed": 13,
+        "steps": 8,
+        "threads": 1
+      },
+      "returncode": 0,
+      "outputs": [
+        "command-stderr",
+        "command-stdout",
+        "log",
+        "model",
+        "receipt",
+        "source_snapshot",
+        "validation_predictions"
+      ]
+    },
+    {
+      "id": "job_cc10b70b39414855",
+      "status": "succeeded",
+      "kind": "artifact-op",
+      "component": "eidos.task.score-classification@1.0.1",
+      "error": null,
+      "metrics": {
+        "accuracy": 0.958217270194986,
+        "n": 359
+      },
+      "returncode": null,
+      "outputs": [
+        "log",
+        "per_example",
+        "report"
+      ]
+    },
+    {
+      "id": "job_d2b3554317f4429b",
+      "status": "succeeded",
+      "kind": "artifact-op",
+      "component": "eidos.task.score-classification@1.0.1",
+      "error": null,
+      "metrics": {
+        "accuracy": 0.958217270194986,
+        "n": 359
+      },
+      "returncode": null,
+      "outputs": [
+        "log",
+        "per_example",
+        "report"
+      ]
+    },
+    {
+      "id": "job_61f8076efbbf4ea6",
+      "status": "succeeded",
+      "kind": "artifact-op",
+      "component": "eidos.task.score-classification@1.0.1",
+      "error": null,
+      "metrics": {
+        "accuracy": 0.9610027855153204,
+        "n": 359
+      },
+      "returncode": null,
+      "outputs": [
+        "log",
+        "per_example",
+        "report"
+      ]
+    },
+    {
+      "id": "job_3abb52e3b31d4eec",
+      "status": "succeeded",
+      "kind": "artifact-op",
+      "component": "eidos.task.score-classification@1.0.1",
+      "error": null,
+      "metrics": {
+        "accuracy": 0.83008356545961,
+        "n": 359
+      },
+      "returncode": null,
+      "outputs": [
+        "log",
+        "per_example",
+        "report"
+      ]
+    },
+    {
+      "id": "job_d23737a505a04995",
+      "status": "succeeded",
+      "kind": "artifact-op",
+      "component": "eidos.task.score-classification@1.0.1",
+      "error": null,
+      "metrics": {
+        "accuracy": 0.8551532033426184,
+        "n": 359
+      },
+      "returncode": null,
+      "outputs": [
+        "log",
+        "per_example",
+        "report"
+      ]
+    }
+  ],
+  "conclusion": {
+    "action": "conclude",
+    "scope": {
+      "claim": "recipe-level improvement, bundled changes, not attributed to architecture alone",
+      "exploration_only": true,
+      "n": 359,
+      "seeds": [
+        11,
+        12,
+        13
+      ],
+      "split": "validation only",
+      "task": "digits",
+      "test_used": false
+    },
+    "summary": "On the validation split (n=359, seeds 11/12/13) the authored recipe in art_3c231b723c0645df beats the baseline by roughly 10 to 13 accuracy points. Candidate: 0.958, 0.958, 0.961 (jobs job_cc10b70b39414855, job_d2b3554317f4429b, job_61f8076efbbf4ea6). Baseline: 0.838, 0.830, 0.855 (jobs job_4096f7a823bf4138, job_3abb52e3b31d4eec, job_d23737a505a04995). Caveats: this is validation-only exploration evidence with no test feedback and no pre-registered comparator or threshold. It covers 3 fresh seeds, and no formal paired-CI assessment was run. The gain comes from a bundled change (MLP, 300 steps, lr 0.01, wd, standardization), so it is not attributed to any single factor. Part of the gain may come from the baseline being undertrained at 8 steps. A further ablation would be needed to attribute it, for example linear with 300 steps and standardization.",
+    "turn_id": "turn_inv_f0b749075fb5_6"
+  },
+  "key_found_in_lab_files": [],
+  "caps": {
+    "max_turns": 12,
+    "max_model_calls_per_turn": 1,
+    "max_requests_per_decision": 5,
+    "model_usd": 2.0,
+    "model_tokens": 1000000
+  },
+  "evidence": {
+    "class": "real-LLM DEVELOPMENT run (full Eidos lab), macOS 26.3.1 arm64 (Apple M4); not scientific evidence",
+    "sha": "4e4c758",
+    "lab_wheels": "fresh build --no-cache from 4e4c758 ($S/dist-4e4c758)",
+    "runtime": "pydantic-ai",
+    "model_requested": "anthropic:claude-sonnet-5-5",
+    "served_models": [
+      "claude-sonnet-5-5"
+    ],
+    "requests": 26,
+    "input_tokens": 305029,
+    "output_tokens": 13055,
+    "list_price_usd_per_mtok": {
+      "input": 2.0,
+      "output": 10.0
+    },
+    "cost_usd": 0.740608,
+    "ledger": {
+      "run_id": "anc-1794148767",
+      "reserved_cents": 250,
+      "settled_cents": 75
+    },
+    "key_handling": "Keychain -> helper -> stdin -> lab start --credentials-stdin; pre-run fake-marker check at 4e4c758: only the investigator worker, job env 10 vars without key, $HOME/~/.claude.json/network/lab API refused, no lab file; post-run byte scan of every lab file: []",
+    "artifacts_you_created_section": "present in every packed context; from turn 3 it listed art_3c231b723c0645df (author_source, turn 2), used_by [] until run",
+    "ran_authored_source": true,
+    "author_source_calls": 1,
+    "author_component_calls": 0,
+    "refused_proposals": 0,
+    "claims_filed": 0,
+    "builder_intervention": "none",
+    "concluded": true,
+    "claim_check": "Conclusion (control 'conclude', no filed claim): authored recipe beats baseline on validation by ~10-13 points over seeds 11/12/13. Recorded job metrics agree exactly: candidate 0.9582/0.9582/0.9610, baseline 0.8384/0.8301/0.8552 (n=359). Supported as an exploration-only development observation on the validation split; the model itself stated the caveats (validation used for selection and reporting, no pre-registered comparator, no paired-CI assessment, bundled change not attributed, baseline under-trained at 8 steps). Not compared with hidden labels; not scientific evidence.",
+    "investigator_inputs": "bundle only; no test data or labels, no reference solution"
+  }
+}
