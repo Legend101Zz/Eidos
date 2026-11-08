@@ -79,3 +79,17 @@ def test_decision_usd_envelope_is_a_tight_upper_bound():
     assert usd >= 120_000 * 2 / 1e6  # never below all-input
     assert decision_usd_envelope(1000, price, cfg) == 1000 * 10 / 1e6  # tiny envelope: may all be output
     assert decision_usd_envelope(1000, {"flat": 3.0}, cfg) == 1000 * 3.0 / 1e6
+
+
+def test_malformed_authored_manifest_is_invalid_not_a_crash():
+    """G5 live run 3: author_component with a malformed eidos-component.json raised JSONDecodeError (HTTP 500)."""
+    import pytest
+
+    from eidos.application.handlers.components import manifest_from_bundle
+    from eidos.domain.errors import Invalid
+    with pytest.raises(Invalid, match="not valid JSON"):
+        manifest_from_bundle({"files": {"eidos-component.json": '{"id": "x",'}})
+    with pytest.raises(Invalid, match="must be a JSON/TOML text"):
+        manifest_from_bundle({"files": {"eidos-component.json": ["x"]}})
+    assert manifest_from_bundle({"files": {"eidos-component.json": {"id": "x"}}}) == {"id": "x"}
+    assert manifest_from_bundle({"files": {"eidos-component.json": '{"id": "y"}'}}) == {"id": "y"}

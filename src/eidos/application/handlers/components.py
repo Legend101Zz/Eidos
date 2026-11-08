@@ -32,10 +32,19 @@ def manifest_from_bundle(bundle: dict) -> dict:
     files = bundle.get("files") or {}
     for name in MANIFEST_NAMES:
         if name in files:
-            if name.endswith(".json"):
-                return json.loads(files[name])
-            import tomllib
-            return tomllib.loads(files[name])
+            raw = files[name]
+            if isinstance(raw, dict):  # an authored bundle may carry the manifest as an object
+                return raw
+            if not isinstance(raw, str):
+                raise Invalid(f"{name} must be a JSON/TOML text (or an object)", details={"got": type(raw).__name__})
+            try:
+                if name.endswith(".json"):
+                    return json.loads(raw)
+                import tomllib
+                return tomllib.loads(raw)
+            except ValueError as exc:  # json.JSONDecodeError and tomllib.TOMLDecodeError are ValueErrors
+                raise Invalid(f"{name} is not valid {'JSON' if name.endswith('.json') else 'TOML'}: {exc}",
+                              details={"manifest_file": name}) from None
     raise Invalid("bundle has no eidos-component.toml/json")
 
 
