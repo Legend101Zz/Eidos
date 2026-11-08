@@ -53,14 +53,19 @@ def test_writer_without_generation_is_fenced_and_current_writer_is_not(pg_roles)
 def test_old_writer_connected_across_the_upgrade_is_refused_after_it(tmp_path):
     """A writer connected to a 0003 ledger keeps running while ``lab upgrade`` migrates to head:
     its next write is refused (no seq collision, no corrupt row) while the new writer proceeds."""
-    from conftest import ADMIN, _pg_available
-    if not _pg_available():
+    import os
+    admin = os.environ.get("EIDOS_TEST_PG_ADMIN", "postgresql+psycopg://postgres:devpass@127.0.0.1:5432/postgres")
+    try:
+        create_engine(admin).connect().close()
+    except Exception:
+        if os.environ.get("EIDOS_TEST_PG_ADMIN"):
+            pytest.fail("EIDOS_TEST_PG_ADMIN is set but unusable")
         pytest.skip("PostgreSQL not available")
     from eidos.persistence.ledger import SqlLedger
     from eidos.persistence.roles import DbRoles, current_revision, migrate, provision
     db = f"eidos_f_{uuid.uuid4().hex[:8]}"
-    roles = DbRoles.generate("127.0.0.1", int(ADMIN.rsplit(":", 1)[1].split("/")[0]), db, prefix=f"ef{uuid.uuid4().hex[:6]}")
-    provision(ADMIN, roles)
+    roles = DbRoles.generate("127.0.0.1", int(admin.rsplit(":", 1)[1].split("/")[0]), db, prefix=f"ef{uuid.uuid4().hex[:6]}")
+    provision(admin, roles)
     try:
         migrate(roles, target="0003")
         assert current_revision(roles) == "0003"
@@ -89,7 +94,7 @@ def test_old_writer_connected_across_the_upgrade_is_refused_after_it(tmp_path):
         reader.dispose()
         old.dispose()
     finally:
-        eng = create_engine(ADMIN, isolation_level="AUTOCOMMIT")
+        eng = create_engine(admin, isolation_level="AUTOCOMMIT")
         with eng.connect() as c:
             c.exec_driver_sql(f'DROP DATABASE IF EXISTS "{db}" WITH (FORCE)')
             for r in ("migrator", "writer", "reader"):

@@ -1,6 +1,6 @@
 [project]
 name = "eidos-lab"
-version = "0.3.0.dev0"
+version = "1.0.0.dev0"
 description = "Eidos: a local research harness for custom PyTorch model investigation"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]

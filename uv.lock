@@ -353,7 +353,7 @@ wheels = [
 
 [[package]]
 name = "eidos-lab"
-version = "0.3.0.dev0"
+version = "1.0.0.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
