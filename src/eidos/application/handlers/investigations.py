@@ -209,6 +209,7 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
     try:
         decision = turn_rules.validate_decision(p.get("proposal") or {}, max_calls=turn["spec"]["limits"]["max_calls"])
         _check_component_contracts(ctx, decision["calls"])
+        _check_something_to_wait_for(ctx, inv, decision)
     except Invalid as exc:
         ctx.tx.insert_decision(did, turn["id"], slot, False, {"proposal": p.get("proposal"), "reason": "invalid",
                                                                "error": exc.to_dict()})
@@ -220,6 +221,31 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
     ctx.event("decision.accepted", did, {"turn_id": turn["id"], "slot": slot, "calls": [c["tool"] for c in calls],
                                          "control": decision["control"]}, investigation_id=inv.id)
     return {"accepted": True, "decision_id": did, "calls": calls, "control": decision["control"]}
+
+
+LAUNCHING_TOOLS = ("run_component", "launch_trial", "launch_branch", "launch_evidence_plan", "author_component")
+
+
+def _check_something_to_wait_for(ctx: Ctx, inv, decision: dict) -> None:
+    """``wait_for_jobs`` with nothing outstanding would park the investigation until the max-idle timer
+    (no job, evidence or assessment event will arrive). Refuse it as an invalid proposal; the refusal is
+    fed back within the turn and counts against the turn's invalid-proposal limit."""
+    control = decision.get("control") or {}
+    if control.get("action") != "wait_for_jobs":
+        return
+    if control.get("bounded_outcome"):  # the runtime's own no-effect outcome (e.g. request budget spent):
+        return                          # refusing it would only buy more model requests in this turn
+    if any(c["tool"] in LAUNCHING_TOOLS for c in decision["calls"]):
+        return
+    idle = ("succeeded", "failed", "cancelled", "pruned", "planned")  # planned trials run only when launched
+    if any(j["status"] not in idle for j in ctx.tx.list_jobs(ctx.project_id, investigation_id=inv.id, limit=100000)):
+        return
+    executing = [r for r in ctx.tx.list_records(ctx.project_id, "evidence_plan", status="executing")
+                 if r.body.get("investigation_id") == inv.id]
+    if executing:  # evidence arms still pending or an assessment still to be committed
+        return
+    raise Invalid("nothing to wait for: no jobs or evidence plans are outstanding for this investigation; run "
+                  "something, request input, or conclude", details={"control": "wait_for_jobs", "outstanding": 0})
 
 
 def _check_component_contracts(ctx: Ctx, calls: list[dict]) -> None:

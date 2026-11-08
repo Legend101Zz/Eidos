@@ -235,7 +235,8 @@ class PydanticAIRuntime:
                 usage["limit_reached"] = str(exc)[:300]
                 proposal = {"rationale": f"decision request budget ({max_requests}) exhausted before a final "
                                          "decision; no effects proposed", "calls": [],
-                            "control": {"action": "wait_for_jobs", "summary": "request budget exhausted"}}
+                            "control": {"action": "wait_for_jobs", "summary": "request budget exhausted",
+                                        "bounded_outcome": "request-budget-exhausted"}}
                 return DecisionResult(proposal, usage, json.loads(_messages_json(messages)),
                                       self._settings(usage, max_requests), PROMPT_REVISION)
             except ModelCallFailed:

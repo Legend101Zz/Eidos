@@ -104,7 +104,9 @@ def _conclude(req: DecisionRequest) -> dict[str, Any]:
 @fixture_policy("note-then-wait")
 def _note(req: DecisionRequest) -> dict[str, Any]:
     if req.turn_so_far:
-        return {"rationale": "wait", "calls": [], "control": {"action": "wait_for_jobs"}}
+        # Nothing was launched, so there are no jobs to wait for: wait for the operator instead.
+        return {"rationale": "wait for operator input", "calls": [],
+                "control": {"action": "request_input", "question": "fixture: steer to continue"}}
     return {"rationale": "record a hypothesis", "calls": [{"tool": "record_note", "args": {
         "kind": "hypothesis", "text": "fixture hypothesis"}}], "control": {}}
 

@@ -29,6 +29,15 @@ def _policy(req):
                       {"tool": "record_note", "args": {"kind": "hypothesis", "text": "echo returns its config"}}]}
 
 
+@fixture_policy("test-wait-on-nothing")
+def _wait_on_nothing(req):
+    rejected = [x for x in req.turn_so_far if x.get("rejected")]
+    if not rejected:
+        return {"rationale": "idle", "calls": [], "control": {"action": "wait_for_jobs"}}
+    return {"rationale": "told there is nothing to wait for", "calls": [],
+            "control": {"action": "conclude", "summary": str(rejected[-1]["error"]["message"])[:200]}}
+
+
 class ShimClient:
     """LabClient-compatible adapter that calls the command service in-process."""
 
@@ -228,3 +237,31 @@ def test_retried_decide_does_not_collide_with_its_own_dead_reservation(lab):
                                        "reservation_ref": f"model:{b['turn_id']}:0:1"}, project=pid)
     bud = lab.q(lab.admin, "budgets", {"investigation_id": inv}, project=pid)["budgets"]["model_tokens"]
     assert bud["reserved"] >= 1e6 - 150_000 - 1, bud   # the test fill is still held, not released twice
+
+
+def test_wait_for_jobs_with_nothing_outstanding_is_refused_within_the_turn(lab):
+    """A decision that waits while no jobs or evidence plans are outstanding would park the investigation until
+    the max-idle timer. It is refused as an invalid proposal, fed back to the next slot of the same turn."""
+    pid, _, acts = setup(lab)
+    wf = lab.principal(f"wf-{pid}", ["workflow"], [pid])
+    inv = lab.cmd(lab.admin, "start_investigation", {"question": "q", "charter_id": f"charter:s{pid}",
+                  "limits": {"model_tokens": 1e6, "compute_seconds": 1e5, "trials": 100},
+                  "investigator": {"runtime": "fixture", "settings": {"policy": "test-wait-on-nothing"}}},
+                  project=pid)["result"]["investigation_id"]
+    env = ActivityEnvironment()
+    b = env.run(acts.begin_turn, {"investigation_id": inv, "project_id": pid, "index": 1})
+    base = {"turn_id": b["turn_id"], "project_id": pid, "investigation_id": inv}
+    env.run(acts.build_context, base)
+    d0 = env.run(acts.decide, {**base, "slot": 0})
+    assert not d0["accepted"] and d0.get("reason") == "invalid", d0
+    turn = lab.q(lab.admin, "get_turn", {"turn_id": b["turn_id"]}, project=pid)
+    refused = [d for d in turn["decisions"] if not d["accepted"]]
+    assert "nothing to wait for" in refused[-1]["body"]["error"]["message"]
+    d1 = env.run(acts.decide, {**base, "slot": 1})
+    assert d1["accepted"] and d1["control"]["action"] == "conclude", d1
+    # with a job outstanding, waiting is legitimate
+    ok = lab.cmd(wf, "accept_decision", {"turn_id": b["turn_id"], "slot": 6, "proposal": {
+        "rationale": "launch", "calls": [{"tool": "run_component", "args": {"component_ref": "test.echo@1.0.0",
+                                                                            "environment": "lab", "config": {}}}],
+        "control": {"action": "wait_for_jobs"}}}, project=pid)["result"]
+    assert ok["accepted"], ok
