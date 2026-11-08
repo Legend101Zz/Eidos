@@ -71,8 +71,10 @@ echo "eidos $OLD_VERSION -> $NEW_VERSION"
 [ "$OLD_VERSION" != "$NEW_VERSION" ] || { echo "version did not change" >&2; exit 1; }
 "$LAB_BIN" upgrade | tee "$OUT/upgrade.json"
 python3 - <<PY
-import json; d = json.load(open("$OUT/upgrade.json"))
-assert d["restarted"] is True and d["ledger_revision"]["after"] == "0003", d
+import json, pathlib
+head = max(f.name.split("_")[0] for f in pathlib.Path("$REPO/src/eidos/persistence/migrations/versions").glob("[0-9]*_*.py"))
+d = json.load(open("$OUT/upgrade.json"))
+assert d["restarted"] is True and d["ledger_revision"]["after"] == head, (head, d)
 PY
 
 step "verify on the upgraded lab"
