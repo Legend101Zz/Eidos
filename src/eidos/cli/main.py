@@ -362,10 +362,12 @@ def inv_start(project: str, question: str = typer.Option(...), charter: str = No
               environment: str = "default", limit: list[str] = typer.Option([], help="dimension=value"),
               runtime: str = "fixture", model: str = None, policy: str = None, max_turns: int = 40,
               investigation_id: str = None, key: str = None,
-              input_artifact: list[str] = typer.Option([], "--input", help="declared input port=artifact_id")):
-    inv = {"runtime": runtime, "model": model, "max_turns": max_turns}
-    if policy:
-        inv["settings"] = {"policy": policy}
+              input_artifact: list[str] = typer.Option([], "--input", help="declared input port=artifact_id"),
+              settings: str = typer.Option(None, help="runtime settings JSON, e.g. max_requests_per_decision, price_per_mtok"),
+              max_model_calls_per_turn: int = 4):
+    inv = {"runtime": runtime, "model": model, "max_turns": max_turns, "max_model_calls_per_turn": max_model_calls_per_turn}
+    if policy or settings:
+        inv["settings"] = {**({"policy": policy} if policy else {}), **(json.loads(settings) if settings else {})}
     payload = {"question": question, "charter_id": charter, "model_artifact_id": model_artifact, "environment": environment,
                "inputs": _kv(input_artifact),
                "limits": {k: float(v) for k, v in _kv(limit).items()}, "investigator": inv,
