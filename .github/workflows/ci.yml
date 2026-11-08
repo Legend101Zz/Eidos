@@ -32,6 +32,7 @@ jobs:
       - run: uv run ruff check src tests
       - run: uv run lint-imports
       - run: uv run pytest tests/unit -q
+      - run: uv run pytest tests/mcp tests/reporting -q   # the live-lab MCP test is covered by the e2e-journey job
 
   integration:
     # Same-repo PRs are already built by the push trigger; run pull_request builds only for forks.
