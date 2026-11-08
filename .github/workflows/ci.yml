@@ -153,6 +153,11 @@ jobs:
         env:
           OUT: ${{ runner.temp }}/eidos-ci/ci-results
         run: '"${RUNNER_TEMP}/eidos-ci/venv/bin/python" scripts/ci/seatbelt_probes.py'
+      - name: Assessor under the host sealed profile (Seatbelt; planted-effect assessment + hostile probes)
+        id: assessor_seatbelt
+        env:
+          OUT: ${{ runner.temp }}/eidos-ci/ci-results
+        run: '"${RUNNER_TEMP}/eidos-ci/venv/bin/python" scripts/ci/assessor_sandbox_probe.py'
       - name: PostgreSQL 16 (Homebrew)
         run: |
           brew install postgresql@16
@@ -205,6 +210,7 @@ jobs:
             echo "| status | ${{ steps.lab_status.outcome }} |"
             echo "| stop | ${{ steps.lab_stop.outcome }} |"
             echo "| seatbelt probes (not a lab step; required) | ${{ steps.seatbelt.outcome }} |"
+            echo "| assessor under seatbelt (required) | ${{ steps.assessor_seatbelt.outcome }} |"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload evidence
         if: always()

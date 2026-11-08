@@ -12,7 +12,7 @@ import pytest
 from temporalio.testing import ActivityEnvironment
 
 from eidos.orchestration.activities import AssessorActivities
-from eidos.runtime.launcher import bwrap_available
+from eidos.runtime.launcher import detect_sealed_profile
 
 ROOT = Path(__file__).resolve().parents[2]
 COMP = ROOT / "components" / "eidos.assessors.paired-ci"
@@ -46,7 +46,7 @@ def _evidence() -> dict:
     return ev.get("json", ev)
 
 
-@pytest.mark.skipif(not bwrap_available(), reason="bubblewrap unavailable")
+@pytest.mark.skipif(not detect_sealed_profile(), reason="no sealed profile on this host")
 def test_assessor_runs_sandboxed_and_reports_realized_isolation(tmp_path):
     secret = tmp_path / "svc-assessor.token"
     secret.write_text("token")
@@ -55,5 +55,5 @@ def test_assessor_runs_sandboxed_and_reports_realized_isolation(tmp_path):
     out = ActivityEnvironment().run(acts._run_assessor, "p", "eidos.assessors.paired-ci@1.0.0", _evidence())
     iso = out["assessor_isolation"]
     assert out["outcome"] == "protocol-passed"
-    assert iso["profile"] == "linux:bwrap-sealed"
+    assert iso["profile"] == detect_sealed_profile()
     assert iso["controls"]["no-credential-read"] == "passed" and iso["controls"]["no-network-egress"] == "passed"

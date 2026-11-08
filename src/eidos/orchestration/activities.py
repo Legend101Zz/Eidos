@@ -67,7 +67,8 @@ class AssessorActivities:
     (two principals), never ledger credentials or candidate code."""
 
     def __init__(self, assessor: LabClient, qualifier: LabClient, runner_factory, lab_python: str, *,
-                 credential_path: str = "/nonexistent", api_port: int = 0, max_evidence_bytes: int = 256 << 20):
+                 credential_path: str = "/nonexistent", api_port: int = 0, max_evidence_bytes: int = 256 << 20,
+                 lab_root: str | None = None):
         self.assessor = assessor
         self.qualifier = qualifier
         self.runner_factory = runner_factory
@@ -75,6 +76,7 @@ class AssessorActivities:
         self.credential_path = credential_path
         self.api_port = api_port
         self.max_evidence_bytes = max_evidence_bytes
+        self.lab_root = lab_root
 
     @activity.defn(name="assess_plan")
     def assess_plan(self, a: dict) -> dict:
@@ -115,7 +117,8 @@ class AssessorActivities:
 
         from eidos.runtime.launcher import (
             LaunchSpec,
-            bwrap_available,
+            credential_dirs,
+            detect_sealed_profile,
             launch,
             profile_config_digest,
             run_probes,
@@ -143,18 +146,25 @@ class AssessorActivities:
                 inv.write(inv_path)
             import eidos as _eidos
             lab_src = str(Path(_eidos.__file__).resolve().parent.parent)
-            profile = "linux:bwrap-sealed" if bwrap_available() else "dev:same-user"
+            profile = detect_sealed_profile() or "dev:same-user"
+            # The assessor role reads only its release, the evidence and the lab interpreter; on Seatbelt
+            # the lab home, its own credential directory and user credential stores are unreadable.
+            deny = [d for d in (self.lab_root, os.path.dirname(self.credential_path)) if d] + credential_dirs()
             readonly = sorted({*SDK_PATHS, lab_src, str(src), str(inv_path), *[i.path for i in inv.inputs.values()]})
             spec = LaunchSpec(argv=[self.lab_python, "-m", "eidos_worker.run", str(inv_path)], cwd=str(src),
                               attempt_dir=str(base / "proc"), profile=profile, readonly=readonly,
                               writable=[inv.staging_dir, inv.scratch_dir],
                               env={"PYTHONPATH": os.pathsep.join([*SDK_PATHS, lab_src, str(src)])},
-                              python_prefixes=python_prefixes(self.lab_python) if profile != "dev:same-user" else [])
+                              python_prefixes=python_prefixes(self.lab_python) if profile != "dev:same-user" else [],
+                              deny_read=deny if profile != "dev:same-user" else [])
             receipt = {"profile": profile, "config_digest": profile_config_digest(spec), "role": "assessor",
                        "release": ref}
             if profile != "dev:same-user":
-                canary = base / "canary"
-                canary.write_text("x")
+                # A planted label where lab-held labels live (inside a denied root), never in the
+                # assessor's own working directory, which it may read.
+                canary = Path(os.path.dirname(self.credential_path)) / "assessor-label-canary"
+                if not canary.exists():
+                    canary.write_text("x")
                 receipt.update(run_probes(spec, label_path=str(canary), credential_path=self.credential_path,
                                           host_write_path=str(base / "host-write"), api_port=self.api_port))
             h = launch(spec)

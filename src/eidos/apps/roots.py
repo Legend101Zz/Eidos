@@ -131,7 +131,8 @@ def run_assessor_worker(cfg: LabConfig) -> None:
     from eidos.orchestration.names import ASSESSOR_QUEUE
     acts = AssessorActivities(client(cfg, "svc-assessor", "assessor-worker"), client(cfg, "svc-qualifier", "assessor-worker"),
                               None, cfg.lab_python or sys.executable,
-                              credential_path=str(cfg.secret_path("svc-assessor.token")), api_port=cfg.api_port)
+                              credential_path=str(cfg.secret_path("svc-assessor.token")), api_port=cfg.api_port,
+                              lab_root=str(cfg.root))
     _worker(cfg, ASSESSOR_QUEUE, activities=[acts.assess_plan, acts.submit_qualification_results])
 
 
