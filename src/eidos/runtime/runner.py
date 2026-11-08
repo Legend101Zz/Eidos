@@ -282,6 +282,11 @@ class AttemptRunner:
                             ctx["stop_signalled"] = now
                             ctx["stop_requested"] = True
                             h.signal_group(__import__("signal").SIGUSR1)
+                            # Signals do not cross the bwrap session/PID namespace; the SDK also polls this.
+                            stop = Path(ctx["attempt_dir"]) / "scratch" / ".eidos-stop-requested"
+                            stop.touch(exist_ok=True)
+                            if ctx["lock"].get("isolation_profile") == "linux:bwrap-sealed" and candidate_uid():
+                                os.chmod(stop, 0o644)
                         elif now - ctx["stop_signalled"] > float(ctx["lock"].get("limits", {}).get("stop_grace_seconds", 120)):
                             h.terminate()
                             return self._finish(project, ctx, "cancelled", {}, {"category": "stop-grace-exceeded",

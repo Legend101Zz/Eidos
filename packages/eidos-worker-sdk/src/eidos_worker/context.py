@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from eidos_wire import Invocation, canonical_json
 from eidos_worker.errors import ContractError
+
+STOP_FILE = ".eidos-stop-requested"  # checkpoint-and-stop request dropped by the runner into scratch
 
 MODEL_PORT = "model.client/1"
 LOG_RELPATH = "logs/run.log"
@@ -72,6 +75,10 @@ class RunContext:
         self._stop = True
 
     def stop_requested(self) -> bool:
+        # A signal cannot cross every sandbox boundary (bwrap runs the worker in its own session and
+        # PID namespace), so the runner also drops this file into the job's scratch directory.
+        if not self._stop and os.path.exists(os.path.join(self.invocation.scratch_dir, STOP_FILE)):
+            self._stop = True
         return self._stop
 
     def record(self, key: str, value: Any) -> None:
