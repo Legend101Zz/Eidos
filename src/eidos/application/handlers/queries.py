@@ -37,13 +37,16 @@ def _jsonable(row: dict) -> dict:
 
 
 SENSITIVE_KINDS = {"assessment", "qualification", "evidence_plan", "reassessment_request"}
+# Event types whose bodies carry evaluation outcomes.
+SENSITIVE_EVENTS = ("assessment.", "qualification.", "evidence.ready", "protocol.promoted")
 
 
 def _expose_record(ctx: Ctx, rec) -> None:
     """Reads that can reveal evaluation outcomes are exposures, whichever query path is used."""
-    if rec.kind in SENSITIVE_KINDS:
-        _expose(ctx, (rec.body or {}).get("investigation_id"), f"{rec.kind}:{rec.id}@{rec.revision}",
-                {"status": rec.status})
+    body = rec.body or {}
+    if rec.kind in SENSITIVE_KINDS or (rec.kind == "claim" and (rec.labels or {}).get("outcome")):
+        _expose(ctx, body.get("investigation_id"), f"{rec.kind}:{rec.id}@{rec.revision}",
+                {"status": rec.status, "outcome": (rec.labels or {}).get("outcome")}, charter_ref=body.get("charter_ref"))
 
 
 def _expose_job(ctx: Ctx, job: dict) -> None:
@@ -93,6 +96,10 @@ def list_events(ctx: Ctx, p: dict) -> dict:
     rows = ctx.tx.events_after(ctx.project_id, after, investigation_id=p.get("investigation_id"), upto=horizon,
                                limit=min(int(p.get("limit", 100)), 500), types=p.get("types"))
     nxt = rows[-1]["seq"] if rows else after
+    for r in rows:
+        if str(r["type"]).startswith(SENSITIVE_EVENTS):
+            _expose(ctx, r.get("investigation_id"), f"event:{r['seq']}:{r['type']}:{r['subject']}",
+                    {"type": r["type"]}, charter_ref=(r.get("body") or {}).get("charter_ref"))
     return {"events": [_jsonable(r) for r in rows], "next_cursor": nxt, "horizon": horizon,
             "more": bool(rows) and nxt < horizon}
 
@@ -199,6 +206,8 @@ def get_investigation(ctx: Ctx, p: dict) -> dict:
         raise NotFound("not found")
     turns = ctx.tx.list_turns(inv.id)
     jobs = ctx.tx.list_jobs(ctx.project_id, investigation_id=inv.id)
+    for j in jobs:  # evidence-arm statuses reveal outcomes
+        _expose_job(ctx, j)
     return {**inv.view(),
             "turns": [{"id": t["id"], "seq": t["seq"], "status": t["status"], "horizon": t["horizon"],
                        "stop_reason": (t["result"] or {}).get("stop_reason")} for t in turns],
@@ -238,16 +247,19 @@ def get_claim(ctx: Ctx, p: dict) -> dict:
 @query("get_assessment")
 def get_assessment(ctx: Ctx, p: dict) -> dict:
     a = ctx.tx.require("assessment", p["assessment_id"])
-    _expose(ctx, None, f"assessment:{a.id}", {"outcome": a.body["outcome"]})
+    _expose(ctx, a.body.get("investigation_id"), f"assessment:{a.id}", {"outcome": a.body["outcome"]},
+            charter_ref=a.body.get("charter_ref"))
     return {**a.view(), "health": a.labels.get("health", "intact")}
 
 
-def _expose(ctx: Ctx, inv_id: str | None, subject: str, disclosed: dict) -> None:
+def _expose(ctx: Ctx, inv_id: str | None, subject: str, disclosed: dict, *, charter_ref: dict | None = None) -> None:
     study = None
     if inv_id:
         inv = ctx.tx.get_record("investigation", inv_id)
         if inv and inv.body.get("charter_ref"):
-            study = inv.body["charter_ref"]["id"].split(":", 1)[1]
+            charter_ref = inv.body["charter_ref"]
+    if isinstance(charter_ref, dict) and str(charter_ref.get("id", "")).count(":"):
+        study = str(charter_ref["id"]).split(":", 1)[1]
     ctx.tx.add_exposure(ctx.project_id, study, ctx.principal.id, subject, disclosed)
 
 
@@ -338,6 +350,8 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
     turns = [t for t in ctx.tx.list_turns(inv.id) if t["horizon"] <= horizon]
     claims = [c for c in ctx.tx.list_records(ctx.project_id, "claim") if c.body.get("investigation_id") == inv.id
               and (cutoff_ts is None or c.created_at <= cutoff_ts)]
+    for c in claims:
+        _expose_record(ctx, c)
     return {"investigation": {"id": inv.id, "status": inv.status, "body": inv_body}, "horizon": horizon,
             "charter": charter, "jobs": jobs,
             "events": [{"seq": e["seq"], "type": e["type"], "subject": e["subject"]} for e in events[-200:]],

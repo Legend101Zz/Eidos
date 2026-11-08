@@ -18,7 +18,7 @@ SEALED_CONTROLS = (
 )
 # Reported by every sealed receipt; required only when a plan lists it explicitly ("distinct
 # service identities where supported").
-OPTIONAL_CONTROLS = ("separate-identity",)
+OPTIONAL_CONTROLS = ("separate-identity", "no-process-inspection")
 
 PROFILES: dict[str, dict[str, Any]] = {
     "dev:same-user": {
@@ -32,7 +32,7 @@ PROFILES: dict[str, dict[str, Any]] = {
         "platforms": ("linux",),
     },
     "macos:seatbelt-sealed": {
-        "controls": SEALED_CONTROLS,
+        "controls": SEALED_CONTROLS + ("no-process-inspection",),
         "summary": "macOS Seatbelt (sandbox-exec): lab home and credential directories unreadable, writes only to "
                    "staging/scratch/resume, no network, cleared environment; same OS user; mach IPC not filtered",
         "platforms": ("darwin",),

@@ -173,8 +173,8 @@ def detect_sealed_profile() -> str | None:
 
 def credential_dirs() -> list[str]:
     home = Path.home()
-    return [str(home / d) for d in (".ssh", ".aws", ".gnupg", ".netrc", ".docker", ".kube", ".config/gcloud",
-                                    "Library/Keychains")]
+    return [str(home / d) for d in (".ssh", ".aws", ".gnupg", ".netrc", ".pgpass", ".git-credentials", ".docker",
+                                    ".kube", ".config/gcloud", ".config/gh", ".config/git", "Library/Keychains")]
 
 
 def seatbelt_policy(spec: LaunchSpec, tmp: str) -> tuple[str, list[str]]:
@@ -195,7 +195,12 @@ def seatbelt_policy(spec: LaunchSpec, tmp: str) -> tuple[str, list[str]]:
 
     writable = [norm(w) for w in spec.writable + [tmp]]
     allowed = list(dict.fromkeys(norm(x) for x in spec.python_prefixes + spec.readonly + [spec.cwd] + writable if x))
-    rules = ["(version 1)", "(allow default)", "(deny network*)"]
+    rules = ["(version 1)", "(allow default)", "(deny network*)",
+             # other processes' arguments/environments (lab daemons may hold provider keys) and signals
+             "(deny process-info* (target others))",
+             # well-known ways to start work outside the sandbox or reach credential services
+             '(deny process-exec (literal "/bin/launchctl") (literal "/usr/bin/osascript") (literal "/usr/bin/open"))',
+             '(deny mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd"))']
     for d in dict.fromkeys(norm(x) for x in spec.deny_read if x):
         inner = [a for a in allowed if a != d and a.startswith(d.rstrip("/") + "/")]
         target = f"(subpath {par('D', d)})"
@@ -303,6 +308,19 @@ def net():
 res["no-network-egress"] = denied(net)
 res["no-control-socket"] = denied(lambda: socket.create_connection(("127.0.0.1", cfg["api_port"]), timeout=2).close())
 res["no-scorer-capability"] = not any(k.startswith("EIDOS_") for k in os.environ)
+def peer_hidden():
+    data = ""
+    try:
+        data = open("/proc/%d/environ" % cfg["peer_pid"], "rb").read().decode(errors="ignore")
+    except Exception:
+        try:
+            import subprocess
+            data = subprocess.run(["/bin/ps", "eww", "-o", "command=", "-p", str(cfg["peer_pid"])],
+                                  capture_output=True, text=True, timeout=5).stdout
+        except Exception:
+            pass
+    return cfg["peer_marker"] not in data
+res["no-process-inspection"] = peer_hidden()
 res["uid"] = os.getuid()
 res["computation"] = sum(range(10)) == 45
 print(json.dumps(res))
@@ -312,24 +330,34 @@ print(json.dumps(res))
 def run_probes(spec: LaunchSpec, *, label_path: str, credential_path: str, host_write_path: str, api_port: int,
                net_host: str = "1.1.1.1", net_port: int = 443) -> dict[str, Any]:
     """Run hostile-access probes with the exact profile configuration; return a receipt fragment."""
+    import secrets as _secrets
+    marker = "peer-" + _secrets.token_hex(8)
+    # A same-user peer holding a marker in its environment, like a lab daemon holding a provider key.
+    peer = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"], env={**os.environ, "EIDOS_PEER": marker},
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     cfg = {"label_path": label_path, "credential_path": credential_path, "host_write_path": host_write_path,
-           "net_host": net_host, "net_port": net_port, "api_port": api_port}
+           "net_host": net_host, "net_port": net_port, "api_port": api_port, "peer_pid": peer.pid, "peer_marker": marker}
     python = spec.argv[0]
     probe_spec = LaunchSpec(argv=[python, "-I", "-c", PROBE, json.dumps(cfg)], cwd=spec.cwd,
                             attempt_dir=str(Path(spec.attempt_dir) / "probe"), env={}, profile=spec.profile,
                             readonly=spec.readonly, writable=[], python_prefixes=spec.python_prefixes,
                             deny_read=spec.deny_read)
-    h = launch(probe_spec)
-    deadline = time.monotonic() + 60
-    while h.exit_code() is None and time.monotonic() < deadline:
-        time.sleep(0.05)
+    try:
+        h = launch(probe_spec)
+        deadline = time.monotonic() + 60
+        while h.exit_code() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+    finally:
+        peer.kill()
+        peer.wait()
     try:
         out = json.loads((Path(probe_spec.attempt_dir) / "stdout.log").read_text().strip().splitlines()[-1])
     except (OSError, ValueError, IndexError):
         err = (Path(probe_spec.attempt_dir) / "stderr.log").read_text()[-2000:] if (Path(probe_spec.attempt_dir) / "stderr.log").exists() else ""
         return {"probe_error": err or "probe produced no result", "controls": {}}
     controls: dict[str, str] = {}
-    for key in ("no-label-read", "no-credential-read", "no-network-egress", "no-control-socket", "no-scorer-capability"):
+    for key in ("no-label-read", "no-credential-read", "no-network-egress", "no-control-socket", "no-scorer-capability",
+                "no-process-inspection"):
         controls[key] = "passed" if out.get(key) else "failed"
     # Judge host writes from the host side: a write into the sandbox's private tmpfs is not one.
     host_file = Path(host_write_path)

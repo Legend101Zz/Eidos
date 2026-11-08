@@ -111,13 +111,13 @@ text, params = seatbelt_policy(spec("macos:seatbelt-sealed", adir), str(adir / "
 result["policy"] = {"text": text, "params": params}
 sealed = probes("macos:seatbelt-sealed", adir)
 result["sealed_probes"] = sealed
-for c in SEALED_CONTROLS:
+for c in (*SEALED_CONTROLS, "no-process-inspection"):
     if sealed.get("controls", {}).get(c) != "passed":
         result["failures"].append(f"seatbelt control {c} = {sealed.get('controls', {}).get(c)} ({sealed.get('probe_error', '')[:300]})")
 
 neg = probes("dev:same-user", base / "negative")
 result["negative_control_probes"] = neg
-expect_fail = ["no-label-read", "no-credential-read", "no-host-write", "no-control-socket"]
+expect_fail = ["no-label-read", "no-credential-read", "no-host-write", "no-control-socket", "no-process-inspection"]
 if result["host_egress_reachable"]:
     expect_fail.append("no-network-egress")
 undetected = [c for c in expect_fail if neg.get("controls", {}).get(c) != "failed"]
