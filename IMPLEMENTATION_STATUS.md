@@ -429,9 +429,20 @@ Lesson: three of the four failures came from round 5 making sealed the default p
   - unit + MCP + reporting: 68 passed, 1 skipped;
   - staging regression: 2 passed.
 
+## Round 16 (2026-11-08): re-run 2 findings 11–13 fixed
+
+- **Merge:** `mac/local-qualification` (e07d905) merged.
+- **Fixes (8ad9519):**
+  - **11.** `investigation_view.created_artifacts` lists the artifacts the investigator authored, with the turn and which jobs used them. The packed context shows them as "Artifacts you created". The tool guide says an authored id appears in the next turn: same-decision references were **not** implemented, and the tool guide says so.
+  - **12.** The bounded-outcome exemption is removed, so a request-budget-exhausted outcome that waits with nothing outstanding is refused and goes through the bounded retry-then-surface rule.
+  - **13.** The tool-free final request now gets exactly the reserved remainder. The cap is exact: the test asserts calls == 3 for a cap of 3, where the old code made 4.
+- **Tests:**
+  - turn-recovery: 12 passed, including the context-only test that authors a source and reads its id next turn, and the bounded-outcome refusal;
+  - unit + MCP + reporting: 68 passed, 1 skipped.
+
 ## Next concrete action
 
-1. **CI for the head.** The Mac session then does the final capped full-lab D02 re-run against 851a019 or later, and the lead folds the receipt in.
+1. **CI for the head.** The Mac session then does the last capped full-lab D02 attempt against 8ad9519 or later, and the lead folds the receipt in during the final handoff round.
 2. **Backlog:**
    - `build_fixtures.py` must not rewrite tracked fixtures;
    - a pytest wrapper for the Seatbelt probes on macOS CI;

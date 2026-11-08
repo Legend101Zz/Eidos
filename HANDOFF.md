@@ -31,6 +31,13 @@
       - **No claim was made.**
       - All three are fixed in 851a019 (ADR 0007 amendment): such a wait is treated like a refused proposal; environment names are validated and listed; and there is a distinct `author_source` tool for candidate project files, with the same meaning in both. A final Mac re-run is pending.
       - The first run's "error: null" was a receipt-query mistake on the Mac side; the ledger was correct. That request was retracted.
+    - **Full-lab D02 re-run 2** (`docs/mac/receipts/a8-full-lab-D02-rerun2.json`):
+      - 31 requests, USD 0.95, 6 turns. Containment held.
+      - The baseline over 3 seeds and the scoring succeeded (val acc 0.838).
+      - It authored 4 candidate `project.py` bundles but ran none, because their ids never reached the packed context.
+      - It parked after turn 6 (operator stop, a builder intervention). **No claim.** It got further than the earlier runs, but still reached no conclusion.
+      - Fixed in 8ad9519: created artifacts are now listed in the investigator's view and context; request-budget outcomes that wait with nothing outstanding take the refused-proposal path; the per-decision request cap is exact.
+      - One last full-lab attempt is pending.
 - **Round 12:**
   - CI and `lab init` no longer depend on GitHub's release CDN: verified cache, then pinned download, then source build with recorded provenance.
   - Adversarial review 3 fixes, including a key leak through symlinked outputs in the lab-free driver.
