@@ -70,6 +70,8 @@ The gate table is `ACCEPTANCE_MATRIX.md` § E. Receipts are in `docs/release/evi
   - the investigator worker SIGKILLed after its first committed effect and handed off, with one admission per job, unique keys and visible charges (USD 1.81).
 
   Two earlier runs exposed six Eidos defects, all fixed with tests. This is development evidence, not a scientific result.
+- **G4, OpenAI-compatible provider.** Adapter verified and model conformance failure recorded. Against our own local Ollama endpoint the adapter's error, timeout, request-limit and 404 handling pass, and `qwen2.5:14b` produced schema-valid decisions. No local model of 14B or less passed full conformance (14B: 4/8; 3B: 3/8; the 7B run did not complete). Anthropic passed 8/8.
+- **G5, local-model attempt.** `qwen2.5:14b` produced one refused decision in about 2 h. This failure is recorded as is.
 - **G6, local operations.** Disk exhaustion on a real 2 GiB APFS volume, SIGKILL of every service including PostgreSQL, and abrupt stop with and without the job all pass on macOS. A real machine sleep and restart is the owner's step (`scripts/qualify/sleep_restart_check.sh`).
 - **G3 and G7.** Tests are listed in the CHANGELOG.
 - **Switch-order acceptance journey on macOS:** 154/154.
