@@ -1,3 +1,14 @@
+# v1.0.0 release session handoff (2026-11-08)
+
+**State:** see the gate table in `ACCEPTANCE_MATRIX.md` § E, and the session's `PROGRESS.md`/`REQUESTS.md` on the SSD (`/Volumes/Mrigesh SSD/eidos-v1/`).
+
+- **Scope:** `docs/release/SUPPORTED.md`. v1.0.0 is the software release (A1–A15). A16 (scientific) is a separate later release with `eval-*` tags.
+- **Licence:** Apache-2.0 (`LICENSE`, `NOTICE`; `research/public/` excluded).
+- **Release documents:** `CHANGELOG.md`, `docs/release/RELEASE_NOTES_v1.0.0.md`. Evidence: `docs/release/evidence/`, plus `docs/mac/STATUS.md` § v1.0.0 release session.
+- **Owner item:** a real machine sleep and restart (`scripts/qualify/sleep_restart_check.sh`; steps in `REQUESTS.md` R1). Until it passes, the release stops at the release candidate.
+
+---
+
 # Final handoff (2026-11-08)
 
 ## Identity
