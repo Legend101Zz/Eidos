@@ -395,6 +395,7 @@ Lesson: three of the four failures came from round 5 making sealed the default p
 ## Round 14 (2026-11-08): Mac branch merged, full-lab defect fixed
 
 - **Merge:** `origin/mac/local-qualification` (e966344) merged into `build/eidos-local-v1` as merge commit 99be3ba. `docs/mac/` is kept as history.
+- **Suites on the head (097d83a):** unit + integration + MCP + reporting **135 passed, 4 skipped** (3 skips are macOS-only; 1 is the live-lab MCP test).
 - **Suites on the merged result:**
   - 133 passed, 2 failed. Both failures were a Linux false negative in the new home-read probe (`os.listdir` saw the bwrap bind-mount scaffold). It now reads a planted file in the real home instead.
   - Re-run: the isolation, assessor, sealed-home and contained suites give 13 passed, 3 skipped (macOS-only).
