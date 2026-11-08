@@ -69,7 +69,7 @@ PROBE
 echo "planted by the Eidos macOS kit; safe to delete" > "$PLANTED"
 step sealed_probe bash -c "'$LAB' project register-env macq --python '$W/venv/bin/python' --root '$W/probe-project' > /dev/null \
   && '$LAB' component install macq \"\$('$W/venv/bin/python' -c 'import eidos,pathlib;print(pathlib.Path(eidos.__file__).parent/\"_components\"/\"eidos.project.command\")')\" > /dev/null \
-  && '$LAB' run macq eidos.project.command@1.0.6 --config \"\$(python3 -c 'import json,sys;print(json.dumps({\"argv\":[\"python\",\"probe.py\",\"--out\",\"{out}\",\"--planted\",sys.argv[1],\"--port\",\"18765\"]}))' '$PLANTED')\" --wait > '$W/probe-job.json' \
+  && '$LAB' run macq eidos.project.command@1.0.7 --config \"\$(python3 -c 'import json,sys;print(json.dumps({\"argv\":[\"python\",\"probe.py\",\"--out\",\"{out}\",\"--planted\",sys.argv[1],\"--port\",\"18765\"]}))' '$PLANTED')\" --wait > '$W/probe-job.json' \
   && P=\$(find '$EIDOS_HOME/jobs' -path '*scratch/out/probe.json' | head -1) && cp \"\$P\" '$W/probe.json' \
   && python3 -c 'import json,sys;r=json.load(open(sys.argv[1]));print(r);sys.exit(0 if all(r.values()) else 1)' '$W/probe.json'"
 rm -f "$PLANTED"

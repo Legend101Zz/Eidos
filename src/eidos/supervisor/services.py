@@ -152,9 +152,35 @@ def _download(url: str, dest: Path, attempts: int = 5) -> None:
             return
         except OSError as exc:  # URLError/HTTPError are OSErrors
             if i == attempts - 1:
+                if _github_api_asset(url, dest):
+                    return
                 raise ServiceError(f"download failed after {attempts} attempts: {url}: {exc}") from exc
             time.sleep(delay)
             delay *= 2
+
+
+def _github_api_asset(url: str, dest: Path) -> bool:
+    """Fallback for github.com release-download outages: fetch the same asset through the REST API's asset
+    endpoint (observed working while browser-download URLs returned 504). The caller still verifies the
+    pinned digest."""
+    import re
+    m = re.match(r"https://github.com/([^/]+/[^/]+)/releases/download/([^/]+)/(.+)$", url)
+    if not m:
+        return False
+    repo, tag, name = m.groups()
+    try:
+        with urllib.request.urlopen(f"https://api.github.com/repos/{repo}/releases/tags/{tag}", timeout=30) as r:
+            assets = json.loads(r.read())["assets"]
+        aid = next(a["id"] for a in assets if a["name"] == name)
+        req = urllib.request.Request(f"https://api.github.com/repos/{repo}/releases/assets/{aid}",
+                                     headers={"Accept": "application/octet-stream"})
+        tmp = dest.with_suffix(".part")
+        with urllib.request.urlopen(req, timeout=300) as r, open(tmp, "wb") as fh:
+            shutil.copyfileobj(r, fh)
+        tmp.replace(dest)
+        return True
+    except (OSError, ValueError, KeyError, StopIteration):
+        return False
 
 
 def install_temporal(cfg: LabConfig, source: str | None = None) -> str:
