@@ -2,7 +2,7 @@
 
 Updated 2026-11-08 by the lead session, on branch `build/eidos-local-v1`.
 - Start here: `HANDOFF.md`, which lists what v0.4.0 is and isn't, the evidence classes, open items and pending owner decisions.
-- Latest freeze: tag `eidos-v0.4.0` → `c57dba9`. Commits after it are listed in `HANDOFF.md`.
+- Latest freeze: tag **`eidos-v0.4.1` → `e328608`**, with all six CI jobs green (run `42429763457`). After it there is only a documentation-only commit with this update.
 - Criterion-level status: `ACCEPTANCE_MATRIX.md`.
 - Build sandbox: `docs/ops/SANDBOX_CAPABILITIES.md`.
 - Public research release runs: `docs/dev-runs/research-public-v0.1.0.md`.
@@ -18,7 +18,7 @@ Updated 2026-11-08 by the lead session, on branch `build/eidos-local-v1`.
 | Command service | ~55 commands and ~22 queries. Idempotency, revisions, fences, budgets and outbox are runtime-verified. |
 | HTTP API, artifact CAS, upload/download, maintenance mode, disk-pressure refusal | runtime-verified |
 | Temporal workflows (coordinator with Continue-As-New, bounded turns, independent jobs, assessment) | runtime-verified on the **regular Temporal Server 1.32.2 + PostgreSQL**. Rollover, retries and recorded-history replay are tested on the dev server (tests only). Real-time timeout/retry behaviour (heartbeat timeout, start-to-close, retry policy, non-retryable errors, worker SIGKILLed mid-activity taken over by a second worker) passes on the dev server **and** on the lab's regular server: `tests/integration/test_temporal_realtime.py`. |
-| Runner/launcher | Reattach-safe handles: pid + start time + boot id, exit file. The dev profile and **linux:bwrap-sealed** are runtime-verified, with hostile probes. **macos:seatbelt-sealed** (`sandbox-exec`) is implemented and unit-tested for profile generation. Its probes run in the macOS CI job (GitHub-runner evidence; first run pending at the time of writing). |
+| Runner/launcher | Reattach-safe handles: pid + start time + boot id, exit file. The dev profile and **linux:bwrap-sealed** are runtime-verified, with hostile probes. **macos:seatbelt-sealed** (`sandbox-exec`) is implemented and unit-tested for profile generation. Its hostile probes passed in the macOS CI job (GitHub-runner evidence, run `42429763457`). |
 | Investigator | context-policy/1, fixture runtime, recovery activities, offline turn replay. Fixture-only. |
 | Pydantic AI adapter | **Anthropic qualified (development, lab-free):** receipt #3 passed 8/8 after the fixes from receipts #1 and #2. OpenAI-compatible endpoints are unqualified. |
 | Supervisor | init, start, stop, status, doctor, logs, backup, restore and upgrade runtime-verified on Linux. Restore was done into a fresh directory on new ports with re-enrolled credentials. |
@@ -55,7 +55,8 @@ export EIDOS_HOME=/workspace/.eidos-dev/lead/lab   # lead lab
 - At `3aa9192`: unit + integration + MCP + reporting **113 passed, 1 skipped**. That count includes 4 real-time Temporal tests and 5 seatbelt policy/selection tests.
 - `test_temporal_realtime.py` also passed 4/4 against the lead lab's regular Temporal Server (`EIDOS_TEMPORAL_TARGET=127.0.0.1:7633`).
 - Ruff is clean and Import Linter keeps 5/5 contracts.
-- CI on `c57dba9` (tag `eidos-v0.4.0`): six jobs green. CI on `3aa9192` and later: not read here (API rate limit). The controller should check it.
+- CI on `c57dba9` (tag `eidos-v0.4.0`): six jobs green.
+- CI on `e328608` (tag `eidos-v0.4.1`, run `42429763457`): six jobs green, including the macOS step "Seatbelt candidate-sandbox probes" and the integration job with the real-time Temporal tests. The run for `3aa9192` was cancelled because the next push superseded it.
 
 Earlier:
 
@@ -233,11 +234,10 @@ These are separate commits in the journey merge:
   - The macOS CI job runs `scripts/ci/seatbelt_probes.py`: hostile probes with a live control-socket listener, a same-user planted-effect control, and a permitted computation.
   - **Not done:** the macOS assessor still runs `dev:same-user`; Lima VM is not implemented.
 - **Handoff:** `HANDOFF.md` written; this file and `ACCEPTANCE_MATRIX.md` updated.
+- **CI:** run `42429763457` on `e328608` passed all six jobs, including the seatbelt probes on GitHub macOS arm64. Tag `eidos-v0.4.1` → `e328608`.
 
 ## Next concrete action
 
-1. The controller reads CI for the head of `build/eidos-local-v1`. Above all, check the macOS step "Seatbelt candidate-sandbox probes". The evidence is the `seatbelt_probes.json` artifact in `macos-arm64-evidence`.
-   - **If the step is green:** tag `eidos-v0.4.1` at that head, and record the result in ACCEPTANCE_MATRIX A11.
-   - **If it is red:** the JSON names the failing control. Fix the generated profile in `seatbelt_policy`. Until then, macOS runs must use `dev:same-user` with a waiver, or run on a lab where `sealed_profile` is empty.
+1. Done: CI is green on `e328608` and tag `eidos-v0.4.1` is cut. The seatbelt probe JSON is in the `macos-arm64-evidence` artifact of run `42429763457`, retained for 3 days. The controller may archive it.
 2. Owner decisions, listed in `HANDOFF.md`: the macOS kit, real-LLM lab-free D02/D12 runs, OpenAI-compatible qualification, external MCP clients, and seatbelt vs Lima.
 3. The remaining v1 gaps need hardware, clients or keys. See ACCEPTANCE_MATRIX §C/§D.

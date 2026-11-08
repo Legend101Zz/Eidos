@@ -5,11 +5,12 @@
 - Repository: `Legend101Zz/Eidos`. Branch: `build/eidos-local-v1`. The controller maintains the draft PR `build/eidos-local-v1 → main`.
 - Latest freeze: annotated tag **`eidos-v0.4.0` → `c57dba9`**. All six CI jobs were green there: lint-and-unit, integration, fresh-install, worker-compat, macOS arm64, components.
   - Earlier tags, never moved: `eidos-v0.1.0` → `78e4597`, `eidos-v0.2.0` → `37bd0c5`, `eidos-v0.3.0` → `8a33793`.
-- **These commits come after the tag** and are not part of any freeze:
+- **Current freeze: annotated tag `eidos-v0.4.1` → `e328608`.** It adds three commits after `eidos-v0.4.0`:
   - `2709265`: real-time Temporal timeout and retry tests.
   - `3aa9192`: the `macos:seatbelt-sealed` candidate sandbox, its probe step in the macOS CI job, and unit tests.
-  - The handoff/status documentation commit that adds this file.
-- Their CI results had not been read when this was written (the GitHub API was rate-limited from the sandbox). If they are green, tag a new `eidos-v0.4.1`. Never move `eidos-v0.4.0`.
+  - `e328608`: this handoff and the status documents.
+- CI run `42429763457` on `e328608` passed all six jobs. The macOS step "Seatbelt candidate-sandbox probes" passed (job `128575933627`).
+- **After `eidos-v0.4.1`** there is one documentation-only commit, which records this CI result and the tag. There are no code changes after the tag.
 - No `eidos-v1.0.0` tag exists, because the v1 acceptance criteria are not all met (see below).
 
 ## What v0.4.0 is
@@ -62,7 +63,7 @@ Full guide: `docs/ops/INSTALL_AND_OPERATE.md`. CI layout: `docs/ops/CI.md`. Exac
 | **Runtime-verified (hosted Linux, Ubuntu 24.04 x86_64, CPU)** | Everything in "What v0.4.0 is", exercised against real PostgreSQL 16, the regular Temporal Server 1.32.2 and real processes. Also: the switch-order journey (149 checks), D01/D02/D12 bundle runs, a fresh wheel install, abrupt-stop/reattach/checkpoint-and-stop ops scripts and a performance smoke. **New:** real-time Temporal heartbeat-timeout, start-to-close, retry-policy and worker-SIGKILL tests pass on the dev server and against the lab's regular server (`tests/integration/test_temporal_realtime.py`, 4/4, 2026-11-08). |
 | **Fixture-only** | All investigator decisions inside lab runs: the D01/D02/D12 investigations and journey step 7. |
 | **Development-qualified, lab-free** | The Anthropic path through the Pydantic AI adapter. Controller-run live receipt #3 passed 8/8. |
-| **GitHub-runner evidence (macOS arm64)** | Wheel install, `lab init/start/doctor/project/status/stop`, worker SDK tests and research smoke. **New, pending its first CI run:** `macos:seatbelt-sealed` hostile probes with a same-user planted-effect control (`scripts/ci/seatbelt_probes.py`). |
+| **GitHub-runner evidence (macOS arm64)** | Wheel install, `lab init/start/doctor/project/status/stop`, worker SDK tests and research smoke. **New:** `macos:seatbelt-sealed` passed on a GitHub macOS 15 arm64 runner (`scripts/ci/seatbelt_probes.py`, CI run `42429763457`):<br>• all six sealed controls held under the sandbox;<br>• the same-user planted-effect control detected the accesses;<br>• the permitted computation read its input copy and wrote staging, scratch, resume and tmp, while project-root writes were refused. |
 | **Unqualified** | macOS researcher machine; Lima VM; CUDA/MPS; OpenAI-compatible providers; external MCP hosts (Claude Code/Desktop, Codex); sleep/suspend; multi-day runs; distributed training; performance on a declared reference machine. |
 | **Scientifically unproven** | Any claim that Eidos improves verified outcomes under comparable budgets (A16). |
 
@@ -71,7 +72,7 @@ Full guide: `docs/ops/INSTALL_AND_OPERATE.md`. CI layout: `docs/ops/CI.md`. Exac
 | Item | Blocker | Next step |
 |---|---|---|
 | macOS researcher-machine qualification | Needs the owner's Mac. A hosted runner is not a researcher machine. | Owner runs `scripts/qualify/macos_owner_kit.sh` (`docs/ops/MACOS_OWNER_QUALIFICATION.md`). |
-| macOS sealed isolation | `macos:seatbelt-sealed` is implemented, but only CI runner evidence exists. It runs as the same OS user (no `separate-identity`), mach IPC is unfiltered, and `sandbox-exec` is deprecated by Apple. The macOS assessor still runs same-user. Lima VM is not implemented. | Read the macOS CI job result. If the probes fail, runs fall back to `dev:same-user` with recorded waivers, and the failure is recorded in the receipt. Owner decides whether seatbelt is acceptable or Lima is required. |
+| macOS sealed isolation | `macos:seatbelt-sealed` passed its probes on a GitHub runner only; no researcher Mac and no full lab job under seatbelt have been tested. It runs as the same OS user (no `separate-identity`), mach IPC is unfiltered, and `sandbox-exec` is deprecated by Apple. The macOS assessor still runs same-user. Lima VM is not implemented. | Run the owner kit on a Mac with a sealed job. Owner decides whether seatbelt is acceptable or Lima is required. |
 | Real-LLM autonomous lab investigation | No provider key in the build sandbox, and the controller's budget is separate. | Owner/controller authorizes the lab-free D02/D12 runs (`scripts/qualify/live_bundle_investigation.py`, ≤ 40 requests per bundle), then a full-lab run. |
 | OpenAI-compatible provider qualification | Needs an endpoint and a key. | Controller runs at most 10 calls (`IMPLEMENTATION_STATUS.md` § Live-provider runs). |
 | External MCP hosts | No Claude Code/Desktop or Codex host in the sandbox. | Use the snippets in `docs/ops/mcp-clients.md`. The SDK client is already verified over stdio and HTTP. |
