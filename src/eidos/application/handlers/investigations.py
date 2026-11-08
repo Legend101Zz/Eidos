@@ -375,11 +375,13 @@ def reserve_model_budget(ctx: Ctx, p: dict) -> dict:
 def release_turn_model_reservations(ctx: Ctx, turn: dict) -> dict:
     """Release model reservations of a turn that were never settled (e.g. the activity died)."""
     scope = inv_scope(turn["investigation_id"])
-    released = {}
-    for dim, left in ctx.tx.open_reservations(scope, f"model:{turn['id']}:").items():
-        if left > 0:
-            ctx.tx.settle(scope, dim, reserved=left, actual=0, ref=f"model:{turn['id']}:release")
-            released[dim] = left
+    released: dict[str, float] = {}
+    # Release under each reservation's own ref (G7 re-check): a release booked under a separate ref
+    # left the original ref looking open, so a late settlement from a zombie attempt released the
+    # same amount again and freed budget held by other reservations.
+    for (dim, ref), left in sorted(_open_by_ref(ctx, scope, f"model:{turn['id']}:").items()):
+        ctx.tx.settle(scope, dim, reserved=left, actual=0, ref=ref, detail={"released_by": "complete_turn"})
+        released[dim] = released.get(dim, 0.0) + left
     return released
 
 

@@ -239,6 +239,34 @@ def test_retried_decide_does_not_collide_with_its_own_dead_reservation(lab):
     assert bud["reserved"] >= 1e6 - 150_000 - 1, bud   # the test fill is still held, not released twice
 
 
+def test_late_settlement_after_turn_release_does_not_release_twice(lab):
+    """G7 open_reservations re-check: complete_turn releases a decision's unsettled reservation; a late
+    settlement from that (zombie) attempt afterwards must not release the same amount again, which
+    would free budget still held by other reservations of the investigation."""
+    pid, inv, acts = setup(lab)
+    env = ActivityEnvironment()
+    b = env.run(acts.begin_turn, {"investigation_id": inv, "project_id": pid, "index": 1})
+    wf = lab.principal(f"wf-{pid}", ["workflow"], [pid])
+    lab.cmd(wf, "reserve_model_budget", {"turn_id": b["turn_id"], "slot": 0, "attempt": 1,
+                                         "estimate": {"model_tokens": 120_000}}, project=pid)
+    with lab.ledger.transaction() as tx:      # another holder of the same dimension
+        tx.project_id = pid
+        tx.reserve(f"inv:{inv}", "model_tokens", 300_000, "test:other-holder")
+    done = lab.cmd(wf, "complete_turn", {"turn_id": b["turn_id"], "stop_reason": "calls-exhausted"}, project=pid)
+    assert done["result"].get("status") in ("completed", None) or done["result"]
+    bud = lab.q(lab.admin, "budgets", {"investigation_id": inv}, project=pid)["budgets"]["model_tokens"]
+    assert abs(bud["reserved"] - 300_000) < 1, bud   # the turn's 120k released once
+    lab.cmd(wf, "record_model_usage", {"turn_id": b["turn_id"], "usage": {"input_tokens": 1000, "output_tokens": 0},
+                                       "reserved": {"model_tokens": 120_000},
+                                       "reservation_ref": f"model:{b['turn_id']}:0:1"}, project=pid)
+    bud = lab.q(lab.admin, "budgets", {"investigation_id": inv}, project=pid)["budgets"]["model_tokens"]
+    assert abs(bud["reserved"] - 300_000) < 1, bud   # not released a second time
+    assert bud["used"] >= 1000  # the late actual charge is still recorded
+    with lab.ledger.transaction() as tx:
+        tx.project_id = pid
+        assert tx.open_reservations(f"inv:{inv}", f"model:{b['turn_id']}:") == {"model_tokens": 0.0}
+
+
 def test_wait_for_jobs_with_nothing_outstanding_is_refused_within_the_turn(lab):
     """A decision that waits while no jobs or evidence plans are outstanding would park the investigation until
     the max-idle timer. It is refused as an invalid proposal, fed back to the next slot of the same turn."""
