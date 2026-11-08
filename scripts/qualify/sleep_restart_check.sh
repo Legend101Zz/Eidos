@@ -30,7 +30,9 @@ export EIDOS_HOME="$HOME_DIR"
 STATE="$HOME_DIR/sleep-restart-state.json"
 P=sleepchk
 boottime() { sysctl -n kern.boottime 2>/dev/null || cat /proc/sys/kernel/random/boot_id; }
-running() { "$LAB" status --json >/dev/null 2>&1; }
+running() {  # the API answers (lab status itself succeeds on a stopped lab)
+  "$LAB" status --json 2>/dev/null | python3 -c "import json,sys; sys.exit(0 if (json.load(sys.stdin).get('api') or {}).get('status') == 'ok' else 1)" 2>/dev/null
+}
 
 case "$MODE" in
 start)
@@ -43,9 +45,9 @@ import json, sys
 print(json.load(open(sys.argv[1] + "/config/lab.json"))["lab_python"])
 PY
 )"
-  mkdir -p "$HOME_DIR/sleepchk-project"
+  mkdir -p "${HOME_DIR%/}-project"
   "$LAB" project create "$P" --budget compute_seconds=20000 --budget trials=50 >/dev/null 2>&1 || true
-  "$LAB" project register-env "$P" --python "$LABPY" --root "$HOME_DIR/sleepchk-project" >/dev/null
+  "$LAB" project register-env "$P" --python "$LABPY" --root "${HOME_DIR%/}-project" >/dev/null
   CMD_DIR="$("$LABPY" -c 'import eidos,pathlib;print(pathlib.Path(eidos.__file__).parent/"_components"/"eidos.project.command")')"
   "$LAB" component install "$P" "$CMD_DIR" >/dev/null 2>&1 || true
   REF="$("$LAB" component list "$P" --text eidos.project.command | python3 -c "import json,sys; print(sorted(c['ref'] for c in json.load(sys.stdin)['components'])[-1])")"
@@ -103,9 +105,10 @@ EOF
   "$LAB" status --json > "$HOME_DIR/sleepchk-status-after.json"
   "$LAB" doctor --json > "$HOME_DIR/sleepchk-doctor-after.json" || true
   "$LAB" query list_events -p "$P" --params '{"cursor": 0, "limit": 5000}' > "$HOME_DIR/sleepchk-events.json" || echo '{}' > "$HOME_DIR/sleepchk-events.json"
-  python3 - "$STATE" "$EVENT" "$WAS_RUNNING" "$HOME_DIR" "$(boottime)" <<'PY'
+  WAKE="$(sysctl -n kern.waketime 2>/dev/null | sed -E 's/.*sec = ([0-9]+).*/\1/' || echo 0)"
+  python3 - "$STATE" "$EVENT" "$WAS_RUNNING" "$HOME_DIR" "$(boottime)" "${WAKE:-0}" <<'PY'
 import json, sys, time
-state, event, was_running, home, boot_now = sys.argv[1:6]
+state, event, was_running, home, boot_now, wake = sys.argv[1:7]
 st = json.load(open(state))
 job = json.load(open(f"{home}/sleepchk-job-after.json"))
 status = json.load(open(f"{home}/sleepchk-status-after.json"))
@@ -116,6 +119,10 @@ outs = [o["slot"] for o in job.get("outputs") or []]
 checks = []
 def check(name, ok, **detail):
     checks.append({"check": name, "ok": bool(ok), **detail})
+if event == "sleep":
+    # A real sleep must have happened after `start`: kern.waketime is the last wake, in epoch seconds.
+    check("sleep: the Mac slept and woke after the job started (kern.waketime)",
+          int(wake or 0) > int(st["started_wall"]), last_wake=int(wake or 0), started=int(st["started_wall"]))
 check("job ended succeeded", job["status"] == "succeeded", status=job["status"])
 check("exactly one successful attempt", sum(1 for a in atts if a["status"] == "succeeded") == 1,
       attempts=[a["status"] for a in atts])
