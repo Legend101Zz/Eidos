@@ -101,7 +101,8 @@ def run_investigator_worker(cfg: LabConfig) -> None:
     acts = InvestigatorActivities(client(cfg, "svc-investigator", "investigator-worker"),
                                   client(cfg, "svc-workflow", "investigator-worker"))
     _worker(cfg, INVESTIGATOR_QUEUE, activities=[acts.begin_turn, acts.build_context, acts.decide,
-                                                 acts.execute_decision, acts.complete_turn, acts.check_news])
+                                                 acts.execute_decision, acts.complete_turn, acts.check_news,
+                                                 acts.mark_needs_input])
 
 
 def _runner(cfg: LabConfig, principal: str, profiles: tuple[str, ...]):

@@ -212,7 +212,7 @@ def get_investigation(ctx: Ctx, p: dict) -> dict:
     jobs = ctx.tx.list_jobs(ctx.project_id, investigation_id=inv.id)
     for j in jobs:  # evidence-arm statuses reveal outcomes
         _expose_job(ctx, j)
-    return {**inv.view(),
+    return {**inv.view(), "needs_input": (inv.labels or {}).get("needs_input"),
             "turns": [{"id": t["id"], "seq": t["seq"], "status": t["status"], "horizon": t["horizon"],
                        "stop_reason": (t["result"] or {}).get("stop_reason")} for t in turns],
             "jobs": [{"id": j["id"], "status": j["status"], "kind": j["kind"],
@@ -383,7 +383,9 @@ def project_summary(ctx: Ctx, p: dict) -> dict:
     by_status: dict[str, int] = {}
     for j in jobs:
         by_status[j["status"]] = by_status.get(j["status"], 0) + 1
-    return {"project_id": ctx.project_id, "records": counts, "jobs": by_status,
+    needs_input = [r.id for r in ctx.tx.list_records(ctx.project_id, "investigation", limit=100000)
+                   if (r.labels or {}).get("needs_input")]
+    return {"project_id": ctx.project_id, "records": counts, "jobs": by_status, "investigations_needing_input": needs_input,
             "budgets": ctx.tx.budgets(f"project:{ctx.project_id}"), "horizon": ctx.tx.horizon()}
 
 

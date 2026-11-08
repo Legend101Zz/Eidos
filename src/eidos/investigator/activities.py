@@ -278,6 +278,12 @@ class InvestigatorActivities:
                                            "types": types, "limit": 1}, project=a["project_id"])
         return {"news": bool(ev["events"]), "after_horizon": horizon}
 
+    @activity.defn(name="mark_needs_input")
+    def mark_needs_input(self, a: dict) -> dict:
+        return self.wf.command("mark_needs_input", {"investigation_id": a["investigation_id"], "reason": a.get("reason"),
+                               "refused_turns": a.get("refused_turns", 0)}, project=a["project_id"],
+                               key=f"needs-input:{a['investigation_id']}:{a.get('turn_counter')}")["result"]
+
     @activity.defn(name="complete_turn")
     @_hb
     def complete_turn(self, a: dict) -> dict:
