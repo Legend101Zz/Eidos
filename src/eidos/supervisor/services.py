@@ -56,6 +56,11 @@ def pg_version(pg_bin: str) -> str:
     return subprocess.run([f"{pg_bin}/postgres", "--version"], capture_output=True, text=True).stdout.strip()
 
 
+def _service_env() -> dict[str, str]:
+    from eidos.runtime.launcher import scrub_secrets
+    return scrub_secrets(os.environ)
+
+
 def _as_pg_user(argv: list[str]) -> list[str]:
     """PostgreSQL refuses to run as root; when the lab runs as root use the 'postgres' account."""
     if os.geteuid() == 0:
@@ -80,7 +85,7 @@ def pg_init(cfg: LabConfig, superuser_password: str) -> None:
         os.chown(pwfile, pw.pw_uid, pw.pw_gid)
     os.chmod(pwfile, 0o600)
     try:
-        r = subprocess.run(_as_pg_user([f"{cfg.pg_bin}/initdb", "-D", str(data), "-U", "postgres", "-A", "scram-sha-256",
+        r = subprocess.run(env=_service_env(), args=_as_pg_user([f"{cfg.pg_bin}/initdb", "-D", str(data), "-U", "postgres", "-A", "scram-sha-256",
                                         f"--pwfile={pwfile}", "--encoding=UTF8"]), capture_output=True, text=True)
     finally:
         pwfile.unlink(missing_ok=True)
@@ -101,7 +106,7 @@ def pg_start(cfg: LabConfig) -> None:
         log.touch()
         pw = pwd.getpwnam("postgres")
         os.chown(log, pw.pw_uid, pw.pw_gid)
-    r = subprocess.run(_as_pg_user([f"{cfg.pg_bin}/pg_ctl", "-D", str(pg_data(cfg)), "-l", str(log), "-w", "-t", "60", "start"]),
+    r = subprocess.run(env=_service_env(), args=_as_pg_user([f"{cfg.pg_bin}/pg_ctl", "-D", str(pg_data(cfg)), "-l", str(log), "-w", "-t", "60", "start"]),
                        capture_output=True, text=True)
     if r.returncode != 0:
         raise ServiceError(f"pg_ctl start failed: {r.stderr[-1000:] or r.stdout[-1000:]}")
@@ -110,14 +115,14 @@ def pg_start(cfg: LabConfig) -> None:
 def pg_stop(cfg: LabConfig, mode: str = "fast") -> None:
     if not pg_running(cfg):
         return
-    subprocess.run(_as_pg_user([f"{cfg.pg_bin}/pg_ctl", "-D", str(pg_data(cfg)), "-m", mode, "-w", "stop"]),
+    subprocess.run(env=_service_env(), args=_as_pg_user([f"{cfg.pg_bin}/pg_ctl", "-D", str(pg_data(cfg)), "-m", mode, "-w", "stop"]),
                    capture_output=True, text=True)
 
 
 def pg_running(cfg: LabConfig) -> bool:
     if not (pg_data(cfg) / "postmaster.pid").exists():
         return False
-    r = subprocess.run(_as_pg_user([f"{cfg.pg_bin}/pg_ctl", "-D", str(pg_data(cfg)), "status"]), capture_output=True, text=True)
+    r = subprocess.run(env=_service_env(), args=_as_pg_user([f"{cfg.pg_bin}/pg_ctl", "-D", str(pg_data(cfg)), "status"]), capture_output=True, text=True)
     return r.returncode == 0
 
 
@@ -283,7 +288,7 @@ def temporal_setup(cfg: LabConfig) -> None:
             c.exec_driver_sql(f'GRANT CONNECT ON DATABASE "{db}" TO "{user}"')
     eng.dispose()
     tool = str(Path(cfg.temporal_bin) / "temporal-sql-tool")
-    env = {**os.environ, "SQL_PLUGIN": "postgres12", "SQL_HOST": "127.0.0.1", "SQL_PORT": str(cfg.pg_port),
+    env = {**_service_env(), "SQL_PLUGIN": "postgres12", "SQL_HOST": "127.0.0.1", "SQL_PORT": str(cfg.pg_port),
            "SQL_USER": user, "SQL_PASSWORD": pw}
     for db, schema in ((cfg.db_name + "_temporal", "postgresql/v12/temporal"),
                        (cfg.db_name + "_temporal_visibility", "postgresql/v12/visibility")):

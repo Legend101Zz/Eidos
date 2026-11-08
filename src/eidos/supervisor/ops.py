@@ -94,13 +94,31 @@ def init_lab(home: str, *, api_port: int = 8765, pg_port: int = 5544, temporal_p
     return cfg
 
 
-def start(cfg: LabConfig, *, wait: float = 120.0) -> dict:
+def provider_credentials(environ, extra: dict[str, str] | None = None) -> dict[str, str]:
+    """The credential-looking variables of ``environ`` (what ``scrub_secrets`` drops) plus ``extra``."""
+    from eidos.runtime.launcher import scrub_secrets
+    kept = scrub_secrets(environ)
+    return {**{k: v for k, v in environ.items() if k not in kept}, **(extra or {})}
+
+
+def start(cfg: LabConfig, *, wait: float = 120.0, credentials: dict[str, str] | None = None) -> dict:
+    """Start the supervisor. Provider credentials (from this process's environment and ``credentials``) are
+    never placed in the supervisor's environment: they travel over a stdin pipe, the supervisor keeps them in
+    memory and hands them only to the investigator worker. Its own environment, and therefore PostgreSQL's,
+    Temporal's and every other service's, is scrubbed."""
+    from eidos.runtime.launcher import scrub_secrets
     pid = supervisor_pid(cfg)
     if pid:
         return {"already_running": True, "pid": pid}
+    creds = provider_credentials(os.environ, credentials)
     log = open(cfg.p("logs", "supervisor.log"), "ab")
-    subprocess.Popen([cfg.lab_python or sys.executable, "-m", "eidos.apps.role", "supervisor"], stdout=log, stderr=log,
-                     stdin=subprocess.DEVNULL, env={**os.environ, "EIDOS_HOME": str(cfg.root)}, start_new_session=True)
+    proc = subprocess.Popen([cfg.lab_python or sys.executable, "-m", "eidos.apps.role", "supervisor"], stdout=log,
+                            stderr=log, stdin=subprocess.PIPE, env={**scrub_secrets(os.environ), "EIDOS_HOME": str(cfg.root)},
+                            start_new_session=True)
+    assert proc.stdin is not None
+    proc.stdin.write(json.dumps(creds).encode())
+    proc.stdin.close()
+    creds.clear()
     end = time.monotonic() + wait
     while time.monotonic() < end:
         st = status_file(cfg)
