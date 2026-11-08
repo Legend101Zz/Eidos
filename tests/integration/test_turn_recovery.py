@@ -335,3 +335,46 @@ def test_environment_must_be_a_registered_name_and_author_source_returns_a_sourc
     r = env.run(acts.execute_decision, {"turn_id": b["turn_id"], "project_id": pid, "investigation_id": inv,
                                         "decision_id": ok["decision_id"]})
     assert r["summary"][0] == {"tool": "author_source", "ok": True, "replayed": None, "code": None} or r["summary"][0]["ok"]
+
+
+def test_authored_source_is_visible_in_the_next_context_and_usable(lab):
+    """Mac request 11: author_source ids reached the view only inside events (dropped by the packer), so four
+    authored candidates were never run. The next turn's packed context must list them, and a policy that reads
+    only that context can run the bundle via run_component inputs.source."""
+    import json as _json
+
+    from eidos.investigator.context import pack
+    pid, inv, acts = setup(lab)
+    env = ActivityEnvironment()
+    b = env.run(acts.begin_turn, {"investigation_id": inv, "project_id": pid, "index": 1})
+    wf = lab.principal(f"wf-{pid}", ["workflow"], [pid])
+    ok = lab.cmd(wf, "accept_decision", {"turn_id": b["turn_id"], "slot": 0, "proposal": {
+        "rationale": "candidate", "calls": [{"tool": "author_source", "args": {"files": {"project.py": "print(2)"}}}],
+        "control": {}}}, project=pid)["result"]
+    env.run(acts.execute_decision, {"turn_id": b["turn_id"], "project_id": pid, "investigation_id": inv,
+                                    "decision_id": ok["decision_id"]})
+    env.run(acts.complete_turn, {"turn_id": b["turn_id"], "project_id": pid, "investigation_id": inv,
+                                 "stop_reason": "waiting"})
+    h = lab.q(lab.admin, "project_summary", {}, project=pid)["horizon"]
+    view = lab.q(lab.admin, "investigation_view", {"investigation_id": inv, "horizon": h}, project=pid)
+    assert [c["tool"] for c in view["created_artifacts"]] == ["author_source"]
+    assert view["created_artifacts"][0]["used_by"] == []
+    text = pack(view, [])["text"]
+    line = next(x for x in text.splitlines() if x.startswith("{") and '"author_source"' in x)
+    aid = _json.loads(line)["artifact_id"]  # all the policy knows is the context
+    call = {"tool": "run_component", "args": {"component_ref": "test.echo@1.0.0", "environment": "lab",
+                                              "inputs": {"source": aid}, "config": {}}}
+    assert aid.startswith("art_") and call["args"]["inputs"]["source"] == view["created_artifacts"][0]["artifact_id"]
+
+
+def test_bounded_outcome_wait_with_nothing_outstanding_is_refused(lab):
+    """Mac request 12: a request-budget-exhausted outcome that waits while nothing is outstanding takes the
+    refused-proposal path (bounded retry, then needs input) instead of parking."""
+    pid, inv, acts = setup(lab)
+    b = ActivityEnvironment().run(acts.begin_turn, {"investigation_id": inv, "project_id": pid, "index": 1})
+    wf = lab.principal(f"wf-{pid}", ["workflow"], [pid])
+    r = lab.cmd(wf, "accept_decision", {"turn_id": b["turn_id"], "slot": 0, "bounded_outcome": "request-budget-exhausted",
+                "usage": {"limit_reached": "request_limit"}, "proposal": {"rationale": "budget spent", "calls": [],
+                "control": {"action": "wait_for_jobs", "bounded_outcome": "request-budget-exhausted"}}},
+                project=pid)["result"]
+    assert not r["accepted"] and "nothing to wait for" in r["error"]["message"]

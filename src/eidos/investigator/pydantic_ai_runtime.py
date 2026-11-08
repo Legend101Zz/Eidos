@@ -220,7 +220,8 @@ class PydanticAIRuntime:
                                 "Your read-tool budget for this decision is used up. No further evidence is "
                                 "available. Return your decision now from what you have gathered.",
                                 message_history=_close_tool_calls(first),
-                                usage_limits=UsageLimits(request_limit=1 + int(self.config.get("output_retries", 1))),
+                                # exactly the one reserved request: the per-decision cap is a hard cap
+                                usage_limits=UsageLimits(request_limit=max(1, max_requests - tool_budget)),
                                 model_settings=settings or None)
                             usage = usage_from_messages(first + [m for m in result.new_messages()], self._provider(), model, self.config.get("price_per_mtok"))
                             usage["tool_budget_exhausted"] = True

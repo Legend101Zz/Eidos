@@ -372,8 +372,23 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
         environments = sorted(get_profile(ctx).body.get("environments") or {})
     except Exception:  # noqa: BLE001 - a project without a profile simply has none
         environments = []
+    # Artifacts the investigator itself created (e.g. author_source bundles), with whether a job has used them.
+    # Their ids otherwise only travel inside events, which the context does not carry (Mac request 11).
+    created = []
+    for t in turns:
+        for d in ctx.tx.decisions(t["id"]):
+            if not d["accepted"]:
+                continue
+            rec = ctx.tx.get_record("decision_receipts", d["id"])
+            if rec is None or (cutoff_ts is not None and rec.created_at > cutoff_ts):
+                continue
+            for r in rec.body.get("receipts") or []:
+                aid = ((r.get("result") or {}).get("artifact_id") or (r.get("result") or {}).get("bundle_artifact_id"))
+                if r.get("ok") and r.get("tool") in ("author_source", "author_component") and aid:
+                    created.append({"artifact_id": aid, "tool": r["tool"], "turn": t["seq"],
+                                    "used_by": [j["id"] for j in jobs if aid in (j.get("inputs") or {}).values()]})
     return {"investigation": {"id": inv.id, "status": inv.status, "body": inv_body}, "horizon": horizon,
-            "environments": environments,
+            "environments": environments, "created_artifacts": created[-50:],
             "charter": charter, "jobs": jobs,
             "events": [{"seq": e["seq"], "type": e["type"], "subject": e["subject"]} for e in events[-200:]],
             "turns": [{"id": t["id"], "seq": t["seq"], "status": t["status"], "result": t["result"]} for t in turns],

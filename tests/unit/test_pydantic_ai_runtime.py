@@ -102,7 +102,7 @@ def test_request_budget_is_a_bounded_outcome_with_usage_counted():
              "search_components": lambda t="", c=None: {}, "describe_component": lambda r: {}}
     rt = PydanticAIRuntime({"_model_object": FunctionModel(fn), "model": "function:test", "max_requests_per_decision": 3})
     res = rt.decide(req(tools))
-    assert res.proposal["calls"] == [] and res.usage["calls"] >= 3 and res.usage["limit_reached"]
+    assert res.proposal["calls"] == [] and res.usage["calls"] == 3 and res.usage["limit_reached"]  # exact cap (Mac 13)
     assert validate_decision(res.proposal, max_calls=4)["control"]["action"] == "wait_for_jobs"
 
 

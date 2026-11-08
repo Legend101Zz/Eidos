@@ -26,6 +26,8 @@ Effect tools (executed in order only after the lab accepts your decision):
   intervention, inputs, config}; launch_branch {trial_id}
   author_source {files:{path: text}}  -> a source-bundle artifact id: candidate project files (e.g. a changed project.py)
     for run_component inputs.source of eidos.project.command (the whole-trainer path). No build, no new component.
+    The id is listed under "Artifacts you created" in your NEXT turn's context; run it there (a call cannot use
+    an id returned by an earlier call of the same decision).
   author_component {files:{path: text}, environment: "<registered environment name string, e.g. \"default\">"}
     -> builds a NEW component (needs an eidos-component.json manifest in files): a validation job; then
     publish_component {bundle_artifact_id, validation_job_id}
@@ -79,6 +81,11 @@ def pack(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int
                                  "error": _error_view(j.get("error")),
                                  "outputs": [{"slot": o["slot"], "artifact_id": o["artifact_id"], "role": o["role"],
                                               "schema": o["schema"]} for o in j.get("outputs", [])]}, sort_keys=True))
+    created = view.get("created_artifacts") or []
+    if created:
+        lines.append(f"## Artifacts you created ({len(created)}; unused ones have used_by [])")
+        for c in created[-20:]:
+            lines.append(json.dumps(c, sort_keys=True))
     claims = view.get("claims") or []
     if claims:
         lines.append("## Claims")

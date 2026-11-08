@@ -261,8 +261,8 @@ def _check_something_to_wait_for(ctx: Ctx, inv, decision: dict) -> None:
     implicit_wait = not control.get("action") and not decision["calls"]  # the turn ends "waiting" on it too
     if control.get("action") != "wait_for_jobs" and not implicit_wait:
         return
-    if control.get("bounded_outcome"):  # the runtime's own no-effect outcome (e.g. request budget spent):
-        return                          # refusing it would only buy more model requests in this turn
+    # A bounded no-effect outcome (request budget spent) is checked like any wait (Mac request 12): with nothing
+    # outstanding it would park the investigation, so it takes the refused-proposal path (bounded, then surfaces).
     if decision["calls"]:
         # Refusing would also drop this decision's effects (e.g. a publish). Their events wake the loop
         # (see check_news NEWS_TYPES), so only a pure wait with nothing outstanding is refused.
