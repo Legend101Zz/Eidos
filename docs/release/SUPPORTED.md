@@ -1,6 +1,6 @@
 # Eidos v1 supported scope
 
-This is the scope of the **v1.0.0 software release** (acceptance areas A1–A15 of `ACCEPTANCE_MATRIX.md`). Anything not listed under "Supported" is **not supported in v1**. That is a scope decision, not a failed check. Each row says why it is out of scope.
+This is the scope of the **v1 software releases (1.0.0, 1.0.1)** (acceptance areas A1–A15 of `ACCEPTANCE_MATRIX.md`). Anything not listed under "Supported" is **not supported in v1**. That is a scope decision, not a failed check. Each row says why it is out of scope.
 
 v1.0.0 makes no scientific claim. Whether Eidos helps an LLM do model research (A16) is a separate, later release, tagged `eval-*`.
 
@@ -17,6 +17,7 @@ v1.0.0 makes no scientific claim. Whether Eidos helps an LLM do model research (
 | Development execution | `dev:same-user` on both platforms, for exploration only, with a recorded waiver when stronger isolation is available | |
 | Services | Local PostgreSQL 14+ (operator-installed) and the regular Temporal Server 1.32.2 (pinned, digest-verified, or built from source), managed by `lab` | `docs/ops/INSTALL_AND_OPERATE.md`. |
 | Python | Lab: Python 3.11–3.13. Worker SDK: Python 3.9+, including Pydantic v1 projects | `tests/worker_compat/run_matrix.sh`. |
+| Worker wire contract | **Schema major 1** (`eidos-wire/1`), JSON Schema 2020-12 files in `schemas/eidos-wire/v1/` generated from the server boundary models. Worker packages `eidos-wire`, `eidos-worker-sdk`, `eidos-pytorch`: **Python 3.9 and later** (standard library only; Pydantic v1 projects work). The server validates every received manifest against the schema; unknown fields from a newer minor are accepted | `tests/unit/test_wire_schemas.py`, `packages/eidos-worker-sdk/tests/test_wire_fixtures.py` (worker-compat matrix, Python 3.9 + pydantic<2), ADR `docs/decisions/0008-versioned-wire-json-schemas.md`. |
 
 ## Isolation: what Seatbelt does and does not do
 
@@ -61,6 +62,16 @@ On Linux, `linux:bwrap-sealed` reports `separate-identity` as failed unless a di
 | Full TUI or web app, hosted multitenancy, cluster scheduling | not supported in v1 | Outside the local v1 release contract (design §Complete local v1). |
 | Multi-day investigations | not exercised | A 20-minute soak, Continue-As-New rollover, suspend/resume and abrupt-stop recovery are verified. A multi-day run is not. |
 | Scientific claims (A16) | separate later release (`eval-*` tags) | It needs blinded, independent evaluation across tasks and hardware. |
+
+## Deferred integrations
+
+These integrations are optional in the design ("How the four scientific libraries enter this design") and are not part of acceptance areas A1–A16. See `docs/decisions/0009-deferred-pyglove-composer-adapters.md`.
+
+| Integration | Status in v1 | Supported path instead | Built when |
+|---|---|---|---|
+| PyGlove transform/search-space adapter | deferred, not built | ordinary PyTorch source patches (a first-class candidate in the design) through the `eidos-pytorch` adapter | a user project uses PyGlove symbolic objects for the model, a PyGlove version is pinned, and hook-phase fixtures exist for it |
+| MosaicML Composer trainer adapter | deferred, not built | author-owned trainers with `eidos-pytorch` training-extension phases or the whole-trainer escape hatch | a user project uses the Composer trainer, Composer versions are pinned, and every mapped event phase passes the hook fixtures for each version |
+| CheckList behavioural contracts | partly adopted | raw predictions recorded and reused by scorers (`eidos.pytorch.evaluate` to `lab.pairs.by_group`, also reused on the image project); paired expectations (`lab.pairs.by_group`); one restore-invariance contract (`eidos.pytorch.behavior-check`) | a general behaviour-suite capability with author-supplied transformations (invariance, direction of change) is a later addition |
 
 ## Where this is referenced
 
