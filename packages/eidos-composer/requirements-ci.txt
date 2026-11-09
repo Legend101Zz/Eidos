@@ -1,0 +1,11 @@
+# Exact pins for the CI job (ubuntu x86_64, CPython 3.12). Install with
+#   uv pip install --index-strategy unsafe-best-match -r requirements-ci.txt
+# (the +cpu local versions exist only on the PyTorch index; PyPI also hosts torch, so uv needs
+# unsafe-best-match to look at both). scripts/ci/adapter_composer.sh does this.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.7.0+cpu
+torchvision==0.22.0+cpu
+mosaicml==0.32.1
+numpy==2.2.6
+torchmetrics==1.7.4
+pytest

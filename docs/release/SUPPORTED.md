@@ -65,15 +65,15 @@ On Linux, `linux:bwrap-sealed` reports `separate-identity` as failed unless a di
 | Multi-day investigations | not exercised | A 20-minute soak, Continue-As-New rollover, suspend/resume and abrupt-stop recovery are verified. A multi-day run is not. |
 | Scientific claims (A16) | separate later release (`eval-*` tags) | It needs blinded, independent evaluation across tasks and hardware. |
 
-## Deferred integrations
+## Optional integrations (since 1.1.0; ADR 0015, which supersedes ADR 0009)
 
-These integrations are optional in the design ("How the four scientific libraries enter this design") and are not part of acceptance areas A1–A16. See `docs/decisions/0009-deferred-pyglove-composer-adapters.md`.
+These integrations are optional in the design ("How the four scientific libraries enter this design") and are not part of acceptance areas A1–A16. The adapters are separate worker-side packages installed into the research project's environment; the lab server and `eidos-worker-sdk` gain no dependency.
 
-| Integration | Status in v1 | Supported path instead | Built when |
+| Integration | Status | Pinned and tested with | Evidence |
 |---|---|---|---|
-| PyGlove transform/search-space adapter | deferred, not built | ordinary PyTorch source patches (a first-class candidate in the design) through the `eidos-pytorch` adapter | a user project uses PyGlove symbolic objects for the model, a PyGlove version is pinned, and hook-phase fixtures exist for it |
-| MosaicML Composer trainer adapter | deferred, not built | author-owned trainers with `eidos-pytorch` training-extension phases or the whole-trainer escape hatch | a user project uses the Composer trainer, Composer versions are pinned, and every mapped event phase passes the hook fixtures for each version |
-| CheckList behavioural contracts | partly adopted | raw predictions recorded and reused by scorers (`eidos.pytorch.evaluate` to `lab.pairs.by_group`, also reused on the image project); paired expectations (`lab.pairs.by_group`); one restore-invariance contract (`eidos.pytorch.behavior-check`) | a general behaviour-suite capability with author-supplied transformations (invariance, direction of change) is a later addition |
+| PyGlove transform/search-space adapter | `eidos-pyglove` 0.1.0: enumerate/materialise candidates by DNA, `pg.patch` transforms, export of the materialised PyTorch builder with its transform revision; loading checks the revision and allowed modules | `pyglove==0.4.5`, CPython 3.12, `torch==2.7.0` CPU | `packages/eidos-pyglove/tests` (82 tests); CI job `adapter-pyglove` |
+| MosaicML Composer trainer adapter | `eidos-composer` 0.1.0: a Composer callback that fires `eidos-pytorch` training-extension phases for the verified events only (`after-model-construction`, `after-backward`, `after-optimizer-step`, `on-evaluation`, `on-checkpoint-save`, `on-checkpoint-load`); gradient accumulation refused. Composer upstream is archived and 0.32.1 loads checkpoints with pickle: load only checkpoints the same run wrote | `mosaicml==0.32.1`, CPython 3.12, `torch==2.7.0`, `torchvision==0.22.0` CPU | `packages/eidos-composer/tests` (26 tests: phase counts, gradient/parameter state per phase, restore on resume); CI job `adapter-composer` |
+| CheckList behavioural contracts | adopted: `behavior-suite/1` (`components/eidos.behavior.suite` 0.1.0) with invariance and direction-of-change templates, author-supplied transformations and groups, scored from recorded raw predictions; plus the earlier paired expectations and restore-invariance contract | standard library | `tests/components/test_behavior_suite.py`, component fixtures |
 
 ## Where this is referenced
 

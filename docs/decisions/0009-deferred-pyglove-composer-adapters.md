@@ -1,6 +1,6 @@
 # 0009: PyGlove and MosaicML Composer adapters are deferred; CheckList is partly adopted
 
-Status: accepted (2026-11-09, release 1.0.1). PyGlove and Composer adapters: **deferred for v1**.
+Status: **superseded by ADR 0015** (2026-11-09, release 1.1.0), at the owner's request. Was: accepted (2026-11-09, release 1.0.1). PyGlove and Composer adapters: **deferred for v1**.
 
 **Context.**
 - The design's table "How the four scientific libraries enter this design" offers two optional adapters:

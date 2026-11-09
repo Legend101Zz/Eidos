@@ -144,6 +144,18 @@ jobs:
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
       - run: bash scripts/ci/adapter_pyglove.sh
 
+  adapter-composer:
+    # Optional worker-side MosaicML Composer adapter (ADR 0015) in its own environment with exact pins
+    # (mosaicml 0.32.1, torch 2.7.0 + torchvision 0.22.0 CPU, CPython 3.12): hook-phase fixtures on a short synthetic
+    # batch, phase counts and restore. Never installed into the lab or the SDK.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - run: bash scripts/ci/adapter_composer.sh
+
   worker-compat:
     # Same-repo PRs are already built by the push trigger; run pull_request builds only for forks.
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
