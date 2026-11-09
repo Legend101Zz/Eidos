@@ -1,0 +1,68 @@
+{
+ "name": "missing-prediction",
+ "author_test": true,
+ "inputs": {
+  "cases": {
+   "json": {
+    "schema": "behavior-cases/1",
+    "suite": "s",
+    "tests": [
+     {
+      "name": "typo",
+      "type": "invariance",
+      "pairs": [
+       {
+        "original": "a",
+        "transformed": "a~missing"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "predictions": {
+   "json": [
+    {
+     "id": "a",
+     "label": 1,
+     "score": 0.9
+    },
+    {
+     "id": "a~typo",
+     "label": 1,
+     "score": 0.85
+    },
+    {
+     "id": "b",
+     "label": 0,
+     "score": 0.2
+    },
+    {
+     "id": "b~typo",
+     "label": 0,
+     "score": 0.25
+    },
+    {
+     "id": "a~neg",
+     "label": 0,
+     "score": 0.95
+    },
+    {
+     "id": "b~neg",
+     "label": 0,
+     "score": 0.1
+    }
+   ]
+  }
+ },
+ "config": {},
+ "expect": {
+  "status": "succeeded",
+  "receipt": {
+   "tests": 1,
+   "passed": 0,
+   "failed": 0,
+   "incomplete": 1
+  }
+ }
+}

@@ -1,0 +1,78 @@
+{
+ "name": "direction-fail",
+ "author_test": true,
+ "inputs": {
+  "cases": {
+   "json": {
+    "schema": "behavior-cases/1",
+    "suite": "s",
+    "tests": [
+     {
+      "name": "negation-lowers",
+      "type": "direction",
+      "expect": "decrease",
+      "on": "score",
+      "tolerance": 0.0,
+      "min_pass_rate": 1.0,
+      "pairs": [
+       {
+        "original": "a",
+        "transformed": "a~neg",
+        "group": "pos"
+       },
+       {
+        "original": "b",
+        "transformed": "b~neg",
+        "group": "neg"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "predictions": {
+   "json": [
+    {
+     "id": "a",
+     "label": 1,
+     "score": 0.9
+    },
+    {
+     "id": "a~typo",
+     "label": 1,
+     "score": 0.85
+    },
+    {
+     "id": "b",
+     "label": 0,
+     "score": 0.2
+    },
+    {
+     "id": "b~typo",
+     "label": 0,
+     "score": 0.25
+    },
+    {
+     "id": "a~neg",
+     "label": 0,
+     "score": 0.95
+    },
+    {
+     "id": "b~neg",
+     "label": 0,
+     "score": 0.1
+    }
+   ]
+  }
+ },
+ "config": {},
+ "expect": {
+  "status": "succeeded",
+  "receipt": {
+   "tests": 1,
+   "passed": 0,
+   "failed": 1,
+   "incomplete": 0
+  }
+ }
+}
