@@ -2,6 +2,45 @@
 
 All notable changes to Eidos. Tags are annotated, created only on CI-green commits, and never moved. Development tags `eidos-v0.x` were freezes, not releases.
 
+## 1.0.1 (2026-11-09)
+
+A design-conformance release. It closes three gaps that a check against the architecture (Revision 4) found and that nobody had recorded. It brings no new features and no ledger migration. Details: `docs/release/RELEASE_NOTES_v1.0.1.md`.
+
+### Type checking (mypy in CI)
+- `pyproject.toml` has a `[tool.mypy]` configuration: the server tree and the worker packages at Python 3.12, `warn_unused_ignores`, `no_implicit_optional`, and missing-import tolerance only for `torch` and `numpy` (absent from the server environment).
+- `scripts/ci/mypy.sh` also checks `eidos-wire`, `eidos-worker-sdk` and `eidos-pytorch` with a **Python 3.9 target**, so 3.10+ syntax or stdlib APIs cannot slip into the worker packages. It uses a pinned mypy 1.19.1, the last release that targets 3.9. The `lint-and-unit` CI job runs it.
+- All 91 errors are fixed with annotations and narrowing, and no new `type: ignore` was added. Three of the four older ones are gone:
+  - two in `eidos-wire` were unused;
+  - `LabClient.upload` now narrows `path` instead of ignoring it.
+
+  The one left is in `eidos-pytorch`: a fallback for a missing `typing.Protocol`, which cannot happen on Python 3.9+. It stays so that package's code does not change. The check found no runtime bug, and behaviour is unchanged.
+- `eidos-wire`: the TOML manifest loader now selects `tomllib` with a `sys.version_info` check, which a 3.9 type check can follow. Its behaviour is the same, including the clear error on Python < 3.11.
+
+### Versioned wire JSON Schemas (design § "The worker compatibility promise"; ADR 0008)
+- New Pydantic v2 boundary models (`src/eidos/boundary/wire.py`, server side only) generate `schemas/eidos-wire/v1/{invocation,output-manifest,component-manifest}.schema.json` (JSON Schema 2020-12) through `scripts/dev/gen_wire_schemas.py`. Each file carries an `x-eidos` header (generator, wire major), and generation is deterministic. CI fails if regenerating the schemas changes anything.
+- Golden fixtures in `tests/fixtures/wire/v1/` are emitted by the real worker SDK code paths (`scripts/dev/emit_wire_fixtures.py`): valid messages, newer-minor messages with unknown fields, and `invalid-*` messages.
+  - In the server environment, the valid fixtures validate against the schemas and the invalid ones fail. `jsonschema` is a dev dependency only.
+  - In the worker-compat matrix (Python 3.9 with pydantic<2), the SDK emits exactly the golden fixtures. The worker packages stay standard-library only.
+- **The server validates received messages against the schema:**
+  - the command service's `publish_outputs`, which refuses a violation as `INVALID` with field-level `problems`;
+  - the runner's and the assessor's manifest reads;
+  - component registration.
+
+  Before, a manifest with a mistyped field passed `eidos_wire`'s presence checks. For example, a list `receipt` or a numeric `card` was accepted and could fail later with an untyped error. Unknown fields from a newer minor version are still accepted.
+- The schema major (1) and the supported worker Python range (3.9+) are stated in `docs/author-guide/worker-sdk.md` and `docs/release/SUPPORTED.md`.
+
+### Deferred integrations recorded (ADR 0009)
+- The design's optional **PyGlove** and **MosaicML Composer** adapters are recorded as **deferred for v1**. The supported path is ordinary PyTorch source patches and author-owned trainers. The ADR gives reversal conditions: a user project that needs one, pinned versions, and hook-phase fixtures.
+- **CheckList** is recorded as partly adopted: raw predictions are recorded and reused by scorers, `lab.pairs.by_group` provides paired expectations, and `eidos.pytorch.behavior-check` provides one restore-invariance contract. There is no general behaviour-suite capability yet.
+- `docs/release/SUPPORTED.md` has a new "Deferred integrations" section.
+
+### CI
+- Pushes to `release/**` branches are built.
+- `lint-and-unit` adds the mypy step and the schema and fixture regeneration check.
+
+### Packages
+- `eidos-lab` 1.0.1. `eidos-wire` 1.0.1 (typing-only changes and the `tomllib` selection above; wire contract unchanged, still `eidos-wire/1`). `eidos-worker-sdk` 1.1.0 and `eidos-pytorch` 1.1.0 are unchanged; only their tests changed.
+
 ## 1.0.0 (2026-11-09)
 
 The final v1 software release. It is the same as 1.0.0-rc1 except for the version string and one CI-only change. Released by the owner's decision without the hardware sleep/restart check (R1). Machine sleep and OS restart recovery are a documented limitation; abrupt-stop and service-kill recovery are verified.

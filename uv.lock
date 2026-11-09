@@ -353,7 +353,7 @@ wheels = [
 
 [[package]]
 name = "eidos-lab"
-version = "1.0.0"
+version = "1.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
@@ -429,7 +429,7 @@ requires-dist = [{ name = "eidos-worker-sdk", editable = "packages/eidos-worker-
 
 [[package]]
 name = "eidos-wire"
-version = "1.0.0"
+version = "1.0.1"
 source = { editable = "packages/eidos-wire" }
 
 [[package]]
