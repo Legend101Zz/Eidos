@@ -50,6 +50,7 @@ if [ -z "${FORCE_SOURCE_BUILD:-}" ]; then
   rm -f "$ARCHIVE.part"
   echo "temporal: release download unavailable; building v$VERSION from source"
 fi
+command -v go >/dev/null 2>&1 || { echo "temporal: the source-build fallback needs a Go toolchain on PATH (none found)" >&2; exit 127; }
 OUT="${TEMPORAL_SRC_OUT:-${RUNNER_TEMP:-/tmp}/temporal-src}"
 mkdir -p "$OUT"
 export GOTOOLCHAIN=auto GOBIN="$OUT/gobin" GOFLAGS=-mod=mod
