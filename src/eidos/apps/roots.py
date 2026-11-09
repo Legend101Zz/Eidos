@@ -105,6 +105,14 @@ def run_investigator_worker(cfg: LabConfig) -> None:
     from eidos.orchestration.names import INVESTIGATOR_QUEUE
     acts = InvestigatorActivities(client(cfg, "svc-investigator", "investigator-worker"),
                                   client(cfg, "svc-workflow", "investigator-worker"))
+    # The LLM credential broker (ADR 0013) lives here because this is the only process holding provider keys.
+    if cfg.secret_path("svc-llm-broker.token").exists():
+        from eidos.investigator.llm_broker import LlmBroker, providers_from_env, serve_unix
+        env = dict(os.environ)
+        broker = LlmBroker(client(cfg, "svc-llm-broker", "llm-broker"),
+                           providers_from_env(env, cfg.extra.get("llm_broker_endpoints") or {}),
+                           secrets=tuple(v for k, v in env.items() if k.endswith("_API_KEY")))
+        serve_unix(broker, cfg.p("run", "llm-broker.sock"))
     _worker(cfg, INVESTIGATOR_QUEUE, activities=[acts.begin_turn, acts.build_context, acts.decide,
                                                  acts.execute_decision, acts.complete_turn, acts.check_news,
                                                  acts.mark_needs_input])

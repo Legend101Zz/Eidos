@@ -216,6 +216,9 @@ def finish_attempt(ctx: Ctx, p: dict) -> dict:
     if not att:
         raise NotFound("attempt not found")
     usage = p.get("usage") or {}
+    if job["lock"].get("llm"):  # the attempt's LLM grant ends with it; unreported calls become uncertain spend
+        from eidos.application.handlers.broker import reconcile_grant
+        reconcile_grant(ctx, f"llmg_{att['id']}", reason="attempt-finished")
     scope = job["lock"].get("budget_scope")
     if scope and usage.get("compute_seconds"):
         ctx.tx.record_usage(scope, "compute_seconds", float(usage["compute_seconds"]), att["id"],

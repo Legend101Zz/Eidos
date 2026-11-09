@@ -88,7 +88,7 @@ def execute(invocation: Invocation) -> OutputManifest:
         reader = ArtifactReader(invocation.inputs)
         _prepare_path(invocation)
         func = resolve_entry(invocation.component["entry"])
-        kwargs = _di_kwargs(func, {"reader": reader, "writer": writer, "context": ctx})
+        kwargs = _di_kwargs(func, {"reader": reader, "writer": writer, "context": ctx, "llm": ctx.llm})
         result = func(dict(invocation.inputs), invocation.config, **kwargs)
         if isinstance(result, dict):
             for key, value in result.items():

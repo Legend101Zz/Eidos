@@ -27,6 +27,7 @@ def make_invocation(
     ports: Optional[Dict[str, Any]] = None,
     seed: Optional[int] = 0,
     component_id: str = "test.component",
+    llm_grant: Optional[Dict[str, Any]] = None,
 ) -> Invocation:
     """Create ``root/{inputs,staging,scratch}`` and return an :class:`Invocation` for ``entry``.
 
@@ -74,6 +75,7 @@ def make_invocation(
         limits=dict(limits or {}),
         ports=dict(ports or {}),
         seed=seed,
+        llm_grant=llm_grant,
     )
 
 

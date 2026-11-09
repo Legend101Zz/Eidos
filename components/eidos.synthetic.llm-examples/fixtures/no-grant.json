@@ -1,0 +1,7 @@
+{
+  "name": "no-grant",
+  "author_test": true,
+  "inputs": {},
+  "config": {"labels": ["positive", "negative"], "per_label": 1},
+  "expect": {"status": "failed", "error_category": "contract"}
+}

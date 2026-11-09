@@ -1,0 +1,45 @@
+{
+  "attempt_id": "attempt-test",
+  "component": {
+    "entry": "wire_fixture:run",
+    "id": "fixture.wire-demo",
+    "release": "0.0.0",
+    "source_dir": "/eidos-fixture/component"
+  },
+  "config": {
+    "scale": 2
+  },
+  "epoch": 1,
+  "inputs": {
+    "rows": {
+      "artifact_id": "art-rows",
+      "digest": "c2b61b26d592d19fdec26ca8e8a2256a4e443eff1844b37a5b61170c8365377b",
+      "media_type": "text/csv",
+      "path": "/eidos-fixture/attempt/inputs/rows",
+      "schema": null,
+      "size": 16
+    }
+  },
+  "job_id": "job-test",
+  "limits": {
+    "max_output_bytes": 65536
+  },
+  "llm_grant": {
+    "expires_at": "2026-11-09T16:00:00+00:00",
+    "grant_id": "llmg_attempt-test",
+    "max_requests": 4,
+    "max_tokens": 2000,
+    "max_usd": null,
+    "models": [
+      "fake:echo"
+    ],
+    "socket": "/run/eidos-llm.sock",
+    "token": "grant-token-0123456789abcdef"
+  },
+  "ports": {},
+  "project_id": "project-test",
+  "scratch_dir": "/eidos-fixture/attempt/scratch",
+  "seed": 7,
+  "staging_dir": "/eidos-fixture/attempt/staging",
+  "wire": "eidos-wire/1"
+}

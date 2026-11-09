@@ -126,6 +126,9 @@ class LaunchSpec:
     # ``eidos-cand`` user: "candidate" (untrusted candidate code: the distinct candidate user) or "lab"
     # (trusted roles: the assessor and scorer keep the lab identity, inside the same bwrap confinement).
     identity: str = "candidate"
+    # Unix sockets the process may connect to (the LLM broker when the attempt holds a grant; ADR 0013). No
+    # other network access is opened: bwrap binds just these paths; Seatbelt allows outbound to just these.
+    sockets: list[str] = field(default_factory=list)
 
 
 _CAND_OK: dict[str, bool] = {}
@@ -282,8 +285,11 @@ def seatbelt_policy(spec: LaunchSpec, tmp: str) -> tuple[str, list[str]]:
         return f'(param "{prefix}{len(params) - 1}")'
 
     writable = [norm(w) for w in spec.writable + [tmp]]
-    allowed = list(dict.fromkeys(norm(x) for x in spec.python_prefixes + spec.readonly + [spec.cwd] + writable if x))
+    sockets = [norm(s) for s in spec.sockets]
+    allowed = list(dict.fromkeys(norm(x) for x in spec.python_prefixes + spec.readonly + [spec.cwd] + writable + sockets
+                                 if x))
     rules = ["(version 1)", "(allow default)", "(deny network*)",
+             *[f"(allow network-outbound (literal {par('S', s)}))" for s in sockets],
              # other processes' arguments/environments (lab daemons may hold provider keys) and signals
              "(deny process-info* (target others))",
              # well-known ways to start work outside the sandbox or reach credential services
@@ -297,6 +303,7 @@ def seatbelt_policy(spec: LaunchSpec, tmp: str) -> tuple[str, list[str]]:
                       + " ".join(f"(subpath {par('R', a)})" for a in inner) + ")))")
         rules.append(f"(deny file-read-data file-read-xattr {target})")
     keep = ['(subpath "/dev")'] + [f"(subpath {par('W', w)})" for w in dict.fromkeys(writable)]
+    keep += [f"(literal {par('K', s)})" for s in sockets]
     keep += [f"(literal {par('L', norm(str(Path(spec.attempt_dir) / f)))})" for f in ("stdout.log", "stderr.log")]
     rules.append("(deny file-write* (require-not (require-any " + " ".join(keep) + ")))")
     return "\n".join(rules), params
@@ -322,6 +329,8 @@ def bwrap_argv(spec: LaunchSpec) -> list[str]:
             seen.add(p)
             a += ["--ro-bind", p, p]
     for p in spec.writable:
+        a += ["--bind", p, p]
+    for p in spec.sockets:
         a += ["--bind", p, p]
     a += ["--setenv", "HOME", "/tmp", "--setenv", "PATH", "/usr/bin:/bin"]
     for k, v in spec.env.items():
@@ -500,7 +509,8 @@ def _digest(s: str) -> str:
 def profile_config_digest(spec: LaunchSpec) -> str:
     shape = LaunchSpec(argv=["<cmd>"], cwd=spec.cwd, attempt_dir="<attempt>", profile=spec.profile,
                        readonly=sorted(spec.readonly), writable=["<staging>", "<scratch>"],
-                       python_prefixes=sorted(spec.python_prefixes), deny_read=sorted(spec.deny_read))
+                       python_prefixes=sorted(spec.python_prefixes), deny_read=sorted(spec.deny_read),
+                       sockets=sorted(spec.sockets))
     cfg: list[Any]
     if spec.profile == "linux:bwrap-sealed":
         cfg = bwrap_argv(shape)

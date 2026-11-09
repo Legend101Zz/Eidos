@@ -177,7 +177,9 @@ def _admit_step(ctx: Ctx, plan, arm: dict, step: dict, inputs: dict, scope, inv_
     run = {"component_ref": spec.get("component_ref") or spec.get("component"), "inputs": inputs,
            "config": spec.get("config") or {}, "environment": spec.get("environment"), "seed": spec.get("seed"),
            "isolation_profile": req.get("profile", spec.get("isolation_profile")),
-           "isolation_waiver": req.get("waiver")}
+           "isolation_waiver": req.get("waiver"),
+           # Sealed arms get an LLM grant only if the plan allows the broker (ADR 0013).
+           "allow_llm_broker": bool(req.get("allow_llm_broker")), "llm": spec.get("llm")}
     lock = resolve_lock(ctx, run)
     lock.update({"plan_id": plan.id, "plan_digest": plan.digest, "arm": arm["id"], "arm_role": arm["role"],
                  "step": step["id"], "cluster": step.get("cluster"), "required_isolation": req})

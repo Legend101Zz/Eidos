@@ -69,6 +69,9 @@ class RunContext:
             if not isinstance(port, dict) or "url" not in port or "token" not in port:
                 raise ContractError(f"port {MODEL_PORT} must be an object with 'url' and 'token'")
             self.model = ModelClient(port["url"], port["token"])
+        # Scoped LLM calls through the lab's broker (ADR 0013); None without a grant.
+        from eidos_worker.llm import LlmClient
+        self.llm: Optional[LlmClient] = LlmClient.from_grant(getattr(invocation, "llm_grant", None))
 
     def request_stop(self) -> None:
         """Set by the runner's stop signal (SIGUSR1): checkpoint at the next safe boundary and return."""

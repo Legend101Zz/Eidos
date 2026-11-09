@@ -130,3 +130,19 @@ def test_only_candidate_code_drops_to_the_candidate_user(monkeypatch):
     spec.identity = "root"
     with pytest.raises(ValueError):
         L.launch_identity(spec)
+
+
+def test_symlinked_interpreter_directories_are_bound_into_the_sandbox(tmp_path):
+    """uv venvs point bin/python at cpython-3.12-<platform>/..., itself a symlink to cpython-3.12.16-<platform>;
+    without binding that intermediate path the interpreter is missing inside bwrap (separate-identity CI job)."""
+    import os
+
+    from eidos.runtime.runner import symlink_hops
+    (tmp_path / "cpython-3.12.16" / "bin").mkdir(parents=True)
+    (tmp_path / "cpython-3.12.16" / "bin" / "python3.12").write_text("")
+    os.symlink(tmp_path / "cpython-3.12.16", tmp_path / "cpython-3.12")
+    (tmp_path / "venv" / "bin").mkdir(parents=True)
+    os.symlink(tmp_path / "cpython-3.12" / "bin" / "python3.12", tmp_path / "venv" / "bin" / "python")
+    hops = symlink_hops(str(tmp_path / "venv" / "bin" / "python"))
+    assert str(tmp_path.resolve() / "cpython-3.12") in {os.path.realpath(os.path.dirname(h)) + "/" + os.path.basename(h)
+                                                        for h in hops}

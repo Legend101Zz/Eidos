@@ -158,6 +158,7 @@ def _lab(*args, input=None):
 
 def _flat(text: str) -> str:
     """Collapse whitespace and rich's box-drawing characters so wrapped error panels can be searched."""
+    text = re.sub(r"\x1b\[[0-9;]*m", "", text)  # CI terminals get colour codes, which split words
     return re.sub(r"[\s│╭╮╰╯─]+", " ", text)
 
 

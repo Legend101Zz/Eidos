@@ -1,0 +1,7 @@
+{
+  "name": "bad-config",
+  "author_test": true,
+  "inputs": {},
+  "config": {"labels": [], "per_label": 1},
+  "expect": {"status": "failed", "error_category": "contract"}
+}

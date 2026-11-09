@@ -208,6 +208,15 @@ def resolve_lock(ctx: Ctx, p: dict, *, extra_config: dict | None = None) -> dict
     if lock["output_access_class"] != "project" and not profile_name.endswith("sealed"):
         raise Invalid("restricted inputs may only be bound into a sealed execution profile",
                       details={"output_access_class": lock["output_access_class"], "profile": profile_name})
+    # A scoped, budgeted LLM grant for components that declare `llm` use (ADR 0013); none under a sealed profile
+    # unless the run or the plan allows the broker explicitly. Absent (not null) when there is none, so locks of
+    # components without LLM use keep their digests.
+    from eidos.application.handlers.broker import llm_lock
+    llm = llm_lock(target["manifest"], get_profile(ctx).body.get("policy", {}), p, profile=profile_name)
+    if llm:
+        lock["llm"] = llm
+    elif p.get("allow_llm_broker") and target["manifest"].get("llm"):
+        lock["llm_refused"] = "the project policy does not enable the LLM broker"
     return lock
 
 

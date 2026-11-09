@@ -11,6 +11,9 @@ Updated 2026-11-08 by the lead session, on branch `build/eidos-local-v1`.
 
 | Item | State | Evidence |
 |---|---|---|
+| Separate candidate identity (ADR 0011) | implemented; verified in CI only (needs root on Linux) | CI job `separate-identity`: root setup (`scripts/ci/separate_identity_setup.sh`), then `tests/integration/test_separate_identity_e2e.py` (a sealed job as `eidos-cand` through the real runner and command service, the assessor under the lab identity in bwrap), plus the probe and assessor sandbox tests as root |
+| Provider keys in the OS secret store (ADR 0012) | runtime-verified on macOS (temporary keychain) and in CI (macOS keychain, Linux gnome-keyring) | `tests/unit/test_secret_store.py` |
+| Credential broker for component LLM calls (ADR 0013) | runtime-verified with a fake provider (real PostgreSQL, real Unix-socket broker, real runner, Seatbelt-sealed job on macOS) | `tests/integration/test_llm_broker.py` (11 tests), `packages/eidos-worker-sdk/tests/test_llm_client.py`; wire `Invocation.llm_grant` + fixtures |
 | Five recovery cases of the failure table (ADR 0010) | runtime-verified (real PostgreSQL, command service) | `tests/integration/test_recovery_cases.py` (7 tests): staged bytes re-verified before publication with per-slot refusal, runner re-stage once then explicit failure; `revise_question` effective next turn with drain/stop policy and exposure; withdrawal wakes investigations and refuses new admissions; assessment dedupe returns the same receipt; withdrawn assessor fails closed then `reassess_evidence_plan`; branch lost reply |
 
 ## State by area
