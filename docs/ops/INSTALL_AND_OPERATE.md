@@ -44,6 +44,24 @@ If `eidos-cand` cannot execute the interpreter, the candidate identity is not us
 namespaces as the lab user and its receipt reports `separate-identity: failed` (never a silent pass). If it can
 execute the interpreter but cannot read the worker SDK, the job fails at start with an import error in its stderr.
 
+## Provider keys
+
+Store provider keys in the operating system's secret store once, and `lab start` reads them (ADR 0012):
+
+```bash
+lab credentials set anthropic          # hidden prompt; or: printf %s "$KEY" | lab credentials set anthropic
+lab credentials status anthropic       # {"stored": true, ...}; never prints the key
+lab start                              # reads stored keys; they reach only the investigator worker
+lab credentials delete anthropic
+```
+
+- macOS uses the Keychain (`/usr/bin/security`); Linux uses libsecret's `secret-tool` (package `libsecret-tools`)
+  and needs a running Secret Service such as gnome-keyring. Without either, `lab credentials` fails with a clear
+  error: Eidos never stores keys in plaintext. Use `lab start --credentials-stdin` (NAME=VALUE lines) instead.
+- Items are named `eidos/<lab id>/<provider>`; the lab id comes from the lab's home path, so a lab restored into a
+  new directory needs its keys set again.
+- A key exported in the shell for `lab start` wins over the stored one for that start.
+
 ## Prerequisites
 
 - Python 3.11–3.13 for the lab. The research projects keep their own interpreters.

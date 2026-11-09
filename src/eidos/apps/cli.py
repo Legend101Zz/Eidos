@@ -47,7 +47,89 @@ def start(credentials_stdin: bool = typer.Option(
             if not sep or not re.fullmatch(r"[A-Z_][A-Z0-9_]*", name.strip()):
                 raise typer.BadParameter("--credentials-stdin expects NAME=VALUE lines (NAME in [A-Z0-9_])")
             creds[name.strip()] = value.strip()
-    out(_start(_cfg(), credentials=creds))
+    cfg = _cfg()
+    sources: dict[str, str] = {name: "stdin" for name in creds}
+    if not credentials_stdin:
+        stored = _stored_credentials(cfg)
+        # An explicitly exported variable wins over the stored key (operator intent for this start).
+        creds = {k: v for k, v in stored.items() if k not in os.environ}
+        sources = {name: "os-secret-store" for name in creds}
+    result = _start(cfg, credentials=creds)
+    creds.clear()
+    if isinstance(result, dict):  # names and sources only, never values
+        result = {**result, "credentials": sources if not result.get("already_running")
+                  else "not applied: the supervisor was already running (stop it to start with new keys)"}
+    out(result)
+
+
+def _stored_credentials(cfg: LabConfig) -> dict[str, str]:
+    """Provider keys stored with ``lab credentials set``; none (with a note on stderr) if no store is available."""
+    import sys
+
+    from eidos.supervisor.secret_store import (
+        CredentialStore,
+        SecretStoreError,
+        SecretStoreUnavailable,
+        lab_id,
+        select_backend,
+    )
+    try:
+        return CredentialStore(select_backend(), lab_id(cfg.home)).load_all()
+    except SecretStoreUnavailable:
+        return {}
+    except SecretStoreError as exc:
+        print(f"note: stored provider keys could not be read ({exc}); starting without them", file=sys.stderr)
+        return {}
+
+
+credentials_app = typer.Typer(help="Provider keys in the OS secret store (macOS Keychain, Linux libsecret). "
+                              "Keys reach only the investigator worker.")
+app.add_typer(credentials_app, name="credentials")
+
+
+def _credential_store():
+    from eidos.supervisor.secret_store import CredentialStore, SecretStoreError, lab_id, select_backend
+    try:
+        return CredentialStore(select_backend(), lab_id(_cfg().home))
+    except SecretStoreError as exc:
+        raise typer.BadParameter(str(exc)) from None
+
+
+@credentials_app.command("set")
+def credentials_set(provider: str = typer.Argument(..., help="anthropic | openai | openai-compatible")):
+    """Store a provider key. The key is read from stdin (piped) or a hidden prompt, never from an argument."""
+    import getpass
+    import sys
+
+    from eidos.supervisor.secret_store import SecretStoreError
+    store = _credential_store()
+    value = sys.stdin.read() if not sys.stdin.isatty() else getpass.getpass(f"{provider} key (hidden): ")
+    try:
+        out(store.set(provider, value))
+    except SecretStoreError as exc:
+        raise typer.BadParameter(str(exc)) from None
+    finally:
+        value = ""
+
+
+@credentials_app.command("delete")
+def credentials_delete(provider: str = typer.Argument(...)):
+    """Delete a stored provider key."""
+    from eidos.supervisor.secret_store import SecretStoreError
+    try:
+        out(_credential_store().delete(provider))
+    except SecretStoreError as exc:
+        raise typer.BadParameter(str(exc)) from None
+
+
+@credentials_app.command("status")
+def credentials_status(provider: str = typer.Argument(...)):
+    """Whether a key is stored for a provider (never prints the value)."""
+    from eidos.supervisor.secret_store import SecretStoreError
+    try:
+        out(_credential_store().status(provider))
+    except SecretStoreError as exc:
+        raise typer.BadParameter(str(exc)) from None
 
 
 @app.command("stop")

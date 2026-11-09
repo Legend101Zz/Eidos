@@ -102,6 +102,37 @@ jobs:
             .venv/bin/python -m pytest -p no:cacheprovider -rs -q tests/integration/test_separate_identity_e2e.py \
             tests/integration/test_isolation_probes.py tests/integration/test_assessor_sandbox.py
 
+  secret-store-macos:
+    # Provider keys in the OS secret store (ADR 0012): the real macOS Keychain, through a throwaway keychain file
+    # the tests create and delete (never the login keychain).
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: true
+      - run: uv sync
+      - run: uv run pytest -q -rs tests/unit/test_secret_store.py
+
+  secret-store-linux:
+    # The same with libsecret: secret-tool against gnome-keyring on a private D-Bus session.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: true
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libsecret-tools gnome-keyring dbus-x11
+      - run: uv sync
+      - name: secret-tool round trip on a private session bus with an unlocked gnome-keyring
+        run: |
+          dbus-run-session -- bash -c 'printf "ci-keyring-pw" | gnome-keyring-daemon --unlock --components=secrets >/dev/null \
+            && EIDOS_REQUIRE_SECRET_TOOL=1 uv run pytest -q -rs tests/unit/test_secret_store.py'
+
   worker-compat:
     # Same-repo PRs are already built by the push trigger; run pull_request builds only for forks.
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
