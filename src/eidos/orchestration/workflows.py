@@ -80,7 +80,7 @@ class InvestigationWorkflow:
         if workflow.patched("terminal-outcome-needs-input-v1"):
             await workflow.execute_activity(
                 "mark_needs_input", {"investigation_id": inv, "project_id": a["project_id"], "turn_counter": counter,
-                                     "reason": f"coordinator stopped: {reason}; raise the limit and resume, or stop"},
+                                     "reason": f"coordinator stopped: {reason}; steer or resume to continue (limits are fixed at start), or stop"},
                 task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
 
     async def _resume_quiet_wait(self, a: dict, inv: str, history_limit: int, idle: int) -> None:

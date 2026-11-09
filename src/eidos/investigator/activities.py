@@ -76,7 +76,11 @@ def decision_usd_envelope(est_tokens: float, price: dict, cfg: dict) -> float:
     """Worst-case USD for one decision: at most max_requests_per_decision x max_output_tokens of the token
     envelope can be output; the rest is input. Pricing every token at the output rate (the old bound) reserved
     about 3x too much and ended a real run with a third of its budget unused (G5 live run 2)."""
-    out_cap = float(cfg.get("max_requests_per_decision", 4)) * float(cfg.get("max_output_tokens", 4096))
+    # Same defaults as the runtime (8 requests per decision); with no output cap every token may be output.
+    if cfg.get("max_output_tokens"):
+        out_cap = float(cfg.get("max_requests_per_decision", 8)) * float(cfg["max_output_tokens"])
+    else:
+        out_cap = est_tokens
     out_tokens = min(est_tokens, out_cap)
     in_price = float(price.get("input", max(price.values())))
     out_price = float(price.get("output", max(price.values())))
@@ -312,7 +316,8 @@ class InvestigatorActivities:
     def mark_needs_input(self, a: dict) -> dict:
         return self.wf.command("mark_needs_input", {"investigation_id": a["investigation_id"], "reason": a.get("reason"),
                                "refused_turns": a.get("refused_turns", 0)}, project=a["project_id"],
-                               key=f"needs-input:{a['investigation_id']}:{a.get('turn_counter')}")["result"]
+                               key=f"needs-input:{a['investigation_id']}:{a.get('turn_counter')}:"
+                                   f"{activity.info().workflow_run_id}")["result"]
 
     @activity.defn(name="complete_turn")
     @_hb

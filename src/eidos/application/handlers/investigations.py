@@ -42,6 +42,12 @@ def start_investigation(ctx: Ctx, p: dict) -> dict:
     investigator = {"runtime": "fixture", "model": None, "context_policy": "context-policy/1",
                     "max_calls_per_turn": 6, "max_model_calls_per_turn": 4, "max_turns": 40,
                     **(p.get("investigator") or {})}
+    if "model_usd" in limits and investigator.get("runtime") != "fixture" \
+            and not (investigator.get("settings") or {}).get("price_per_mtok"):
+        # Without prices no decision reserves or reports USD, so the limit would never apply (v1.0.0 review).
+        raise Invalid("a model_usd limit needs investigator.settings.price_per_mtok ({\"input\": .., \"output\": ..} "
+                      "USD per million tokens); without it the USD limit could not be enforced",
+                      details={"limits": limits})
     body = {"question": p["question"], "model_artifact_id": p.get("model_artifact_id"),
             "environment": p.get("environment", "default"), "charter_ref": None, "limits": limits,
             "investigator": investigator, "steering": [], "confirmation_envelope": p.get("confirmation_envelope", {}),

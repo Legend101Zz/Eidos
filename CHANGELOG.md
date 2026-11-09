@@ -42,6 +42,12 @@ The v1 **software** release: acceptance areas A1–A15 within the scope of `docs
 - The tool guide now documents the component entry calling convention, training-extension binding, and the branch migration, stream and intervention shapes.
 - Releases without a manifest `summary` (the built-in `eidos.pytorch.*` components) show their method card's Question and Config paragraphs in the catalog.
 
+### Release review fixes
+- `start_investigation` refuses a `model_usd` limit for a real-model runtime without `price_per_mtok`. Without prices no decision reserves or reports USD, so the limit could never apply.
+- The needs-input mark of a stopped coordinator is keyed per coordinator run, so it surfaces again after an operator action.
+- The per-decision USD envelope uses the runtime's defaults (8 requests per decision). With no output cap, every token is priced as output.
+- A manifest authored as an object is materialized as JSON for the validation job.
+
 ### Local operations (found on the Mac)
 - The supervisor now restarts a PostgreSQL cluster that died (crash recovery). A sixth death within five minutes leaves it `failed` in `run/status.json` and in `lab doctor`.
 - `lab status` reports `disk.refusing_new_bytes`, and `lab doctor` fails the disk check while the store refuses uploads and job outputs (below the reserve). It used to warn only.

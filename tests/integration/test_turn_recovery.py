@@ -443,3 +443,20 @@ def test_bounded_outcome_wait_with_nothing_outstanding_is_refused(lab):
                 "control": {"action": "wait_for_jobs", "bounded_outcome": "request-budget-exhausted"}}},
                 project=pid)["result"]
     assert not r["accepted"] and "nothing to wait for" in r["error"]["message"]
+
+
+def test_model_usd_limit_without_prices_is_refused(lab):
+    """v1.0.0 review: without price_per_mtok no decision reserves or reports USD, so a model_usd limit on a real-model
+    investigation would silently never apply. It is refused at start; with prices it is accepted."""
+    import pytest
+
+    from eidos.domain.errors import Invalid
+    pid, _, _ = setup(lab)
+    base = {"question": "q", "charter_id": f"charter:s{pid}", "limits": {"model_usd": 2.0, "turns": 3}}
+    with pytest.raises(Invalid, match="price_per_mtok"):
+        lab.cmd(lab.admin, "start_investigation", {**base, "investigator": {
+            "runtime": "pydantic-ai", "model": "anthropic:claude-sonnet-5-5"}}, project=pid)
+    ok = lab.cmd(lab.admin, "start_investigation", {**base, "investigator": {
+        "runtime": "pydantic-ai", "model": "anthropic:claude-sonnet-5-5",
+        "settings": {"price_per_mtok": {"input": 2.0, "output": 10.0}}}}, project=pid)["result"]
+    assert ok["investigation_id"]

@@ -38,12 +38,12 @@ See `CHANGELOG.md`. In short:
 
 | Measure | eidos-v0.7.0 | v1.0.0-rc1 |
 |---|---|---|
-| Test functions (unit, integration, MCP, reporting, packages, components) | 218 | 241 |
-| Local fast + integration suite on the qualification Mac | 140 passed, 4 skipped | see G9 in `ACCEPTANCE_MATRIX.md` § E (158 passed, 4 skipped at `329d9c3`, before the last fixes) |
-| CI jobs per push (all green) | 10 | 10, plus a wheel licence check and a setup fallback that no longer masks failures |
+| Test functions (all of `tests/`, packages and components) | 218 | 244 |
+| Local unit + integration + MCP + reporting suite on the qualification Mac | 140 passed, 4 skipped | the final count on the release tree is in `ACCEPTANCE_MATRIX.md` § E, G9 |
+| CI jobs per push | 10 | 10 (green on the release tree: G9), plus a wheel licence check and a setup fallback that no longer masks failures |
 | Release gates G1–G9 defined and recorded | none | G1–G5, G7, G8 pass; G6 passes except the hardware sleep/restart check; G9 on the final tree |
 | Licence | none declared | Apache-2.0 in every package and wheel |
-| A8 with a real model | a full-lab D02 exploration run concluded once (exploration only: no qualified assessment, no export) | **full A8 journey** with `claude-sonnet-5-5`, all 15 checks: diagnosis, new component published and run, trial, branch, qualified assessment (`inconclusive`), behaviour check, strict-loading export, worker SIGKILL and hand-off; USD 1.81 |
+| A8 with a real model | a full-lab D02 exploration run concluded once (exploration only: no qualified assessment, no export) | **full A8 journey** with `claude-sonnet-5-5`, all 15 checks: diagnosis, new component published and run, trial, branch, qualified assessment (`inconclusive`), behaviour check, strict-loading export, worker SIGKILL and hand-off; USD 1.81 (`a8-sonnet-3-recheck.json`: the checks were re-evaluated from the ledger, with no model call, after a bug in the checking script's export loader) |
 | OpenAI-compatible provider | `qwen2.5:3b`: 3/8 scenarios | `qwen2.5:14b`: 4/8 (adapter verified; conformance failure recorded); Anthropic 8/8 |
 | Local operations on macOS | not exercised on the Mac | disk exhaustion 13/13 on a real 2 GiB volume; every service SIGKILLed and restarted, including PostgreSQL; abrupt stop A/B pass |
 | Switch-order acceptance journey on macOS | 154/154 in CI (Linux) | 154/154 on the Mac as well |

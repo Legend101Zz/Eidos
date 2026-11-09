@@ -93,3 +93,22 @@ def test_malformed_authored_manifest_is_invalid_not_a_crash():
         manifest_from_bundle({"files": {"eidos-component.json": ["x"]}})
     assert manifest_from_bundle({"files": {"eidos-component.json": {"id": "x"}}}) == {"id": "x"}
     assert manifest_from_bundle({"files": {"eidos-component.json": '{"id": "y"}'}}) == {"id": "y"}
+
+
+def test_envelope_without_an_output_cap_prices_everything_as_output():
+    from eidos.investigator.activities import decision_usd_envelope
+    assert decision_usd_envelope(50_000, {"input": 2.0, "output": 10.0}, {}) == 50_000 * 10 / 1e6
+    # runtime default of 8 requests per decision when only the output cap is set
+    usd = decision_usd_envelope(200_000, {"input": 2.0, "output": 10.0}, {"max_output_tokens": 1000})
+    assert abs(usd - ((200_000 - 8000) * 2 + 8000 * 10) / 1e6) < 1e-12
+
+
+def test_object_manifest_is_materialized_as_json(tmp_path):
+    import json
+
+    from eidos.runtime.runner import materialize_bundle
+    bundle = tmp_path / "b.json"
+    bundle.write_text(json.dumps({"files": {"eidos-component.json": {"id": "x", "release": "1.0.0"}, "m.py": "x=1\n"}}))
+    dest = materialize_bundle(str(bundle), tmp_path / "src")
+    assert json.loads((dest / "eidos-component.json").read_text()) == {"id": "x", "release": "1.0.0"}
+    assert (dest / "m.py").read_text() == "x=1\n"

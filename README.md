@@ -88,13 +88,14 @@ python3 scripts/qualify/mcp_clients/gen_configs.py --home "$EIDOS_HOME" --lab "$
 Then register the generated snippet in your client: `docs/ops/mcp-clients.md`. Claude Code and Codex CLI were verified on read and write paths (`docs/mac/receipts/a14-*.json`).
 
 **4. Run an investigation.**
-- A model provider key reaches only the investigator worker. Pass it on stdin: `printf 'ANTHROPIC_API_KEY=%s\n' "$KEY" | lab start --credentials-stdin` (stop the lab first).
+- Set `price_per_mtok` to your provider's current list price. A `model_usd` limit is refused without it, because it could not be enforced. A model provider key reaches only the investigator worker. Pass it on stdin: `printf 'ANTHROPIC_API_KEY=%s\n' "$KEY" | lab start --credentials-stdin` (stop the lab first).
 - A charter with prospective success rules must be committed before exploration: `lab charter commit` (see `lab charter commit --help`).
 - Then start the investigation:
 
 ```bash
 lab investigate start demo --question "..." --charter <charter id> --runtime pydantic-ai \
-  --model anthropic:claude-sonnet-5-5 --limit model_usd=2 --limit turns=12
+  --model anthropic:claude-sonnet-5-5 --settings '{"price_per_mtok": {"input": 2.0, "output": 10.0}}' \
+  --limit model_usd=2 --limit model_tokens=600000 --limit turns=12
 lab investigate show demo <investigation id>
 lab report demo --investigation <investigation id> --out-dir report/
 lab stop
@@ -167,8 +168,8 @@ Details and limits: [`docs/release/SUPPORTED.md`](docs/release/SUPPORTED.md), [A
 | G1 licence | pass | `LICENSE`, `NOTICE`; wheel metadata checked in CI |
 | G2 scope | pass | [`SUPPORTED.md`](docs/release/SUPPORTED.md) |
 | G3 isolation honesty | pass | `tests/unit/test_seatbelt_policy.py`, `tests/integration/test_sealed_plan_refusal.py` |
-| G4 OpenAI-compatible | adapter verified; no local model of 14B or less passed full conformance | [`g4-*.json`](docs/release/evidence/) |
-| G5 real-model investigation (A8) | pass: `claude-sonnet-5-5` completed the full journey autonomously | [`a8-sonnet-3*.json`](docs/release/evidence/) |
+| G4 OpenAI-compatible | adapter verified; no local model of 14B or less passed full conformance (`qwen2.5:14b`: 4/8) | [`g4-*.json`](docs/release/evidence/) |
+| G5 real-model investigation (A8) | pass: `claude-sonnet-5-5` completed the full journey autonomously. The run receipt failed one check because of a bug in the checking script's export loader; the checks were re-evaluated from the ledger, with no model call, in `a8-sonnet-3-recheck.json` | [`a8-sonnet-3*.json`](docs/release/evidence/) |
 | G6 local operations | disk exhaustion, service kills and abrupt stop pass on macOS; **machine sleep/restart pending (hardware check)** | [`g6-*.json`](docs/release/evidence/) |
 | G7 review items | pass | `CHANGELOG.md` |
 | G8 docs | pass | this page, `docs/` |

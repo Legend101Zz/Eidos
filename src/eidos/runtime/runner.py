@@ -73,8 +73,10 @@ def materialize_bundle(bundle_path: str, dest: Path) -> Path:
         if isinstance(content, dict) and "base64" in content:
             import base64
             target.write_bytes(base64.b64decode(content["base64"]))
+        elif isinstance(content, (dict, list)):  # e.g. a manifest authored as an object
+            target.write_text(json.dumps(content, indent=2, sort_keys=True))
         else:
-            target.write_text(content)
+            target.write_text(str(content))
     return dest
 
 
