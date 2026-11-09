@@ -14,11 +14,13 @@ import subprocess
 import time
 from collections.abc import Callable
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import eidos_pytorch
 import eidos_wire
 import eidos_worker
+from eidos.boundary.wire import validate_wire
 from eidos.client import LabClient, LabError
 from eidos.domain.isolation import SEALED_PROFILES
 from eidos.runtime.artifacts import LocalArtifactStore, StoreError
@@ -35,7 +37,15 @@ from eidos.runtime.launcher import (
 )
 from eidos_wire import InputBinding, Invocation, OutputManifest, WireError, sha256_file
 
-SDK_PATHS = sorted({str(Path(m.__file__).resolve().parent.parent) for m in (eidos_wire, eidos_worker, eidos_pytorch)})
+
+def _sdk_root(m: ModuleType) -> str:
+    """Directory that contains the SDK package ``m`` (a namespace package has no ``__file__``)."""
+    if m.__file__ is None:
+        raise RuntimeError(f"SDK package {m.__name__} has no __file__; cannot expose it to the sandbox")
+    return str(Path(m.__file__).resolve().parent.parent)
+
+
+SDK_PATHS = sorted({_sdk_root(m) for m in (eidos_wire, eidos_worker, eidos_pytorch)})
 HEARTBEAT_SECONDS = 10.0
 
 VALIDATE_SNIPPET = (
@@ -323,8 +333,10 @@ class AttemptRunner:
         staging = adir / "staging"
         if ctx["lock"]["component"].get("kind") == "build":
             return self._collect_build(project, ctx, adir)
-        try:
-            man = OutputManifest.read(staging)
+        try:  # schema first (WireSchemaError is a ValueError), then the eidos_wire semantic rules
+            raw = json.loads((staging / OutputManifest.FILENAME).read_text())
+            validate_wire("output-manifest", raw)
+            man = OutputManifest.from_dict(raw)
         except (OSError, ValueError, WireError) as exc:
             err = (adir / "stderr.log").read_text()[-3000:] if (adir / "stderr.log").exists() else ""
             return self._finish(project, ctx, "failed", {}, {"category": "infrastructure",

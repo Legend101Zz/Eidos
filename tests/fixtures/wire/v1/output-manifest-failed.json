@@ -1,0 +1,27 @@
+{
+  "attempt_id": "attempt-test",
+  "epoch": 1,
+  "error": {
+    "category": "user-code",
+    "message": "fixture failure: the component raised on purpose",
+    "traceback_tail": "<traceback>",
+    "type": "builtins.ValueError"
+  },
+  "job_id": "job-test",
+  "outputs": [
+    {
+      "digest": "0000000000000000000000000000000000000000000000000000000000000000",
+      "filename": "outputs/log.txt",
+      "media_type": "text/plain",
+      "role": "log",
+      "schema": null,
+      "size": 0,
+      "slot": "log"
+    }
+  ],
+  "receipt": {
+    "wall_seconds": 0.0
+  },
+  "status": "failed",
+  "wire": "eidos-wire/1"
+}

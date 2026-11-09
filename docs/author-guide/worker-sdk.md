@@ -121,6 +121,14 @@ boundaries you truly support. Eidos then only gets the checkpoints and receipts 
 `devices()` reports cpu/cuda/mps. Restoring across devices is never claimed exact; treat it as
 "numerically equivalent under protocol" and check tolerances.
 
+## Wire contract: schema major and supported Python
+
+- **Schema major: 1** (`eidos-wire/1`; `eidos_wire.WIRE_MAJOR`). The messages that cross the worker/server boundary have published JSON Schemas (2020-12) in `schemas/eidos-wire/v1/`: `invocation.schema.json`, `output-manifest.schema.json` and `component-manifest.schema.json`. They are generated from the server boundary models (`scripts/dev/gen_wire_schemas.py`; ADR 0008).
+- **Supported worker Python: 3.9 and later.** The worker packages use only the standard library (no Pydantic, no jsonschema), so Pydantic v1 projects are fine. The lab server itself needs Python 3.11–3.13.
+- **Validation.** The server validates every manifest it receives against the schema, then applies the semantic rules in `eidos_wire`, such as unique output slots. A violation is refused with a field-level message, for example `output-manifest violates the eidos-wire/1 schema: receipt: Input should be an object`.
+- **Compatibility.** A newer minor version only adds optional fields. Readers accept unknown fields and ignore them. Removing, renaming or retyping a field is a new major (`v2`), and the server refuses majors it does not speak.
+- **Golden fixtures.** `tests/fixtures/wire/v1/` holds messages emitted by the real SDK code paths (`scripts/dev/emit_wire_fixtures.py`), plus deliberately invalid `invalid-*` variants. They are useful examples when you implement the protocol yourself (§ 3).
+
 ## 3. Projects outside the SDK's Python range (JSON subprocess protocol)
 
 If your environment cannot install the SDK (e.g. Python < 3.9), implement the protocol directly:

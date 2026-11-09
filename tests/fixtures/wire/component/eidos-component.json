@@ -1,0 +1,15 @@
+{
+  "id": "fixture.wire-demo",
+  "release": "1.0.0",
+  "implements": "wire-demo/1",
+  "kind": "artifact-op",
+  "entry": "wire_fixture:run",
+  "input": {"rows": "labeled-rows/1"},
+  "output": {"summary": "row-summary/1", "rows_out": "labeled-rows/1"},
+  "scientific_effects": ["observe"],
+  "isolation": "immutable-artifacts",
+  "receipt": ["input_rows"],
+  "python": ">=3.9",
+  "wire": "eidos-wire/1",
+  "license": "Apache-2.0"
+}

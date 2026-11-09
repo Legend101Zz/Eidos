@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -178,9 +179,10 @@ def load_manifest(path: str | Path) -> ComponentManifest:
     if path.suffix == ".json":
         data = json.loads(text)
     else:
-        try:
-            import tomllib  # Python 3.11+
-        except ModuleNotFoundError as exc:  # pragma: no cover - exercised on 3.9/3.10
-            raise ManifestError([f"{path.name}: TOML manifests need Python 3.11+; ship eidos-component.json"]) from exc
-        data = tomllib.loads(text)
+        if sys.version_info >= (3, 11):
+            import tomllib  # standard library from Python 3.11
+
+            data = tomllib.loads(text)
+        else:  # pragma: no cover - exercised on 3.9/3.10
+            raise ManifestError([f"{path.name}: TOML manifests need Python 3.11+; ship eidos-component.json"])
     return parse_manifest(data)

@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from eidos.application.service import Ctx, command
+from eidos.boundary.wire import WireSchemaError, validate_wire
 from eidos.domain.errors import Fenced, Invalid, NotFound
 from eidos_wire import OutputManifest, WireError
 
@@ -120,12 +121,21 @@ def publish_outputs(ctx: Ctx, p: dict) -> dict:
     publication exists per (job, slot); duplicates and stale epochs leave a diagnostic event."""
     job = _job(ctx, p["job_id"])
     epoch = int(p["epoch"])
+    # The published schema (schemas/eidos-wire/v1/output-manifest.schema.json), then the semantic rules.
+    # A schema violation is refused only after the terminal/fence checks, so a stale attempt is still
+    # reported as fenced (with its publication.rejected_stale event) whatever its manifest looks like.
+    schema_error: WireSchemaError | None = None
     try:
-        man = OutputManifest.from_dict(p["manifest"])
-    except WireError as exc:
-        raise Invalid(f"invalid output manifest: {exc}") from exc
-    if man.job_id != job["id"] or man.attempt_id != p["attempt_id"] or man.epoch != epoch:
-        raise Invalid("manifest identity does not match the attempt")
+        validate_wire("output-manifest", p["manifest"])
+    except WireSchemaError as exc:
+        schema_error = exc
+    if schema_error is None:
+        try:
+            man = OutputManifest.from_dict(p["manifest"])
+        except WireError as exc:
+            raise Invalid(f"invalid output manifest: {exc}") from exc
+        if man.job_id != job["id"] or man.attempt_id != p["attempt_id"] or man.epoch != epoch:
+            raise Invalid("manifest identity does not match the attempt")
     if job["status"] in TERMINAL:
         raise Fenced(f"job {job['id']} is already {job['status']}; nothing more can be published")
     try:
@@ -135,6 +145,8 @@ def publish_outputs(ctx: Ctx, p: dict) -> dict:
                                                            "current_epoch": job["epoch"]},
                   investigation_id=job["investigation_id"])
         raise
+    if schema_error is not None:
+        raise Invalid(f"invalid output manifest: {schema_error}", details={"problems": schema_error.problems})
     published, duplicates = [], []
     checkpoints = (man.receipt or {}).get("checkpoints", {})
     branch = (job["lock"].get("config") or {}).get("branch")

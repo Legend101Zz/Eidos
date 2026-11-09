@@ -353,7 +353,7 @@ wheels = [
 
 [[package]]
 name = "eidos-lab"
-version = "1.0.0"
+version = "1.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
@@ -378,6 +378,7 @@ dev = [
     { name = "eidos-pytorch" },
     { name = "eidos-worker-sdk" },
     { name = "import-linter" },
+    { name = "jsonschema" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -408,6 +409,7 @@ dev = [
     { name = "eidos-pytorch", editable = "packages/eidos-pytorch" },
     { name = "eidos-worker-sdk", editable = "packages/eidos-worker-sdk" },
     { name = "import-linter", specifier = ">=2.3" },
+    { name = "jsonschema", specifier = ">=4.23" },
     { name = "mypy", specifier = ">=1.15" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-asyncio", specifier = ">=0.25" },
@@ -427,7 +429,7 @@ requires-dist = [{ name = "eidos-worker-sdk", editable = "packages/eidos-worker-
 
 [[package]]
 name = "eidos-wire"
-version = "1.0.0"
+version = "1.0.1"
 source = { editable = "packages/eidos-wire" }
 
 [[package]]

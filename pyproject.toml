@@ -1,6 +1,6 @@
 [project]
 name = "eidos-lab"
-version = "1.0.0"
+version = "1.0.1"
 description = "Eidos: a local research harness for custom PyTorch model investigation"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
@@ -70,6 +70,7 @@ dev = [
     "ruff>=0.11",
     "mypy>=1.15",
     "import-linter>=2.3",
+    "jsonschema>=4.23",
 ]
 
 [tool.pytest.ini_options]
@@ -84,6 +85,21 @@ markers = [
     "fixture_llm: uses deterministic fixture investigator providers (not real LLM behaviour)",
     "slow: long-running journey",
 ]
+
+[tool.mypy]
+# Server tree and the worker packages, checked at the server's Python (3.12). The worker packages are
+# also checked with a Python 3.9 target by scripts/ci/mypy.sh (their supported floor).
+files = ["src/eidos", "packages/eidos-wire/src", "packages/eidos-worker-sdk/src", "packages/eidos-pytorch/src"]
+python_version = "3.12"
+warn_unused_ignores = true
+no_implicit_optional = true
+warn_redundant_casts = true
+
+# Third-party modules without type information in the dev environment (torch and numpy are installed
+# only in worker/research environments, never in the server venv).
+[[tool.mypy.overrides]]
+module = ["torch", "torch.*", "numpy", "numpy.*"]
+ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 110

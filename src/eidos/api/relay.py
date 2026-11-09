@@ -38,7 +38,7 @@ class OutboxRelay:
         self.reconcile_every = reconcile_seconds
         self.inv_args = investigation_args or {}
         self._event = asyncio.Event()
-        self._stats = {"dispatched": 0, "errors": 0, "last_error": None, "last_reconcile": None, "paused": False}
+        self._stats: dict[str, Any] = {"dispatched": 0, "errors": 0, "last_error": None, "last_reconcile": None, "paused": False}
         self._task: asyncio.Task | None = None
         self.maintenance_flag = None
 

@@ -6,7 +6,7 @@
 
 Eidos is for ML researchers who want an LLM to help investigate their own PyTorch models on their own machine, without letting it grade its own work. An investigator diagnoses failures, writes and publishes research components, runs trials and checkpoint branches, and exports models. Claims count only when they come from a frozen, qualified evidence plan and an independent assessor. Every command, job, charge and isolation receipt is in a PostgreSQL ledger.
 
-**Current release: v1.0.0** (package version `1.0.0`). Machine sleep and OS restart recovery are not yet verified on hardware; see [Status](#status-and-evidence).
+**Current release: v1.0.1** (package version `1.0.1`). It is a design-conformance follow-up to v1.0.0: mypy in CI, versioned wire JSON Schemas with server-side validation, and the deferred PyGlove/Composer adapters recorded ([release notes](docs/release/RELEASE_NOTES_v1.0.1.md)). Machine sleep and OS restart recovery are not yet verified on hardware; see [Status](#status-and-evidence).
 
 ## Key features
 
@@ -177,7 +177,7 @@ Details and limits: [`docs/release/SUPPORTED.md`](docs/release/SUPPORTED.md), [A
 | G8 docs | pass | this page, `docs/` |
 | G9 final verification | pass: suite 167 passed / 4 skipped, switch journey 154/154, macOS owner kit 15/15, CI 10/10, independent review | [`g9-*`](docs/release/evidence/), `ACCEPTANCE_MATRIX.md` § E |
 
-CI runs 10 jobs on every push: lint and unit, integration (PostgreSQL and Temporal), worker compatibility, components, fresh install, macOS arm64, upgrade across releases, end-to-end journey, switch journey, and a Temporal source-build fallback. Full criteria: [`ACCEPTANCE_MATRIX.md`](ACCEPTANCE_MATRIX.md). Release notes: [`docs/release/RELEASE_NOTES_v1.0.0.md`](docs/release/RELEASE_NOTES_v1.0.0.md). History: [`CHANGELOG.md`](CHANGELOG.md). Documents dated before 2026-11-09 cite earlier commit IDs: [`COMMIT_ID_MAP.md`](docs/release/COMMIT_ID_MAP.md).
+CI runs 10 jobs on every push: lint and unit, integration (PostgreSQL and Temporal), worker compatibility, components, fresh install, macOS arm64, upgrade across releases, end-to-end journey, switch journey, and a Temporal source-build fallback. Full criteria: [`ACCEPTANCE_MATRIX.md`](ACCEPTANCE_MATRIX.md). Release notes: [`docs/release/RELEASE_NOTES_v1.0.1.md`](docs/release/RELEASE_NOTES_v1.0.1.md) (and [v1.0.0](docs/release/RELEASE_NOTES_v1.0.0.md)). History: [`CHANGELOG.md`](CHANGELOG.md). Documents dated before 2026-11-09 cite earlier commit IDs: [`COMMIT_ID_MAP.md`](docs/release/COMMIT_ID_MAP.md).
 
 ## Documentation map
 
@@ -197,6 +197,7 @@ CI runs 10 jobs on every push: lint and unit, integration (PostgreSQL and Tempor
 ```bash
 uv sync
 uv run ruff check src tests && uv run lint-imports
+bash scripts/ci/mypy.sh              # mypy: server at 3.12, worker packages also at a 3.9 target
 uv run pytest tests/unit tests/mcp tests/reporting -q
 EIDOS_TEST_PG_ADMIN=postgresql+psycopg://postgres:<password>@127.0.0.1:5432/postgres uv run pytest tests/integration -q
 bash tests/journeys/run_ci.sh        # the 154-check switch-order acceptance journey from fresh wheels

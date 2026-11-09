@@ -1,3 +1,12 @@
+# v1.0.1 handoff (2026-11-09)
+
+- **Current release:** v1.0.1 (package `1.0.1`; `eidos-wire` 1.0.1; `eidos-worker-sdk` and `eidos-pytorch` unchanged at 1.1.0). It is a design-conformance follow-up to v1.0.0, with no new features and no migration:
+  - mypy runs in CI (server at 3.12, worker packages also at a 3.9 target), 91 errors fixed to 0;
+  - versioned wire JSON Schemas (`schemas/eidos-wire/v1/`) generated from server boundary models, golden fixtures emitted by the worker SDK, and server-side validation of received manifests (ADR 0008);
+  - the deferred PyGlove/Composer adapters and partial CheckList adoption are recorded (ADR 0009, `docs/release/SUPPORTED.md` § Deferred integrations).
+- **Release documents:** `CHANGELOG.md` § 1.0.1, `docs/release/RELEASE_NOTES_v1.0.1.md`. The session record is `PROGRESS_101.md` on the SSD.
+- Everything below about v1.0.0 still applies, including the R1 sleep/restart limitation.
+
 # v1.0.0 handoff (2026-11-09)
 
 **State:** see the gate table in `ACCEPTANCE_MATRIX.md` § E, and the session's `PROGRESS.md`/`REQUESTS.md` on the SSD (`/Volumes/Mrigesh SSD/eidos-v1/`).

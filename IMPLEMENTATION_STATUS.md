@@ -447,6 +447,21 @@ Lesson: three of the four failures came from round 5 making sealed the default p
 - **Docs:** the 4-run table and the final handoff are at the top of HANDOFF.md, and A8 is updated.
 - **Verification:** unit + integration + MCP + reporting **140 passed, 4 skipped** on the merged head (3 skips are macOS-only; 1 is the live-lab MCP test).
 
+## Round 19 (2026-11-09): v1.0.1 design-conformance release
+
+A check against the design (Revision 4) found three unrecorded gaps. All three are closed on branch `release/1.0.1`:
+- **mypy in CI:**
+  - `[tool.mypy]` in `pyproject.toml`, and `scripts/ci/mypy.sh` with a 3.9 target for the worker packages;
+  - 91 errors fixed to 0, with no new `type: ignore` and no behaviour change.
+- **Wire JSON Schemas (ADR 0008):**
+  - `src/eidos/boundary/wire.py` is the source of truth;
+  - 3 schema files and 15 golden fixtures from the SDK;
+  - fixtures are checked by jsonschema in the server environment, and SDK output is checked against them in the 3.9/pydantic<2 matrix;
+  - `publish_outputs`, the runner, the assessor and component registration validate received messages;
+  - the A10 row in `ACCEPTANCE_MATRIX.md` now matches the code.
+- **Deferred adapters (ADR 0009):** PyGlove and Composer are deferred. CheckList is partly adopted (raw-prediction reuse, paired expectations, restore-invariance behaviour check).
+- Versions: `eidos-lab` 1.0.1, `eidos-wire` 1.0.1. Release notes: `docs/release/RELEASE_NOTES_v1.0.1.md`.
+
 ## Round 18 (2026-11-08/09): v1.0.0 release session (local Mac controller)
 
 Gates and evidence: `ACCEPTANCE_MATRIX.md` § E; receipts in `docs/release/evidence/`; Mac details in `docs/mac/STATUS.md` § v1.0.0 release session.

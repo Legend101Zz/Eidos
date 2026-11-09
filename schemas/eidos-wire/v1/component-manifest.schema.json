@@ -1,0 +1,273 @@
+{
+  "$defs": {
+    "LlmUse": {
+      "description": "Specialist model use declared by a component (role, prompt revision, limits).",
+      "properties": {
+        "max_calls": {
+          "title": "Max Calls"
+        },
+        "max_tokens": {
+          "title": "Max Tokens"
+        },
+        "prompt_revision": {
+          "title": "Prompt Revision"
+        },
+        "role": {
+          "title": "Role"
+        }
+      },
+      "required": [
+        "role",
+        "prompt_revision",
+        "max_calls",
+        "max_tokens"
+      ],
+      "title": "LlmUse",
+      "type": "object"
+    }
+  },
+  "$id": "urn:eidos:schema:eidos-wire:v1:component-manifest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Component manifest ``eidos-component.json`` (author to server; design \"The component contract\").",
+  "properties": {
+    "card": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Card"
+    },
+    "conflicts": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Conflicts",
+      "type": "array"
+    },
+    "controls": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Controls",
+      "type": "array"
+    },
+    "cost": {
+      "additionalProperties": true,
+      "title": "Cost",
+      "type": "object"
+    },
+    "dependencies": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Dependencies",
+      "type": "array"
+    },
+    "entry": {
+      "pattern": "^[^:].*:.*[^:]$",
+      "title": "Entry",
+      "type": "string"
+    },
+    "grants": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Grants",
+      "type": "array"
+    },
+    "id": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{1,127}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "implements": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]*/\\d+$",
+      "title": "Implements",
+      "type": "string"
+    },
+    "input": {
+      "additionalProperties": {
+        "pattern": "^[a-z0-9][a-z0-9_.\\-]*/\\d+$|^\\*$",
+        "type": "string"
+      },
+      "title": "Input",
+      "type": "object"
+    },
+    "isolation": {
+      "default": "immutable-artifacts",
+      "enum": [
+        "immutable-artifacts",
+        "private-copy",
+        "in-trial",
+        "sealed"
+      ],
+      "title": "Isolation",
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "artifact-op",
+        "training-extension",
+        "decision-policy",
+        "provider",
+        "planning",
+        "assessment"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "license": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "License"
+    },
+    "llm": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LlmUse"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "metrics": {
+      "additionalProperties": true,
+      "title": "Metrics",
+      "type": "object"
+    },
+    "optional": {
+      "items": {
+        "pattern": "^[a-z0-9][a-z0-9_.\\-]*/\\d+$",
+        "type": "string"
+      },
+      "title": "Optional",
+      "type": "array"
+    },
+    "output": {
+      "additionalProperties": {
+        "pattern": "^[a-z0-9][a-z0-9_.\\-]*/\\d+$",
+        "type": "string"
+      },
+      "title": "Output",
+      "type": "object"
+    },
+    "phases": {
+      "items": {
+        "enum": [
+          "before-model-construction",
+          "after-model-construction",
+          "before-optimizer-construction",
+          "after-backward",
+          "after-gradient-unscale",
+          "before-optimizer-step",
+          "after-optimizer-step",
+          "on-checkpoint-save",
+          "on-checkpoint-load",
+          "on-evaluation"
+        ],
+        "type": "string"
+      },
+      "title": "Phases",
+      "type": "array"
+    },
+    "python": {
+      "default": ">=3.9",
+      "title": "Python",
+      "type": "string"
+    },
+    "reads": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Reads",
+      "type": "array"
+    },
+    "receipt": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Receipt",
+      "type": "array"
+    },
+    "release": {
+      "pattern": "^\\d+\\.\\d+\\.\\d+([.\\-+][0-9A-Za-z.\\-]+)?$",
+      "title": "Release",
+      "type": "string"
+    },
+    "requires": {
+      "items": {
+        "pattern": "^[a-z0-9][a-z0-9_.\\-]*/\\d+$",
+        "type": "string"
+      },
+      "title": "Requires",
+      "type": "array"
+    },
+    "scientific_effects": {
+      "items": {
+        "enum": [
+          "observe",
+          "generate-data",
+          "change-weights",
+          "change-learning",
+          "change-structure",
+          "plan",
+          "assess"
+        ],
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Scientific Effects",
+      "type": "array"
+    },
+    "state": {
+      "additionalProperties": true,
+      "title": "State",
+      "type": "object"
+    },
+    "wire": {
+      "default": "eidos-wire/1",
+      "description": "Wire contract identity, 'eidos-wire/<major>'.",
+      "pattern": "^eidos-wire/1(\\.[0-9]+)*$",
+      "title": "Wire",
+      "type": "string"
+    },
+    "writes": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Writes",
+      "type": "array"
+    }
+  },
+  "required": [
+    "id",
+    "release",
+    "implements",
+    "kind",
+    "entry",
+    "scientific_effects"
+  ],
+  "title": "ComponentManifest",
+  "type": "object",
+  "x-eidos": {
+    "generator": "scripts/dev/gen_wire_schemas.py",
+    "source": "eidos.boundary.wire.ComponentManifest",
+    "unknown_fields": "accepted and ignored (newer minor versions add optional fields)",
+    "wire": "eidos-wire/1",
+    "wire_major": 1
+  }
+}

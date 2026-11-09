@@ -18,6 +18,7 @@ import json
 import tempfile
 import threading
 from contextlib import contextmanager
+from typing import Any
 
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
@@ -249,7 +250,7 @@ class InvestigatorActivities:
         self.wf.command("record_decision_receipts", {"decision_id": dec["id"], "receipts": stable}, project=p,
                         key=f"receipts:{dec['id']}")
         summary = [{"tool": r["tool"], "ok": r["ok"], "replayed": r.get("replayed"), "code": r.get("code")} for r in receipts]
-        out = {"summary": summary}
+        out: dict[str, Any] = {"summary": summary}
         # A wait after effects that created nothing to wait for (every effect call failed, or none launched work)
         # would park the investigation: report it so the turn treats it like a refused proposal (ADR 0007/0008).
         if (dec["body"].get("control") or {}).get("action") == "wait_for_jobs" and receipts:

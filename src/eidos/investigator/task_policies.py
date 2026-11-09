@@ -77,8 +77,8 @@ def bundle_baseline_replicate(req: DecisionRequest) -> dict[str, Any]:
     scores = [j for j in jobs if (j["component"] or "").split("@")[0] == SCORER_ID]
     if any(j["status"] not in TERMINAL for j in scores):
         return _wait("scoring still running")
-    accs = [((j.get("receipt") or {}).get("metrics") or {}).get("accuracy") for j in scores if j["status"] == "succeeded"]
-    accs = [a for a in accs if a is not None]
+    reported = [((j.get("receipt") or {}).get("metrics") or {}).get("accuracy") for j in scores if j["status"] == "succeeded"]
+    accs: list[float] = [a for a in reported if a is not None]
     failed = [j["id"] for j in train + scores if j["status"] != "succeeded"]
     summary = (f"Baseline reproduced over {len(accs)} seed(s); validation accuracy "
                f"{min(accs):.4f}-{max(accs):.4f}" if accs else "No successful baseline runs") + (

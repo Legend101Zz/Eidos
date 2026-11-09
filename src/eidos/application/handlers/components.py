@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from eidos.application.handlers.projects import get_profile, new_profile_revision
 from eidos.application.service import Ctx, command
+from eidos.boundary.wire import WireSchemaError, validate_wire
 from eidos.domain import resolver as res
 from eidos.domain import support
 from eidos.domain.errors import Invalid, NotFound
@@ -50,9 +52,14 @@ def manifest_from_bundle(bundle: dict) -> dict:
 
 def parse_or_invalid(data: dict):
     try:
-        return parse_manifest(data)
+        man = parse_manifest(data)
     except ManifestError as exc:
         raise Invalid("component manifest violates the contract", details={"problems": exc.problems}) from exc
+    try:  # field types the contract rules above do not check (schemas/eidos-wire/v1/component-manifest.schema.json)
+        validate_wire("component-manifest", data)
+    except WireSchemaError as exc:
+        raise Invalid("component manifest violates the contract", details={"problems": exc.problems}) from None
+    return man
 
 
 def release_digest(manifest: dict, bundle_digest: str, env_lock: str | None) -> str:
@@ -83,7 +90,7 @@ def validate_component(ctx: Ctx, p: dict) -> dict:
         raise Invalid("component dependencies conflict with the project environment",
                       details={"conflicts": conflicts},
                       next_action="Use a separate environment; Eidos will not upgrade the project's packages.")
-    lock = {"lock": "eidos-build-lock/1", "component": {"ref": "builtin:validator", "id": "eidos.validator",
+    lock: dict[str, Any] = {"lock": "eidos-build-lock/1", "component": {"ref": "builtin:validator", "id": "eidos.validator",
             "entry": "eidos_worker.validate:run_component", "kind": "build", "implements": "component-validation/1",
             "effects": ["observe"], "digest": "builtin"},
             "target": {"ref": man.ref, "manifest": man.to_dict()},

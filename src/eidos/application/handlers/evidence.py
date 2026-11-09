@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from typing import Any
 
 from eidos.application.handlers.investigations import confirm_scope, inv_scope
 from eidos.application.handlers.runs import admit_job, resolve_lock, strongest_profile
@@ -113,8 +114,9 @@ def freeze_evidence_plan(ctx: Ctx, p: dict) -> dict:
     kind = plan.body["claim_kind"]
     t_ok = approval_for(ctx, plan.body["template"]["ref"], kind) is not None
     a_ref = (plan.body.get("assessor") or {}).get("ref")
-    a_ok = bool(a_ref) and approval_for(ctx, a_ref, kind) is not None
+    a_ok = bool(a_ref and approval_for(ctx, a_ref, kind) is not None)
     ev.check_freezable(plan.body, template_approved=t_ok, assessor_approved=a_ok)
+    assert a_ref  # check_freezable raised unless the assessor ref was present and approved
     _refuse_unsupported_sealed(ctx, plan.body)
     if not plan.body["arms"]:
         raise Invalid("a plan needs arms before freezing")
@@ -267,7 +269,9 @@ def maybe_request_assessment(ctx: Ctx, plan_id: str) -> None:
 
 
 def _realized(ctx: Ctx, plan) -> dict:
-    arms, iso_findings, iso_ok = {}, [], True
+    arms: dict[str, Any] = {}
+    iso_findings: list[dict[str, Any]] = []
+    iso_ok = True
     req = plan.body.get("required_isolation") or {}
     sealed_needed = bool(req.get("sealed") or str(req.get("profile", "")).endswith("sealed") or req.get("controls"))
     # Trusted = holds the launcher grant and, for sealed requirements, the sealed:read grant too.
@@ -278,7 +282,8 @@ def _realized(ctx: Ctx, plan) -> dict:
     blocked = (plan.body["launch"].get("blocked") or {})
     waivers: list[dict] = []
     for arm_id, jids in arm_jobs(plan.body).items():
-        statuses, receipt = [], {}
+        statuses: list[str] = []
+        receipt: dict[str, Any] = {}
         for jid in jids:
             job = ctx.tx.get_job(jid)
             statuses.append(job["status"] if job else "missing")

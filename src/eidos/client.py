@@ -73,7 +73,12 @@ class LabClient:
                media_type: str = "application/octet-stream", schema: str | None = None, role: str = "input",
                access_class: str = "project", name: str | None = None, key: str | None = None,
                investigation: str | None = None) -> dict:
-        content = data if data is not None else Path(path).read_bytes()  # type: ignore[arg-type]
+        if data is not None:
+            content = data
+        elif path is not None:
+            content = Path(path).read_bytes()
+        else:  # Path(None) raised TypeError before; same type, clearer message
+            raise TypeError("upload() needs a path or data")
         headers = {"content-type": media_type, "x-eidos-role": role, "x-eidos-access-class": access_class,
                    "x-eidos-sha256": hashlib.sha256(content).hexdigest(),
                    "x-eidos-command-key": key or "upload:" + hashlib.sha256(content).hexdigest()[:32] + ":" + (name or "")}

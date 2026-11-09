@@ -62,6 +62,7 @@ class LedgerTx(Protocol):
     """
 
     command_id: int | None
+    project_id: str
 
     def claim_command(self, project_id: str, principal_id: str, key: str, ctype: str, payload_hash: str,
                       delegation: dict) -> dict | None: ...
