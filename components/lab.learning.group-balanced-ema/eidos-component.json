@@ -1,0 +1,53 @@
+{
+  "id": "lab.learning.group-balanced-ema",
+  "release": "1.0.0",
+  "implements": "group-balanced-update/1",
+  "kind": "training-extension",
+  "entry": "group_ema.rule:create",
+  "scientific_effects": [
+    "change-learning"
+  ],
+  "phases": [
+    "before-optimizer-step"
+  ],
+  "input": {},
+  "output": {},
+  "requires": [
+    "pytorch.adapter/1",
+    "adapter.loss_terms/1"
+  ],
+  "optional": [],
+  "reads": [
+    "model.parameters",
+    "batches.loss_inputs"
+  ],
+  "writes": [
+    "param.grad",
+    "state:group-ema/1"
+  ],
+  "isolation": "in-trial",
+  "card": "method-card.md",
+  "controls": [
+    "fixtures/test_group_ema.py"
+  ],
+  "receipt": [
+    "extensions.group-balanced-ema.updates",
+    "extensions.group-balanced-ema.extra_forward_backward_passes"
+  ],
+  "state": {
+    "schema": "group-ema/1",
+    "restore_classes": [
+      "exact"
+    ],
+    "mapping": "per-group, per-parameter-name gradient EMA tensors; branch with init to start with empty memory"
+  },
+  "conflicts": [],
+  "cost": {
+    "extra": "one extra forward and backward per group per update"
+  },
+  "python": ">=3.9",
+  "dependencies": [
+    "torch"
+  ],
+  "license": "Apache-2.0"
+}

@@ -1,0 +1,4 @@
+{"name": "ok",
+ "inputs": {"predictions": {"text": "g,pred_a,label_a,pred_b,label_b\nx,1,1,0,0\nx,1,0,0,0\ny,1,1,1,1\n", "media_type": "text/csv"}},
+ "config": {"group_by": "g"},
+ "expect": {"status": "succeeded", "receipt": {"input_rows": 3}, "outputs": {"report": {"json": {"x": [2, 1], "y": [1, 1]}}}}}

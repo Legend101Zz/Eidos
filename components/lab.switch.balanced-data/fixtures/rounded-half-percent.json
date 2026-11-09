@@ -1,0 +1,24 @@
+{
+  "name": "rounded-half-percent",
+  "author_test": true,
+  "inputs": {},
+  "config": {
+    "examples": 1000,
+    "batch_size": 100,
+    "exception_rate": 0.005,
+    "mode": "rounded-per-batch",
+    "seed": 1
+  },
+  "expect": {
+    "status": "succeeded",
+    "receipt": {
+      "requested_exceptions": 5.0,
+      "realized_exceptions": 0,
+      "realized_exception_rate": 0.0,
+      "group_counts": {
+        "agree": 1000,
+        "exception": 0
+      }
+    }
+  }
+}

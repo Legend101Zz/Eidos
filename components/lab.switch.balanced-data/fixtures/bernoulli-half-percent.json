@@ -1,0 +1,19 @@
+{
+  "name": "bernoulli-half-percent",
+  "author_test": true,
+  "inputs": {},
+  "config": {
+    "examples": 20000,
+    "batch_size": 100,
+    "exception_rate": 0.005,
+    "mode": "bernoulli",
+    "seed": 1
+  },
+  "expect": {
+    "status": "succeeded",
+    "receipt": {
+      "mode": "bernoulli",
+      "requested_exceptions": 100.0
+    }
+  }
+}

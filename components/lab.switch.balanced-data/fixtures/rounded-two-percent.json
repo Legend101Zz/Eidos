@@ -1,0 +1,23 @@
+{
+  "name": "rounded-two-percent",
+  "author_test": true,
+  "inputs": {},
+  "config": {
+    "examples": 1000,
+    "batch_size": 100,
+    "exception_rate": 0.02,
+    "mode": "rounded-per-batch",
+    "seed": 1
+  },
+  "expect": {
+    "status": "succeeded",
+    "receipt": {
+      "requested_exceptions": 20.0,
+      "realized_exceptions": 20,
+      "group_counts": {
+        "agree": 980,
+        "exception": 20
+      }
+    }
+  }
+}

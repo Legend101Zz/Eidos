@@ -1,0 +1,140 @@
+[project]
+name = "eidos-lab"
+version = "1.0.0rc1"
+description = "Eidos: a local research harness for custom PyTorch model investigation"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "eidos-wire",
+    "eidos-worker-sdk",
+    "eidos-pytorch",
+    "pydantic>=2.11,<3",
+    "sqlalchemy>=2.0.40,<2.2",
+    "alembic>=1.15,<2",
+    "psycopg[binary]>=3.2,<4",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.34,<1",
+    "httpx>=0.28,<1",
+    "temporalio>=1.35,<2",
+    "typer>=0.15,<1",
+    "rich>=13,<16",
+    "mcp>=2.0,<3",
+    "pydantic-ai-slim[anthropic,openai]>=2.60,<3",
+]
+
+[project.scripts]
+lab = "eidos.apps.cli:main"
+eidos-api = "eidos.apps.api:main"
+eidos-workflow-worker = "eidos.apps.workflow_worker:main"
+eidos-investigator-worker = "eidos.apps.investigator_worker:main"
+eidos-assessor-worker = "eidos.apps.assessor_worker:main"
+eidos-training-runner = "eidos.apps.training_runner:main"
+eidos-sealed-runner = "eidos.apps.sealed_runner:main"
+eidos-supervisor = "eidos.apps.supervisor:main"
+eidos-mcp = "eidos.apps.mcp:main"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/eidos"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"components" = "eidos/_components"
+
+[tool.uv.workspace]
+members = ["packages/eidos-wire", "packages/eidos-worker-sdk", "packages/eidos-pytorch"]
+
+[tool.uv.sources]
+eidos-wire = { workspace = true }
+eidos-worker-sdk = { workspace = true }
+eidos-pytorch = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "eidos-worker-sdk",
+    "eidos-pytorch",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "ruff>=0.11",
+    "mypy>=1.15",
+    "import-linter>=2.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+markers = [
+    "pg: requires a running PostgreSQL (EIDOS_TEST_PG_DSN)",
+    "temporal: requires a Temporal server (EIDOS_TEST_TEMPORAL)",
+    "torch: requires torch in the test environment",
+    "fixture_llm: uses deterministic fixture investigator providers (not real LLM behaviour)",
+    "slow: long-running journey",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+src = ["src", "packages/*/src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+ignore = ["E501", "B008", "SIM108", "SIM115", "SIM105"]
+
+[tool.importlinter]
+root_packages = ["eidos", "eidos_wire", "eidos_worker", "eidos_pytorch"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Domain imports no frameworks or infrastructure"
+type = "forbidden"
+source_modules = ["eidos.domain"]
+forbidden_modules = [
+    "eidos.application", "eidos.persistence", "eidos.orchestration", "eidos.investigator",
+    "eidos.runtime", "eidos.api", "eidos.mcp", "eidos.cli", "eidos.supervisor", "eidos.reporting",
+    "sqlalchemy", "temporalio", "fastapi", "pydantic", "pydantic_ai", "mcp", "httpx", "torch",
+]
+
+[[tool.importlinter.contracts]]
+name = "Application depends on ports, not adapters"
+type = "forbidden"
+source_modules = ["eidos.application"]
+forbidden_modules = [
+    "eidos.persistence", "eidos.orchestration", "eidos.investigator", "eidos.runtime", "eidos.api",
+    "eidos.mcp", "eidos.cli", "eidos.supervisor", "sqlalchemy", "temporalio", "fastapi", "pydantic_ai",
+    "mcp", "torch",
+]
+
+[[tool.importlinter.contracts]]
+name = "Worker-facing packages import no server, database, Temporal or LLM libraries"
+type = "forbidden"
+source_modules = ["eidos_wire", "eidos_worker", "eidos_pytorch"]
+forbidden_modules = [
+    "eidos", "sqlalchemy", "temporalio", "fastapi", "pydantic", "pydantic_ai", "mcp", "httpx",
+    "psycopg", "alembic", "anthropic", "openai",
+]
+
+[[tool.importlinter.contracts]]
+name = "CLI, MCP and reporting cannot touch persistence or bypass commands"
+type = "forbidden"
+source_modules = ["eidos.cli", "eidos.mcp", "eidos.reporting", "eidos.tasks"]
+forbidden_modules = ["eidos.persistence", "eidos.orchestration", "sqlalchemy", "psycopg", "temporalio"]
+
+[[tool.importlinter.contracts]]
+name = "Investigator and orchestration hold no database access"
+type = "forbidden"
+source_modules = ["eidos.investigator", "eidos.orchestration", "eidos.runtime"]
+forbidden_modules = ["eidos.persistence", "sqlalchemy", "psycopg"]

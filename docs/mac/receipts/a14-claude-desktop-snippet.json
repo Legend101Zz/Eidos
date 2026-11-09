@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "eidos": {
+      "command": "/Volumes/Mrigesh SSD/eidos-mac/venvs/lab/bin/lab",
+      "args": [
+        "mcp"
+      ],
+      "env": {
+        "EIDOS_HOME": "/Volumes/Mrigesh SSD/eidos-mac/lab"
+      }
+    }
+  }
+}

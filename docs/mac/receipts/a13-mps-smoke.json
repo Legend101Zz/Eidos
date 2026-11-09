@@ -1,0 +1,212 @@
+{
+  "script": "mps_smoke.py",
+  "at": "2026-11-08T10:40:51Z",
+  "config": {
+    "steps": 45,
+    "seed": 41,
+    "builder": "OrderedSwitchNet",
+    "PYTORCH_ENABLE_MPS_FALLBACK": "1"
+  },
+  "python": "3.12.8",
+  "devices_report": {
+    "torch": "2.15.0",
+    "cpu": {
+      "available": true
+    },
+    "cuda": {
+      "available": false,
+      "count": 0,
+      "names": []
+    },
+    "mps": {
+      "available": true
+    },
+    "exact_restore_across_devices": false
+  },
+  "cpu": {
+    "device_requested": "cpu",
+    "torch": "2.15.0",
+    "available": true,
+    "device_actual": "cpu",
+    "wall_seconds": 1.0949,
+    "final_loss": 0.27576982975006104,
+    "eval_accuracy": 0.984000027179718,
+    "steps": 45,
+    "param_checksum": -13.047526029869914,
+    "param_l2": 9.808787036677273,
+    "deterministic_used": true,
+    "warnings": [],
+    "determinism": {
+      "requested": true,
+      "mode": "strict",
+      "nondeterministic_ops": []
+    },
+    "receipt_device": "cpu",
+    "fallback_lines_in_stderr": [],
+    "cpu_fallbacks": []
+  },
+  "mps": {
+    "device_requested": "mps",
+    "torch": "2.15.0",
+    "available": true,
+    "device_actual": "mps:0",
+    "wall_seconds": 1.626,
+    "final_loss": 0.27576982975006104,
+    "eval_accuracy": 0.984000027179718,
+    "steps": 45,
+    "param_checksum": -13.047526134178042,
+    "param_l2": 9.808787028046247,
+    "deterministic_used": true,
+    "warnings": [
+      "UserWarning: embedding_dense_backward_mps does not have a deterministic implementation, but you set 'torch.use_deterministic_algorithms(True, warn_only=True)'. You can file an issue at https://github.com/pytorch/pytorch/issues to help us prioritize adding deterministic support for this operation. (Triggered internally at /Users/runner/work/pytorch/pytorch/aten/src/ATen/Context.cpp:224.)"
+    ],
+    "determinism": {
+      "requested": true,
+      "mode": "warn-only",
+      "nondeterministic_ops": [
+        "embedding_dense_backward_mps does not have a deterministic implementation, but you set 'torch.use_deterministic_algorithms(True, warn_only=True)'. You can file an issue at https://github.com/pytorch/p"
+      ]
+    },
+    "receipt_device": "mps",
+    "fallback_lines_in_stderr": [],
+    "cpu_fallbacks": []
+  },
+  "comparison": {
+    "loss_tol": 0.005,
+    "acc_tol": 0.02,
+    "match_within_tolerance": true,
+    "abs_final_loss_diff": 0.0,
+    "abs_accuracy_diff": 0.0,
+    "param_checksum_diff": 1.043081283569336e-07,
+    "exact_equal": true
+  },
+  "checkpoint_across_devices": [
+    {
+      "first": "cpu",
+      "second": "cpu",
+      "split_step": 20,
+      "resumed_from_step": 20,
+      "end_step": 45,
+      "device_actual": "cpu",
+      "final_loss": 0.27576982975006104,
+      "eval_accuracy": 0.984000027179718,
+      "determinism": [
+        {
+          "requested": true,
+          "mode": "strict",
+          "nondeterministic_ops": []
+        },
+        {
+          "requested": true,
+          "mode": "strict",
+          "nondeterministic_ops": []
+        }
+      ],
+      "max_abs_param_diff_vs_uninterrupted": {
+        "cpu": 0.0,
+        "mps": 2.384185791015625e-07
+      },
+      "abs_final_loss_diff_vs_uninterrupted_same_device": 0.0,
+      "abs_accuracy_diff_vs_uninterrupted_same_device": 0.0,
+      "within_tolerance": true,
+      "exact_same_device_resume": true
+    },
+    {
+      "first": "mps",
+      "second": "mps",
+      "split_step": 20,
+      "resumed_from_step": 20,
+      "end_step": 45,
+      "device_actual": "mps:0",
+      "final_loss": 0.2757698893547058,
+      "eval_accuracy": 0.984000027179718,
+      "determinism": [
+        {
+          "requested": true,
+          "mode": "warn-only",
+          "nondeterministic_ops": [
+            "embedding_dense_backward_mps does not have a deterministic implementation, but you set 'torch.use_deterministic_algorithms(True, warn_only=True)'. You can file an issue at https://github.com/pytorch/p"
+          ]
+        },
+        {
+          "requested": true,
+          "mode": "warn-only",
+          "nondeterministic_ops": [
+            "embedding_dense_backward_mps does not have a deterministic implementation, but you set 'torch.use_deterministic_algorithms(True, warn_only=True)'. You can file an issue at https://github.com/pytorch/p"
+          ]
+        }
+      ],
+      "max_abs_param_diff_vs_uninterrupted": {
+        "cpu": 2.5331974029541016e-07,
+        "mps": 2.384185791015625e-07
+      },
+      "abs_final_loss_diff_vs_uninterrupted_same_device": 5.960464477539063e-08,
+      "abs_accuracy_diff_vs_uninterrupted_same_device": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "first": "mps",
+      "second": "cpu",
+      "split_step": 20,
+      "resumed_from_step": 20,
+      "end_step": 45,
+      "device_actual": "cpu",
+      "final_loss": 0.27576982975006104,
+      "eval_accuracy": 0.984000027179718,
+      "determinism": [
+        {
+          "requested": true,
+          "mode": "warn-only",
+          "nondeterministic_ops": [
+            "embedding_dense_backward_mps does not have a deterministic implementation, but you set 'torch.use_deterministic_algorithms(True, warn_only=True)'. You can file an issue at https://github.com/pytorch/p"
+          ]
+        },
+        {
+          "requested": true,
+          "mode": "strict",
+          "nondeterministic_ops": []
+        }
+      ],
+      "max_abs_param_diff_vs_uninterrupted": {
+        "cpu": 2.384185791015625e-07,
+        "mps": 2.384185791015625e-07
+      },
+      "abs_final_loss_diff_vs_uninterrupted_same_device": 0.0,
+      "abs_accuracy_diff_vs_uninterrupted_same_device": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "first": "cpu",
+      "second": "mps",
+      "split_step": 20,
+      "resumed_from_step": 20,
+      "end_step": 45,
+      "device_actual": "mps:0",
+      "final_loss": 0.27576979994773865,
+      "eval_accuracy": 0.984000027179718,
+      "determinism": [
+        {
+          "requested": true,
+          "mode": "strict",
+          "nondeterministic_ops": []
+        },
+        {
+          "requested": true,
+          "mode": "warn-only",
+          "nondeterministic_ops": [
+            "embedding_dense_backward_mps does not have a deterministic implementation, but you set 'torch.use_deterministic_algorithms(True, warn_only=True)'. You can file an issue at https://github.com/pytorch/p"
+          ]
+        }
+      ],
+      "max_abs_param_diff_vs_uninterrupted": {
+        "cpu": 2.384185791015625e-07,
+        "mps": 2.384185791015625e-07
+      },
+      "abs_final_loss_diff_vs_uninterrupted_same_device": 2.9802322387695312e-08,
+      "abs_accuracy_diff_vs_uninterrupted_same_device": 0.0,
+      "within_tolerance": true
+    }
+  ],
+  "ok": true,
+  "evidence": "researcher Mac: Apple M4 (10-core GPU), macOS 26.3.1, torch 2.15.0, research venv from research/public/development/requirements.lock; scripts/qualify/mps_smoke.py at 5813dc2"
+}

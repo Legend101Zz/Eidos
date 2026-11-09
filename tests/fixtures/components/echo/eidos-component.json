@@ -1,0 +1,2 @@
+{"id": "test.echo", "release": "1.0.0", "implements": "echo/1", "kind": "artifact-op", "entry": "echo:run",
+ "scientific_effects": ["observe"], "output": {"report": "echo-report/1"}, "summary": "echo config back (test fixture)"}

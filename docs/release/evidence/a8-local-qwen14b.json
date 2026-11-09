@@ -1,0 +1,66 @@
+{
+  "receipt": "eidos-a8-local-attempt/1",
+  "model": "openai-compatible:qwen2.5:14b-instruct",
+  "base_url": "http://127.0.0.1:11535/v1 (own Ollama 0.9.6 on the owner's M4, models on the SSD)",
+  "investigation": "inv-a8-162658",
+  "status": "stopped",
+  "turns": [
+    {
+      "seq": 1,
+      "status": "open",
+      "stop_reason": null,
+      "decisions": [
+        {
+          "slot": 0,
+          "accepted": false,
+          "calls": [],
+          "control": null,
+          "error": {
+            "code": "INVALID",
+            "details": {
+              "control": "wait_for_jobs",
+              "outstanding": 0
+            },
+            "message": "nothing to wait for: no jobs or evidence plans are outstanding for this investigation; run something, request input, or conclude",
+            "next_action": "Correct the request and retry with a new command key."
+          },
+          "usage": null
+        }
+      ]
+    }
+  ],
+  "jobs": [],
+  "budgets": {
+    "compute_seconds": {
+      "limit_amount": 6000.0,
+      "reserved": 0.0,
+      "uncertain": 0.0,
+      "used": 0.0
+    },
+    "model_tokens": {
+      "limit_amount": 1500000.0,
+      "reserved": 80000.0,
+      "uncertain": 0.0,
+      "used": 9247.0
+    },
+    "trials": {
+      "limit_amount": 60.0,
+      "reserved": 0.0,
+      "uncertain": 0.0,
+      "used": 0.0
+    },
+    "turns": {
+      "limit_amount": 6.0,
+      "reserved": 1.0,
+      "uncertain": 0.0,
+      "used": 0.0
+    }
+  },
+  "outcome": "FAILED honestly: in about 2 hours the model produced one decision in turn 1. It was refused (wait_for_jobs with nothing outstanding), and no job was admitted. Requests took 4-8 minutes each, with stalls. The operator stopped the run at 20:29 UTC and the driver's own 2-hour limit ended it. No A8 element was reached.",
+  "caps": {
+    "max_turns": 6,
+    "max_calls_per_turn": 2,
+    "max_requests_per_decision": 3,
+    "request_timeout_s": 900
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "name": "branch-undeclared-state",
+  "author_test": true,
+  "inputs": {
+    "parent_checkpoint": {
+      "file": "fixtures/data/parent-step6.ckpt",
+      "media_type": "application/octet-stream"
+    }
+  },
+  "config": {
+    "adapter": "eidos_adapter:ADAPTER",
+    "python_path": [
+      "fixtures/selftest"
+    ],
+    "builder": "OrderedSwitchNet",
+    "steps": 12,
+    "seed": 5,
+    "branch": {
+      "migration": {
+        "component.train-meta": "copy",
+        "data_cursor": "copy",
+        "model": "copy",
+        "rng.python": "copy",
+        "rng.torch": "copy",
+        "step": "copy"
+      },
+      "stream_policy": "paired"
+    }
+  },
+  "expect": {
+    "status": "failed",
+    "error_category": "user-code"
+  }
+}

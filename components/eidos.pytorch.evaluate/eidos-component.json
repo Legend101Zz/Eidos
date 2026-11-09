@@ -1,0 +1,65 @@
+{
+  "release": "1.0.0",
+  "kind": "artifact-op",
+  "requires": [
+    "artifact.reader/1",
+    "artifact.writer/1",
+    "pytorch.adapter/1"
+  ],
+  "optional": [],
+  "card": "method-card.md",
+  "python": ">=3.9",
+  "dependencies": [
+    "torch"
+  ],
+  "license": "Apache-2.0",
+  "id": "eidos.pytorch.evaluate",
+  "implements": "pytorch-evaluate/1",
+  "entry": "eidos_evaluate.evaluate:run",
+  "scientific_effects": [
+    "observe"
+  ],
+  "input": {
+    "checkpoint": "eidos-checkpoint/1"
+  },
+  "output": {
+    "predictions": "labeled-binary-pairs/1"
+  },
+  "reads": [
+    "checkpoint",
+    "project.adapter"
+  ],
+  "writes": [
+    "output:predictions"
+  ],
+  "isolation": "immutable-artifacts",
+  "controls": [
+    "fixtures/evaluate-small.json",
+    "fixtures/evaluate-unknown-builder.json"
+  ],
+  "receipt": [
+    "rows",
+    "split",
+    "cluster",
+    "input_checkpoint_step",
+    "builder",
+    "metrics"
+  ],
+  "metrics": {
+    "both_correct_rate": {
+      "identity": "paired-report/1:both-correct-rate",
+      "computed_by": "lab.pairs.by_group is authoritative; the receipt copy is a convenience",
+      "unit": "pair",
+      "direction": "increase"
+    },
+    "reference_accuracy": {
+      "identity": "paired-report/1:reference-accuracy",
+      "unit": "pair",
+      "direction": "increase"
+    }
+  },
+  "cost": {
+    "device": "project environment",
+    "examples": "adapter-defined evaluation size"
+  }
+}

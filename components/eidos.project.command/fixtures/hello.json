@@ -1,0 +1,18 @@
+{
+ "name": "runs an argv command and stages its output",
+ "inputs": {},
+ "config": {
+  "argv": [
+   "python",
+   "-c",
+   "import os; os.makedirs('{out}', exist_ok=True); open('{out}/hello.txt','w').write('hi')"
+  ]
+ },
+ "expect": {
+  "status": "succeeded",
+  "receipt": {
+   "returncode": 0
+  }
+ },
+ "author_test": true
+}

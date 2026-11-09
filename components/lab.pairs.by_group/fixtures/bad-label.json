@@ -1,0 +1,15 @@
+{
+  "name": "bad-label",
+  "author_test": true,
+  "inputs": {
+    "predictions": {
+      "text": "pair_id,reference_logit,variant_logit,reference_label,variant_label,stratum\n0,1,1,2,1,a\n",
+      "media_type": "text/csv"
+    }
+  },
+  "config": {},
+  "expect": {
+    "status": "failed",
+    "error_category": "contract"
+  }
+}

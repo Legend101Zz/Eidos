@@ -1,0 +1,53 @@
+{
+  "name": "opposite-labels",
+  "author_test": true,
+  "inputs": {
+    "predictions": {
+      "text": "pair_id,reference_logit,variant_logit,reference_label,variant_label,stratum\n0,2.0,-1.0,1,0,adjacent\n1,-0.5,0.5,0,1,adjacent\n2,1.0,1.0,1,0,far\n3,-1.0,-1.0,0,1,far\n",
+      "media_type": "text/csv"
+    }
+  },
+  "config": {},
+  "expect": {
+    "status": "succeeded",
+    "receipt": {
+      "input_rows": 4,
+      "unique_pairs": 4,
+      "rejected_rows": 0,
+      "group_counts": {
+        "adjacent": 2,
+        "far": 2
+      }
+    },
+    "outputs": {
+      "report": {
+        "json": {
+          "group_by": "stratum",
+          "overall": {
+            "pairs": 4,
+            "reference_correct": 4,
+            "both_correct": 2,
+            "reference_accuracy": 1.0,
+            "both_correct_rate": 0.5
+          },
+          "by_group": {
+            "adjacent": {
+              "pairs": 2,
+              "reference_correct": 2,
+              "both_correct": 2,
+              "reference_accuracy": 1.0,
+              "both_correct_rate": 1.0
+            },
+            "far": {
+              "pairs": 2,
+              "reference_correct": 2,
+              "both_correct": 0,
+              "reference_accuracy": 1.0,
+              "both_correct_rate": 0.0
+            }
+          }
+        }
+      }
+    }
+  }
+}

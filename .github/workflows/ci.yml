@@ -1,0 +1,430 @@
+name: ci
+
+on:
+  push:
+    branches: [main, build/eidos-local-v1, "task/**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_CACHE_DIR: /tmp/uv-cache
+  UV_LOCKED: "1"
+
+jobs:
+  lint-and-unit:
+    # Same-repo PRs are already built by the push trigger; run pull_request builds only for forks.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: true
+      - run: uv sync
+      - run: uv run ruff check src tests
+      - run: uv run lint-imports
+      - name: shellcheck (errors) over CI, qualification, journey and ops scripts
+        run: shellcheck -S error scripts/ci/*.sh scripts/qualify/*.sh scripts/qualify/mcp_clients/*.sh scripts/journeys/*.sh tests/journeys/*.sh tests/ops/*.sh
+      - run: uv run pytest tests/unit -q
+      - run: uv run pytest tests/mcp tests/reporting -q   # the live-lab MCP test is covered by the e2e-journey job
+
+  integration:
+    # Same-repo PRs are already built by the push trigger; run pull_request builds only for forks.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: devpass
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      EIDOS_TEST_PG_ADMIN: postgresql+psycopg://postgres:devpass@127.0.0.1:5432/postgres
+      EIDOS_TEMPORAL_CLI: /tmp/temporal/temporal
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: true
+      - run: uv sync
+      - name: Temporal CLI (dev server is used for workflow tests only)
+        run: |
+          mkdir -p /tmp/temporal
+          curl -fsSL "https://temporal.download/cli/archive/latest?platform=linux&arch=amd64" | tar xz -C /tmp/temporal
+      - run: uv run pytest tests/integration -q
+
+  worker-compat:
+    # Same-repo PRs are already built by the push trigger; run pull_request builds only for forks.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      EIDOS_COMPAT_ROOT: /tmp/compat
+      EIDOS_WHEELHOUSE: /tmp/wheelhouse
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: true
+      - run: EIDOS_WHEELHOUSE=/tmp/wheelhouse bash scripts/dev/fetch_cpu_torch.sh 2.15.0 cp312
+      - run: bash tests/worker_compat/run_matrix.sh
+
+  components:
+    # Same-repo PRs are already built by the push trigger; run pull_request builds only for forks.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    name: components (built-in component tests, CPU torch 2.15 + numpy)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CI_WORK: /tmp/eidos-components
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: true
+      - run: bash scripts/ci/components.sh
+      - name: Upload component test log on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: components-logs
+          path: /tmp/eidos-components/components.log
+          retention-days: 3
+          if-no-files-found: ignore
+
+  fresh-install:
+    # Same-repo PRs are already built by the push trigger; run pull_request builds only for forks.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    name: fresh-install (ubuntu-24.04, wheels in a clean venv, full lab lifecycle)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      UV_CACHE_DIR: /tmp/uv-cache
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        id: setup_uv
+        continue-on-error: true
+      - name: uv fallback, only when the GitHub release download is unavailable (other setup-uv failures fail the job)
+        if: steps.setup_uv.outcome == 'failure'
+        run: bash scripts/ci/uv_fallback.sh
+      - name: uv is available
+        run: uv --version
+      - name: Temporal archive cache location
+        run: echo "EIDOS_TEMPORAL_ARCHIVE_CACHE=$RUNNER_TEMP/eidos-temporal" >> "$GITHUB_ENV"
+      - name: Cache the pinned Temporal server archive (key covers the pinned version/digest table)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/eidos-temporal
+          key: eidos-temporal-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/eidos/supervisor/services.py') }}
+      - name: Temporal server (verified cache, pinned download, or source build via the Go module proxy)
+        run: bash scripts/ci/temporal_server.sh
+      - name: PostgreSQL 16 binaries
+        run: |
+          ls /usr/lib/postgresql/*/bin/initdb 2>/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-16; }
+          ls -d /usr/lib/postgresql/*/bin
+          echo "PG_BIN=$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -n1)" >> "$GITHUB_ENV"
+      - name: Build wheels, install into a fresh venv, lab init/start/doctor/project create/status/stop
+        run: bash scripts/ci/fresh_install.sh
+      - name: Upload lab logs and results on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fresh-install-logs
+          path: |
+            ${{ runner.temp }}/eidos-ci/lab/logs
+            ${{ runner.temp }}/eidos-ci/ci-results
+          retention-days: 3
+          if-no-files-found: ignore
+
+  macos-arm64-smoke:
+    # Same-repo PRs are already built by the push trigger; run pull_request builds only for forks.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    name: macOS arm64 GitHub-runner evidence (not researcher-machine qualification)
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      UV_CACHE_DIR: /tmp/uv-cache
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        id: setup_uv
+        continue-on-error: true
+      - name: uv fallback, only when the GitHub release download is unavailable (other setup-uv failures fail the job)
+        if: steps.setup_uv.outcome == 'failure'
+        run: bash scripts/ci/uv_fallback.sh
+      - name: uv is available
+        run: uv --version
+      - name: Temporal archive cache location
+        run: echo "EIDOS_TEMPORAL_ARCHIVE_CACHE=$RUNNER_TEMP/eidos-temporal" >> "$GITHUB_ENV"
+      - name: Cache the pinned Temporal server archive (key covers the pinned version/digest table)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/eidos-temporal
+          key: eidos-temporal-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/eidos/supervisor/services.py') }}
+      - name: Temporal server (verified cache, pinned download, or source build via the Go module proxy)
+        run: bash scripts/ci/temporal_server.sh
+      - name: Platform
+        run: |
+          uname -a; sw_vers; python3 -c 'import platform; print(platform.machine())'
+          test "$(uname -m)" = arm64
+      - name: Build wheels and install into a fresh venv
+        run: |
+          bash scripts/ci/build_and_install.sh
+          echo "${RUNNER_TEMP}/eidos-ci/venv/bin" >> "$GITHUB_PATH"
+      - name: Seatbelt candidate-sandbox probes (macos:seatbelt-sealed, with a same-user planted-effect control)
+        id: seatbelt
+        env:
+          OUT: ${{ runner.temp }}/eidos-ci/ci-results
+        run: '"${RUNNER_TEMP}/eidos-ci/venv/bin/python" scripts/ci/seatbelt_probes.py'
+      - name: Assessor under the host sealed profile (Seatbelt; planted-effect assessment + hostile probes)
+        id: assessor_seatbelt
+        env:
+          OUT: ${{ runner.temp }}/eidos-ci/ci-results
+        run: '"${RUNNER_TEMP}/eidos-ci/venv/bin/python" scripts/ci/assessor_sandbox_probe.py'
+      - name: PostgreSQL 16 (Homebrew)
+        run: |
+          brew install postgresql@16
+          echo "PG_BIN=$(brew --prefix postgresql@16)/bin" >> "$GITHUB_ENV"
+      # Lab steps are informational on macOS: a failure is recorded in the job summary, not hidden,
+      # but does not stop the SDK and research-release evidence below.
+      - name: lab init
+        id: lab_init
+        continue-on-error: true
+        run: bash scripts/ci/lab_cycle.sh init
+      - name: lab start
+        id: lab_start
+        if: steps.lab_init.outcome == 'success'
+        continue-on-error: true
+        run: bash scripts/ci/lab_cycle.sh start
+      - name: lab doctor
+        id: lab_doctor
+        if: steps.lab_start.outcome == 'success'
+        continue-on-error: true
+        run: bash scripts/ci/lab_cycle.sh doctor
+      - name: lab project create
+        id: lab_project
+        if: steps.lab_start.outcome == 'success'
+        continue-on-error: true
+        run: bash scripts/ci/lab_cycle.sh project
+      - name: lab status
+        id: lab_status
+        if: steps.lab_start.outcome == 'success'
+        continue-on-error: true
+        run: bash scripts/ci/lab_cycle.sh status
+      - name: lab stop
+        id: lab_stop
+        if: always() && steps.lab_start.outcome != 'skipped'
+        continue-on-error: true
+        run: bash scripts/ci/lab_cycle.sh stop
+      - name: Worker SDK tests (plain venv, eidos-wire + eidos-worker-sdk only)
+        run: bash scripts/ci/sdk_tests.sh
+      - name: Research-release reference smoke (development collection, CPU)
+        run: bash scripts/ci/research_smoke.sh
+      - name: Step results
+        if: always()
+        run: |
+          {
+            echo "### macOS arm64 GitHub-runner evidence, not researcher-machine qualification"
+            echo "| lab step | outcome |"; echo "|---|---|"
+            echo "| init | ${{ steps.lab_init.outcome }} |"
+            echo "| start | ${{ steps.lab_start.outcome }} |"
+            echo "| doctor | ${{ steps.lab_doctor.outcome }} |"
+            echo "| project create | ${{ steps.lab_project.outcome }} |"
+            echo "| status | ${{ steps.lab_status.outcome }} |"
+            echo "| stop | ${{ steps.lab_stop.outcome }} |"
+            echo "| seatbelt probes (not a lab step; required) | ${{ steps.seatbelt.outcome }} |"
+            echo "| assessor under seatbelt (required) | ${{ steps.assessor_seatbelt.outcome }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: macos-arm64-evidence
+          path: |
+            ${{ runner.temp }}/eidos-ci/ci-results
+            ${{ runner.temp }}/eidos-ci/lab/logs
+            ${{ runner.temp }}/research-smoke/**/*.json
+            ${{ runner.temp }}/research-smoke/pip_freeze.txt
+            ${{ runner.temp }}/research-smoke/python_version.txt
+            !${{ runner.temp }}/research-smoke/venv/**
+          retention-days: 3
+          if-no-files-found: ignore
+
+  upgrade-across-releases:
+    # Same-repo PRs are already built by the push trigger; run pull_request builds only for forks.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    name: upgrade-across-releases (eidos-v0.1.0 wheels -> head, same lab directory)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      UV_CACHE_DIR: /tmp/uv-cache
+      OLD_TAG: eidos-v0.1.0
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        id: setup_uv
+        continue-on-error: true
+      - name: uv fallback, only when the GitHub release download is unavailable (other setup-uv failures fail the job)
+        if: steps.setup_uv.outcome == 'failure'
+        run: bash scripts/ci/uv_fallback.sh
+      - name: uv is available
+        run: uv --version
+      - name: Temporal archive cache location
+        run: echo "EIDOS_TEMPORAL_ARCHIVE_CACHE=$RUNNER_TEMP/eidos-temporal" >> "$GITHUB_ENV"
+      - name: Cache the pinned Temporal server archive (key covers the pinned version/digest table)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/eidos-temporal
+          key: eidos-temporal-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/eidos/supervisor/services.py') }}
+      - name: Temporal server (verified cache, pinned download, or source build via the Go module proxy)
+        run: EXTRACT_TO_SOURCE=1 bash scripts/ci/temporal_server.sh
+      - name: PostgreSQL 16 binaries
+        run: |
+          ls /usr/lib/postgresql/*/bin/initdb 2>/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-16; }
+          echo "PG_BIN=$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -n1)" >> "$GITHUB_ENV"
+      - name: Old release lab with real data, upgrade in place, verify
+        run: bash scripts/ci/upgrade_across_releases.sh
+      - name: Upload result and lab logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: upgrade-across-releases
+          path: |
+            ${{ runner.temp }}/eidos-upgrade/out
+            ${{ runner.temp }}/eidos-upgrade/lab/logs
+          retention-days: 3
+          if-no-files-found: ignore
+
+  e2e-journey:
+    # Same-repo PRs are already built by the push trigger; run pull_request builds only for forks.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    name: e2e-journey (clean wheel install; lab CLI + MCP SDK client; D01 bundle, branch, export)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      UV_CACHE_DIR: /tmp/uv-cache
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        id: setup_uv
+        continue-on-error: true
+      - name: uv fallback, only when the GitHub release download is unavailable (other setup-uv failures fail the job)
+        if: steps.setup_uv.outcome == 'failure'
+        run: bash scripts/ci/uv_fallback.sh
+      - name: uv is available
+        run: uv --version
+      - name: Temporal archive cache location
+        run: echo "EIDOS_TEMPORAL_ARCHIVE_CACHE=$RUNNER_TEMP/eidos-temporal" >> "$GITHUB_ENV"
+      - name: Cache the pinned Temporal server archive (key covers the pinned version/digest table)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/eidos-temporal
+          key: eidos-temporal-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/eidos/supervisor/services.py') }}
+      - name: Temporal server (verified cache, pinned download, or source build via the Go module proxy)
+        run: bash scripts/ci/temporal_server.sh
+      - name: PostgreSQL 16 binaries
+        run: |
+          ls /usr/lib/postgresql/*/bin/initdb 2>/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-16; }
+          echo "PG_BIN=$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -n1)" >> "$GITHUB_ENV"
+      - name: Journey (builds the CPU torch research env, installs wheels, drives CLI and MCP)
+        run: bash scripts/journeys/e2e_journey.sh
+      - name: Upload record, reports and lab logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-journey
+          path: |
+            ${{ runner.temp }}/eidos-e2e/out/journey-record.json
+            ${{ runner.temp }}/eidos-e2e/out/doctor.json
+            ${{ runner.temp }}/eidos-e2e/out/report
+            ${{ runner.temp }}/eidos-e2e/out/report-sw1
+            ${{ runner.temp }}/eidos-e2e/out/D01-answer/answer.json
+            ${{ runner.temp }}/eidos-e2e/lab/logs
+          retention-days: 3
+          if-no-files-found: ignore
+
+  switch-journey:
+    # Same-repo PRs are already built by the push trigger; run pull_request builds only for forks.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    name: switch-journey (clean wheel install; the full 154-check switch-order acceptance journey, CPU torch)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      UV_CACHE_DIR: /tmp/uv-cache
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        id: setup_uv
+        continue-on-error: true
+      - name: uv fallback, only when the GitHub release download is unavailable (other setup-uv failures fail the job)
+        if: steps.setup_uv.outcome == 'failure'
+        run: bash scripts/ci/uv_fallback.sh
+      - name: uv is available
+        run: uv --version
+      - name: Temporal archive cache location
+        run: echo "EIDOS_TEMPORAL_ARCHIVE_CACHE=$RUNNER_TEMP/eidos-temporal" >> "$GITHUB_ENV"
+      - name: Cache the pinned Temporal server archive (key covers the pinned version/digest table)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/eidos-temporal
+          key: eidos-temporal-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/eidos/supervisor/services.py') }}
+      - name: Temporal server (verified cache, pinned download, or source build via the Go module proxy)
+        run: bash scripts/ci/temporal_server.sh
+      - name: PostgreSQL 16 binaries
+        run: |
+          ls /usr/lib/postgresql/*/bin/initdb 2>/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-16; }
+          echo "PG_BIN=$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -n1)" >> "$GITHUB_ENV"
+      - name: Switch-order acceptance journey (steps 1-7)
+        run: bash tests/journeys/run_ci.sh
+      - name: Upload record and lab logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: switch-journey
+          path: |
+            ${{ runner.temp }}/eidos-switch/out
+            ${{ runner.temp }}/eidos-switch/lab/logs
+          retention-days: 3
+          if-no-files-found: ignore
+
+  temporal-source-fallback:
+    # Proves the CDN-independent path: build the pinned server from source (Go module proxy, go.sum-verified)
+    # and run the full lab lifecycle on it; lab doctor reports provenance operator-supplied/source-built.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    name: temporal-source-fallback (pinned server built from source, full lab lifecycle)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: uv from PyPI (pinned; no GitHub release download)
+        run: |
+          python3 -m pip install --user --break-system-packages uv==0.13.7 || python3 -m pip install --user uv==0.13.7
+          echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
+      - name: PostgreSQL 16 binaries
+        run: |
+          ls /usr/lib/postgresql/*/bin/initdb 2>/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-16; }
+      - name: Build the pinned Temporal server from source
+        run: FORCE_SOURCE_BUILD=1 bash scripts/ci/temporal_server.sh
+      - name: Lab lifecycle on the source-built server
+        run: |
+          bash scripts/ci/build_and_install.sh
+          export PATH="$RUNNER_TEMP/eidos-ci/venv/bin:$PATH"
+          bash scripts/ci/lab_cycle.sh all
+          grep -q '"source-built"' "$RUNNER_TEMP/eidos-ci/lab/services/temporal/provenance.json"
+          grep -q 'provenance: operator-supplied' "$RUNNER_TEMP/eidos-ci/ci-results/doctor.json"
+

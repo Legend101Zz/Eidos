@@ -1,0 +1,3 @@
+{"id": "journey.conflict-torch99", "release": "1.0.0", "implements": "journey-noop/1", "kind": "artifact-op",
+ "entry": "noop:run", "scientific_effects": ["observe"], "output": {"report": "journey-noop-report/1"},
+ "dependencies": ["torch>=99"], "summary": "journey fixture: pins a torch version no project environment has"}

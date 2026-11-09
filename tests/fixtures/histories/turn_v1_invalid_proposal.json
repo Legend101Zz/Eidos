@@ -1,0 +1,618 @@
+{
+  "events": [
+    {
+      "eventId": "1",
+      "eventTime": "2026-11-07T20:41:59.606844033Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+      "taskId": "1048587",
+      "workflowExecutionStartedEventAttributes": {
+        "workflowType": {
+          "name": "TurnWorkflow"
+        },
+        "taskQueue": {
+          "name": "eidos-workflows",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJpbmRleCI6MSwiaW52ZXN0aWdhdGlvbl9pZCI6ImkiLCJwcm9qZWN0X2lkIjoicCJ9"
+            }
+          ]
+        },
+        "workflowTaskTimeout": "10s",
+        "originalExecutionRunId": "01a1b7bf-2436-7cdd-b1b0-5dac53727c5d",
+        "identity": "4315@vm",
+        "firstExecutionRunId": "01a1b7bf-2436-7cdd-b1b0-5dac53727c5d",
+        "attempt": 1,
+        "firstWorkflowTaskBackoff": "0s",
+        "workflowId": "t-99a49f",
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "2",
+      "eventTime": "2026-11-07T20:41:59.606921379Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "taskId": "1048588",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "eidos-workflows",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "3",
+      "eventTime": "2026-11-07T20:41:59.621711555Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "taskId": "1048593",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "2",
+        "identity": "4315@vm",
+        "requestId": "36a7ec78-c427-4e71-ad38-f1d2cc7169e1",
+        "historySizeBytes": "309",
+        "workerVersion": {
+          "buildId": "38b8efe6c6921d34fd4c75e057a982d1"
+        }
+      }
+    },
+    {
+      "eventId": "4",
+      "eventTime": "2026-11-07T20:41:59.632387161Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "taskId": "1048597",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "2",
+        "startedEventId": "3",
+        "identity": "4315@vm",
+        "workerVersion": {
+          "buildId": "38b8efe6c6921d34fd4c75e057a982d1"
+        },
+        "sdkMetadata": {
+          "coreUsedFlags": [
+            3,
+            1,
+            2,
+            4
+          ],
+          "sdkName": "temporal-python",
+          "sdkVersion": "1.35.0"
+        },
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "5",
+      "eventTime": "2026-11-07T20:41:59.632636761Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "taskId": "1048598",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "1",
+        "activityType": {
+          "name": "begin_turn"
+        },
+        "taskQueue": {
+          "name": "eidos-investigator",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJpbmRleCI6MSwiaW52ZXN0aWdhdGlvbl9pZCI6ImkiLCJwcm9qZWN0X2lkIjoicCJ9"
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "0s",
+        "scheduleToStartTimeout": "0s",
+        "startToCloseTimeout": "60s",
+        "heartbeatTimeout": "0s",
+        "workflowTaskCompletedEventId": "4",
+        "retryPolicy": {
+          "initialInterval": "1s",
+          "backoffCoefficient": 2.0,
+          "maximumInterval": "30s",
+          "maximumAttempts": 5,
+          "nonRetryableErrorTypes": [
+            "PAYLOAD_TOO_LARGE",
+            "FORBIDDEN",
+            "INVALID",
+            "NonRetryable"
+          ]
+        },
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "6",
+      "eventTime": "2026-11-07T20:41:59.635662232Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "taskId": "1048605",
+      "activityTaskStartedEventAttributes": {
+        "scheduledEventId": "5",
+        "identity": "4315@vm",
+        "requestId": "325f02b8-42b5-40c3-942d-e4682eb729b5",
+        "attempt": 1,
+        "workerVersion": {
+          "buildId": "38b8efe6c6921d34fd4c75e057a982d1"
+        }
+      }
+    },
+    {
+      "eventId": "7",
+      "eventTime": "2026-11-07T20:41:59.641174300Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "taskId": "1048606",
+      "activityTaskCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJtYXhfbW9kZWxfY2FsbHMiOjMsInN0YXJ0ZWQiOnRydWUsInR1cm5faWQiOiJ0MSJ9"
+            }
+          ]
+        },
+        "scheduledEventId": "5",
+        "startedEventId": "6",
+        "identity": "4315@vm"
+      }
+    },
+    {
+      "eventId": "8",
+      "eventTime": "2026-11-07T20:41:59.641290846Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "taskId": "1048607",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "4315@vm-7c5ecf009de646aa86777ab603949844",
+          "kind": "TASK_QUEUE_KIND_STICKY",
+          "normalName": "eidos-workflows"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "9",
+      "eventTime": "2026-11-07T20:41:59.643619433Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "taskId": "1048611",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "8",
+        "identity": "4315@vm",
+        "requestId": "09a9cad6-fef2-4e23-858f-dd2f2724bd0c",
+        "historySizeBytes": "1103",
+        "workerVersion": {
+          "buildId": "38b8efe6c6921d34fd4c75e057a982d1"
+        }
+      }
+    },
+    {
+      "eventId": "10",
+      "eventTime": "2026-11-07T20:41:59.648389220Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "taskId": "1048615",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "8",
+        "startedEventId": "9",
+        "identity": "4315@vm",
+        "workerVersion": {
+          "buildId": "38b8efe6c6921d34fd4c75e057a982d1"
+        },
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "11",
+      "eventTime": "2026-11-07T20:41:59.648433452Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "taskId": "1048616",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "2",
+        "activityType": {
+          "name": "build_context"
+        },
+        "taskQueue": {
+          "name": "eidos-investigator",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJpbnZlc3RpZ2F0aW9uX2lkIjoiaSIsInByb2plY3RfaWQiOiJwIiwidHVybl9pZCI6InQxIn0="
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "0s",
+        "scheduleToStartTimeout": "0s",
+        "startToCloseTimeout": "60s",
+        "heartbeatTimeout": "0s",
+        "workflowTaskCompletedEventId": "10",
+        "retryPolicy": {
+          "initialInterval": "1s",
+          "backoffCoefficient": 2.0,
+          "maximumInterval": "30s",
+          "maximumAttempts": 5,
+          "nonRetryableErrorTypes": [
+            "PAYLOAD_TOO_LARGE",
+            "FORBIDDEN",
+            "INVALID",
+            "NonRetryable"
+          ]
+        },
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "12",
+      "eventTime": "2026-11-07T20:41:59.651008395Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "taskId": "1048622",
+      "activityTaskStartedEventAttributes": {
+        "scheduledEventId": "11",
+        "identity": "4315@vm",
+        "requestId": "2e280971-b7c5-41f5-9cb2-69e4e75daf29",
+        "attempt": 1,
+        "workerVersion": {
+          "buildId": "38b8efe6c6921d34fd4c75e057a982d1"
+        }
+      }
+    },
+    {
+      "eventId": "13",
+      "eventTime": "2026-11-07T20:41:59.654044584Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "taskId": "1048623",
+      "activityTaskCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "e30="
+            }
+          ]
+        },
+        "scheduledEventId": "11",
+        "startedEventId": "12",
+        "identity": "4315@vm"
+      }
+    },
+    {
+      "eventId": "14",
+      "eventTime": "2026-11-07T20:41:59.654059764Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "taskId": "1048624",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "4315@vm-7c5ecf009de646aa86777ab603949844",
+          "kind": "TASK_QUEUE_KIND_STICKY",
+          "normalName": "eidos-workflows"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "15",
+      "eventTime": "2026-11-07T20:41:59.655691369Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "taskId": "1048628",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "14",
+        "identity": "4315@vm",
+        "requestId": "e9ea66d5-7e26-4b14-b291-d2942303aa80",
+        "historySizeBytes": "1825",
+        "workerVersion": {
+          "buildId": "38b8efe6c6921d34fd4c75e057a982d1"
+        }
+      }
+    },
+    {
+      "eventId": "16",
+      "eventTime": "2026-11-07T20:41:59.660449182Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "taskId": "1048632",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "14",
+        "startedEventId": "15",
+        "identity": "4315@vm",
+        "workerVersion": {
+          "buildId": "38b8efe6c6921d34fd4c75e057a982d1"
+        },
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "17",
+      "eventTime": "2026-11-07T20:41:59.660494116Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "taskId": "1048633",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "3",
+        "activityType": {
+          "name": "decide"
+        },
+        "taskQueue": {
+          "name": "eidos-investigator",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJpbnZlc3RpZ2F0aW9uX2lkIjoiaSIsInByb2plY3RfaWQiOiJwIiwic2xvdCI6MCwidHVybl9pZCI6InQxIn0="
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "0s",
+        "scheduleToStartTimeout": "0s",
+        "startToCloseTimeout": "60s",
+        "heartbeatTimeout": "0s",
+        "workflowTaskCompletedEventId": "16",
+        "retryPolicy": {
+          "initialInterval": "2s",
+          "backoffCoefficient": 2.0,
+          "maximumInterval": "60s",
+          "maximumAttempts": 3,
+          "nonRetryableErrorTypes": [
+            "PAYLOAD_TOO_LARGE",
+            "FORBIDDEN",
+            "INVALID",
+            "NonRetryable"
+          ]
+        },
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "18",
+      "eventTime": "2026-11-07T20:41:59.662153154Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "taskId": "1048639",
+      "activityTaskStartedEventAttributes": {
+        "scheduledEventId": "17",
+        "identity": "4315@vm",
+        "requestId": "6ccffbe1-d89b-4a84-9c72-43462d667c8e",
+        "attempt": 1,
+        "workerVersion": {
+          "buildId": "38b8efe6c6921d34fd4c75e057a982d1"
+        }
+      }
+    },
+    {
+      "eventId": "19",
+      "eventTime": "2026-11-07T20:41:59.664848211Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "taskId": "1048640",
+      "activityTaskCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJhY2NlcHRlZCI6ZmFsc2UsImRlY2lzaW9uX2lkIjoiZCIsInJlYXNvbiI6ImludmFsaWQifQ=="
+            }
+          ]
+        },
+        "scheduledEventId": "17",
+        "startedEventId": "18",
+        "identity": "4315@vm"
+      }
+    },
+    {
+      "eventId": "20",
+      "eventTime": "2026-11-07T20:41:59.664860988Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "taskId": "1048641",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "4315@vm-7c5ecf009de646aa86777ab603949844",
+          "kind": "TASK_QUEUE_KIND_STICKY",
+          "normalName": "eidos-workflows"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "21",
+      "eventTime": "2026-11-07T20:41:59.666431506Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "taskId": "1048645",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "20",
+        "identity": "4315@vm",
+        "requestId": "054e737e-3a75-4d2f-a6fb-fefd21605605",
+        "historySizeBytes": "2602",
+        "workerVersion": {
+          "buildId": "38b8efe6c6921d34fd4c75e057a982d1"
+        }
+      }
+    },
+    {
+      "eventId": "22",
+      "eventTime": "2026-11-07T20:41:59.670806391Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "taskId": "1048649",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "20",
+        "startedEventId": "21",
+        "identity": "4315@vm",
+        "workerVersion": {
+          "buildId": "38b8efe6c6921d34fd4c75e057a982d1"
+        },
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "23",
+      "eventTime": "2026-11-07T20:41:59.670839173Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "taskId": "1048650",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "4",
+        "activityType": {
+          "name": "complete_turn"
+        },
+        "taskQueue": {
+          "name": "eidos-investigator",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJpbnZlc3RpZ2F0aW9uX2lkIjoiaSIsInByb2plY3RfaWQiOiJwIiwic3RvcF9yZWFzb24iOiJlcnJvciIsInR1cm5faWQiOiJ0MSJ9"
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "0s",
+        "scheduleToStartTimeout": "0s",
+        "startToCloseTimeout": "60s",
+        "heartbeatTimeout": "0s",
+        "workflowTaskCompletedEventId": "22",
+        "retryPolicy": {
+          "initialInterval": "1s",
+          "backoffCoefficient": 2.0,
+          "maximumInterval": "30s",
+          "maximumAttempts": 5,
+          "nonRetryableErrorTypes": [
+            "PAYLOAD_TOO_LARGE",
+            "FORBIDDEN",
+            "INVALID",
+            "NonRetryable"
+          ]
+        },
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "24",
+      "eventTime": "2026-11-07T20:41:59.672423719Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "taskId": "1048656",
+      "activityTaskStartedEventAttributes": {
+        "scheduledEventId": "23",
+        "identity": "4315@vm",
+        "requestId": "35b24311-b7fe-43b2-b300-26103acde1cb",
+        "attempt": 1,
+        "workerVersion": {
+          "buildId": "38b8efe6c6921d34fd4c75e057a982d1"
+        }
+      }
+    },
+    {
+      "eventId": "25",
+      "eventTime": "2026-11-07T20:41:59.675482844Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "taskId": "1048657",
+      "activityTaskCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJzdGF0dXMiOiJjb21wbGV0ZWQifQ=="
+            }
+          ]
+        },
+        "scheduledEventId": "23",
+        "startedEventId": "24",
+        "identity": "4315@vm"
+      }
+    },
+    {
+      "eventId": "26",
+      "eventTime": "2026-11-07T20:41:59.675495889Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "taskId": "1048658",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "4315@vm-7c5ecf009de646aa86777ab603949844",
+          "kind": "TASK_QUEUE_KIND_STICKY",
+          "normalName": "eidos-workflows"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "27",
+      "eventTime": "2026-11-07T20:41:59.676920371Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "taskId": "1048662",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "26",
+        "identity": "4315@vm",
+        "requestId": "3d682e63-ecdb-4d0e-86e6-424fc6567d29",
+        "historySizeBytes": "3366",
+        "workerVersion": {
+          "buildId": "38b8efe6c6921d34fd4c75e057a982d1"
+        }
+      }
+    },
+    {
+      "eventId": "28",
+      "eventTime": "2026-11-07T20:41:59.680479899Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "taskId": "1048666",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "26",
+        "startedEventId": "27",
+        "identity": "4315@vm",
+        "workerVersion": {
+          "buildId": "38b8efe6c6921d34fd4c75e057a982d1"
+        },
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "29",
+      "eventTime": "2026-11-07T20:41:59.680579930Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+      "taskId": "1048667",
+      "workflowExecutionCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJzdGFydGVkIjp0cnVlLCJzdG9wX3JlYXNvbiI6ImVycm9yIn0="
+            }
+          ]
+        },
+        "workflowTaskCompletedEventId": "28"
+      }
+    }
+  ]
+}

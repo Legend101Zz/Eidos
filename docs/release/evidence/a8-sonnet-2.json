@@ -1,0 +1,1411 @@
+{
+  "a8_live": true,
+  "api_url": "http://127.0.0.1:18765",
+  "artifacts": {},
+  "base_url": null,
+  "budgets": {
+    "compute_seconds": {
+      "limit_amount": 6000.0,
+      "reserved": 0.0,
+      "uncertain": 0.0,
+      "used": 24.642
+    },
+    "model_tokens": {
+      "limit_amount": 1500000.0,
+      "reserved": 0.0,
+      "uncertain": 0.0,
+      "used": 876540.0
+    },
+    "model_usd": {
+      "limit_amount": 3.2,
+      "reserved": 0.0,
+      "uncertain": 0.0,
+      "used": 2.041168
+    },
+    "trials": {
+      "limit_amount": 60.0,
+      "reserved": 0.0,
+      "uncertain": 0.0,
+      "used": 14.0
+    },
+    "turns": {
+      "limit_amount": 18.0,
+      "reserved": 0.0,
+      "uncertain": 0.0,
+      "used": 11.0
+    }
+  },
+  "call_results": [
+    {
+      "ok": true,
+      "result": {
+        "component": "eidos.pytorch.train@1.2.0",
+        "job_id": "job_a8d75f7508404942",
+        "lock_digest": "sha256:38f19d7f6aedf6c3ac6f27985dd6f61b1b7388cb488fc20731233bddf979bced",
+        "trial_id": "trial_a8d75f7508404942"
+      },
+      "tool": "run_component",
+      "turn": 1
+    },
+    {
+      "ok": true,
+      "result": {
+        "component": "eidos.pytorch.evaluate@1.0.0",
+        "job_id": "job_3aba5f1ebf6e4d3b",
+        "lock_digest": "sha256:631425f975aba4b903e10f98deea259b86447bbb9cd3debd2b4b1b598228e69a",
+        "trial_id": "trial_3aba5f1ebf6e4d3b"
+      },
+      "tool": "run_component",
+      "turn": 2
+    },
+    {
+      "ok": true,
+      "result": {
+        "component": "lab.pairs.by_group@1.0.0",
+        "job_id": "job_3d043754bbe44e3d",
+        "lock_digest": "sha256:6280e21be4ea6fdd28ce3385c18240d5a4f4f5daef45781655d795ac0cdbed87",
+        "trial_id": "trial_3d043754bbe44e3d"
+      },
+      "tool": "run_component",
+      "turn": 3
+    },
+    {
+      "ok": true,
+      "result": {
+        "bundle_artifact_id": "art_82bb30dba3204c04",
+        "component_ref": "invest.pairs.margin-probe@1.0.0",
+        "job_id": "job_4c649f654efc4185"
+      },
+      "tool": "author_component",
+      "turn": 3
+    },
+    {
+      "ok": true,
+      "result": {
+        "component_ref": "invest.pairs.margin-probe@1.0.0",
+        "digest": "sha256:3fc727099f7993b001f8b0d76866708ffd2d9977dc891d0de9f5b3714e325318"
+      },
+      "tool": "publish_component",
+      "turn": 4
+    },
+    {
+      "ok": true,
+      "result": {
+        "lock_digest": "sha256:129347b6332a8078f33d0c4a85d9ff1f61f452c2266fb1406acb91d2b1f36541",
+        "trial_id": "trial_3630b8d2cc92482c"
+      },
+      "tool": "plan_trial",
+      "turn": 4
+    },
+    {
+      "code": "INVALID",
+      "error": "{\"code\": \"INVALID\", \"details\": {\"actions\": [\"copy\", \"transform\", \"init\", \"drop\"], \"example\": {\"intervention\": {\"component_ref\": \"<release ref>\", \"config\": {}, \"kind\": \"change-weights\"}, \"migration\": {\"component.train-meta\": \"copy\", \"data_cursor\": \"copy\", \"model\": \"copy\", \"optimizer\": \"copy\", \"rng.mps\": \"copy\", \"rng.numpy\": \"copy\", \"rng.python\": \"copy\", \"rng.torch\": \"copy\", \"step\": \"copy\"}}, \"parent_state_entries\": [\"component.train-meta\", \"data_cursor\", \"model\", \"optimizer\", \"rng.mps\", \"rng.numpy\", \"rng.python\", \"rng.torch\", \"step\"], \"problems\": [\"undeclared parent state: ['component.train-met...(truncated)",
+      "ok": false,
+      "tool": "plan_branch",
+      "turn": 4
+    },
+    {
+      "ok": true,
+      "result": {
+        "job_id": "job_3630b8d2cc92482c",
+        "lock_digest": "sha256:129347b6332a8078f33d0c4a85d9ff1f61f452c2266fb1406acb91d2b1f36541",
+        "trial_id": "trial_3630b8d2cc92482c"
+      },
+      "tool": "launch_trial",
+      "turn": 4
+    },
+    {
+      "ok": true,
+      "result": {
+        "branch_id": "branch:trial_d8fc34cc23804753",
+        "cost": {
+          "additional_budget": {},
+          "inherited": {
+            "steps": 45
+          }
+        },
+        "independence_unit": "trial_a8d75f7508404942",
+        "lock_digest": "sha256:da088bbf3e1eda1e3bbca4617afa45a20f5999aa1fddcc43228535c11502d49c",
+        "restore_class": "warm-start",
+        "trial_id": "trial_d8fc34cc23804753"
+      },
+      "tool": "plan_branch",
+      "turn": 4
+    },
+    {
+      "ok": true,
+      "result": {
+        "component": "invest.pairs.margin-probe@1.0.0",
+        "job_id": "job_0ee3906e0f774e82",
+        "lock_digest": "sha256:93a7ff1980cd48c157c0376f89247ced9e5cf294e39c0863b2a27d627c509ae8",
+        "trial_id": "trial_0ee3906e0f774e82"
+      },
+      "tool": "run_component",
+      "turn": 4
+    },
+    {
+      "ok": true,
+      "result": {
+        "job_id": "job_d8fc34cc23804753",
+        "lock_digest": "sha256:da088bbf3e1eda1e3bbca4617afa45a20f5999aa1fddcc43228535c11502d49c",
+        "trial_id": "trial_d8fc34cc23804753"
+      },
+      "tool": "launch_branch",
+      "turn": 5
+    },
+    {
+      "ok": true,
+      "result": {
+        "component": "eidos.pytorch.evaluate@1.0.0",
+        "job_id": "job_6ce75a23b6d74970",
+        "lock_digest": "sha256:e7a3624410ea71271c94d9cdc82d72c7e32425ebdf7b94465f0347ba828f888f",
+        "trial_id": "trial_6ce75a23b6d74970"
+      },
+      "tool": "run_component",
+      "turn": 6
+    },
+    {
+      "ok": true,
+      "result": {
+        "branch_id": "branch:trial_fa32cfd0a9d64b82",
+        "cost": {
+          "additional_budget": {},
+          "inherited": {
+            "steps": 45
+          }
+        },
+        "independence_unit": "trial_a8d75f7508404942",
+        "lock_digest": "sha256:ad921fcd140dcdab57088f301f8b8742b77b76efce47e71532e3145e546ef199",
+        "restore_class": "warm-start",
+        "trial_id": "trial_fa32cfd0a9d64b82"
+      },
+      "tool": "plan_branch",
+      "turn": 6
+    },
+    {
+      "ok": true,
+      "result": {
+        "job_id": "job_fa32cfd0a9d64b82",
+        "lock_digest": "sha256:ad921fcd140dcdab57088f301f8b8742b77b76efce47e71532e3145e546ef199",
+        "trial_id": "trial_fa32cfd0a9d64b82"
+      },
+      "tool": "launch_branch",
+      "turn": 7
+    },
+    {
+      "ok": true,
+      "result": {
+        "component": "lab.pairs.by_group@1.0.0",
+        "job_id": "job_b8a46a78fa1649f0",
+        "lock_digest": "sha256:69dbfa0b1a5c677ae1c58e868cd079b0c38dd11ebfa8c3a0084d6c0235e296ee",
+        "trial_id": "trial_b8a46a78fa1649f0"
+      },
+      "tool": "run_component",
+      "turn": 7
+    },
+    {
+      "ok": true,
+      "result": {
+        "branch_id": "branch:trial_8cd7f5918d0f4cdc",
+        "cost": {
+          "additional_budget": {},
+          "inherited": {
+            "steps": 45
+          }
+        },
+        "independence_unit": "trial_a8d75f7508404942",
+        "lock_digest": "sha256:7d1befe34388effcf7b276926cfce124beb5c0c767b7db52c7ea68e35358d77a",
+        "restore_class": "warm-start",
+        "trial_id": "trial_8cd7f5918d0f4cdc"
+      },
+      "tool": "plan_branch",
+      "turn": 8
+    },
+    {
+      "ok": true,
+      "result": {
+        "job_id": "job_8cd7f5918d0f4cdc",
+        "lock_digest": "sha256:7d1befe34388effcf7b276926cfce124beb5c0c767b7db52c7ea68e35358d77a",
+        "trial_id": "trial_8cd7f5918d0f4cdc"
+      },
+      "tool": "launch_branch",
+      "turn": 8
+    },
+    {
+      "ok": true,
+      "result": {
+        "component": "eidos.pytorch.evaluate@1.0.0",
+        "job_id": "job_15908ae0dd324612",
+        "lock_digest": "sha256:7f79565bfe29617c90c430806d68c3fb93cf6a95251c53712be870b478bcb377",
+        "trial_id": "trial_15908ae0dd324612"
+      },
+      "tool": "run_component",
+      "turn": 9
+    },
+    {
+      "ok": true,
+      "result": {
+        "claim_id": "claim_323af8f338cb",
+        "revision": 1
+      },
+      "tool": "file_claim",
+      "turn": 10
+    },
+    {
+      "ok": true,
+      "result": {
+        "component": "lab.pairs.by_group@1.0.0",
+        "job_id": "job_bad35bd6e1e549ba",
+        "lock_digest": "sha256:6b2f4c8c3bdd63c76938279de4a058933305815a7d1f407b2171ba8f75070ccd",
+        "trial_id": "trial_bad35bd6e1e549ba"
+      },
+      "tool": "run_component",
+      "turn": 10
+    },
+    {
+      "ok": true,
+      "result": {
+        "component": "eidos.pytorch.behavior-check@1.0.0",
+        "job_id": "job_843a0bd0e955450f",
+        "lock_digest": "sha256:2d275c6fb54aee8db7c9c3172e1f45f267ae733f6fc8a05f740ced20ebdc3086",
+        "trial_id": "trial_843a0bd0e955450f"
+      },
+      "tool": "run_component",
+      "turn": 10
+    }
+  ],
+  "caps": {
+    "max_calls_per_turn": 2,
+    "max_output_tokens": 4096,
+    "max_req_per_decision": 4,
+    "max_turns": 18,
+    "model_tokens": 1500000,
+    "model_usd": 3.2
+  },
+  "defects": [],
+  "evidence_plans": [],
+  "export_load": {
+    "ok": false
+  },
+  "investigation": "inv-a8-159870",
+  "investigation_final": {
+    "conclusion": null,
+    "needs_input": null,
+    "status": "stopped"
+  },
+  "jobs": [
+    {
+      "component": "eidos.pytorch.train@1.2.0",
+      "id": "job_a8d75f7508404942",
+      "kind": "artifact-op",
+      "purpose": null,
+      "status": "succeeded"
+    },
+    {
+      "component": "eidos.pytorch.evaluate@1.0.0",
+      "id": "job_3aba5f1ebf6e4d3b",
+      "kind": "artifact-op",
+      "purpose": null,
+      "status": "succeeded"
+    },
+    {
+      "component": "lab.pairs.by_group@1.0.0",
+      "id": "job_3d043754bbe44e3d",
+      "kind": "artifact-op",
+      "purpose": null,
+      "status": "succeeded"
+    },
+    {
+      "component": "builtin:validator",
+      "id": "job_4c649f654efc4185",
+      "kind": "build",
+      "purpose": null,
+      "status": "succeeded"
+    },
+    {
+      "component": "eidos.pytorch.train@1.2.0",
+      "id": "job_3630b8d2cc92482c",
+      "kind": "artifact-op",
+      "purpose": null,
+      "status": "succeeded"
+    },
+    {
+      "component": "invest.pairs.margin-probe@1.0.0",
+      "id": "job_0ee3906e0f774e82",
+      "kind": "artifact-op",
+      "purpose": null,
+      "status": "succeeded"
+    },
+    {
+      "component": "eidos.pytorch.train@1.2.0",
+      "id": "job_d8fc34cc23804753",
+      "kind": "branch",
+      "purpose": null,
+      "status": "failed"
+    },
+    {
+      "component": "eidos.pytorch.evaluate@1.0.0",
+      "id": "job_6ce75a23b6d74970",
+      "kind": "artifact-op",
+      "purpose": null,
+      "status": "succeeded"
+    },
+    {
+      "component": "eidos.pytorch.train@1.2.0",
+      "id": "job_fa32cfd0a9d64b82",
+      "kind": "branch",
+      "purpose": null,
+      "status": "failed"
+    },
+    {
+      "component": "lab.pairs.by_group@1.0.0",
+      "id": "job_b8a46a78fa1649f0",
+      "kind": "artifact-op",
+      "purpose": null,
+      "status": "succeeded"
+    },
+    {
+      "component": "eidos.pytorch.train@1.2.0",
+      "id": "job_8cd7f5918d0f4cdc",
+      "kind": "branch",
+      "purpose": null,
+      "status": "succeeded"
+    },
+    {
+      "component": "eidos.pytorch.evaluate@1.0.0",
+      "id": "job_15908ae0dd324612",
+      "kind": "artifact-op",
+      "purpose": null,
+      "status": "succeeded"
+    },
+    {
+      "component": "lab.pairs.by_group@1.0.0",
+      "id": "job_bad35bd6e1e549ba",
+      "kind": "artifact-op",
+      "purpose": null,
+      "status": "succeeded"
+    },
+    {
+      "component": "eidos.pytorch.behavior-check@1.0.0",
+      "id": "job_843a0bd0e955450f",
+      "kind": "artifact-op",
+      "purpose": null,
+      "status": "succeeded"
+    }
+  ],
+  "kills": [
+    {
+      "jobs_at_kill": [
+        "job_a8d75f7508404942"
+      ],
+      "pid": 79653,
+      "t": 1794159890.2347898,
+      "turns_after_kill": [
+        [
+          "turn_inv-a8-159870_1",
+          "open"
+        ]
+      ]
+    }
+  ],
+  "model": "anthropic:claude-sonnet-5-5",
+  "notes": [],
+  "project": "a8sw",
+  "started": 1794159870.837857,
+  "steps": {
+    "A8": {
+      "checks": [
+        {
+          "detail": {
+            "err": ""
+          },
+          "label": "lab investigate start (pydantic-ai runtime, real model)",
+          "ok": true
+        },
+        {
+          "detail": {
+            "evaluate": 3,
+            "score": 3,
+            "train": 3
+          },
+          "label": "diagnosis evidence: the baseline was trained, evaluated and scored by stratum",
+          "ok": true
+        },
+        {
+          "detail": {
+            "published": [
+              "invest.pairs.margin-probe@1.0.0"
+            ]
+          },
+          "label": "new component: author_component -> validation -> publish_component",
+          "ok": true
+        },
+        {
+          "detail": {
+            "jobs": [
+              "job_0ee3906e0f774e82"
+            ]
+          },
+          "label": "the new component ran successfully",
+          "ok": true
+        },
+        {
+          "detail": {
+            "launched": [
+              "job_3630b8d2cc92482c"
+            ],
+            "statuses": [
+              "succeeded"
+            ]
+          },
+          "label": "trial executed (plan_trial + launch_trial, job succeeded)",
+          "ok": true
+        },
+        {
+          "detail": {
+            "launched": [
+              "job_d8fc34cc23804753",
+              "job_fa32cfd0a9d64b82",
+              "job_8cd7f5918d0f4cdc"
+            ],
+            "statuses": [
+              "failed",
+              "failed",
+              "succeeded"
+            ]
+          },
+          "label": "checkpoint branch executed (plan_branch + launch_branch, job succeeded)",
+          "ok": true
+        },
+        {
+          "detail": {
+            "plans": []
+          },
+          "label": "qualified assessment: the investigator's frozen evidence plan was launched and assessed",
+          "ok": false
+        },
+        {
+          "detail": {
+            "exports": 0
+          },
+          "label": "export recorded through export_model",
+          "ok": false
+        },
+        {
+          "detail": {
+            "loaded": {
+              "ok": false
+            }
+          },
+          "label": "the exported model loads into a freshly built OrderedSwitchNet (strict restore)",
+          "ok": false
+        },
+        {
+          "detail": {
+            "status": "stopped"
+          },
+          "label": "investigation concluded autonomously",
+          "ok": false
+        },
+        {
+          "detail": {
+            "kills": [
+              {
+                "jobs_at_kill": [
+                  "job_a8d75f7508404942"
+                ],
+                "pid": 79653,
+                "t": 1794159890.2347898,
+                "turns_after_kill": [
+                  [
+                    "turn_inv-a8-159870_1",
+                    "open"
+                  ]
+                ]
+              }
+            ]
+          },
+          "label": "the investigator-worker was SIGKILLed right after a committed effect",
+          "ok": true
+        },
+        {
+          "detail": {
+            "new": 80053,
+            "old": 79653
+          },
+          "label": "the supervisor restarted the investigator-worker (hand-off to a new process)",
+          "ok": true
+        },
+        {
+          "label": "exactly one accepted decision per (turn, slot)",
+          "ok": true
+        },
+        {
+          "label": "persisted command keys are unique (a retry re-used the recorded key)",
+          "ok": true
+        },
+        {
+          "detail": {
+            "admitted": 14,
+            "distinct": 14
+          },
+          "label": "one job.admitted event per job (no duplicate admission after the kill)",
+          "ok": true
+        },
+        {
+          "detail": {
+            "model_tokens": {
+              "limit_amount": 1500000.0,
+              "reserved": 0.0,
+              "uncertain": 0.0,
+              "used": 876540.0
+            },
+            "model_usd": {
+              "limit_amount": 3.2,
+              "reserved": 0.0,
+              "uncertain": 0.0,
+              "used": 2.041168
+            }
+          },
+          "label": "model charges are visible in the budget ledger",
+          "ok": true
+        }
+      ],
+      "numbers": {
+        "jobs": 14,
+        "turns": 11
+      },
+      "seconds": 1928.56,
+      "started": 1794159870.8383622,
+      "status": "fail",
+      "title": "REAL-MODEL autonomous investigation (anthropic:claude-sonnet-5-5): diagnose, author, trial, branch, assess, export; investigator-worker crash after a committed effect"
+    }
+  },
+  "turns": [
+    {
+      "decisions": [
+        {
+          "accepted": true,
+          "calls": [
+            "run_component"
+          ],
+          "control": {
+            "action": "wait_for_jobs",
+            "summary": "Waiting for the baseline training job to finish before evaluating and scoring it."
+          },
+          "error": null,
+          "rationale": "Step 1 is to reproduce the baseline. I'm training OrderedSwitchNet with the standard recipe (45 steps, seed 41). Evaluation, pair scoring and the stratum breakdown come in later turns, once the checkpoint exists. I can't chain them here because a call can't use an id returned earlier in the same decision.",
+          "served_models": [
+            "claude-sonnet-5-5"
+          ],
+          "slot": 0,
+          "usage": {
+            "calls": 4,
+            "input_tokens": 51070,
+            "model": "anthropic:claude-sonnet-5-5",
+            "output_tokens": 1024,
+            "per_request": [
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 9146,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 174
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 10366,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 66
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 15952,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 105
+              },
+              {
+                "finish_reason": "stop",
+                "input_tokens": 15606,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 679
+              }
+            ],
+            "provider": "anthropic",
+            "request_ids": [
+              "msg_011CgqsobfxHGghifzfdpauj",
+              "msg_011CgqsoohWaaNUWY18sdv4Z",
+              "msg_011CgqsowKQNoQDzB62hrTT7",
+              "msg_011Cgqsp8gXEv8mCdCKFpgaQ"
+            ],
+            "served_models": [
+              "claude-sonnet-5-5"
+            ],
+            "tool_budget_exhausted": true,
+            "usd": 0.11238
+          }
+        }
+      ],
+      "seq": 1,
+      "status": "completed",
+      "stop_reason": "waiting"
+    },
+    {
+      "decisions": [
+        {
+          "accepted": true,
+          "calls": [
+            "run_component"
+          ],
+          "control": {
+            "action": "wait_for_jobs",
+            "summary": "Waiting for the baseline evaluation of art_a8d75f7508404942_checkpoint. Next I will score its predictions with lab.pairs.by_group."
+          },
+          "error": null,
+          "rationale": "The baseline train job job_a8d75f7508404942 succeeded and produced checkpoint art_a8d75f7508404942_checkpoint. The next step is to evaluate it with the standard recipe, using the evaluation draw from the brief. Evaluation has to finish before lab.pairs.by_group can score the predictions, because a call cannot use an output id from an earlier call in the same decision. So I launch the evaluation now and wait. Scoring by stratum comes next turn.",
+          "served_models": [
+            "claude-sonnet-5-5"
+          ],
+          "slot": 0,
+          "usage": {
+            "calls": 4,
+            "input_tokens": 46975,
+            "model": "anthropic:claude-sonnet-5-5",
+            "output_tokens": 1115,
+            "per_request": [
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 9600,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 310
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 12362,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 93
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 12515,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 49
+              },
+              {
+                "finish_reason": "stop",
+                "input_tokens": 12498,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 663
+              }
+            ],
+            "provider": "anthropic",
+            "request_ids": [
+              "msg_011Cgqsq754XUQ8hx7vp6yFD",
+              "msg_011CgqsqPGeF9MJcL1GtKi74",
+              "msg_011CgqsqYSJ3bcCdAVjW86ZF",
+              "msg_011CgqsqjAiKKhj9tCgT58sy"
+            ],
+            "served_models": [
+              "claude-sonnet-5-5"
+            ],
+            "tool_budget_exhausted": true,
+            "usd": 0.1051
+          }
+        }
+      ],
+      "seq": 2,
+      "status": "completed",
+      "stop_reason": "waiting"
+    },
+    {
+      "decisions": [
+        {
+          "accepted": true,
+          "calls": [
+            "run_component",
+            "author_component"
+          ],
+          "control": {
+            "action": "wait_for_jobs",
+            "summary": "Wait for the by_group scoring job and the margin-probe validation job, then publish the component, run it on art_3aba5f1ebf6e4d3b_predictions, and plan the repair."
+          },
+          "error": null,
+          "rationale": "Baseline job_a8d75f7508404942 / job_3aba5f1ebf6e4d3b reaches 0.984 reference accuracy but only 0.2625 both-correct (art_3aba5f1ebf6e4d3b_predictions). In the preview, reference logits mostly follow the label, while variant logits sit near 0 or keep the reference's sign. That fits the model leaning on the recorder flag, which agrees with the label about 98% of the time, instead of event order. This turn I score the baseline by stratum with lab.pairs.by_group and author a small observe-only margin probe. The probe reports per-stratum label-signed logit margins for the reference and the twin. Rep",
+          "served_models": [
+            "claude-sonnet-5-5"
+          ],
+          "slot": 0,
+          "usage": {
+            "calls": 4,
+            "input_tokens": 50521,
+            "model": "anthropic:claude-sonnet-5-5",
+            "output_tokens": 5048,
+            "per_request": [
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 10106,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 292
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 12112,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 454
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 14120,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 333
+              },
+              {
+                "finish_reason": "stop",
+                "input_tokens": 14183,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 3969
+              }
+            ],
+            "provider": "anthropic",
+            "request_ids": [
+              "msg_011CgqsrYaWCi83xwp1UGdUs",
+              "msg_011CgqsrmthzDsSQicR7X1qs",
+              "msg_011CgqssA2xcRHucWkJus1Rs",
+              "msg_011CgqssU69xJEAgmWTNuhK6"
+            ],
+            "served_models": [
+              "claude-sonnet-5-5"
+            ],
+            "tool_budget_exhausted": true,
+            "usd": 0.151522
+          }
+        }
+      ],
+      "seq": 3,
+      "status": "completed",
+      "stop_reason": "waiting"
+    },
+    {
+      "decisions": [
+        {
+          "accepted": true,
+          "calls": [
+            "publish_component",
+            "plan_trial",
+            "plan_branch"
+          ],
+          "control": {
+            "action": "wait_for_jobs",
+            "summary": "Waiting for the margin-probe publication. Next turn: launch the planned trial and branch, and run the published probe on art_3aba5f1ebf6e4d3b_predictions."
+          },
+          "error": null,
+          "rationale": "Baseline (job_a8d75f7508404942 train, job_3aba5f1ebf6e4d3b eval, job_3d043754bbe44e3d report art_3d043754bbe44e3d_report) shows reference accuracy 0.984 but both-correct 0.2625. Failure is stratified: adjacent 0/701 both-correct, 2-3 apart 8/1133 (0.7%), 4+ apart 1042/2166 (48%), while reference accuracy is ~0.97-0.99 everywhere. The model leans on the recorder flag, which agrees with the label in ~98% of training examples, so it gets the original right but not the twin, probably because the twin has a flipped or disagreeing recorder. This is a diagnosis from stratified counts, not a verified ",
+          "served_models": [
+            "claude-sonnet-5-5"
+          ],
+          "slot": 0,
+          "usage": {
+            "calls": 4,
+            "input_tokens": 51301,
+            "model": "anthropic:claude-sonnet-5-5",
+            "output_tokens": 2945,
+            "per_request": [
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 10854,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 316
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 11848,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 569
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 14403,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 453
+              },
+              {
+                "finish_reason": "stop",
+                "input_tokens": 14196,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 1607
+              }
+            ],
+            "provider": "anthropic",
+            "request_ids": [
+              "msg_011CgqsuSTV89TDFtLxGg22R",
+              "msg_011CgqsujbNzH53fKsToHbU6",
+              "msg_011CgqsvESTFShdapFjeCYBD",
+              "msg_011CgqsvdW3RjhxqB5kps8cv"
+            ],
+            "served_models": [
+              "claude-sonnet-5-5"
+            ],
+            "tool_budget_exhausted": true,
+            "usd": 0.132052
+          }
+        },
+        {
+          "accepted": true,
+          "calls": [
+            "launch_trial",
+            "plan_branch",
+            "run_component"
+          ],
+          "control": {
+            "action": "wait_for_jobs",
+            "summary": "Waiting for the repair trial and the margin-probe run. Next turn: launch the re-planned branch, evaluate the repaired checkpoint, then file the claim and draft the evidence plan."
+          },
+          "error": null,
+          "rationale": "Baseline reproduced: job_a8d75f7508404942 trained, job_3aba5f1ebf6e4d3b evaluated (reference acc 0.984, both-correct 0.2625), job_3d043754bbe44e3d / art_3d043754bbe44e3d_report stratified it. Failure is concentrated in close strata: adjacent both-correct 0/701, 2-3 apart 8/1133, while 4+ apart is 1042/2166, even though reference accuracy is ~0.97-0.99 everywhere. This suggests the model relies on the recorder flag, which agrees with the label about 98% of the time and is the same in the twin. The margin-probe invest.pairs.margin-probe@1.0.0 is now published. The previously planned trial trial_",
+          "served_models": [
+            "claude-sonnet-5-5"
+          ],
+          "slot": 1,
+          "usage": {
+            "calls": 4,
+            "input_tokens": 59537,
+            "model": "anthropic:claude-sonnet-5-5",
+            "output_tokens": 2148,
+            "per_request": [
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 13889,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 323
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 14936,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 69
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 15403,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 185
+              },
+              {
+                "finish_reason": "stop",
+                "input_tokens": 15309,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 1571
+              }
+            ],
+            "provider": "anthropic",
+            "request_ids": [
+              "msg_011CgqswUJBK6izDAqtn83BK",
+              "msg_011CgqswmZzW7hwThUEL7Mh5",
+              "msg_011CgqswuLJttWN8pHGSuWkV",
+              "msg_011Cgqsx7zZyKDbbsngDC17K"
+            ],
+            "served_models": [
+              "claude-sonnet-5-5"
+            ],
+            "tool_budget_exhausted": true,
+            "usd": 0.140554
+          }
+        }
+      ],
+      "seq": 4,
+      "status": "completed",
+      "stop_reason": "waiting"
+    },
+    {
+      "decisions": [
+        {
+          "accepted": true,
+          "calls": [
+            "launch_branch"
+          ],
+          "control": {
+            "action": "wait_for_jobs",
+            "summary": "Waiting for the margin-probe job_0ee3906e0f774e82, the group-balanced trial job_3630b8d2cc92482c and the checkpoint branch trial_d8fc34cc23804753 before filing the claim and drafting the evidence plan."
+          },
+          "error": null,
+          "rationale": "Diagnosis so far: the baseline (job_a8d75f7508404942 trained, job_3aba5f1ebf6e4d3b evaluated, job_3d043754bbe44e3d scored) reaches reference accuracy 0.984 but both-correct only 0.2625. In art_3d043754bbe44e3d_report the failure sits in the strata where position evidence is weak. Adjacent pairs have 0 of 701 both-correct, and 2-3 apart pairs have 8 of 1133 (0.7%). Pairs 4+ apart reach 0.48. The reference accuracy is about 0.97-0.99 in every stratum. The prediction CSV (art_3aba5f1ebf6e4d3b_predictions) shows twin logits staying near the reference sign with small margins, for example adjacent p",
+          "served_models": [
+            "claude-sonnet-5-5"
+          ],
+          "slot": 0,
+          "usage": {
+            "calls": 4,
+            "input_tokens": 53161,
+            "model": "anthropic:claude-sonnet-5-5",
+            "output_tokens": 1590,
+            "per_request": [
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 12466,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 249
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 13113,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 168
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 14031,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 143
+              },
+              {
+                "finish_reason": "stop",
+                "input_tokens": 13551,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 1030
+              }
+            ],
+            "provider": "anthropic",
+            "request_ids": [
+              "msg_011Cgqsy2N1SK1xWXThNXGDo",
+              "msg_011CgqsyGws51dk5RF8DyxFG",
+              "msg_011CgqsyVioMygYKS38wfKpM",
+              "msg_011Cgqsyj12G2EeHFQcSvuUV"
+            ],
+            "served_models": [
+              "claude-sonnet-5-5"
+            ],
+            "tool_budget_exhausted": true,
+            "usd": 0.122222
+          }
+        }
+      ],
+      "seq": 5,
+      "status": "completed",
+      "stop_reason": "waiting"
+    },
+    {
+      "decisions": [
+        {
+          "accepted": true,
+          "calls": [
+            "run_component",
+            "plan_branch"
+          ],
+          "control": {
+            "action": "wait_for_jobs",
+            "summary": "Wait for the trial-checkpoint evaluation. The re-planned branch will be launched next turn from its listed trial id."
+          },
+          "error": null,
+          "rationale": "Baseline diagnosis: job_3aba5f1ebf6e4d3b and its by-group report art_3d043754bbe44e3d show reference accuracy 0.984 but both-correct 0.2625. The failure is concentrated by stratum: adjacent 0/701, 2-3 apart 8/1133, and 4+ apart 1042/2166. The margin probe (art_0ee3906e0f774e82, from my published component invest.pairs.margin-probe@1.0.0) shows reference margins are positive everywhere, but the twin's mean margin is negative for adjacent (-0.61) and 2-3 apart (-0.44) and about 0 for 4+ apart. This fits the model leaning on the recorder flag, which agrees with the label for about 98% of examples",
+          "served_models": [
+            "claude-sonnet-5-5"
+          ],
+          "slot": 0,
+          "usage": {
+            "calls": 4,
+            "input_tokens": 67651,
+            "model": "anthropic:claude-sonnet-5-5",
+            "output_tokens": 3675,
+            "per_request": [
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 13327,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 287
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 16539,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 1410
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 19022,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 183
+              },
+              {
+                "finish_reason": "stop",
+                "input_tokens": 18763,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 1795
+              }
+            ],
+            "provider": "anthropic",
+            "request_ids": [
+              "msg_011CgqszQhU72xYX9jU5xPNF",
+              "msg_011Cgqszhgfst67XpydCPY7L",
+              "msg_011Cgqt1dA645fDxD7peQ1o7",
+              "msg_011Cgqt1sgDPBDxag9w6BsXT"
+            ],
+            "served_models": [
+              "claude-sonnet-5-5"
+            ],
+            "tool_budget_exhausted": true,
+            "usd": 0.172052
+          }
+        }
+      ],
+      "seq": 6,
+      "status": "completed",
+      "stop_reason": "waiting"
+    },
+    {
+      "decisions": [
+        {
+          "accepted": true,
+          "calls": [
+            "launch_branch",
+            "run_component"
+          ],
+          "control": {
+            "action": "wait_for_jobs",
+            "summary": "Waiting for the corrected branch trial_fa32cfd0a9d64b82 and the by-stratum scoring of the trial predictions art_6ce75a23b6d74970_predictions."
+          },
+          "error": null,
+          "rationale": "Diagnosis so far. Baseline job_a8d75f7508404942 / eval job_3aba5f1ebf6e4d3b gives reference accuracy 0.984 but both-correct 0.2625. Scoring in art_3d043754bbe44e3d_report and the margin probe art_0ee3906e0f774e82_report show the failure sits in the twin: adjacent pairs 0/701 both-correct, 2-3 apart 8/1133, 4+ apart 1042/2166 (0.48). Reference margins are positive everywhere, but twin margins are negative in the adjacent (-0.61) and 2-3 apart (-0.44) strata. This fits the model leaning on the recorder flag, which agrees with the label about 98% of the time, and so not tracking the order signal ",
+          "served_models": [
+            "claude-sonnet-5-5"
+          ],
+          "slot": 0,
+          "usage": {
+            "calls": 4,
+            "input_tokens": 67885,
+            "model": "anthropic:claude-sonnet-5-5",
+            "output_tokens": 1843,
+            "per_request": [
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 13969,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 396
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 16511,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 260
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 18857,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 133
+              },
+              {
+                "finish_reason": "stop",
+                "input_tokens": 18548,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 1054
+              }
+            ],
+            "provider": "anthropic",
+            "request_ids": [
+              "msg_011Cgqt2pWVgWhc3RW6uTv74",
+              "msg_011Cgqt37GoiD2VhShciYT68",
+              "msg_011Cgqt3MMd9sx4QJprvXbr4",
+              "msg_011Cgqt3bg6E3LKZB9jxviJL"
+            ],
+            "served_models": [
+              "claude-sonnet-5-5"
+            ],
+            "tool_budget_exhausted": true,
+            "usd": 0.1542
+          }
+        }
+      ],
+      "seq": 7,
+      "status": "completed",
+      "stop_reason": "waiting"
+    },
+    {
+      "decisions": [
+        {
+          "accepted": true,
+          "calls": [
+            "plan_branch"
+          ],
+          "control": {
+            "action": "wait_for_jobs",
+            "summary": "Planned the corrected checkpoint branch; launch it next turn, then evaluate and score it."
+          },
+          "error": null,
+          "rationale": "Diagnosis so far: baseline job_a8d75f7508404942 evaluated in job_3aba5f1ebf6e4d3b has reference accuracy 0.984 but both-correct 0.2625. The by_group report art_3d043754bbe44e3d_report puts the failure in the close strata: adjacent 0.0, 2-3 apart 0.007, 4+ apart 0.481. The margin probe art_0ee3906e0f774e82_report shows twin margins are negative in the close strata (adjacent -0.61, 2-3 apart -0.44) while reference margins stay positive. The twin evidently has the recorder flag disagreeing with the label, so the model is following the recorder shortcut. The group-balanced trial job_3630b8d2cc9248",
+          "served_models": [
+            "claude-sonnet-5-5"
+          ],
+          "slot": 0,
+          "usage": {
+            "calls": 4,
+            "input_tokens": 71182,
+            "model": "anthropic:claude-sonnet-5-5",
+            "output_tokens": 2865,
+            "per_request": [
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 15015,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 373
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 16207,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 192
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 19708,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 827
+              },
+              {
+                "finish_reason": "stop",
+                "input_tokens": 20252,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 1473
+              }
+            ],
+            "provider": "anthropic",
+            "request_ids": [
+              "msg_011Cgqt4L9V7QcHrKac6oAdP",
+              "msg_011Cgqt4eRKVAeust9pUphSC",
+              "msg_011Cgqt4tg4yjajmUQTAxRTq",
+              "msg_011Cgqt5YcbhvuFS2Q1Ymqrb"
+            ],
+            "served_models": [
+              "claude-sonnet-5-5"
+            ],
+            "tool_budget_exhausted": true,
+            "usd": 0.171014
+          }
+        },
+        {
+          "accepted": true,
+          "calls": [
+            "launch_branch"
+          ],
+          "control": {
+            "action": "wait_for_jobs",
+            "summary": "Launched the corrected group-balanced-EMA checkpoint branch (trial_8cd7f5918d0f4cdc) from baseline art_a8d75f7508404942_checkpoint. Next turn: evaluate it, score it with lab.pairs.by_group, and compare against the guardrail."
+          },
+          "error": null,
+          "rationale": "Diagnosis so far: baseline (job_a8d75f7508404942, eval job_3aba5f1ebf6e4d3b) has reference accuracy 0.984 but both-correct 0.2625. By stratum (art_3d043754bbe44e3d_report) both-correct is 0.0 for adjacent, 0.007 for 2-3 apart and 0.48 for 4+ apart, while reference accuracy stays ~0.97-0.99 everywhere. The margin-probe report (art_0ee3906e0f774e82_report, my published component invest.pairs.margin-probe@1.0.0) shows twin margins negative for adjacent (-0.61) and 2-3 apart (-0.44) but about 0 for 4+ apart. So the model copies the recorder shortcut onto the twin and fails exactly where positional",
+          "served_models": [
+            "claude-sonnet-5-5"
+          ],
+          "slot": 1,
+          "usage": {
+            "calls": 4,
+            "input_tokens": 74825,
+            "model": "anthropic:claude-sonnet-5-5",
+            "output_tokens": 2432,
+            "per_request": [
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 15698,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 1031
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 19476,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 333
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 19932,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 70
+              },
+              {
+                "finish_reason": "stop",
+                "input_tokens": 19719,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 998
+              }
+            ],
+            "provider": "anthropic",
+            "request_ids": [
+              "msg_011Cgqt6NnndQS3wj1UuqP95",
+              "msg_011Cgqt74WUUSiBMp93Lehor",
+              "msg_011Cgqt7LMDfNfyXH9CMLVJA",
+              "msg_011Cgqt7YF5oAp8phUmbugmB"
+            ],
+            "served_models": [
+              "claude-sonnet-5-5"
+            ],
+            "tool_budget_exhausted": true,
+            "usd": 0.17397
+          }
+        }
+      ],
+      "seq": 8,
+      "status": "completed",
+      "stop_reason": "waiting"
+    },
+    {
+      "decisions": [
+        {
+          "accepted": true,
+          "calls": [
+            "run_component"
+          ],
+          "control": {
+            "action": "wait_for_jobs",
+            "summary": "Waiting for the evaluation of the branched checkpoint art_8cd7f5918d0f4cdc_checkpoint. Next step is to score it by stratum."
+          },
+          "error": null,
+          "rationale": "Diagnosis so far: baseline (job_a8d75f7508404942, eval job_3aba5f1ebf6e4d3b) has reference accuracy 0.984 but both-correct 0.2625. By-group report art_3d043754bbe44e3d_report: adjacent 0.0 and 2-3 apart 0.007 both-correct, 4+ apart 0.481, while reference accuracy is 0.97-0.99 in every stratum. The margin probe art_0ee3906e0f774e82_report shows twin margins negative in the close strata (adjacent -0.61, 2-3 apart -0.44) and about 0 for 4+ apart. This fits the model leaning on the recorder shortcut: the twin keeps the recorder's hint and is wrong. The trial repair (job_3630b8d2cc92482c) raises bo",
+          "served_models": [
+            "claude-sonnet-5-5"
+          ],
+          "slot": 0,
+          "usage": {
+            "calls": 4,
+            "input_tokens": 72204,
+            "model": "anthropic:claude-sonnet-5-5",
+            "output_tokens": 2044,
+            "per_request": [
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 16074,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 402
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 17721,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 219
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 18005,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 64
+              },
+              {
+                "finish_reason": "stop",
+                "input_tokens": 20404,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 1359
+              }
+            ],
+            "provider": "anthropic",
+            "request_ids": [
+              "msg_011Cgqt8B1vHKFDddr5f9y6R",
+              "msg_011Cgqt8WG43ePVFWg5sPFQL",
+              "msg_011Cgqt8k3XMEhWfcFdna36Q",
+              "msg_011Cgqt8uEB4DVo4CC2uj2A4"
+            ],
+            "served_models": [
+              "claude-sonnet-5-5"
+            ],
+            "tool_budget_exhausted": true,
+            "usd": 0.164848
+          }
+        }
+      ],
+      "seq": 9,
+      "status": "completed",
+      "stop_reason": "waiting"
+    },
+    {
+      "decisions": [
+        {
+          "accepted": true,
+          "calls": [
+            "file_claim",
+            "run_component",
+            "run_component"
+          ],
+          "control": {
+            "action": "wait_for_jobs",
+            "summary": "Waiting for the branch by-group report and the behavior check; the evidence plan is drafted next turn."
+          },
+          "error": null,
+          "rationale": "Baseline (job_a8d75f7508404942 -> eval job_3aba5f1ebf6e4d3b, by_group job_3d043754bbe44e3d) has reference accuracy 0.984 but both-correct 0.2625. Per stratum, both-correct is 0.0 for adjacent, 0.007 for 2-3 apart and 0.48 for 4+ apart. The margin probe (my published component invest.pairs.margin-probe, job_0ee3906e0f774e82) shows reference margins are positive everywhere (0.86 to 1.53) while twin margins are negative for adjacent (-0.61) and 2-3 apart (-0.44). That fits the model leaning on the recorder shortcut, so it fails whenever the twin's recorder disagrees with the label. The scratch gr",
+          "served_models": [
+            "claude-sonnet-5-5"
+          ],
+          "slot": 0,
+          "usage": {
+            "calls": 4,
+            "input_tokens": 76821,
+            "model": "anthropic:claude-sonnet-5-5",
+            "output_tokens": 2833,
+            "per_request": [
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 16565,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 310
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 18120,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 121
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 19510,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 781
+              },
+              {
+                "finish_reason": "stop",
+                "input_tokens": 22626,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 1621
+              }
+            ],
+            "provider": "anthropic",
+            "request_ids": [
+              "msg_011Cgqt9hbiGtfc14eqnYk8Q",
+              "msg_011Cgqt9x56m5G8ZHYa1fxHC",
+              "msg_011CgqtA4iCrqWG22RPuSbcq",
+              "msg_011CgqtAdKX9JJBrCo3HPKGk"
+            ],
+            "served_models": [
+              "claude-sonnet-5-5"
+            ],
+            "tool_budget_exhausted": true,
+            "usd": 0.181972
+          }
+        }
+      ],
+      "seq": 10,
+      "status": "completed",
+      "stop_reason": "waiting"
+    },
+    {
+      "decisions": [
+        {
+          "accepted": false,
+          "calls": [],
+          "control": null,
+          "error": {
+            "code": "INVALID",
+            "details": {
+              "control": "wait_for_jobs",
+              "outstanding": 0
+            },
+            "message": "nothing to wait for: no jobs or evidence plans are outstanding for this investigation; run something, request input, or conclude",
+            "next_action": "Correct the request and retry with a new command key."
+          },
+          "rationale": "",
+          "served_models": null,
+          "slot": 0,
+          "usage": null
+        }
+      ],
+      "seq": 11,
+      "status": "completed",
+      "stop_reason": "budget-exhausted"
+    }
+  ],
+  "updated": 1794161799.404425
+}

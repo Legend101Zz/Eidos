@@ -1,0 +1,12 @@
+{
+  "name": "bad-mode",
+  "author_test": true,
+  "inputs": {},
+  "config": {
+    "mode": "nope"
+  },
+  "expect": {
+    "status": "failed",
+    "error_category": "contract"
+  }
+}

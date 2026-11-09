@@ -1,0 +1,177 @@
+{
+  "receipt": "eidos-service-failures/1",
+  "kills": [
+    {
+      "service": "api",
+      "killed_pid": 57956,
+      "new_pid": 58318,
+      "state": "running",
+      "seconds": 4.0,
+      "restarts": 1
+    },
+    {
+      "service": "workflow-worker",
+      "killed_pid": 57966,
+      "new_pid": 58434,
+      "state": "running",
+      "seconds": 3.0,
+      "restarts": 1
+    },
+    {
+      "service": "investigator-worker",
+      "killed_pid": 57968,
+      "new_pid": 58628,
+      "state": "running",
+      "seconds": 3.0,
+      "restarts": 1
+    },
+    {
+      "service": "training-runner",
+      "killed_pid": 57969,
+      "new_pid": 58743,
+      "state": "running",
+      "seconds": 3.0,
+      "restarts": 1
+    },
+    {
+      "service": "assessor-worker",
+      "killed_pid": 57970,
+      "new_pid": 58877,
+      "state": "running",
+      "seconds": 3.0,
+      "restarts": 1
+    },
+    {
+      "service": "sealed-runner",
+      "killed_pid": 57971,
+      "new_pid": 58994,
+      "state": "running",
+      "seconds": 3.0,
+      "restarts": 1
+    },
+    {
+      "service": "temporal",
+      "killed_pid": 57930,
+      "new_pid": 59054,
+      "state": "running",
+      "seconds": 3.0,
+      "restarts": 1
+    },
+    {
+      "service": "postgres",
+      "killed_pid": 57922,
+      "new_pid": 59141,
+      "state": "running",
+      "seconds": 2.0,
+      "restarts": 1
+    }
+  ],
+  "checks": [
+    {
+      "check": "api: SIGKILLed by pid and restarted by the supervisor",
+      "ok": true,
+      "service": "api",
+      "killed_pid": 57956,
+      "new_pid": 58318,
+      "state": "running",
+      "seconds": 4.0,
+      "restarts": 1
+    },
+    {
+      "check": "workflow-worker: SIGKILLed by pid and restarted by the supervisor",
+      "ok": true,
+      "service": "workflow-worker",
+      "killed_pid": 57966,
+      "new_pid": 58434,
+      "state": "running",
+      "seconds": 3.0,
+      "restarts": 1
+    },
+    {
+      "check": "investigator-worker: SIGKILLed by pid and restarted by the supervisor",
+      "ok": true,
+      "service": "investigator-worker",
+      "killed_pid": 57968,
+      "new_pid": 58628,
+      "state": "running",
+      "seconds": 3.0,
+      "restarts": 1
+    },
+    {
+      "check": "training-runner: SIGKILLed by pid and restarted by the supervisor",
+      "ok": true,
+      "service": "training-runner",
+      "killed_pid": 57969,
+      "new_pid": 58743,
+      "state": "running",
+      "seconds": 3.0,
+      "restarts": 1
+    },
+    {
+      "check": "assessor-worker: SIGKILLed by pid and restarted by the supervisor",
+      "ok": true,
+      "service": "assessor-worker",
+      "killed_pid": 57970,
+      "new_pid": 58877,
+      "state": "running",
+      "seconds": 3.0,
+      "restarts": 1
+    },
+    {
+      "check": "sealed-runner: SIGKILLed by pid and restarted by the supervisor",
+      "ok": true,
+      "service": "sealed-runner",
+      "killed_pid": 57971,
+      "new_pid": 58994,
+      "state": "running",
+      "seconds": 3.0,
+      "restarts": 1
+    },
+    {
+      "check": "temporal: SIGKILLed by pid and restarted by the supervisor",
+      "ok": true,
+      "service": "temporal",
+      "killed_pid": 57930,
+      "new_pid": 59054,
+      "state": "running",
+      "seconds": 3.0,
+      "restarts": 1
+    },
+    {
+      "check": "postgres: SIGKILLed by pid and restarted by the supervisor",
+      "ok": true,
+      "service": "postgres",
+      "killed_pid": 57922,
+      "new_pid": 59141,
+      "state": "running",
+      "seconds": 2.0,
+      "restarts": 1
+    },
+    {
+      "check": "the job finished succeeded on its original attempt across all service kills",
+      "ok": true,
+      "status": "succeeded",
+      "attempts": [
+        "succeeded"
+      ]
+    },
+    {
+      "check": "lab doctor has no failed checks after the kills",
+      "ok": true,
+      "fails": []
+    },
+    {
+      "check": "abrupt stop A (services killed, job survives, reattached single attempt)",
+      "ok": true
+    },
+    {
+      "check": "abrupt stop B (services and job killed: lost attempt reconciled, new fenced attempt)",
+      "ok": true
+    },
+    {
+      "check": "abrupt stop: doctor clean",
+      "ok": true
+    }
+  ],
+  "ok": true
+}

@@ -1,0 +1,45 @@
+{
+  "id": "eidos.task.score-classification",
+  "release": "1.0.1",
+  "implements": "classification-score/1",
+  "kind": "artifact-op",
+  "entry": "score:run",
+  "summary": "Score integer class predictions (npz ids/predictions) against a labelled split (npz ids/y) the investigator is allowed to see; strict ID/shape/range checks; per-example correctness for paired comparisons.",
+  "scientific_effects": [
+    "observe"
+  ],
+  "input": {
+    "predictions": "prediction-array/1",
+    "reference": "task-array/1"
+  },
+  "output": {
+    "report": "classification-report/1",
+    "per_example": "per-example-correct/1"
+  },
+  "metrics": {
+    "accuracy": {
+      "numerator": "predictions equal to label",
+      "denominator": "all reference IDs",
+      "direction": "increase"
+    }
+  },
+  "reads": [
+    "predictions",
+    "reference"
+  ],
+  "writes": [
+    "output:report",
+    "output:per_example"
+  ],
+  "isolation": "immutable-artifacts",
+  "controls": [
+    "fixtures/reordered.json",
+    "fixtures/duplicates.json"
+  ],
+  "receipt": [
+    "n",
+    "accuracy",
+    "wilson_95"
+  ],
+  "card": "method-card.md"
+}

@@ -1,0 +1,427 @@
+{
+  "receipt": "eidos-full-lab-live/1",
+  "label": "full-lab real-LLM development run (owner Mac)",
+  "project": "live1794137093",
+  "investigation": "inv_7f50456b5d46",
+  "status": "active",
+  "needs_input": null,
+  "budgets": {
+    "confirmation": {},
+    "exploration": {
+      "compute_seconds": {
+        "limit_amount": 6000.0,
+        "reserved": 0.0,
+        "uncertain": 0.0,
+        "used": 3.065
+      },
+      "model_tokens": {
+        "limit_amount": 600000.0,
+        "reserved": 0.0,
+        "uncertain": 0.0,
+        "used": 184607.0
+      },
+      "model_usd": {
+        "limit_amount": 3.0,
+        "reserved": 0.0,
+        "uncertain": 0.0,
+        "used": 0.466254
+      }
+    }
+  },
+  "turns": [
+    {
+      "seq": 1,
+      "stop_reason": "waiting",
+      "decisions": [
+        {
+          "slot": 0,
+          "accepted": true,
+          "usage": {
+            "calls": 4,
+            "input_tokens": 23375,
+            "model": "anthropic:claude-sonnet-5-5",
+            "output_tokens": 1261,
+            "per_request": [
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 4057,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 148
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 6391,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 121
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 6591,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 73
+              },
+              {
+                "finish_reason": "stop",
+                "input_tokens": 6336,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 919
+              }
+            ],
+            "provider": "anthropic",
+            "request_ids": [
+              "msg_011CgqNstNne1p44B1GnH1mC",
+              "msg_011CgqNtHkTqUzyec95V5tSU",
+              "msg_011CgqNtTAjx51aQYCPtMn6n",
+              "msg_011CgqNtenkLdTNgYWaayXaY"
+            ],
+            "served_models": [
+              "claude-sonnet-5-5"
+            ],
+            "tool_budget_exhausted": true,
+            "usd": 0.05936
+          },
+          "served_models": [
+            "claude-sonnet-5-5"
+          ],
+          "calls": [
+            "run_component"
+          ],
+          "control": {
+            "action": "wait_for_jobs",
+            "summary": "Wait for the baseline reproduction (seed 11). Next step: score its predictions on validation with eidos.task.score-classification, then design a candidate change."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "seq": 2,
+      "stop_reason": "waiting",
+      "decisions": [
+        {
+          "slot": 0,
+          "accepted": true,
+          "usage": {
+            "calls": 4,
+            "input_tokens": 34005,
+            "model": "anthropic:claude-sonnet-5-5",
+            "output_tokens": 1894,
+            "per_request": [
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 4638,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 205
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 9026,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 152
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 10364,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 273
+              },
+              {
+                "finish_reason": "stop",
+                "input_tokens": 9977,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 1264
+              }
+            ],
+            "provider": "anthropic",
+            "request_ids": [
+              "msg_011CgqNuMetuYc2oNLdEBCkh",
+              "msg_011CgqNuYdwL9EzG3byMvG4w",
+              "msg_011CgqNuiQ4bLvdsvzUfLCk9",
+              "msg_011CgqNuzJ3DnTGSRaUcqcyx"
+            ],
+            "served_models": [
+              "claude-sonnet-5-5"
+            ],
+            "tool_budget_exhausted": true,
+            "usd": 0.08695
+          },
+          "served_models": [
+            "claude-sonnet-5-5"
+          ],
+          "calls": [
+            "run_component"
+          ],
+          "control": {
+            "action": "wait_for_jobs",
+            "summary": "Wait for the staging diagnostic to finish, then read the listing and fix the baseline invocation."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "seq": 3,
+      "stop_reason": "waiting",
+      "decisions": [
+        {
+          "slot": 0,
+          "accepted": true,
+          "usage": {
+            "calls": 4,
+            "input_tokens": 39254,
+            "model": "anthropic:claude-sonnet-5-5",
+            "output_tokens": 1934,
+            "per_request": [
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 5360,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 232
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 10394,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 126
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 11706,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 252
+              },
+              {
+                "finish_reason": "stop",
+                "input_tokens": 11794,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 1324
+              }
+            ],
+            "provider": "anthropic",
+            "request_ids": [
+              "msg_011CgqNvoFnp68oWSzqa5Nse",
+              "msg_011CgqNvzPmWZgPHBxvBGtdV",
+              "msg_011CgqNw7MUT9zp2iLwFzC4N",
+              "msg_011CgqNwKpK7MjVsTcGRFy3K"
+            ],
+            "served_models": [
+              "claude-sonnet-5-5"
+            ],
+            "tool_budget_exhausted": true,
+            "usd": 0.097848
+          },
+          "served_models": [
+            "claude-sonnet-5-5"
+          ],
+          "calls": [
+            "run_component"
+          ],
+          "control": {
+            "action": "wait_for_jobs",
+            "summary": "Waiting for the staging probe to show where train/validation artifacts are placed before running or improving the digit classifier."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "seq": 4,
+      "stop_reason": "waiting",
+      "decisions": [
+        {
+          "slot": 0,
+          "accepted": true,
+          "usage": {
+            "calls": 4,
+            "input_tokens": 37218,
+            "model": "anthropic:claude-sonnet-5-5",
+            "output_tokens": 4387,
+            "per_request": [
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 6183,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 236
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 7611,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 222
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 9591,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 222
+              },
+              {
+                "finish_reason": "stop",
+                "input_tokens": 13833,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 3707
+              }
+            ],
+            "provider": "anthropic",
+            "request_ids": [
+              "msg_011CgqNxA6wfd9Pa7YguHYCR",
+              "msg_011CgqNxML8JK2SUg6txatZQ",
+              "msg_011CgqNxYW5Xj9yRzFvv4812",
+              "msg_011CgqNxk9KVtWYgTUcEYNgx"
+            ],
+            "served_models": [
+              "claude-sonnet-5-5"
+            ],
+            "tool_budget_exhausted": true,
+            "usd": 0.118306
+          },
+          "served_models": [
+            "claude-sonnet-5-5"
+          ],
+          "calls": [
+            "run_component"
+          ],
+          "control": {
+            "action": "wait_for_jobs",
+            "summary": "Wait for the staging probe to finish, then read probe.txt to locate the input data."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "seq": 5,
+      "stop_reason": "waiting",
+      "decisions": [
+        {
+          "slot": 0,
+          "accepted": true,
+          "usage": {
+            "calls": 4,
+            "input_tokens": 38625,
+            "model": "anthropic:claude-sonnet-5-5",
+            "output_tokens": 2654,
+            "per_request": [
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 6940,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 243
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 9232,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 295
+              },
+              {
+                "finish_reason": "tool_call",
+                "input_tokens": 10945,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 473
+              },
+              {
+                "finish_reason": "stop",
+                "input_tokens": 11508,
+                "model": "claude-sonnet-5-5",
+                "output_tokens": 1643
+              }
+            ],
+            "provider": "anthropic",
+            "request_ids": [
+              "msg_011CgqNzymBTwfykKnEZX4HR",
+              "msg_011CgqP1Asewxeq5iAACFVHi",
+              "msg_011CgqP1NZP46XVfa3FzETA6",
+              "msg_011CgqP1gdZmBDEYr2qDwgCT"
+            ],
+            "served_models": [
+              "claude-sonnet-5-5"
+            ],
+            "tool_budget_exhausted": true,
+            "usd": 0.10379
+          },
+          "served_models": [
+            "claude-sonnet-5-5"
+          ],
+          "calls": [
+            "run_component"
+          ],
+          "control": {
+            "action": "wait_for_jobs",
+            "summary": "Wait for the staging probe, then rerun the baseline with correct input paths if the npz files are found."
+          },
+          "error": null
+        }
+      ]
+    }
+  ],
+  "jobs": [
+    {
+      "id": "job_04b7de5850e340b4",
+      "status": "failed",
+      "kind": "artifact-op",
+      "component": "eidos.project.command@1.0.6"
+    },
+    {
+      "id": "job_5bdb987aef6e479c",
+      "status": "succeeded",
+      "kind": "artifact-op",
+      "component": "eidos.project.command@1.0.6"
+    },
+    {
+      "id": "job_ca6c5fbe89064585",
+      "status": "succeeded",
+      "kind": "artifact-op",
+      "component": "eidos.project.command@1.0.6"
+    },
+    {
+      "id": "job_6c37d8128db442f8",
+      "status": "succeeded",
+      "kind": "artifact-op",
+      "component": "eidos.project.command@1.0.6"
+    },
+    {
+      "id": "job_61dfe3dabb0f48da",
+      "status": "succeeded",
+      "kind": "artifact-op",
+      "component": "eidos.project.command@1.0.6"
+    }
+  ],
+  "conclusion": null,
+  "key_found_in_lab_files": [],
+  "caps": {
+    "max_turns": 5,
+    "max_model_calls_per_turn": 2,
+    "max_requests_per_decision": 4,
+    "model_usd": 3,
+    "model_tokens": 600000
+  },
+  "evidence": {
+    "class": "real-LLM DEVELOPMENT run (full Eidos lab), macOS 26.3.1 arm64 (Apple M4)",
+    "sha": "4d494ce",
+    "lab_wheels": "built from e36bfb1 sources (lab venv $S/venvs/lab, EIDOS_HOME=$S/lab)",
+    "runtime": "pydantic-ai",
+    "model_requested": "anthropic:claude-sonnet-5-5",
+    "served_models": [
+      "claude-sonnet-5-5"
+    ],
+    "requests": 20,
+    "input_tokens": 172477,
+    "output_tokens": 12130,
+    "list_price_usd_per_mtok": {
+      "input": 2.0,
+      "output": 10.0
+    },
+    "cost_usd": 0.466254,
+    "ledger": {
+      "run_id": "anc-1794137082",
+      "settled_cents": 47
+    },
+    "key_handling": "Keychain -> helper -> stdin -> lab start --credentials-stdin; during the run `ps eww` showed an ANTHROPIC_API_KEY variable only in eidos.apps.role investigator-worker; byte scan of every lab file: []",
+    "refused_proposals": 0,
+    "builder_intervention": "none during the run",
+    "outcome": "5 turns (max_turns cap), no conclusion. Turn 1 baseline job failed: eidos.project.command copies inputs into the work dir only via config.files, which the investigator did not pass (the lab-free driver defaults it); the failure (job.terminal.error with the stderr tail) was in the investigator's context, yet turns 2-5 were spent on staging/listing probes",
+    "investigator_inputs": "bundle only (brief, task.json, project.py, train/validation artifacts); no test data or labels, no reference solution",
+    "correction_2026_11_08": "An earlier version said the failed job recorded error=null; that came from the receipt query reading attempts[-1].error. The ledger has the error in job.terminal.error and the investigator view included it."
+  }
+}

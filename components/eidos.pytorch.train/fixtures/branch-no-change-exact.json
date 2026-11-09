@@ -1,0 +1,50 @@
+{
+  "name": "branch-no-change-exact",
+  "author_test": true,
+  "inputs": {
+    "parent_checkpoint": {
+      "file": "fixtures/data/parent-step6.ckpt",
+      "media_type": "application/octet-stream"
+    }
+  },
+  "config": {
+    "adapter": "eidos_adapter:ADAPTER",
+    "python_path": [
+      "fixtures/selftest"
+    ],
+    "builder": "OrderedSwitchNet",
+    "steps": 12,
+    "seed": 5,
+    "verify_no_change": true,
+    "branch": {
+      "migration": {
+        "component.train-meta": "copy",
+        "data_cursor": "copy",
+        "model": "copy",
+        "optimizer": "copy",
+        "rng.python": "copy",
+        "rng.torch": "copy",
+        "step": "copy"
+      },
+      "stream_policy": "paired",
+      "seed": null,
+      "intervention": {
+        "kind": "none"
+      },
+      "restore_class": "exact",
+      "required_fixtures": [
+        "no-change-restore"
+      ]
+    }
+  },
+  "expect": {
+    "status": "succeeded",
+    "receipt": {
+      "resumed_from_step": 6,
+      "end_step": 12,
+      "updates": 6,
+      "restore_class": "exact",
+      "no_change_restore_match": true
+    }
+  }
+}

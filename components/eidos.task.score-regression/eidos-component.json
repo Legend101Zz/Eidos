@@ -1,0 +1,55 @@
+{
+  "id": "eidos.task.score-regression",
+  "release": "1.0.1",
+  "implements": "regression-score/1",
+  "kind": "artifact-op",
+  "entry": "score:run",
+  "summary": "Score finite numeric predictions (npz ids/predictions) against a labelled split (npz ids/y) the investigator is allowed to see; strict ID/shape/finiteness checks; reports MSE, RMSE and MAE with per-example squared and absolute error.",
+  "scientific_effects": [
+    "observe"
+  ],
+  "input": {
+    "predictions": "prediction-array/1",
+    "reference": "task-array/1"
+  },
+  "output": {
+    "report": "regression-report/1",
+    "per_example": "per-example-error/1"
+  },
+  "metrics": {
+    "rmse": {
+      "numerator": "square root of mean squared error",
+      "denominator": "all reference IDs",
+      "direction": "decrease"
+    },
+    "mae": {
+      "numerator": "mean absolute error",
+      "denominator": "all reference IDs",
+      "direction": "decrease"
+    },
+    "mse": {
+      "numerator": "mean squared error",
+      "denominator": "all reference IDs",
+      "direction": "decrease"
+    }
+  },
+  "reads": [
+    "predictions",
+    "reference"
+  ],
+  "writes": [
+    "output:report",
+    "output:per_example"
+  ],
+  "isolation": "immutable-artifacts",
+  "controls": [
+    "fixtures/reordered.json"
+  ],
+  "receipt": [
+    "n",
+    "mse",
+    "rmse",
+    "mae"
+  ],
+  "card": "method-card.md"
+}

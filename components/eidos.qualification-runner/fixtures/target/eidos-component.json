@@ -1,0 +1,3 @@
+{"id": "toy.assessor", "release": "0.0.1", "implements": "protocol-assessment/1", "kind": "assessment",
+ "entry": "toy_assessor.run:run", "scientific_effects": ["assess"],
+ "input": {"evidence": "evidence-set/1"}, "output": {"evaluation": "protocol-evaluation/1"}}

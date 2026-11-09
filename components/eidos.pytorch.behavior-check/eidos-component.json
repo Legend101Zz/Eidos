@@ -1,0 +1,53 @@
+{
+  "release": "1.0.0",
+  "kind": "artifact-op",
+  "requires": [
+    "artifact.reader/1",
+    "artifact.writer/1",
+    "pytorch.adapter/1"
+  ],
+  "optional": [],
+  "card": "method-card.md",
+  "python": ">=3.9",
+  "dependencies": [
+    "torch"
+  ],
+  "license": "Apache-2.0",
+  "id": "eidos.pytorch.behavior-check",
+  "implements": "pytorch-behavior-check/1",
+  "entry": "eidos_behavior.check:run",
+  "scientific_effects": [
+    "observe"
+  ],
+  "input": {
+    "checkpoint": "eidos-checkpoint/1"
+  },
+  "output": {
+    "behavior": "behavior-check-report/1"
+  },
+  "reads": [
+    "checkpoint",
+    "project.adapter"
+  ],
+  "writes": [
+    "output:behavior"
+  ],
+  "isolation": "immutable-artifacts",
+  "controls": [
+    "fixtures/wrong-builder.json",
+    "fixtures/right-builder.json"
+  ],
+  "receipt": [
+    "behavior_match",
+    "strict_load_ok",
+    "max_abs_diff",
+    "builder",
+    "reference_builder",
+    "stage",
+    "problems"
+  ],
+  "cost": {
+    "processes": 2,
+    "device": "cpu"
+  }
+}
