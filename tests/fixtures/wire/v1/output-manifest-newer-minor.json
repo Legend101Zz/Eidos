@@ -1,0 +1,43 @@
+{
+  "attempt_id": "attempt-test",
+  "epoch": 1,
+  "error": null,
+  "job_id": "job-test",
+  "outputs": [
+    {
+      "checksum_algorithm": "sha256",
+      "digest": "88eaf2d8fb4e8be2859e7e7f06304b9d6aa4b6e6483f2a650fc5e21a7c078eb6",
+      "filename": "outputs/summary.json",
+      "media_type": "application/json",
+      "role": "output",
+      "schema": "row-summary/1",
+      "size": 20,
+      "slot": "summary"
+    },
+    {
+      "digest": "6146a1c3e455110a063785e97439db22ee77dba1d4a2b222b2a7ffb8a47fa6f9",
+      "filename": "outputs/rows_out.jsonl",
+      "media_type": "application/jsonl",
+      "role": "output",
+      "schema": "labeled-rows/1",
+      "size": 48,
+      "slot": "rows_out"
+    },
+    {
+      "digest": "0000000000000000000000000000000000000000000000000000000000000000",
+      "filename": "outputs/log.txt",
+      "media_type": "text/plain",
+      "role": "log",
+      "schema": null,
+      "size": 0,
+      "slot": "log"
+    }
+  ],
+  "provenance_note": "optional field added by a newer minor version",
+  "receipt": {
+    "input_rows": 3,
+    "wall_seconds": 0.0
+  },
+  "status": "succeeded",
+  "wire": "eidos-wire/1"
+}

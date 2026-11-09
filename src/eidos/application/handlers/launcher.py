@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from eidos.application.service import Ctx, command
+from eidos.boundary.wire import WireSchemaError, validate_wire
 from eidos.domain.errors import Fenced, Invalid, NotFound
 from eidos_wire import OutputManifest, WireError
 
@@ -120,6 +121,10 @@ def publish_outputs(ctx: Ctx, p: dict) -> dict:
     publication exists per (job, slot); duplicates and stale epochs leave a diagnostic event."""
     job = _job(ctx, p["job_id"])
     epoch = int(p["epoch"])
+    try:  # the published schema (schemas/eidos-wire/v1/output-manifest.schema.json), then the semantic rules
+        validate_wire("output-manifest", p["manifest"])
+    except WireSchemaError as exc:
+        raise Invalid(f"invalid output manifest: {exc}", details={"problems": exc.problems}) from None
     try:
         man = OutputManifest.from_dict(p["manifest"])
     except WireError as exc:

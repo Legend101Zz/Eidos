@@ -175,7 +175,11 @@ class OutputManifest:
 
 
 def json_schema(cls) -> dict:
-    """Generate a JSON Schema (draft 2020-12 subset) for a wire dataclass, standard library only."""
+    """Generate a JSON Schema (draft 2020-12 subset) for a wire dataclass, standard library only.
+
+    Descriptive helper. The published schemas (``schemas/eidos-wire/v<major>/`` in the repository) are
+    generated from the server boundary models, which also carry patterns, enums and bounds.
+    """
     import typing
 
     hints = typing.get_type_hints(cls)

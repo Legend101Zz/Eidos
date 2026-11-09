@@ -20,6 +20,7 @@ from typing import Any
 import eidos_pytorch
 import eidos_wire
 import eidos_worker
+from eidos.boundary.wire import validate_wire
 from eidos.client import LabClient, LabError
 from eidos.domain.isolation import SEALED_PROFILES
 from eidos.runtime.artifacts import LocalArtifactStore, StoreError
@@ -332,8 +333,10 @@ class AttemptRunner:
         staging = adir / "staging"
         if ctx["lock"]["component"].get("kind") == "build":
             return self._collect_build(project, ctx, adir)
-        try:
-            man = OutputManifest.read(staging)
+        try:  # schema first (WireSchemaError is a ValueError), then the eidos_wire semantic rules
+            raw = json.loads((staging / OutputManifest.FILENAME).read_text())
+            validate_wire("output-manifest", raw)
+            man = OutputManifest.from_dict(raw)
         except (OSError, ValueError, WireError) as exc:
             err = (adir / "stderr.log").read_text()[-3000:] if (adir / "stderr.log").exists() else ""
             return self._finish(project, ctx, "failed", {}, {"category": "infrastructure",

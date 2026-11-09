@@ -1,0 +1,25 @@
+{
+  "card": 42,
+  "entry": "wire_fixture:run",
+  "id": "fixture.wire-demo",
+  "implements": "wire-demo/1",
+  "input": {
+    "rows": "labeled-rows/1"
+  },
+  "isolation": "immutable-artifacts",
+  "kind": "artifact-op",
+  "license": "Apache-2.0",
+  "output": {
+    "rows_out": "labeled-rows/1",
+    "summary": "row-summary/1"
+  },
+  "python": ">=3.9",
+  "receipt": [
+    "input_rows"
+  ],
+  "release": "1.0.0",
+  "scientific_effects": [
+    "observe"
+  ],
+  "wire": "eidos-wire/1"
+}

@@ -1,0 +1,131 @@
+{
+  "$defs": {
+    "OutputEntry": {
+      "description": "One staged output file. ``filename`` is relative to the staging directory.",
+      "properties": {
+        "digest": {
+          "title": "Digest",
+          "type": "string"
+        },
+        "filename": {
+          "pattern": "^(?!/)(?!.*\\\\)(?!(?:.*/)?\\.\\.(?:/|$)).+$",
+          "title": "Filename",
+          "type": "string"
+        },
+        "media_type": {
+          "default": "application/octet-stream",
+          "title": "Media Type",
+          "type": "string"
+        },
+        "role": {
+          "default": "output",
+          "description": "output | checkpoint | model-export | log | context",
+          "title": "Role",
+          "type": "string"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema"
+        },
+        "size": {
+          "minimum": 0,
+          "title": "Size",
+          "type": "integer"
+        },
+        "slot": {
+          "title": "Slot",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slot",
+        "filename",
+        "digest",
+        "size"
+      ],
+      "title": "OutputEntry",
+      "type": "object"
+    }
+  },
+  "$id": "urn:eidos:schema:eidos-wire:v1:output-manifest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The worker's claim about what it produced (worker to server). Verified by the launcher, fenced by the server.",
+  "properties": {
+    "attempt_id": {
+      "title": "Attempt Id",
+      "type": "string"
+    },
+    "epoch": {
+      "minimum": 1,
+      "title": "Epoch",
+      "type": "integer"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    },
+    "job_id": {
+      "title": "Job Id",
+      "type": "string"
+    },
+    "outputs": {
+      "items": {
+        "$ref": "#/$defs/OutputEntry"
+      },
+      "title": "Outputs",
+      "type": "array"
+    },
+    "receipt": {
+      "additionalProperties": true,
+      "title": "Receipt",
+      "type": "object"
+    },
+    "status": {
+      "enum": [
+        "succeeded",
+        "failed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "wire": {
+      "description": "Wire contract identity, 'eidos-wire/<major>'.",
+      "pattern": "^eidos-wire/1(\\.[0-9]+)*$",
+      "title": "Wire",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id",
+    "attempt_id",
+    "epoch",
+    "status",
+    "wire"
+  ],
+  "title": "OutputManifest",
+  "type": "object",
+  "x-eidos": {
+    "generator": "scripts/dev/gen_wire_schemas.py",
+    "source": "eidos.boundary.wire.OutputManifest",
+    "unknown_fields": "accepted and ignored (newer minor versions add optional fields)",
+    "wire": "eidos-wire/1",
+    "wire_major": 1
+  }
+}

@@ -1,0 +1,173 @@
+{
+  "$defs": {
+    "ComponentRef": {
+      "description": "The component the attempt runs (``id``, ``entry``; also release, digest, kind, implements...).",
+      "properties": {
+        "entry": {
+          "description": "'module:function'",
+          "pattern": "^[^:].*:.*[^:]$",
+          "title": "Entry",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "entry"
+      ],
+      "title": "ComponentRef",
+      "type": "object"
+    },
+    "InputBinding": {
+      "description": "One immutable input artifact made available read-only to the worker.",
+      "properties": {
+        "artifact_id": {
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "digest": {
+          "title": "Digest",
+          "type": "string"
+        },
+        "media_type": {
+          "default": "application/octet-stream",
+          "title": "Media Type",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "digest",
+        "path"
+      ],
+      "title": "InputBinding",
+      "type": "object"
+    }
+  },
+  "$id": "urn:eidos:schema:eidos-wire:v1:invocation",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Everything a worker may know about one attempt. Written by the trusted launcher (server to worker).",
+  "properties": {
+    "attempt_id": {
+      "title": "Attempt Id",
+      "type": "string"
+    },
+    "component": {
+      "$ref": "#/$defs/ComponentRef"
+    },
+    "config": {
+      "additionalProperties": true,
+      "title": "Config",
+      "type": "object"
+    },
+    "epoch": {
+      "minimum": 1,
+      "title": "Epoch",
+      "type": "integer"
+    },
+    "inputs": {
+      "additionalProperties": {
+        "$ref": "#/$defs/InputBinding"
+      },
+      "title": "Inputs",
+      "type": "object"
+    },
+    "job_id": {
+      "title": "Job Id",
+      "type": "string"
+    },
+    "limits": {
+      "additionalProperties": true,
+      "title": "Limits",
+      "type": "object"
+    },
+    "ports": {
+      "additionalProperties": true,
+      "title": "Ports",
+      "type": "object"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "scratch_dir": {
+      "title": "Scratch Dir",
+      "type": "string"
+    },
+    "seed": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Seed"
+    },
+    "staging_dir": {
+      "title": "Staging Dir",
+      "type": "string"
+    },
+    "wire": {
+      "description": "Wire contract identity, 'eidos-wire/<major>'.",
+      "pattern": "^eidos-wire/1(\\.[0-9]+)*$",
+      "title": "Wire",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id",
+    "attempt_id",
+    "epoch",
+    "project_id",
+    "component",
+    "inputs",
+    "config",
+    "staging_dir",
+    "scratch_dir",
+    "wire"
+  ],
+  "title": "Invocation",
+  "type": "object",
+  "x-eidos": {
+    "generator": "scripts/dev/gen_wire_schemas.py",
+    "source": "eidos.boundary.wire.Invocation",
+    "unknown_fields": "accepted and ignored (newer minor versions add optional fields)",
+    "wire": "eidos-wire/1",
+    "wire_major": 1
+  }
+}

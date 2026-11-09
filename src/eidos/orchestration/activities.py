@@ -136,6 +136,7 @@ class AssessorActivities:
         import os
         import time as _time
 
+        from eidos.boundary.wire import validate_wire
         from eidos.runtime.launcher import (
             LaunchSpec,
             detect_sealed_profile,
@@ -211,7 +212,9 @@ class AssessorActivities:
                 raise ApplicationError("assessor manifest is not a regular file", type="ASSESSOR_FAILED",
                                        non_retryable=True)
             try:
-                man = OutputManifest.read(inv.staging_dir)
+                raw = json.loads((staging / OutputManifest.FILENAME).read_text())
+                validate_wire("output-manifest", raw)
+                man = OutputManifest.from_dict(raw)
             except Exception as exc:  # noqa: BLE001 - no manifest means the assessor process itself failed
                 err = (base / "proc" / "stderr.log").read_text()[-800:] if (base / "proc" / "stderr.log").exists() else ""
                 raise ApplicationError(f"assessor produced no output manifest ({exc}): {err}",
