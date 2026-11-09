@@ -1,0 +1,13 @@
+{
+ "source": "g4-110-qwen2.5-3b-instruct-repair.json",
+ "model": "qwen2.5:3b-instruct",
+ "output_mode": "repair",
+ "scenario": "conformance-failed-job",
+ "reply_index": 0,
+ "reply": "{\n  \"rationale\": \"Analyze the existing training job failure and validate the data formats provided before proposing a new experiment.\",\n  \"purpose\": \"measurement-development\",\n  \"hypotheses\": [\n    {\n      \"statement\": \"The model will fail to train due to missing or corrupted input files, incorrect format, or mismatched paths for {train}, {validation}, and {task}.\",\n      \"prediction\": \"Training job status will be failed with an error related to data inputs.\",\n      \"falsifier\": \"Successful training completes without errors after fixing the input file formats.\"\n    }\n  ],\n  \"calls\": [\n    {\n      \"tool\": \"file_claim\",\n      \"args\": {\n        \"statement\": \"{train}, {validation}, and {task} artifacts are properly claimed as 'data' kind.\"\n      }\n    },\n    {\n      \"tool\": \"export_model\",\n      \"args\": {\n        \"checkpoint_artifact_id\": \"art_checkpoint\"\n      }\n    },\n    {\n      \"tool\": \"record_note\",\n      \"args\": {\n        \"kind\": \"preparation-checkout\",\n        \"text\": \"Verifying the {train}, {validation}, and {task} artifacts ensure consistency between provided data and model requirements.\"\n      }\n    },\n    {\n      \"tool\": \"plan_trial\",\n      \"args\": {\n        \"component_ref\": \"eidos.project.command@1.0.4\",\n        \"inputs\": {\n          \"work\": \"art_train\",\n          \"out\": \"art_validate\",\n          \"train\": \"art_train\",\n          \"validation\": \"art_validation\",\n          \"task\": \"art_task\"\n        },\n        \"config\": {\n          \"argv\": [\"python\", \"project.py\", \"recreate\", \"--inputs\", \"{work}\", \"--dataset-name\", \"model-test\"]\n        }\n      }\n    }\n  ],\n  \"control\": {\n    \"action\": \"wait_for_jobs\",\n    \"summary\": \"Jobs for recreating the model training dataset are waiting to be confirmed successful. Resume after data consistency checks and pre-examined artifacts.\",\n    \"scope\": {}\n  }\n}",
+ "expect": "recovered",
+ "repairs": [
+  "args-object",
+  "scope-object"
+ ]
+}

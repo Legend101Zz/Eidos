@@ -1,0 +1,333 @@
+{
+  "check": "eidos-live-provider/1",
+  "model_requested": "openai-compatible:qwen2.5:3b-instruct",
+  "base_url": "http://127.0.0.1:11535/v1",
+  "output_mode": "tool",
+  "caps": {
+    "max_total_requests": 24,
+    "max_output_tokens": 4096,
+    "temperature": "unset"
+  },
+  "request_timeout_seconds": 300.0,
+  "started_at": 1794236935.8456519,
+  "scenarios": [
+    {
+      "name": "conformance-fresh",
+      "expect": "valid-decision",
+      "context_chars": 7539,
+      "outcome": "model-call-failed",
+      "retryable": true,
+      "error": "UnexpectedModelBehavior: Exceeded maximum output retries (1)",
+      "possible_usage": {
+        "provider": "openai-compatible",
+        "model": "openai-compatible:qwen2.5:3b-instruct",
+        "input_tokens": 5225,
+        "output_tokens": 361,
+        "calls": 2,
+        "request_ids": [
+          "chatcmpl-455",
+          "chatcmpl-362"
+        ],
+        "served_models": [
+          "qwen2.5:3b-instruct"
+        ],
+        "per_request": [
+          {
+            "model": "qwen2.5:3b-instruct",
+            "input_tokens": 2490,
+            "output_tokens": 115,
+            "finish_reason": "stop"
+          },
+          {
+            "model": "qwen2.5:3b-instruct",
+            "input_tokens": 2735,
+            "output_tokens": 246,
+            "finish_reason": "stop"
+          }
+        ],
+        "failed_request": {
+          "error": "UnexpectedModelBehavior",
+          "status_code": null
+        }
+      },
+      "seconds": 24.59,
+      "pass": false
+    },
+    {
+      "name": "conformance-after-baselines",
+      "expect": "valid-decision",
+      "context_chars": 8817,
+      "outcome": "model-call-failed",
+      "retryable": true,
+      "error": "UnexpectedModelBehavior: Exceeded maximum output retries (1)",
+      "possible_usage": {
+        "provider": "openai-compatible",
+        "model": "openai-compatible:qwen2.5:3b-instruct",
+        "input_tokens": 6260,
+        "output_tokens": 481,
+        "calls": 2,
+        "request_ids": [
+          "chatcmpl-178",
+          "chatcmpl-655"
+        ],
+        "served_models": [
+          "qwen2.5:3b-instruct"
+        ],
+        "per_request": [
+          {
+            "model": "qwen2.5:3b-instruct",
+            "input_tokens": 2895,
+            "output_tokens": 282,
+            "finish_reason": "stop"
+          },
+          {
+            "model": "qwen2.5:3b-instruct",
+            "input_tokens": 3365,
+            "output_tokens": 199,
+            "finish_reason": "stop"
+          }
+        ],
+        "failed_request": {
+          "error": "UnexpectedModelBehavior",
+          "status_code": null
+        }
+      },
+      "seconds": 24.87,
+      "pass": false
+    },
+    {
+      "name": "conformance-failed-job",
+      "expect": "valid-decision",
+      "context_chars": 7902,
+      "outcome": "model-call-failed",
+      "retryable": true,
+      "error": "UnexpectedModelBehavior: Exceeded maximum output retries (1)",
+      "possible_usage": {
+        "provider": "openai-compatible",
+        "model": "openai-compatible:qwen2.5:3b-instruct",
+        "input_tokens": 5613,
+        "output_tokens": 357,
+        "calls": 2,
+        "request_ids": [
+          "chatcmpl-663",
+          "chatcmpl-445"
+        ],
+        "served_models": [
+          "qwen2.5:3b-instruct"
+        ],
+        "per_request": [
+          {
+            "model": "qwen2.5:3b-instruct",
+            "input_tokens": 2601,
+            "output_tokens": 293,
+            "finish_reason": "stop"
+          },
+          {
+            "model": "qwen2.5:3b-instruct",
+            "input_tokens": 3012,
+            "output_tokens": 64,
+            "finish_reason": "stop"
+          }
+        ],
+        "failed_request": {
+          "error": "UnexpectedModelBehavior",
+          "status_code": null
+        }
+      },
+      "seconds": 22.15,
+      "pass": false
+    },
+    {
+      "name": "conformance-large-catalog",
+      "expect": "valid-decision",
+      "context_chars": 12708,
+      "outcome": "decision",
+      "usage": {
+        "provider": "openai-compatible",
+        "model": "openai-compatible:qwen2.5:3b-instruct",
+        "input_tokens": 4049,
+        "output_tokens": 169,
+        "calls": 1,
+        "request_ids": [
+          "chatcmpl-390"
+        ],
+        "served_models": [
+          "qwen2.5:3b-instruct"
+        ],
+        "per_request": [
+          {
+            "model": "qwen2.5:3b-instruct",
+            "input_tokens": 4049,
+            "output_tokens": 169,
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "served_models": [
+        "qwen2.5:3b-instruct"
+      ],
+      "replies": [
+        "{\"rationale\": \"Enhancing the digit classifier training process should involve more in-depth experimentation and analysis. The current functioning classification can be improved by refining our approach to input data handling, adjusting hyperparameters, or even experimenting with different architectures.\", \"purpose\": \"measurement-development\", \"hypotheses\": [{\"statement\": \"The current model's performance as measured on a validation dataset will show marginal improvement after tuning the learning rate and regularization parameters.\", \"prediction\": \"The new model will outperform the existing one model within the same dataset by 5% accuracy points with respect to the validation set score.\", \"falsifier\": \"Failing to achieve an accuracy improvement of at least 5% when changing learning rates and/or applying different amounts of L2 regularization\"}], \"calls\": [], \"control\": {\"action\": \"request_input\"}}"
+      ],
+      "schema_valid": true,
+      "executable": true,
+      "tools": [],
+      "calls": [],
+      "control": {
+        "action": "request_input",
+        "summary": ""
+      },
+      "seconds": 34.61,
+      "pass": true
+    },
+    {
+      "name": "read-tools-available",
+      "expect": "valid-decision",
+      "context_chars": 7965,
+      "outcome": "model-call-failed",
+      "retryable": true,
+      "error": "UnexpectedModelBehavior: Exceeded maximum output retries (1)",
+      "possible_usage": {
+        "provider": "openai-compatible",
+        "model": "openai-compatible:qwen2.5:3b-instruct",
+        "input_tokens": 6557,
+        "output_tokens": 792,
+        "calls": 2,
+        "request_ids": [
+          "chatcmpl-583",
+          "chatcmpl-560"
+        ],
+        "served_models": [
+          "qwen2.5:3b-instruct"
+        ],
+        "per_request": [
+          {
+            "model": "qwen2.5:3b-instruct",
+            "input_tokens": 2859,
+            "output_tokens": 353,
+            "finish_reason": "stop"
+          },
+          {
+            "model": "qwen2.5:3b-instruct",
+            "input_tokens": 3698,
+            "output_tokens": 439,
+            "finish_reason": "stop"
+          }
+        ],
+        "failed_request": {
+          "error": "UnexpectedModelBehavior",
+          "status_code": null
+        }
+      },
+      "seconds": 124.01,
+      "pass": false
+    },
+    {
+      "name": "provider-timeout",
+      "expect": "model-call-failed:true",
+      "context_chars": 7539,
+      "outcome": "model-call-failed",
+      "retryable": true,
+      "error": "ModelTimeoutError: Request timed out.",
+      "possible_usage": {
+        "provider": "openai-compatible",
+        "model": "openai-compatible:qwen2.5:3b-instruct",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "calls": 0,
+        "request_ids": [],
+        "served_models": [],
+        "per_request": [],
+        "failed_request": {
+          "error": "ModelTimeoutError",
+          "status_code": null
+        }
+      },
+      "seconds": 0.04,
+      "pass": true
+    },
+    {
+      "name": "request-limit-with-tool-loop",
+      "expect": "bounded-or-decision",
+      "context_chars": 8070,
+      "outcome": "bounded-no-decision",
+      "usage": {
+        "provider": "openai-compatible",
+        "model": "openai-compatible:qwen2.5:3b-instruct",
+        "input_tokens": 2883,
+        "output_tokens": 155,
+        "calls": 1,
+        "request_ids": [
+          "chatcmpl-883"
+        ],
+        "served_models": [
+          "qwen2.5:3b-instruct"
+        ],
+        "per_request": [
+          {
+            "model": "qwen2.5:3b-instruct",
+            "input_tokens": 2883,
+            "output_tokens": 155,
+            "finish_reason": "stop"
+          }
+        ],
+        "limit_reached": "The next request would exceed the request_limit of 1. Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits"
+      },
+      "served_models": [
+        "qwen2.5:3b-instruct"
+      ],
+      "replies": [
+        "{\n  \"rationale\": \"Inspect art_vp0 to understand existing performance and identify areas for improvement.\",\n  \"purpose\": \"open-search\",\n  \"hypotheses\": [\n    {\n      \"statement\": \"The digit classifier can be improved with additional training data.\",\n      \"prediction\": \"The classification accuracy will increase when more examples of digits are used for training.\",\n      \"falsifier\": \"Decreasing the amount of training data and observing no change in the accuracy reported by art_vp0.\"\n    }\n  ],\n  \"calls\": [\n    {\n      \"tool\": \"inspect_evidence\",\n      \"args\": {\"artifact_id\": \"art_vp0\", \"max_bytes\": 1000}\n    }\n  ],\n  \"control\": {}\n}"
+      ],
+      "schema_valid": true,
+      "executable": true,
+      "tools": [],
+      "calls": [],
+      "control": {
+        "action": "wait_for_jobs",
+        "summary": "request budget exhausted",
+        "bounded_outcome": "request-budget-exhausted"
+      },
+      "seconds": 37.03,
+      "pass": true
+    },
+    {
+      "name": "unknown-model-id",
+      "expect": "model-call-failed:false",
+      "context_chars": 7539,
+      "outcome": "model-call-failed",
+      "retryable": false,
+      "error": "ModelNotFoundError: status_code: 404, model_name: eidos-no-such-model, body: {'message': 'model \"eidos-no-such-model\" not found, try pulling it first', 'type': 'api_error', 'param': None, 'code': None}",
+      "possible_usage": {
+        "provider": "openai-compatible",
+        "model": "openai-compatible:eidos-no-such-model",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "calls": 0,
+        "request_ids": [],
+        "served_models": [],
+        "per_request": [],
+        "failed_request": {
+          "error": "ModelNotFoundError",
+          "status_code": 404
+        }
+      },
+      "seconds": 0.04,
+      "pass": true
+    }
+  ],
+  "transport_retries_disabled": true,
+  "total_requests_counted": 12,
+  "finished_at": 1794237204.0615199,
+  "summary": {
+    "scenarios": 8,
+    "passed": 4,
+    "schema_conformance": [
+      null,
+      null,
+      null,
+      true,
+      null
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+{
+ "source": "g4-110-qwen2.5-3b-instruct-tool.json",
+ "model": "qwen2.5:3b-instruct",
+ "output_mode": "tool",
+ "scenario": "request-limit-with-tool-loop",
+ "reply_index": 0,
+ "reply": "{\n  \"rationale\": \"Inspect art_vp0 to understand existing performance and identify areas for improvement.\",\n  \"purpose\": \"open-search\",\n  \"hypotheses\": [\n    {\n      \"statement\": \"The digit classifier can be improved with additional training data.\",\n      \"prediction\": \"The classification accuracy will increase when more examples of digits are used for training.\",\n      \"falsifier\": \"Decreasing the amount of training data and observing no change in the accuracy reported by art_vp0.\"\n    }\n  ],\n  \"calls\": [\n    {\n      \"tool\": \"inspect_evidence\",\n      \"args\": {\"artifact_id\": \"art_vp0\", \"max_bytes\": 1000}\n    }\n  ],\n  \"control\": {}\n}",
+ "expect": "recovered",
+ "repairs": [
+  "args-object"
+ ]
+}
