@@ -1,0 +1,202 @@
+# EXAMPLE ONLY. Not active in this repository: GitHub runs only files named *.yml / *.yaml
+# directly inside .github/workflows/, and this file lives in docs/experiments/.
+#
+# It belongs in the PRIVATE grading repository, as .github/workflows/grade.yml.
+# Design and rules: docs/experiments/README.md, section "Grading on GitHub Actions".
+#
+# Two jobs on two fresh VMs:
+#   run   - runs the candidate model on the test inputs and uploads predictions.
+#           No secrets, no labels on this VM. Candidate code runs as a separate OS user,
+#           inside bubblewrap, with no network.
+#   score - downloads the predictions, loads the labels, scores them and uploads grade.json.
+#           It reads predictions as data and never executes candidate code.
+#
+# Assumed layout of the private grading repo (adapt as needed):
+#   candidates/<sha256>.tar.gz   candidate bundle pushed by the controller; named by content hash.
+#                                It contains model/ (a trained model) and project.py with an
+#                                `infer --model --inputs --out` command (the research-public-v0.1.0
+#                                bundle interface).
+#   inputs/<task>/               test inputs only (test_inputs.npz). No labels.
+#   env/requirements.lock        the frozen candidate runtime environment.
+#   grader/                      the qualified scoring code (for example a copy of grade.py and
+#                                validate_answer.py) and its own lock file.
+#   labels/<task>/               test labels. Read ONLY by the score job. Alternatively keep them
+#                                in a repository secret (secrets are limited to 48 KB each).
+#
+# Before use: qualify this workflow with planted-effect, null and invalid-prediction cases,
+# and simulate an infrastructure failure (see "Grader qualification" in the plan).
+
+name: grade
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha256:
+        description: "SHA-256 of candidates/<sha256>.tar.gz"
+        required: true
+      task:
+        description: "Task card, for example D02"
+        required: true
+      run_tag:
+        description: "Opaque run identifier from the study launcher (no arm name, to keep grading blind)"
+        required: true
+
+# Least privilege by default; each job asks only for what it needs.
+permissions: {}
+
+jobs:
+  run:
+    # Only the controller or the owner may grade. GRADERS is a repository variable holding a
+    # JSON list of GitHub logins, for example ["owner-login"]. Write access to a private repo
+    # is already required to dispatch; this check makes the allowlist explicit.
+    if: contains(fromJSON(vars.GRADERS), github.actor)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120          # GitHub's hard limit for a hosted job is 6 hours.
+    permissions:
+      contents: read              # to check out the private repo; no secrets are referenced here
+    steps:
+      # Phase marker: any failure before the candidate starts is an INFRASTRUCTURE INCIDENT.
+      - name: Mark phase setup
+        run: echo setup > "$RUNNER_TEMP/phase"
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false   # do not leave the token in .git/config
+          sparse-checkout: |           # never fetch labels/ or grader/ onto this VM
+            candidates
+            inputs
+            env
+
+      - name: Verify the candidate by content hash
+        env:
+          SHA: ${{ inputs.candidate_sha256 }}
+        run: |
+          f="candidates/${SHA}.tar.gz"
+          test -f "$f"
+          echo "${SHA}  ${f}" | sha256sum -c -
+
+      - name: Install bubblewrap and the frozen runtime (network allowed here, before the candidate runs)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq bubblewrap
+          # Ubuntu 24.04 restricts unprivileged user namespaces; bubblewrap needs them.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo python3 -m venv /opt/candidate-env
+          sudo /opt/candidate-env/bin/pip install -q -r env/requirements.lock
+
+      - name: Create the candidate user and its directories
+        env:
+          SHA: ${{ inputs.candidate_sha256 }}
+          TASK: ${{ inputs.task }}
+        run: |
+          sudo useradd --create-home --shell /usr/sbin/nologin candidate
+          sudo mkdir -p /grade/candidate /grade/inputs /grade/out
+          sudo tar -xzf "candidates/${SHA}.tar.gz" -C /grade/candidate
+          sudo cp -r "inputs/${TASK}/." /grade/inputs/
+          sudo chown -R root:root /grade/candidate /grade/inputs
+          sudo chmod -R a+rX,go-w /grade/candidate /grade/inputs
+          sudo chown candidate: /grade/out
+
+      - name: Run the candidate (separate user, bubblewrap, no network, empty environment)
+        run: |
+          echo candidate > "$RUNNER_TEMP/phase"
+          # A non-zero exit or a timeout here is a CANDIDATE failure, not an incident.
+          set +e
+          sudo -u candidate timeout 3600 bwrap \
+            --unshare-all --die-with-parent --new-session --clearenv \
+            --setenv PATH /opt/candidate-env/bin:/usr/bin:/bin \
+            --setenv HOME /tmp \
+            --ro-bind /usr /usr --ro-bind /opt/candidate-env /opt/candidate-env \
+            --symlink usr/bin /bin --symlink usr/lib /lib --symlink usr/lib64 /lib64 \
+            --proc /proc --dev /dev --tmpfs /tmp \
+            --ro-bind /grade/candidate /candidate --ro-bind /grade/inputs /inputs \
+            --bind /grade/out /out \
+            --chdir /candidate \
+            python project.py infer --model /candidate/model --inputs /inputs --out /out
+          echo $? > "$RUNNER_TEMP/candidate_exit"
+          set -e
+          echo done > "$RUNNER_TEMP/phase"
+
+      - name: Collect predictions and the run record
+        if: always()
+        env:
+          SHA: ${{ inputs.candidate_sha256 }}
+          TASK: ${{ inputs.task }}
+          RUN_TAG: ${{ inputs.run_tag }}
+        run: |
+          mkdir -p upload
+          sudo cp /grade/out/*.npz upload/ 2>/dev/null || true
+          sudo chown -R "$(id -u)" upload
+          python3 - <<'EOF'
+          import json, os, pathlib
+          t = os.environ["RUNNER_TEMP"]
+          read = lambda n, d: pathlib.Path(t, n).read_text().strip() if pathlib.Path(t, n).exists() else d
+          json.dump({"run_tag": os.environ["RUN_TAG"], "task": os.environ["TASK"],
+                     "candidate_sha256": os.environ["SHA"],
+                     "phase_reached": read("phase", "setup"),
+                     "candidate_exit": read("candidate_exit", None)},
+                    open("upload/run-record.json", "w"), indent=2)
+          EOF
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: predictions-${{ inputs.run_tag }}
+          path: upload/
+          retention-days: 30
+
+  score:
+    needs: run
+    if: always() && contains(fromJSON(vars.GRADERS), github.actor)   # also record incidents
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            grader
+            labels
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true      # a missing artifact is handled below as an incident
+        with:
+          name: predictions-${{ inputs.run_tag }}
+          path: predictions/
+
+      # Labels from a secret instead of labels/:  echo "$LABELS_B64" | base64 -d > labels.npz
+      # with env: LABELS_B64: ${{ secrets.LABELS_D02 }}. Only this job may reference secrets.
+
+      - name: Score (reads predictions as data; never imports or runs candidate code)
+        env:
+          TASK: ${{ inputs.task }}
+          RUN_TAG: ${{ inputs.run_tag }}
+          RUN_RESULT: ${{ needs.run.result }}
+        run: |
+          python3 -m venv /tmp/grader-env
+          /tmp/grader-env/bin/pip install -q -r grader/requirements.lock
+          # status is one of:
+          #   incident          - the run job failed before the candidate started (phase "setup"),
+          #                       or its artifact is missing. Never a candidate failure: the launcher
+          #                       replaces the whole paired block, blinded.
+          #   candidate_failure - the candidate crashed, timed out or wrote invalid predictions.
+          #                       No verified success; stays in the denominator.
+          #   scored            - predictions valid; grade.json holds the metric and the
+          #                       verified_success decision under the frozen task rules.
+          # grader/score_run.py is the qualified scorer you write for the study (built on grade.py's
+          # compare() and validate_answer.py). Its interface here is illustrative.
+          /tmp/grader-env/bin/python grader/score_run.py \
+            --task "$TASK" --run-tag "$RUN_TAG" --run-result "$RUN_RESULT" \
+            --predictions predictions/ --labels "labels/$TASK" --out grade.json
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: grade-${{ inputs.run_tag }}
+          path: grade.json
+          retention-days: 90
+
+# Fetching results (controller or a reporting-only session, after the block has finished):
+#   gh run download <run-id> -R <owner>/<grading-repo> -n grade-<run_tag>
+# Never pass grades into a session that is still running an arm.

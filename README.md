@@ -2,13 +2,147 @@
 
 [![CI](https://github.com/Legend101Zz/Eidos/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Legend101Zz/Eidos/actions/workflows/ci.yml) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE) ![Platforms: Linux | macOS](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS-lightgrey.svg) ![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)
 
-**A local research harness for investigating custom PyTorch models with an LLM investigator, under recorded evidence rules.**
+Over the past two years, LLMs have gone from autocompleting code to doing real machine-learning work. Wrapped in a harness, the loop of tools, memory, feedback and limits around the model, a coding agent such as Claude Code or Codex can read a training script, form a hypothesis, change the code, launch a run and read the result, for hours at a time. Researchers have started to measure how far this goes:
 
-Eidos is for ML researchers who want an LLM to help investigate their own PyTorch models on their own machine, without letting it grade its own work. An investigator diagnoses failures, writes and publishes research components, runs trials and checkpoint branches, and exports models. Claims count only when they come from a frozen, qualified evidence plan and an independent assessor. Every command, job, charge and isolation receipt is in a PostgreSQL ledger.
+- [AIDE](https://arxiv.org/abs/2502.13138) treats ML engineering as a search over code. It explores a tree of candidate programs and is a strong baseline on practical ML tasks.
+- [MLGym](https://arxiv.org/abs/2502.14499) gives research agents open-ended AI research tasks in a gym-style environment.
+- [RE-Bench](https://arxiv.org/abs/2411.15114) put frontier agents next to human experts on ML research-engineering tasks. The agents scored higher on short time budgets; the experts pulled ahead when both had more time.
+- The [LLM speedrunning benchmark](https://arxiv.org/abs/2506.22419) asked agents to reproduce known speedups of NanoGPT training, and found that they struggled even with detailed hints.
+- [AIRS-Bench](https://arxiv.org/abs/2602.06855) collects diverse AI research tasks and prepares data separately for the agent and for the evaluator.
 
-**Current release: v1.0.1** (package version `1.0.1`). It is a design-conformance follow-up to v1.0.0: mypy in CI, versioned wire JSON Schemas with server-side validation, and the deferred PyGlove/Composer adapters recorded ([release notes](docs/release/RELEASE_NOTES_v1.0.1.md)). Machine sleep and OS restart recovery are not yet verified on hardware; see [Status](#status-and-evidence).
+Two lessons stand out. First, the harness matters: the same model can behave very differently depending on the loop around it. Second, today's harnesses are built to push a score up. Nothing in them stops an agent from tuning against its own evaluation until something improves, grading its own work, losing track of which results it has already seen, or reporting one lucky seed as a finding. Human researchers have old habits against exactly these failures: decide what counts as success before you look, let someone else check, keep a lab notebook, and report the nulls.
 
-## Key features
+That gap is where Eidos started. **Eidos is a research harness that builds those habits into the loop.**
+- You bring your own PyTorch project, a question about your model and a budget.
+- An LLM, the *investigator*, works on it on your machine, one bounded turn at a time. It diagnoses failures, writes new research components, runs trials and checkpoint branches, and exports models.
+- Success rules are committed before it starts exploring. A claim counts only when it comes from an evidence plan frozen in advance and a separate, qualified assessor agrees.
+- Every command, cost and look at a result is written to a ledger.
+- At the end you get the strongest answer the evidence supports, a model you can load if one really improved, and a report that keeps the failures and the limitations.
+
+Whether this discipline actually makes an LLM a better researcher is an open question, and Eidos was built to answer it. It is the instrument for a study, written up as a paper in preparation, that compares the same LLM with and without it ([below](#the-research-behind-it-paper-in-preparation)).
+
+**Current release: v1.0.1** (package version `1.0.1`, tag `eidos-v1.0.1`). It is a design-conformance follow-up to v1.0.0: mypy in CI, versioned wire JSON Schemas with server-side validation, and the deferred PyGlove/Composer adapters recorded ([release notes](docs/release/RELEASE_NOTES_v1.0.1.md)). Machine sleep and OS restart recovery are not yet verified on hardware; see [Status](#status-and-evidence).
+
+Contents: [How it stays honest](#how-eidos-keeps-the-investigator-honest) · [Research](#the-research-behind-it-paper-in-preparation) · [How it works](#how-it-works) · [Use it today](#what-you-can-do-with-it-today) · [Scope](#supported-scope-v1) · [Status](#status-and-evidence) · [Docs](#documentation-map) · [Contributing](#contributing) · [Licence](#license)
+
+## How Eidos keeps the investigator honest
+
+Each habit of a careful researcher maps to something the harness enforces, rather than something the LLM is asked to remember:
+
+| Habit of a careful researcher | What Eidos enforces |
+|---|---|
+| Decide what counts as success before looking | A **charter** with the success rules is committed before exploration. Plans cannot override its thresholds; a later change is a new revision that keeps the old rule and records what had been seen |
+| Use a sound method | **Evidence plans** come from **qualified templates**: templates that have shown they detect a planted effect and stay silent on a null case |
+| Let someone else judge | A separate **assessor**, qualified the same way, compares the frozen plan with what actually ran |
+| Keep a lab notebook | Every run, cost, isolation receipt and **exposure** (who saw which result, and when) is in the ledger |
+| Claim only what the evidence supports | Claims carry an assessed outcome and a scope; failures, nulls and inconclusive results are kept |
+
+**A worked example** (the switch-order project in [`examples/switch-order-project`](examples/switch-order-project/)). A small PyTorch model must decide which of two switches fired first. One input, the "recorder", agrees with the label 98% of the time, which is a tempting shortcut. The useful metric is *both-correct*: the model gets an example **and** its order-swapped twin right. In the v1.0.0 real-model run, `claude-sonnet-5-5` worked as the investigator on its own ([`a8-sonnet-3-recheck.json`](docs/release/evidence/a8-sonnet-3-recheck.json)):
+
+1. **Diagnosis.** The baseline had 0.984 accuracy but only 0.2625 both-correct, and 0 of 701 adjacent pairs were both correct. The investigator concluded that the model probably relies on the recorder shortcut, and wrote that it had not tested this directly.
+2. **Fix.** Group-balanced training from scratch reached 0.467 both-correct but dropped accuracy to 0.7125, breaking the charter's guardrail, so it was not claimed. The same training continued on a **checkpoint branch** of the baseline reached 0.785 both-correct with accuracy 0.9955.
+3. **Assessed result.** A frozen evidence plan ran baseline and candidate again; the numbers reproduced exactly. The independent assessor returned **inconclusive**. The investigator's report listed the weak points itself: one training seed, one evaluation draw, and 45 extra training steps that confound the comparison. It did not claim more than that.
+
+The run cost USD 1.81 in model calls.
+
+## The research behind it (paper in preparation)
+
+The study asks one question: **does the same LLM make more independently verified, useful model improvements through Eidos than as a well-equipped coding agent?** To make that a fair test, it compares four arms that share one LLM, one task set and one resource envelope, so the only difference is what the LLM works through:
+
+| Arm | What the LLM gets |
+|---|---|
+| 1 | A coding agent with a research brief and ordinary tools |
+| 2 | Arm 1 plus the component library and written research method, without Eidos |
+| 3 | The same coding agent operating Eidos through MCP |
+| 4 | The Eidos internal investigator |
+
+```mermaid
+flowchart LR
+  S["Same LLM, task and budget"] --> A1["Arm 1: coding agent"]
+  S --> A2["Arm 2: agent plus library and method"]
+  S --> A3["Arm 3: agent driving Eidos over MCP"]
+  S --> A4["Arm 4: Eidos investigator"]
+  A1 --> G["Independent grader"]
+  A2 --> G
+  A3 --> G
+  A4 --> G
+  G --> D["Decision: arm 4 minus arm 2"]
+```
+
+**Decision rule.** The primary contrast is arm 4 minus arm 2. A practically useful advantage needs at least +10 percentage points in verified success rate, with the lower end of the 95% confidence interval above +10 points. The owner fixed this rule before any comparative result.
+
+**No comparative results exist yet.** The public research release is [`research/public/`](research/public/) (release `research-public-v0.1.0`): the study protocol, 14 development task cards, the answer format and draft analysis code. The plan for running the study, and for testing the harness, is [`docs/experiments/README.md`](docs/experiments/README.md).
+
+## How it works
+
+**The research loop.** An investigation moves through the same stages a careful researcher would, and each stage leaves a record:
+
+```mermaid
+flowchart LR
+  C["Charter: success rules first"] --> P["Evidence plan from a qualified template"]
+  P --> T["Trials, branches and new components"]
+  T --> A["Independent assessment"]
+  A --> R["Claim, report and exported model"]
+```
+
+The investigator works in **bounded turns**. Each turn reads the evidence from the ledger, makes one model decision, and runs the accepted actions with recorded command keys. Exploration is free between turns; claims go through the plan and the assessor.
+
+**The architecture.**
+
+```mermaid
+flowchart LR
+  subgraph Clients
+    CLI[lab CLI]
+    MCPC[Claude Code / Codex / MCP SDK]
+  end
+  MCPS[MCP server<br/>lab mcp]
+  API[Command API<br/>authenticated, loopback]
+  LEDGER[(PostgreSQL ledger<br/>records, events, budgets,<br/>receipts, exposures)]
+  STORE[(Artifact store<br/>content-addressed)]
+  TEMPORAL[Temporal Server<br/>investigation, turn,<br/>job, assessment workflows]
+  subgraph Workers
+    INV[Investigator worker]
+    RUN[Training / sealed runner]
+    ASS[Assessor worker]
+  end
+  SANDBOX[Sandboxed jobs<br/>bwrap on Linux,<br/>Seatbelt on macOS]
+  PROV[Model providers<br/>Anthropic, OpenAI-compatible]
+  SUP[Supervisor<br/>start, restart, reconcile]
+
+  CLI --> API
+  MCPC --> MCPS --> API
+  API --> LEDGER
+  API --> STORE
+  API -- outbox relay --> TEMPORAL
+  TEMPORAL --> INV & RUN & ASS
+  INV -- commands --> API
+  INV --> PROV
+  RUN --> SANDBOX
+  RUN -- receipts --> API
+  ASS -- assessments --> API
+  SUP -.-> API & TEMPORAL & INV & RUN & ASS & LEDGER
+```
+
+- **Ledger.** Only the command service holds write credentials. Workers, the investigator and jobs act only through authenticated commands. Since migration 0004, writers from an older version are fenced after an upgrade.
+- **Investigations.** An investigation is a coordinator workflow that starts one bounded turn at a time. A turn is: context from the ledger, then a model decision, then the accepted calls run with recorded command keys. Jobs outlive turns.
+
+**The roles.**
+
+| Role | What it does |
+|---|---|
+| Investigator | The LLM. Reads evidence, proposes and runs experiments, writes components; acts only through commands |
+| Command service | The single write path: authenticates every caller, checks revisions and budgets, commits to the ledger |
+| Ledger | PostgreSQL records of charters, runs, claims, plans, budgets, receipts and exposures |
+| Workers | Separate processes that train, evaluate and score in the project's own Python environment |
+| Assessor | A separate identity that checks a frozen plan against what actually ran and issues the verdict |
+| Sandboxes | Isolate candidate code: bubblewrap on Linux, Seatbelt on macOS; each attempt gets an isolation receipt |
+| Supervisor | Starts, health-checks, restarts and reconciles PostgreSQL, Temporal and the workers |
+
+![Topology of the complete local v1 harness](docs/design/eidos-claude-handoff/architecture/model-research-harness-architecture.svg)
+
+*The local v1 topology from the design (Revision 4, [`docs/design/`](docs/design/eidos-claude-handoff/architecture/model-research-harness-design.md)). It shows the designed system; what v1 supports is in [Supported scope](#supported-scope-v1).*
+
+### Key features
 
 - **Bounded, durable investigations.**
   - Turns run as Temporal workflows with persisted decisions and stable command keys.
@@ -28,20 +162,30 @@ Eidos is for ML researchers who want an LLM to help investigate their own PyTorc
 - **Operator interfaces.** The `lab` CLI, an MCP server (stdio and loopback HTTP) and static HTML reports.
 - **Local operations.** A supervisor manages PostgreSQL and Temporal, with `doctor`, backup and restore, upgrade, disk-pressure refusal and crash reconciliation.
 
-## Supported scope (v1)
+### Isolation model
 
-| | Supported |
-|---|---|
-| Platforms | Linux x86_64, macOS arm64; CPU, plus MPS on macOS |
-| Model providers | Anthropic; OpenAI-compatible endpoints (protocol; see G4 below) |
-| MCP clients | Claude Code, Codex CLI, MCP Python SDK |
-| Sealed (hostile-code) evaluation | Linux with bubblewrap only |
+Every job attempt gets an isolation receipt from probes that actually ran, and the receipt records which controls held.
+- **Linux, `linux:bwrap-sealed`.** Namespaces, read-only inputs, no network, no host writes, no credential or label reads, and a separate scorer process. This is the only profile for **sealed (hostile-code) evaluation**.
+- **macOS, `macos:seatbelt-sealed`.**
+  - `sandbox-exec` keeps the lab home, credentials and `$HOME` unreadable, allows no network, writes only to staging and scratch, and denies inspection of other processes.
+  - It runs as the **same OS user**: launchd/XPC stay reachable by other routes, mach IPC is not filtered and signals are allowed. It does not contain a hostile same-user program.
+  - So macOS labs **refuse plans that require sealed execution**, and a Seatbelt receipt never satisfies them.
+- **`dev:same-user`.** Exploration only. Asking for it when a stronger profile is available needs a recorded waiver, which stays visible in locks, plans and assessments.
 
-Out of scope, with reasons: Windows, CUDA, distributed training, Lima VM, Claude Desktop, hosted multitenancy. Details: [`docs/release/SUPPORTED.md`](docs/release/SUPPORTED.md).
+Details and limits: [`docs/release/SUPPORTED.md`](docs/release/SUPPORTED.md), [ADR 0006](docs/decisions/0006-macos-seatbelt-profile.md).
 
-v1 makes **no scientific claim**: whether Eidos helps an LLM do model research (A16) is a separate later release.
+### Budget and ledger model
 
-## Install
+- Budgets are per investigation and per dimension: `model_tokens`, `model_usd` (at configured prices), `compute_seconds`, `trials`, `turns`.
+- Each model decision reserves its worst-case envelope before any request and settles to the actual usage afterwards. A request that may have been charged before a timeout is recorded as uncertain usage.
+- A retried call reuses its recorded command key, so a crash after a committed effect never admits work twice.
+- Exposures (reads of outcomes) are recorded, so later claims can be checked against what was seen.
+
+## What you can do with it today
+
+Everything below runs on one machine: a laptop or workstation with Linux or macOS, no cloud account and no cluster. The lab manages its own PostgreSQL and Temporal services.
+
+### Install
 
 Requirements:
 - Python 3.12 and [`uv`](https://docs.astral.sh/uv/);
@@ -60,7 +204,7 @@ export PATH="$HOME/eidos-venv/bin:$PATH"
 
 From release wheels: download the wheels attached to the GitHub release into `dist/`, then run the last two commands.
 
-## Quickstart
+### Quickstart
 
 **1. Create and start a lab.** The lab owns a private PostgreSQL cluster and a Temporal Server under its home directory.
 
@@ -105,63 +249,18 @@ lab stop
 
 The complete, scripted version of this journey (setup, qualified protocols and a real-model investigation) is `tests/journeys/a8_live.py`. Operations guide: [`docs/ops/INSTALL_AND_OPERATE.md`](docs/ops/INSTALL_AND_OPERATE.md); problems: [`docs/ops/TROUBLESHOOTING.md`](docs/ops/TROUBLESHOOTING.md).
 
-## Architecture
+## Supported scope (v1)
 
-```mermaid
-flowchart LR
-  subgraph Clients
-    CLI[lab CLI]
-    MCPC[Claude Code / Codex / MCP SDK]
-  end
-  MCPS[MCP server<br/>lab mcp]
-  API[Command API<br/>authenticated, loopback]
-  LEDGER[(PostgreSQL ledger<br/>records, events, budgets,<br/>receipts, exposures)]
-  STORE[(Artifact store<br/>content-addressed)]
-  TEMPORAL[Temporal Server<br/>investigation, turn,<br/>job, assessment workflows]
-  subgraph Workers
-    INV[Investigator worker]
-    RUN[Training / sealed runner]
-    ASS[Assessor worker]
-  end
-  SANDBOX[Sandboxed jobs<br/>bwrap on Linux,<br/>Seatbelt on macOS]
-  PROV[Model providers<br/>Anthropic, OpenAI-compatible]
-  SUP[Supervisor<br/>start, restart, reconcile]
+| | Supported |
+|---|---|
+| Platforms | Linux x86_64, macOS arm64; CPU, plus MPS on macOS |
+| Model providers | Anthropic; OpenAI-compatible endpoints (protocol; see G4 below) |
+| MCP clients | Claude Code, Codex CLI, MCP Python SDK |
+| Sealed (hostile-code) evaluation | Linux with bubblewrap only |
 
-  CLI --> API
-  MCPC --> MCPS --> API
-  API --> LEDGER
-  API --> STORE
-  API -- outbox relay --> TEMPORAL
-  TEMPORAL --> INV & RUN & ASS
-  INV -- commands --> API
-  INV --> PROV
-  RUN --> SANDBOX
-  RUN -- receipts --> API
-  ASS -- assessments --> API
-  SUP -.-> API & TEMPORAL & INV & RUN & ASS & LEDGER
-```
+Out of scope, with reasons: Windows, CUDA, distributed training, Lima VM, Claude Desktop, hosted multitenancy. Details: [`docs/release/SUPPORTED.md`](docs/release/SUPPORTED.md).
 
-- **Ledger.** Only the command service holds write credentials. Workers, the investigator and jobs act only through authenticated commands. Since migration 0004, writers from an older version are fenced after an upgrade.
-- **Investigations.** An investigation is a coordinator workflow that starts one bounded turn at a time. A turn is: context from the ledger, then a model decision, then the accepted calls run with recorded command keys. Jobs outlive turns.
-
-## Isolation model
-
-Every job attempt gets an isolation receipt from probes that actually ran, and the receipt records which controls held.
-- **Linux, `linux:bwrap-sealed`.** Namespaces, read-only inputs, no network, no host writes, no credential or label reads, and a separate scorer process. This is the only profile for **sealed (hostile-code) evaluation**.
-- **macOS, `macos:seatbelt-sealed`.**
-  - `sandbox-exec` keeps the lab home, credentials and `$HOME` unreadable, allows no network, writes only to staging and scratch, and denies inspection of other processes.
-  - It runs as the **same OS user**: launchd/XPC stay reachable by other routes, mach IPC is not filtered and signals are allowed. It does not contain a hostile same-user program.
-  - So macOS labs **refuse plans that require sealed execution**, and a Seatbelt receipt never satisfies them.
-- **`dev:same-user`.** Exploration only. Asking for it when a stronger profile is available needs a recorded waiver, which stays visible in locks, plans and assessments.
-
-Details and limits: [`docs/release/SUPPORTED.md`](docs/release/SUPPORTED.md), [ADR 0006](docs/decisions/0006-macos-seatbelt-profile.md).
-
-## Budget and ledger model
-
-- Budgets are per investigation and per dimension: `model_tokens`, `model_usd` (at configured prices), `compute_seconds`, `trials`, `turns`.
-- Each model decision reserves its worst-case envelope before any request and settles to the actual usage afterwards. A request that may have been charged before a timeout is recorded as uncertain usage.
-- A retried call reuses its recorded command key, so a crash after a committed effect never admits work twice.
-- Exposures (reads of outcomes) are recorded, so later claims can be checked against what was seen.
+v1 makes **no scientific claim**: whether Eidos helps an LLM do model research (A16) is a separate later release; see [The research behind it](#the-research-behind-it-paper-in-preparation).
 
 ## Status and evidence
 
@@ -175,7 +274,8 @@ Details and limits: [`docs/release/SUPPORTED.md`](docs/release/SUPPORTED.md), [A
 | G6 local operations | disk exhaustion, service kills and abrupt stop pass on macOS; **machine sleep/restart not verified on hardware** (released without it by owner decision) | [`g6-*.json`](docs/release/evidence/) |
 | G7 review items | pass | `CHANGELOG.md` |
 | G8 docs | pass | this page, `docs/` |
-| G9 final verification | pass: suite 167 passed / 4 skipped, switch journey 154/154, macOS owner kit 15/15, CI 10/10, independent review | [`g9-*`](docs/release/evidence/), `ACCEPTANCE_MATRIX.md` § E |
+| G9 final verification (v1.0.0) | pass: suite 167 passed / 4 skipped, switch journey 154/154, macOS owner kit 15/15, CI 10/10, independent review | [`g9-*`](docs/release/evidence/), `ACCEPTANCE_MATRIX.md` § E |
+| v1.0.1 follow-up | mypy 0 errors in CI (also at a Python 3.9 target for worker packages); wire JSON Schemas and 15 golden fixtures; suite 199 passed / 4 skipped, worker packages 22 passed / 1 skipped; CI 10/10 on `main` | [`RELEASE_NOTES_v1.0.1.md`](docs/release/RELEASE_NOTES_v1.0.1.md) |
 
 CI runs 10 jobs on every push: lint and unit, integration (PostgreSQL and Temporal), worker compatibility, components, fresh install, macOS arm64, upgrade across releases, end-to-end journey, switch journey, and a Temporal source-build fallback. Full criteria: [`ACCEPTANCE_MATRIX.md`](ACCEPTANCE_MATRIX.md). Release notes: [`docs/release/RELEASE_NOTES_v1.0.1.md`](docs/release/RELEASE_NOTES_v1.0.1.md) (and [v1.0.0](docs/release/RELEASE_NOTES_v1.0.0.md)). History: [`CHANGELOG.md`](CHANGELOG.md). Documents dated before 2026-11-09 cite earlier commit IDs: [`COMMIT_ID_MAP.md`](docs/release/COMMIT_ID_MAP.md).
 
@@ -191,8 +291,16 @@ CI runs 10 jobs on every push: lint and unit, integration (PostgreSQL and Tempor
 | `docs/decisions/` | architecture decision records |
 | `docs/mac/STATUS.md` | macOS qualification record |
 | `docs/release/` | supported scope, release notes, evidence |
+| [`docs/experiments/README.md`](docs/experiments/README.md) | experiments and testing plan (R0–R3), GitHub workflow, grading |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | branches, pull requests, CI, commit identity |
+| `research/public/` | public research release: study protocol, task cards, answer format (immutable) |
+| `ACCEPTANCE_MATRIX.md` | release acceptance criteria and gate results |
 
-## Development
+## Contributing
+
+Start with [`CONTRIBUTING.md`](CONTRIBUTING.md): branches, pull requests, CI and commit identity. The research and testing work is planned in [`docs/experiments/README.md`](docs/experiments/README.md).
+
+### Development
 
 ```bash
 uv sync
@@ -205,7 +313,7 @@ bash tests/journeys/run_ci.sh        # the 154-check switch-order acceptance jou
 
 Integration tests need a PostgreSQL superuser URL and, for workflow tests, a Temporal CLI (`EIDOS_TEMPORAL_CLI`). The workflow is in `.github/workflows/ci.yml`; see `docs/ops/CI.md`.
 
-## Repository
+### Repository
 
 | Path | What |
 |---|---|
