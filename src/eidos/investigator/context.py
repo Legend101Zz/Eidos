@@ -65,6 +65,11 @@ def pack(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int
     omitted: dict[str, list] = {"jobs": [], "catalog": []}
     lines = [f"# Investigation {view['investigation']['id']} (status {view['investigation']['status']}, horizon {view['horizon']})",
              f"Question: {inv.get('question')}"]
+    qh = inv.get("question_history") or []
+    if len(qh) > 1:  # the human revised the question: show it, with what changed and the policy for admitted work
+        last = qh[-1]
+        lines.append(f"(Question revision {last['question_revision']} by {last['by']}; previous question: "
+                     f"{str(last.get('previous'))[:500]!r}; work admitted earlier: {last.get('running_job_policy')})")
     if view.get("environments"):
         lines.append(f"Registered environments (names for `environment`): {', '.join(view['environments'])}")
     if inv.get("model_artifact_id"):

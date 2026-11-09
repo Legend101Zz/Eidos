@@ -11,7 +11,7 @@ from eidos.application.handlers.runs import admit_job, resolve_lock, strongest_p
 from eidos.application.service import Ctx, command
 from eidos.domain import evidence as ev
 from eidos.domain import isolation, qualification
-from eidos.domain.errors import Forbidden, Invalid, NotFound, QualificationMissing
+from eidos.domain.errors import Forbidden, Invalid, NotFound, QualificationMissing, WithdrawnMethod
 from eidos_wire import canonical_json, sha256_bytes
 
 
@@ -263,6 +263,12 @@ def maybe_request_assessment(ctx: Ctx, plan_id: str) -> None:
             return
     jobs = [ctx.tx.get_job(j) for js in arm_jobs(plan.body).values() for j in js]
     if all(j["status"] in ("succeeded", "failed", "cancelled", "pruned") for j in jobs):
+        blocked = ((ctx.tx.get_record("evidence_plan", plan_id) or plan).labels or {}).get("blocked_by")
+        if blocked:  # withdrawn method: no assessment is requested (fail closed)
+            ctx.tx.set_status("evidence_plan", plan_id, "assessment-blocked")
+            ctx.event("evidence_plan.assessment_blocked", plan_id, {"withdrawal": blocked},
+                      investigation_id=plan.body.get("investigation_id"), wake=True)
+            return
         ctx.tx.set_status("evidence_plan", plan_id, "awaiting-assessment")
         ctx.tx.enqueue("assessment.request", f"assess:{plan_id}:{plan.revision}",
                        {"plan_id": plan_id, "project_id": ctx.project_id})
@@ -315,6 +321,11 @@ def submit_assessment(ctx: Ctx, p: dict) -> dict:
     the ledger; the assessor's statistical evaluation cannot make a non-conformant plan pass.
     Deduplicated by (plan digest, evidence-set digest, assessor release)."""
     plan = ctx.tx.require("evidence_plan", p["plan_id"], lock=True)
+    if (plan.labels or {}).get("blocked_by"):
+        # The method was withdrawn during confirmation: fail closed. The frozen plan and its receipts are kept;
+        # continuing needs a new attributed reassessment plan under a corrected release (reassess_evidence_plan).
+        raise WithdrawnMethod(f"plan {plan.id} depends on a withdrawn release ({plan.labels['blocked_by']}); "
+                              "no assessment is accepted for it", details={"withdrawal": plan.labels["blocked_by"]})
     if plan.status not in ("awaiting-assessment", "executing", "assessed"):
         raise Invalid(f"plan is {plan.status}; it has not been executed under a frozen revision")
     frozen = next(r for r in reversed(ctx.tx.record_history("evidence_plan", plan.id)) if r["body"].get("frozen_by"))
@@ -325,12 +336,15 @@ def submit_assessment(ctx: Ctx, p: dict) -> dict:
         raise Forbidden("only the plan's pinned assessor release may assess it")
     if approval_for(ctx, a_ref, plan.body["claim_kind"]) is None:
         raise QualificationMissing("assessor release approval is missing or suspended")
-    evidence_set = p.get("evidence_set") or {}
+    evidence_set = normalize_evidence_set(p.get("evidence_set") or {})
     es_digest = "sha256:" + sha256_bytes(canonical_json(evidence_set).encode())
     aid = "assess_" + sha256_bytes(canonical_json([frozen["digest"], es_digest, plan.body["assessor"]["digest"]]).encode())[:24]
     existing = ctx.tx.get_record("assessment", aid)
     if existing:
-        return {"assessment_id": aid, "outcome": existing.body["outcome"], "deduplicated": True}
+        # Assessor restart or the same evidence twice: the same assessment, the same receipt, plus a diagnostic.
+        ctx.event("assessment.deduplicated", aid, {"plan": plan.id, "by": ctx.principal.id},
+                  investigation_id=plan.body.get("investigation_id"))
+        return {**assessment_receipt(aid, existing.body), "deduplicated": True}
     realized = _realized(ctx, plan)
     conformance = ev.check_conformance(plan.body, realized)
     result = ev.finalize_assessment(plan=plan.body, plan_digest=frozen["digest"], evidence_set_digest=es_digest,
@@ -371,8 +385,63 @@ def submit_assessment(ctx: Ctx, p: dict) -> dict:
     ctx.event("assessment.committed", aid, {"plan": plan.id, "outcome": result["outcome"],
                                             "conformance": result["conformance"]},
               investigation_id=plan.body.get("investigation_id"), wake=True)
-    return {"assessment_id": aid, "outcome": result["outcome"], "conformance": result["conformance"],
-            "findings": result["findings"]}
+    return {**assessment_receipt(aid, result), "deduplicated": False}
+
+
+def normalize_evidence_set(evidence_set: dict) -> dict:
+    """Order-insensitive identity of an evidence set: the same artifacts in another order are the same evidence."""
+    if not isinstance(evidence_set, dict):
+        raise Invalid("evidence_set must map arm ids to artifact id lists")
+    return {str(k): sorted({str(x) for x in (v if isinstance(v, list) else [v])}) for k, v in evidence_set.items()}
+
+
+def assessment_receipt(aid: str, body: dict) -> dict:
+    """The receipt of a committed assessment; a deduplicated submission returns exactly the same fields."""
+    return {"assessment_id": aid, "outcome": body["outcome"], "conformance": body.get("conformance"),
+            "findings": body.get("findings"), "plan_id": body.get("plan_id"),
+            "evidence_set_digest": body.get("evidence_set_digest")}
+
+
+@command("reassess_evidence_plan", "freeze_plan")
+def reassess_evidence_plan(ctx: Ctx, p: dict) -> dict:
+    """Continue a confirmation whose assessor was withdrawn: a NEW attributed plan that reuses the old plan's
+    frozen arms and executed receipts, pinned to a corrected, approved assessor release (design: "Reassessment
+    under a corrected release is a new attributed assessment/plan"). The old plan, its receipts and the
+    withdrawal stay as they are. If the withdrawn release produced evidence (an arm component or template), the
+    evidence itself is affected and a new plan must re-execute it; that is refused here."""
+    old = ctx.tx.require("evidence_plan", p["plan_id"], lock=True)
+    wid = (old.labels or {}).get("blocked_by")
+    if not wid:
+        raise Invalid(f"plan {old.id} is not blocked by a withdrawal; nothing to reassess")
+    if (old.labels or {}).get("reassessed_as"):
+        raise Invalid(f"plan {old.id} was already reassessed as {old.labels['reassessed_as']}")
+    w = ctx.tx.require("withdrawal", wid)
+    if w.body["release_ref"] != (old.body.get("assessor") or {}).get("ref"):
+        raise WithdrawnMethod(f"the withdrawn release {w.body['release_ref']} is not this plan's assessor: the evidence "
+                              "itself is affected; draft a new plan that re-executes it", details={"withdrawal": wid})
+    jobs = [ctx.tx.get_job(j) for js in arm_jobs(old.body).values() for j in js]
+    if not all(j and j["status"] in ("succeeded", "failed", "cancelled", "pruned") for j in jobs):
+        raise Invalid("the plan's admitted work has not finished; reassess after it drains")
+    a_ref = p.get("assessor_ref")
+    rel = ctx.tx.require("component_release", a_ref) if a_ref else None
+    if rel is None or rel.status != "active" or rel.id == w.body["release_ref"]:
+        raise Invalid("assessor_ref must name an active release other than the withdrawn one")
+    if approval_for(ctx, rel.id, old.body["claim_kind"]) is None:
+        raise QualificationMissing(f"{rel.id} has no active approval for {old.body['claim_kind']} claims")
+    new_id = f"{old.id}-r{len(ctx.tx.list_records(ctx.project_id, 'evidence_plan', limit=100000))}"
+    body = json.loads(json.dumps(old.body))
+    body.update({"assessor": {"ref": rel.id, "digest": rel.body["digest"]}, "frozen_by": ctx.principal.id,
+                 "reassessment_of": {"plan_id": old.id, "plan_digest": old.digest, "withdrawal": wid,
+                                     "reason": str(p.get("reason", ""))[:2000]}})
+    rec = ctx.tx.put_record("evidence_plan", new_id, ctx.project_id, body, created_by=ctx.principal.id,
+                            status="awaiting-assessment", parent_id=old.id)
+    ctx.tx.set_status("evidence_plan", old.id, old.status, labels={"reassessed_as": new_id})
+    ctx.tx.add_lineage(ctx.project_id, old.id, new_id, "reassessed-as")
+    ctx.tx.enqueue("assessment.request", f"assess:{new_id}:{rec.revision}", {"plan_id": new_id,
+                   "project_id": ctx.project_id})
+    ctx.event("evidence_plan.reassessment", new_id, {"of": old.id, "withdrawal": wid, "assessor": rel.id,
+              "by": ctx.principal.id}, investigation_id=body.get("investigation_id"), wake=True)
+    return {"plan_id": new_id, "plan_digest": rec.digest, "reassessment_of": old.id, "assessor": rel.id}
 
 
 @command("add_justification", "propose")

@@ -7,6 +7,12 @@ Updated 2026-11-08 by the lead session, on branch `build/eidos-local-v1`.
 - Build sandbox: `docs/ops/SANDBOX_CAPABILITIES.md`.
 - Public research release runs: `docs/dev-runs/research-public-v0.1.0.md`.
 
+## Release 1.1.0 (branch `release/1.1.0`, 2026-11-09)
+
+| Item | State | Evidence |
+|---|---|---|
+| Five recovery cases of the failure table (ADR 0010) | runtime-verified (real PostgreSQL, command service) | `tests/integration/test_recovery_cases.py` (7 tests): staged bytes re-verified before publication with per-slot refusal, runner re-stage once then explicit failure; `revise_question` effective next turn with drain/stop policy and exposure; withdrawal wakes investigations and refuses new admissions; assessment dedupe returns the same receipt; withdrawn assessor fails closed then `reassess_evidence_plan`; branch lost reply |
+
 ## State by area
 
 | Area | State |

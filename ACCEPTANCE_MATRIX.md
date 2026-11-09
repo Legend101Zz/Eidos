@@ -6,7 +6,7 @@ the "Failures a production installation must handle" table.
 
 Supported scope for v1: **`docs/release/SUPPORTED.md`**. Anything outside it is marked "not supported in v1", not "failed".
 
-Status vocabulary: `not-started` · `implemented` (code exists, not yet exercised end to end) ·
+Status vocabulary: `not-started` · `verified` (integration-tested against real PostgreSQL and the command service; since 1.1.0) · `implemented` (code exists, not yet exercised end to end) ·
 `runtime-verified` (exercised against real PostgreSQL/Temporal/processes in this sandbox) ·
 `fixture-only` (verified with deterministic fixture providers, not a real LLM) ·
 `unqualified` (needs hardware/OS/provider/client not available here) · `scientifically-unproven`.
@@ -58,11 +58,11 @@ Paths are relative to the repository root. Verification commands are listed in
 | Investigator dies during training → reattach via handle | `tests/ops/runner_reattach.sh` (runner killed mid-job; same attempt finished, 2026-11-07) | runtime-verified (runner crash); investigator crash in journey |
 | Node preempted / rank lost | single-node: process kill + reconcile | not-started; distributed unqualified |
 | Duplicate/reordered/stale completion → epoch + unique publication key | `test_command_path.py::test_fencing...` | runtime-verified |
-| Storage/DB lag → verify staged content before publish | `tests/integration/test_artifacts.py` | not-started |
-| Human changes question / withdraws release | integration | not-started |
-| Assessor restart / evidence twice → dedupe by plan+evidence digest+assessor | integration | not-started |
-| Assessment method withdrawn during confirmation | integration | not-started |
-| Branch request loses reply | integration | not-started |
+| Storage/DB lag → verify staged content before publish | `tests/integration/test_recovery_cases.py::test_publication_reverifies_staged_bytes_and_refuses_changed_or_vanished_content`, `::test_runner_restages_once_then_fails_the_attempt_explicitly` (ADR 0010) | verified (1.1.0) |
+| Human changes question / withdraws release | `test_recovery_cases.py::test_question_change_is_seen_at_the_next_turn_with_policy_and_exposure`, `::test_release_withdrawn_mid_investigation_drains_or_stops_and_wakes_the_next_turn` (ADR 0010) | verified (1.1.0) |
+| Assessor restart / evidence twice → dedupe by plan+evidence digest+assessor | `test_recovery_cases.py::test_assessor_restart_or_duplicate_evidence_returns_the_same_assessment_receipt` (ADR 0010) | verified (1.1.0) |
+| Assessment method withdrawn during confirmation | `test_recovery_cases.py::test_assessor_withdrawn_during_confirmation_fails_closed_then_reassesses_under_a_corrected_release` (ADR 0010) | verified (1.1.0) |
+| Branch request loses reply | `test_recovery_cases.py::test_branch_request_retried_with_the_same_key_returns_the_same_branch` | verified (1.1.0) |
 | Controller upgrade during multi-day work → replay tests, versioning | `test_workflows.py::test_recorded_histories_replay...`, `lab upgrade` | partially verified |
 | Turn dies after tool effect commits → same key, existing receipt | `test_turn_recovery.py` | runtime-verified (activity level); worker kill in journey |
 | Payload overflow / history limit → reject + rollover | `test_workflows.py`, envelope checks | runtime-verified (dev server) |

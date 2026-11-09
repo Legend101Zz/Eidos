@@ -119,11 +119,15 @@ class AssessorActivities:
                     rows.extend(_read_rows(tmp.name, out["media_type"]))
             evidence["arms"][arm_id] = {"role": role_of.get(arm_id), "rows": rows, "status": arm["status"]}
         evaluation = self._run_assessor(p, plan["assessor"]["ref"], evidence)
+        payload = {"plan_id": a["plan_id"], "plan_digest": inputs["plan_digest"],
+                   "assessor_ref": plan["assessor"]["ref"], "evidence_set": evidence_set, "evaluation": evaluation}
+        # The key covers the whole payload: an assessor that restarts and re-evaluates the same evidence can never
+        # hit a command-key conflict; the service deduplicates by (frozen plan, evidence-set digest, assessor
+        # release) and returns the same assessment receipt (design: "Assessor restarts or evidence arrives twice").
+        from eidos_wire import canonical_json, sha256_bytes
+        key = f"assess:{a['plan_id']}:" + sha256_bytes(canonical_json(payload).encode())[:32]
         try:
-            r = self.assessor.command("submit_assessment", {"plan_id": a["plan_id"], "plan_digest": inputs["plan_digest"],
-                                      "assessor_ref": plan["assessor"]["ref"], "evidence_set": evidence_set,
-                                      "evaluation": evaluation}, project=p,
-                                      key=f"assess:{a['plan_id']}:{inputs['plan_digest']}")
+            r = self.assessor.command("submit_assessment", payload, project=p, key=key)
         except LabError as exc:
             raise ApplicationError(str(exc), exc.error, type=exc.code or "LAB_ERROR",
                                    non_retryable=exc.status in (400, 403, 404, 409, 422)) from exc

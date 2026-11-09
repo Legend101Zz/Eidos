@@ -153,6 +153,10 @@ def resolve_lock(ctx: Ctx, p: dict, *, extra_config: dict | None = None) -> dict
     target = next((r for r in cat if r["ref"] == p["component_ref"]), None)
     if target is None:
         raise NotFound(f"component {p['component_ref']} not found")
+    if target["status"] == "withdrawn":  # a withdrawn method admits no new work (history and live jobs are kept)
+        from eidos.domain.errors import WithdrawnMethod
+        raise WithdrawnMethod(f"component {target['ref']} was withdrawn; no new work is admitted with it",
+                              details={"component_ref": target["ref"]})
     schema = target["manifest"].get("config_schema")
     if schema:
         from eidos.domain.contracts import validate_config

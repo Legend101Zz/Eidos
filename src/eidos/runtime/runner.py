@@ -368,12 +368,46 @@ class AttemptRunner:
         if outputs:
             md = man.to_dict()
             md["outputs"] = [dict(o.__dict__) for o in outputs]
-            self.client.command("publish_outputs", {"job_id": ctx["job_id"], "attempt_id": ctx["attempt_id"],
-                                "epoch": ctx["epoch"], "manifest": md}, project=project, key=f"publish:{ctx['attempt_id']}")
+            refused = self._publish_verified(project, ctx, md, staging)
+            if refused is not None:
+                return self._finish(project, ctx, "failed", {}, {"category": "storage", "message":
+                                    "staged outputs could not be verified before publication; nothing was published",
+                                    "unverifiable": refused}, final=True)
         if (ctx.get("stop_requested") or (man.receipt or {}).get("stopped_early")) and man.status == "succeeded":
             receipt = {**(man.receipt or {}), "stopped_by_policy": "checkpoint-and-stop"}
             return self._finish(project, ctx, "cancelled", receipt, None)
         return self._finish(project, ctx, man.status, man.receipt, man.error, final=man.status == "failed")
+
+    def _publish_verified(self, project: str, ctx: dict, manifest: dict, staging: Path) -> list[dict] | None:
+        """Publish; if the lab refuses because staged bytes are missing or changed (storage lag, a damaged
+        blob), re-stage the affected outputs once from this attempt's own verified staging files and retry
+        under the same command key (a refused command commits nothing). Returns the unverifiable slots if
+        the refusal persists, so the attempt fails explicitly instead of publishing unverifiable bytes."""
+        args = {"job_id": ctx["job_id"], "attempt_id": ctx["attempt_id"], "epoch": ctx["epoch"], "manifest": manifest}
+        key = f"publish:{ctx['attempt_id']}"
+        for round_ in range(2):
+            try:
+                self.client.command("publish_outputs", args, project=project, key=key)
+                return None
+            except LabError as exc:
+                if exc.code != "CONTENT_UNVERIFIABLE":
+                    raise
+                bad = list(((exc.error or {}).get("details") or {}).get("unverifiable") or [])
+                if round_ == 1:
+                    return bad
+                by_slot = {o["slot"]: o for o in manifest["outputs"]}
+                for u in bad:
+                    o = by_slot.get(u.get("slot"))
+                    if o is None:
+                        return bad
+                    src = staging / o["filename"]
+                    if src.is_symlink() or not src.is_file():
+                        return bad
+                    try:
+                        self.store.put_file(src, expected_digest=o["digest"], expected_size=o["size"])
+                    except StoreError:
+                        return bad
+        return None
 
     def _collect_build(self, project: str, ctx: dict, adir: Path) -> dict:
         try:
