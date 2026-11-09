@@ -1,3 +1,18 @@
+# v1.1.0 handoff (2026-11-09)
+
+- **Current release:** v1.1.0 prepared on `release/1.1.0` (package `1.1.0`; `eidos-wire` 1.1.0; `eidos-worker-sdk` 1.2.0;
+  `eidos-pytorch` unchanged at 1.1.0; new optional `eidos-pyglove` 0.1.0 and `eidos-composer` 0.1.0). The tag follows the
+  owner's review of the PR. No ledger migration. Six features, each with an ADR (0010–0015):
+  - the five remaining recovery cases of the failure table (`ACCEPTANCE_MATRIX.md` § C, now `verified`);
+  - separate-identity sealed evaluation on Linux (candidate as `eidos-cand`, assessor as the lab identity; root CI job);
+  - provider keys in the OS secret store (`lab credentials`);
+  - a credential broker for component LLM calls (scoped, budgeted grants; Unix-socket broker in the investigator worker);
+  - structured-output repair for local models (`output_mode`), with G4 re-measured for qwen2.5 3B/7B;
+  - optional PyGlove and Composer adapters and a CheckList-style `behavior-suite/1`.
+- **Release documents:** `CHANGELOG.md` § 1.1.0, `docs/release/RELEASE_NOTES_v1.1.0.md`. The session record is
+  `PROGRESS_110.md` on the SSD.
+- Everything below about v1.0.1 and v1.0.0 still applies, including the R1 sleep/restart limitation.
+
 # v1.0.1 handoff (2026-11-09)
 
 - **Current release:** v1.0.1 (package `1.0.1`; `eidos-wire` 1.0.1; `eidos-worker-sdk` and `eidos-pytorch` unchanged at 1.1.0). It is a design-conformance follow-up to v1.0.0, with no new features and no migration:
@@ -78,7 +93,7 @@ The lab-free driver's earlier results overstated the full lab until run 1's defe
 - **Code:** work on `build/eidos-local-v1`. The tags above are immutable; tag only CI-green SHAs.
 - **Status and next actions:** `IMPLEMENTATION_STATUS.md`, `ACCEPTANCE_MATRIX.md`, `docs/decisions/`.
 - **Local test commands:** `IMPLEMENTATION_STATUS.md` § How to run.
-- **CI:** `.github/workflows/ci.yml`, 10 jobs; see `docs/ops/CI.md`.
+- **CI:** `.github/workflows/ci.yml`, 15 jobs since 1.1.0; see `docs/ops/CI.md`.
 - **Mac work:** `docs/ops/MAC_QUALIFICATION_RUNBOOK.md`, `docs/ops/STORAGE_PATHS.md`. Mac results and requests: `docs/mac/`.
 - **Real-LLM checks (controller-run, capped):**
   - lab-free: `scripts/qualify/live_bundle_investigation.py`;

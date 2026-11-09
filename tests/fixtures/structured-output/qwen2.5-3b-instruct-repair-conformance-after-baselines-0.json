@@ -1,0 +1,12 @@
+{
+ "source": "g4-110-qwen2.5-3b-instruct-repair.json",
+ "model": "qwen2.5:3b-instruct",
+ "output_mode": "repair",
+ "scenario": "conformance-after-baselines",
+ "reply_index": 0,
+ "reply": "{\n  \"rationale\": \"Determine if there's an improvement potential within the available methods in the catalog and potentially develop a new method if necessary.\",\n  \"purpose\": \"hypothesis-test\",\n  \"hypotheses\": [\n    {\n      \"statement\": \"There is no need to change current classification approaches since none of the existing methods provide significant improvements over the previous attempts.\",\n      \"prediction\": \"None of the experiments based on the current catalog will reveal a new, significantly improved method for digit classification.\",\n      \"falsifier\": \"The presence of an experiment resulting in or indicating a new, significantly improved method.\"\n    }\n  ],\n  \"calls\": [\n    {\n      \"tool\": \"plan_trial\",\n      \"args\": {\n        \"component_ref\": \"lab.generated.method-001@1.0.0\",\n        \"inputs\": {}\n      }\n    },\n    {\n      \"tool\": \"plan_branch\",\n      \"args\": {\n        \"parent_checkpoint_id\": \"\",\n        \"component_ref\": \"author_component\",\n        \"migration\": {},\n        \"seed_policy\": {\"seeds\": [14, 15]},\n        \"interervention\": {\"kind\": \"change-weights\"}\n      }\n    },\n    {\n      \"tool\": \"plan_trial\",\n      \"args\": {\n        \"component_ref\": \"lab.generated.method-002@1.0.0\",\n        \"inputs\": {}\n      }\n    }\n  ],\n  \"control\": {\n    \"action\": \"wait_for_jobs\"\n  }\n}",
+ "expect": "recovered",
+ "repairs": [
+  "args-object"
+ ]
+}

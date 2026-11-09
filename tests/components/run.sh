@@ -13,7 +13,7 @@ export PYTHONPATH="$ROOT/src:$SDK"
 "$LAB_PY" -m pytest tests/components -q -p no:cacheprovider "$@"
 
 # 2. the same fixtures through the SDK's own validator, each in its declared environment
-for c in lab.pairs.by_group lab.switch.balanced-data eidos.templates.improves-under-budget \
+for c in lab.pairs.by_group lab.switch.balanced-data eidos.templates.improves-under-budget eidos.synthetic.llm-examples eidos.behavior.suite \
          eidos.assessors.paired-ci eidos.qualification-runner; do
   echo "== validate $c (lab environment)"; "$LAB_PY" -m eidos_worker.validate "components/$c"
 done

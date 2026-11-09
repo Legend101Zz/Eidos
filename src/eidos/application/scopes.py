@@ -20,6 +20,9 @@ ROLE_SCOPES: dict[str, list[str]] = {
     "assessor": ["project:read", "artifact:read", "assess"],
     "qualifier": ["project:read", "artifact:read", "qualify"],
     "launcher": ["project:read", "artifact:read", "artifact:write", "launcher"],
+    # The LLM broker (served by the investigator worker, which holds provider keys; ADR 0013): it can only
+    # reserve and settle calls of grants the launcher issued.
+    "llm-broker": ["project:read", "llm_broker"],
     "workflow": ["project:read", "turn", "orchestrate"],
     "reader": ["project:read", "artifact:read"],
     "admin": ["admin"],

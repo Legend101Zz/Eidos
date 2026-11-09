@@ -7,15 +7,19 @@ from __future__ import annotations
 
 from eidos_worker.context import ModelClient, RunContext
 from eidos_worker.errors import ContractError, NonFiniteError, check_finite, classify
+from eidos_worker.llm import LlmClient, LlmRefused, LlmResult
 from eidos_worker.reader import ArtifactReader
 from eidos_worker.writer import ArtifactWriter
 
-__version__ = "1.0.0"
+__version__ = "1.2.0"
 
 __all__ = [
     "ArtifactReader",
     "ArtifactWriter",
     "ContractError",
+    "LlmClient",
+    "LlmRefused",
+    "LlmResult",
     "ModelClient",
     "NonFiniteError",
     "RunContext",

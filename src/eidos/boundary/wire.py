@@ -57,6 +57,20 @@ class ComponentRef(BaseModel):
     entry: Annotated[str, Field(pattern=ENTRY_PATTERN, description="'module:function'")]
 
 
+class LlmGrant(BaseModel):
+    """A scoped, short-lived, budget-limited LLM grant for one attempt (ADR 0013). A grant token, never a key."""
+
+    model_config = _CONFIG
+    grant_id: str
+    token: Annotated[str, Field(min_length=16)]
+    socket: str = Field(description="path of the broker's Unix socket inside the worker's view")
+    models: Annotated[list[str], Field(min_length=1)]
+    max_requests: Annotated[int, Field(ge=1)]
+    max_tokens: Annotated[int, Field(ge=1)]
+    max_usd: float | None = None
+    expires_at: str
+
+
 class Invocation(BaseModel):
     """Everything a worker may know about one attempt. Written by the trusted launcher (server to worker)."""
 
@@ -74,6 +88,7 @@ class Invocation(BaseModel):
     ports: JsonObject = Field(default_factory=dict)
     seed: int | None = None
     wire: Wire
+    llm_grant: LlmGrant | None = None
 
 
 class OutputEntry(BaseModel):
@@ -129,6 +144,8 @@ class LlmUse(BaseModel):
     prompt_revision: Any
     max_calls: Any
     max_tokens: Any
+    models: list[str] | None = None  # optional narrowing of the project's broker allowlist (ADR 0013)
+    max_usd: float | None = None
 
 
 class ComponentManifest(BaseModel):

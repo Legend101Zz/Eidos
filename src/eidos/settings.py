@@ -22,6 +22,7 @@ SERVICE_ROLES = {
     "svc-assessor": (["assessor"], []),
     "svc-qualifier": (["qualifier"], []),
     "svc-reporter": (["reader"], []),
+    "svc-llm-broker": (["llm-broker"], []),
 }
 
 

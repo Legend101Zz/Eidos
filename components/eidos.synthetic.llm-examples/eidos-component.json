@@ -1,0 +1,23 @@
+{
+  "id": "eidos.synthetic.llm-examples",
+  "release": "0.1.0",
+  "implements": "synthetic-labeled-text/1",
+  "kind": "artifact-op",
+  "entry": "synthetic_llm.generate:run",
+  "scientific_effects": ["generate-data"],
+  "input": {},
+  "output": {"dataset": "labeled-text/1"},
+  "requires": ["artifact.writer/1"],
+  "optional": [],
+  "reads": [],
+  "writes": ["output:dataset"],
+  "isolation": "immutable-artifacts",
+  "card": "method-card.md",
+  "llm": {"role": "synthetic-data-generator", "prompt_revision": "labeled-examples/1", "max_calls": 20,
+          "max_tokens": 8000},
+  "controls": ["fixtures/no-grant.json", "fixtures/bad-config.json"],
+  "receipt": ["prompt_revision", "requested", "generated", "rejected", "calls", "models", "tokens"],
+  "python": ">=3.9",
+  "dependencies": [],
+  "license": "Apache-2.0"
+}

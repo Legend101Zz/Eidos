@@ -104,6 +104,9 @@ def main() -> int:
     ap.add_argument("--model", default="anthropic:claude-sonnet-5-5")
     ap.add_argument("--base-url", help="OpenAI-compatible endpoint, e.g. http://127.0.0.1:11535/v1")
     ap.add_argument("--api-key-env", help="environment variable holding the endpoint key (default: provider's own)")
+    ap.add_argument("--output-mode", default="tool", choices=["tool", "repair", "json"],
+                    help="decision output mode (ADR 0014): tool calls (default), JSON text with bounded repair, or "
+                         "repair plus the endpoint's JSON mode")
     ap.add_argument("--request-timeout", type=float, default=120.0,
                     help="seconds per model request (a local model on a laptop may need several minutes)")
     args = ap.parse_args()
@@ -122,7 +125,8 @@ def main() -> int:
     from eidos.investigator.runtime import DecisionRequest, ModelCallFailed
 
     spent = {"requests": 0}
-    receipt = {"check": "eidos-live-provider/1", "model_requested": args.model, "base_url": args.base_url, "caps": {
+    receipt = {"check": "eidos-live-provider/1", "model_requested": args.model, "base_url": args.base_url,
+               "output_mode": args.output_mode, "caps": {
         "max_total_requests": MAX_TOTAL_REQUESTS, "max_output_tokens": MAX_OUTPUT_TOKENS, "temperature": "unset"},
         "request_timeout_seconds": args.request_timeout, "started_at": time.time(), "scenarios": []}
     m = build_model({"model": args.model, **endpoint})
@@ -134,7 +138,7 @@ def main() -> int:
             return
         cfg = {"model": args.model, "max_output_tokens": MAX_OUTPUT_TOKENS, "output_retries": 1,
                "max_requests_per_decision": budget_needed, "request_timeout": args.request_timeout, **endpoint,
-               **cfg_extra}
+               "output_mode": args.output_mode, **cfg_extra}
         packed = pack(view, _catalog(catalog_n))
         req = DecisionRequest(turn_id=f"live:{name}", slot=0, context=packed["text"], turn_so_far=[],
                               limits={"max_calls": 6}, read_tools=tools or {}, view=view)
@@ -145,6 +149,11 @@ def main() -> int:
             spent["requests"] += int(res.usage.get("calls") or 0)
             entry.update({"outcome": "bounded-no-decision" if res.usage.get("limit_reached") else "decision",
                           "usage": res.usage, "served_models": res.model_settings.get("served_models")})
+            # The model's text replies (recorded so malformed outputs can become repair fixtures).
+            replies = [p.get("content") for m in (res.raw_response or []) if m.get("kind") == "response"
+                       for p in m.get("parts", []) if p.get("part_kind") == "text"]
+            if replies:
+                entry["replies"] = [str(r)[:6000] for r in replies]
             try:
                 d = validate_decision(res.proposal, max_calls=6)  # rejects calls missing required args
                 entry["schema_valid"] = True

@@ -61,6 +61,30 @@ class LocalArtifactStore:
                 h.update(block)
         return h.hexdigest() == normalize(digest)
 
+    def check(self, digest: str, size: int) -> str | None:
+        """Why staged content cannot be published, or None when it verifies (size and full rehash).
+
+        ``missing``: no regular file at the digest's path; ``size-changed``: the file's size differs from the
+        declared size; ``digest-changed``: the bytes no longer hash to their digest."""
+        p = Path(self.path_for(digest))
+        if not p.is_file() or p.is_symlink():
+            return "missing"
+        if p.stat().st_size != int(size):
+            return "size-changed"
+        return None if self.verify(digest, size) else "digest-changed"
+
+    def check_with_retry(self, digest: str, size: int, *, attempts: int = 3, delay: float = 0.05) -> str | None:
+        """``check`` with a short bounded retry: storage that lags the database (a write not yet visible)
+        gets a few chances; a persistent failure is returned, never hidden."""
+        import time
+        reason = self.check(digest, size)
+        for i in range(1, attempts):
+            if reason is None:
+                return None
+            time.sleep(delay * i)
+            reason = self.check(digest, size)
+        return reason
+
     def free_bytes(self) -> int:
         return shutil.disk_usage(self.root).free
 
@@ -72,9 +96,10 @@ class LocalArtifactStore:
     def _commit_temp(self, tmp: Path, digest: str) -> tuple[str, int]:
         dst = Path(self.path_for(digest))
         size = tmp.stat().st_size
-        if dst.exists():
+        if dst.exists() and self.check(digest, size) is None:
             tmp.unlink()
             return digest, size
+        # Absent, or present but damaged (changed size or bytes): the freshly hashed copy replaces it.
         dst.parent.mkdir(parents=True, exist_ok=True)
         os.chmod(tmp, 0o440)
         os.replace(tmp, dst)

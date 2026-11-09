@@ -84,9 +84,15 @@ class Invocation:
     ports: Dict[str, Any] = field(default_factory=dict)  # resolved port bindings (descriptive)
     seed: Optional[int] = None
     wire: str = WIRE_SCHEMA
+    # Scoped LLM grant for this attempt (since eidos-wire 1.1; ADR 0013), or None. Holds a grant token, never a
+    # provider key: {"grant_id", "token", "socket", "models", "max_requests", "max_tokens", "max_usd",
+    # "expires_at"}.
+    llm_grant: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> dict:
         data = dataclasses.asdict(self)
+        if data.get("llm_grant") is None:
+            data.pop("llm_grant", None)  # absent unless granted: older readers and fixtures are unchanged
         return data
 
     @classmethod
@@ -99,6 +105,14 @@ class Invocation:
         for key in ("id", "entry"):
             if key not in inv.component:
                 raise WireError(f"Invocation: component.{key} is required")
+        grant = inv.llm_grant
+        if grant is not None:
+            if not isinstance(grant, dict):
+                raise WireError("Invocation: llm_grant must be an object")
+            for key, typ in (("grant_id", str), ("token", str), ("socket", str), ("models", list),
+                             ("max_requests", int), ("max_tokens", int), ("expires_at", str)):
+                if not isinstance(grant.get(key), typ):
+                    raise WireError(f"Invocation: llm_grant.{key} is required ({typ.__name__})")
         return dataclasses.replace(inv, inputs=inputs)
 
     def write(self, path: str | Path) -> None:

@@ -111,3 +111,23 @@ class Unauthenticated(DomainError):
     code = "UNAUTHENTICATED"
     http_status = 401
     next_action = "Supply a valid bearer token."
+
+
+class ContentUnverifiable(DomainError):
+    code = "CONTENT_UNVERIFIABLE"
+    http_status = 409
+    next_action = ("Staged bytes are missing or no longer match their declared digest/size; nothing was published. "
+                   "Re-stage the content from its source, or report the attempt as failed.")
+
+
+class WithdrawnMethod(DomainError):
+    code = "WITHDRAWN_METHOD"
+    http_status = 409
+    next_action = ("A release this work depends on was withdrawn. Reassess under a corrected, approved release "
+                   "(reassess_evidence_plan) or rely on an alternate justification.")
+
+
+class QuestionRevised(DomainError):
+    code = "QUESTION_REVISED"
+    http_status = 409
+    next_action = "The investigation question changed after this turn began; propose new work in the next turn."

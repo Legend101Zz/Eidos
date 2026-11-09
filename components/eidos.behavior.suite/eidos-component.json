@@ -1,0 +1,22 @@
+{
+  "id": "eidos.behavior.suite",
+  "release": "0.1.0",
+  "implements": "behavior-suite/1",
+  "kind": "artifact-op",
+  "entry": "eidos_behavior.score:run",
+  "scientific_effects": ["observe"],
+  "input": {"cases": "behavior-cases/1", "predictions": "raw-predictions/1"},
+  "output": {"report": "behavior-report/1"},
+  "requires": ["artifact.reader/1", "artifact.writer/1"],
+  "optional": [],
+  "reads": ["input:cases", "input:predictions"],
+  "writes": ["output:report"],
+  "isolation": "immutable-artifacts",
+  "card": "method-card.md",
+  "controls": ["fixtures/invariance-pass.json", "fixtures/direction-fail.json", "fixtures/missing-prediction.json",
+               "fixtures/bad-type.json"],
+  "receipt": ["suite", "tests", "passed", "failed", "incomplete"],
+  "python": ">=3.9",
+  "dependencies": [],
+  "license": "Apache-2.0"
+}

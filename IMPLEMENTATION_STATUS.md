@@ -7,6 +7,16 @@ Updated 2026-11-08 by the lead session, on branch `build/eidos-local-v1`.
 - Build sandbox: `docs/ops/SANDBOX_CAPABILITIES.md`.
 - Public research release runs: `docs/dev-runs/research-public-v0.1.0.md`.
 
+## Release 1.1.0 (branch `release/1.1.0`, 2026-11-09)
+
+| Item | State | Evidence |
+|---|---|---|
+| Separate candidate identity (ADR 0011) | implemented; verified in CI only (needs root on Linux) | CI job `separate-identity`: root setup (`scripts/ci/separate_identity_setup.sh`), then `tests/integration/test_separate_identity_e2e.py` (a sealed job as `eidos-cand` through the real runner and command service, the assessor under the lab identity in bwrap), plus the probe and assessor sandbox tests as root |
+| Provider keys in the OS secret store (ADR 0012) | runtime-verified on macOS (temporary keychain) and in CI (macOS keychain, Linux gnome-keyring) | `tests/unit/test_secret_store.py` |
+| Credential broker for component LLM calls (ADR 0013) | runtime-verified with a fake provider (real PostgreSQL, real Unix-socket broker, real runner, Seatbelt-sealed job on macOS) | `tests/integration/test_llm_broker.py` (11 tests), `packages/eidos-worker-sdk/tests/test_llm_client.py`; wire `Invocation.llm_grant` + fixtures |
+| Structured-output repair for local models (ADR 0014) | runtime-verified against local Ollama (qwen2.5 3B/7B) | `tests/unit/test_structured_output_repair.py` (21 recorded replies); `docs/release/evidence/g4-110-*.json`: decisions obtained 3B 1→5, 7B 0→5 of 5; executable 3B 1→2, 7B 0→1 of 5 |
+| Five recovery cases of the failure table (ADR 0010) | runtime-verified (real PostgreSQL, command service) | `tests/integration/test_recovery_cases.py` (7 tests): staged bytes re-verified before publication with per-slot refusal, runner re-stage once then explicit failure; `revise_question` effective next turn with drain/stop policy and exposure; withdrawal wakes investigations and refuses new admissions; assessment dedupe returns the same receipt; withdrawn assessor fails closed then `reassess_evidence_plan`; branch lost reply |
+
 ## State by area
 
 | Area | State |

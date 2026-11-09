@@ -93,6 +93,27 @@ def materialize_bundle(bundle_path: str, dest: Path) -> Path:
 _PREFIX_CACHE: dict[str, list[str]] = {}
 
 
+def symlink_hops(path: str, limit: int = 40) -> set[str]:
+    """Every symlinked directory met while resolving ``path`` (e.g. uv's ``cpython-3.12-<platform>`` link to
+    ``cpython-3.12.16-<platform>``, through which a venv's ``bin/python`` points). A sandbox that binds only the
+    resolved prefixes lacks these paths, and the interpreter cannot be executed inside it."""
+    out: set[str] = set()
+    p = Path(os.path.abspath(path))
+    for _ in range(limit):
+        cur = Path(p.parts[0])
+        for part in p.parts[1:]:
+            cur = cur / part
+            if cur.is_symlink():
+                if cur.is_dir():
+                    out.add(str(cur))
+                target = Path(os.readlink(cur))
+                p = Path(os.path.normpath((target if target.is_absolute() else cur.parent / target) / p.relative_to(cur)))
+                break
+        else:
+            return out
+    return out
+
+
 def python_prefixes(python: str) -> list[str]:
     if python not in _PREFIX_CACHE:
         out = subprocess.run(env=_job_env(), args=[python, "-c", "import sys,json;print(json.dumps([[sys.prefix, "
@@ -105,15 +126,20 @@ def python_prefixes(python: str) -> list[str]:
         protected = [os.path.realpath(str(Path.home())), *(os.path.realpath(d) for d in credential_dirs())]
         extra = [e for e in extra if not any(os.path.realpath(e) == d or d.startswith(os.path.realpath(e).rstrip("/") + "/")
                                              for d in protected)]
-        _PREFIX_CACHE[python] = sorted(set(prefixes) | real | set(extra))
+        hops = {h for h in symlink_hops(python)
+                if not any(os.path.realpath(h) == d or d.startswith(os.path.realpath(h).rstrip("/") + "/")
+                           for d in protected)}  # a symlinked ancestor holding $HOME or credentials is never bound
+        _PREFIX_CACHE[python] = sorted(set(prefixes) | real | set(extra) | hops)
     return _PREFIX_CACHE[python]
 
 
 class AttemptRunner:
     def __init__(self, client: LabClient, store: LocalArtifactStore, *, lab_root: str | Path, launcher_id: str,
                  api_port: int, credential_path: str, sealed_label_canary: str | None = None,
-                 allowed_profiles: tuple[str, ...] = ("dev:same-user",)):
+                 allowed_profiles: tuple[str, ...] = ("dev:same-user",), broker_socket: str | None = None):
         self.client = client
+        # The LLM broker's Unix socket (served by the investigator worker; ADR 0013).
+        self.broker_socket = broker_socket or str(Path(lab_root) / "run" / "llm-broker.sock")
         self.store = store
         self.root = Path(lab_root)
         self.launcher_id = launcher_id
@@ -238,14 +264,28 @@ class AttemptRunner:
                 shutil.chown(d, CANDIDATE_USER, CANDIDATE_USER)
             if adir.parent.exists():
                 os.chmod(adir.parent, 0o755)
+        sockets: list[str] = []
         if lock["component"].get("kind") == "build":
             argv = [python, "-I", "-c", "import sys; sys.path[:0]=" + json.dumps(pythonpath.split(os.pathsep)) + "\n" + VALIDATE_SNIPPET,
                     str(source)]
         else:
+            llm_grant = None
+            if lock.get("llm"):
+                # A fresh token per attempt; only its hash reaches the lab. The grant is fenced to this attempt.
+                import hashlib
+                import secrets as _secrets
+                # eidos_llmg_<project>.<random>: the project routes the broker's command; the hash authenticates.
+                token = f"eidos_llmg_{lock.get('project_id', '')}." + _secrets.token_urlsafe(32)
+                th = hashlib.sha256(token.encode()).hexdigest()
+                grant = self.client.command("issue_llm_grant", {"job_id": ctx["job_id"], "attempt_id": ctx["attempt_id"],
+                                            "epoch": ctx["epoch"], "token_sha256": th},
+                                            project=lock.get("project_id"), key=f"llm-grant:{ctx['attempt_id']}:{th[:16]}")
+                llm_grant = {**grant["result"], "token": token, "socket": self.broker_socket}
+                sockets.append(self.broker_socket)
             inv = Invocation(job_id=ctx["job_id"], attempt_id=ctx["attempt_id"], epoch=ctx["epoch"],
                              project_id=lock.get("project_id", ""), component=comp, inputs=inputs,
                              config=lock.get("config") or {}, staging_dir=str(staging), scratch_dir=str(scratch),
-                             limits=lock.get("limits") or {}, ports=ports, seed=lock.get("seed"))
+                             limits=lock.get("limits") or {}, ports=ports, seed=lock.get("seed"), llm_grant=llm_grant)
             inv.write(adir / "invocation.json")
             os.chmod(adir / "invocation.json", 0o444)
             readonly.append(str(adir / "invocation.json"))
@@ -254,7 +294,7 @@ class AttemptRunner:
                           env={"PYTHONPATH": pythonpath, "PYTHONHASHSEED": "0"},
                           profile=profile, readonly=readonly, writable=[str(staging), str(scratch), str(resume)],
                           python_prefixes=python_prefixes(python) if sealed else [],
-                          deny_read=sealed_deny_read(str(self.root)) if sealed else [])
+                          deny_read=sealed_deny_read(str(self.root)) if sealed else [], sockets=sockets)
 
     def _isolation_receipt(self, spec: LaunchSpec, profile: str) -> dict:
         import platform
@@ -273,6 +313,8 @@ class AttemptRunner:
         if profile == "macos:seatbelt-sealed":
             threat += ("; macOS Seatbelt via deprecated sandbox-exec, same OS user, mach IPC (e.g. Keychain via "
                        "securityd) not filtered")
+        if spec.sockets:  # the only reachable endpoint: the LLM broker socket, granted for this attempt
+            base["reachable_sockets"] = {"llm-broker": spec.sockets}
         return {**base, **probes, "threat_model": threat}
 
     # -------------------------------------------------------------------------------------
@@ -368,12 +410,46 @@ class AttemptRunner:
         if outputs:
             md = man.to_dict()
             md["outputs"] = [dict(o.__dict__) for o in outputs]
-            self.client.command("publish_outputs", {"job_id": ctx["job_id"], "attempt_id": ctx["attempt_id"],
-                                "epoch": ctx["epoch"], "manifest": md}, project=project, key=f"publish:{ctx['attempt_id']}")
+            refused = self._publish_verified(project, ctx, md, staging)
+            if refused is not None:
+                return self._finish(project, ctx, "failed", {}, {"category": "storage", "message":
+                                    "staged outputs could not be verified before publication; nothing was published",
+                                    "unverifiable": refused}, final=True)
         if (ctx.get("stop_requested") or (man.receipt or {}).get("stopped_early")) and man.status == "succeeded":
             receipt = {**(man.receipt or {}), "stopped_by_policy": "checkpoint-and-stop"}
             return self._finish(project, ctx, "cancelled", receipt, None)
         return self._finish(project, ctx, man.status, man.receipt, man.error, final=man.status == "failed")
+
+    def _publish_verified(self, project: str, ctx: dict, manifest: dict, staging: Path) -> list[dict] | None:
+        """Publish; if the lab refuses because staged bytes are missing or changed (storage lag, a damaged
+        blob), re-stage the affected outputs once from this attempt's own verified staging files and retry
+        under the same command key (a refused command commits nothing). Returns the unverifiable slots if
+        the refusal persists, so the attempt fails explicitly instead of publishing unverifiable bytes."""
+        args = {"job_id": ctx["job_id"], "attempt_id": ctx["attempt_id"], "epoch": ctx["epoch"], "manifest": manifest}
+        key = f"publish:{ctx['attempt_id']}"
+        for round_ in range(2):
+            try:
+                self.client.command("publish_outputs", args, project=project, key=key)
+                return None
+            except LabError as exc:
+                if exc.code != "CONTENT_UNVERIFIABLE":
+                    raise
+                bad = list(((exc.error or {}).get("details") or {}).get("unverifiable") or [])
+                if round_ == 1:
+                    return bad
+                by_slot = {o["slot"]: o for o in manifest["outputs"]}
+                for u in bad:
+                    o = by_slot.get(u.get("slot"))
+                    if o is None:
+                        return bad
+                    src = staging / o["filename"]
+                    if src.is_symlink() or not src.is_file():
+                        return bad
+                    try:
+                        self.store.put_file(src, expected_digest=o["digest"], expected_size=o["size"])
+                    except StoreError:
+                        return bad
+        return None
 
     def _collect_build(self, project: str, ctx: dict, adir: Path) -> dict:
         try:

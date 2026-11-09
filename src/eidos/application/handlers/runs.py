@@ -153,6 +153,10 @@ def resolve_lock(ctx: Ctx, p: dict, *, extra_config: dict | None = None) -> dict
     target = next((r for r in cat if r["ref"] == p["component_ref"]), None)
     if target is None:
         raise NotFound(f"component {p['component_ref']} not found")
+    if target["status"] == "withdrawn":  # a withdrawn method admits no new work (history and live jobs are kept)
+        from eidos.domain.errors import WithdrawnMethod
+        raise WithdrawnMethod(f"component {target['ref']} was withdrawn; no new work is admitted with it",
+                              details={"component_ref": target["ref"]})
     schema = target["manifest"].get("config_schema")
     if schema:
         from eidos.domain.contracts import validate_config
@@ -204,6 +208,21 @@ def resolve_lock(ctx: Ctx, p: dict, *, extra_config: dict | None = None) -> dict
     if lock["output_access_class"] != "project" and not profile_name.endswith("sealed"):
         raise Invalid("restricted inputs may only be bound into a sealed execution profile",
                       details={"output_access_class": lock["output_access_class"], "profile": profile_name})
+    # A scoped, budgeted LLM grant for components that declare `llm` use (ADR 0013); none under a sealed profile
+    # unless the run or the plan allows the broker explicitly. Absent (not null) when there is none, so locks of
+    # components without LLM use keep their digests.
+    from eidos.application.handlers.broker import llm_lock
+    policy = get_profile(ctx).body.get("policy", {})
+    # The sealed-run allowance is a human decision: honoured from a principal that may steer (researcher/admin)
+    # or from project policy (llm_broker.allow_sealed); the investigator setting it in its own calls has no effect.
+    sealed_ok = bool(p.get("allow_llm_broker")) and (
+        ctx.principal.has("steer") or bool((policy.get("llm_broker") or {}).get("allow_sealed")))
+    llm = llm_lock(target["manifest"], policy, {**p, "allow_llm_broker": sealed_ok}, profile=profile_name)
+    if llm:
+        lock["llm"] = llm
+    elif p.get("allow_llm_broker") and target["manifest"].get("llm"):
+        lock["llm_refused"] = ("the project policy does not enable the LLM broker" if not policy.get("llm_broker")
+                               else "a sealed run's broker allowance needs a researcher or policy.llm_broker.allow_sealed")
     return lock
 
 

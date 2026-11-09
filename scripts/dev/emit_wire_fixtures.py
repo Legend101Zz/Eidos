@@ -83,6 +83,11 @@ def _attempt(entry: str, base: Path) -> dict[str, Any]:
     }
 
 
+GRANT = {"grant_id": "llmg_attempt-test", "token": "grant-token-0123456789abcdef", "socket": "/run/eidos-llm.sock",
+         "models": ["fake:echo"], "max_requests": 4, "max_tokens": 2000, "max_usd": None,
+         "expires_at": "2026-11-09T16:00:00+00:00"}
+
+
 def emit() -> dict[str, Any]:
     """Fixture name (without ``.json``) -> message. Deterministic."""
     work = Path(tempfile.mkdtemp(prefix="eidos-wire-fixtures-")).resolve()
@@ -109,6 +114,10 @@ def emit() -> dict[str, Any]:
     fixtures: dict[str, Any] = {
         "invocation": inv,
         "invocation-newer-minor": variant(inv, lambda d: d.update(deadline_hint_seconds=600)),
+        # Since eidos-wire 1.1 (ADR 0013): an attempt with a scoped LLM grant (a grant token, never a provider key).
+        "invocation-llm-grant": variant(inv, lambda d: d.update(llm_grant=dict(GRANT))),
+        "invalid-invocation-llm-grant-token-missing": variant(
+            inv, lambda d: d.update(llm_grant={k: v for k, v in GRANT.items() if k != "token"})),
         "output-manifest-succeeded": succeeded,
         "output-manifest-failed": failed["manifest"],
         "output-manifest-newer-minor": variant(succeeded, newer_minor_manifest),

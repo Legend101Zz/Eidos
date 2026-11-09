@@ -121,6 +121,28 @@ boundaries you truly support. Eidos then only gets the checkpoints and receipts 
 `devices()` reports cpu/cuda/mps. Restoring across devices is never claimed exact; treat it as
 "numerically equivalent under protocol" and check tolerances.
 
+## LLM calls from a component (since 1.1.0)
+
+Declare the use in the manifest and take the injected `llm` client; the lab gives each attempt a scoped grant
+(model allowlist, request/token/USD limits, expiry) and never a provider key (ADR 0013):
+
+```json
+"llm": {"role": "synthetic-data-generator", "prompt_revision": "my-prompts/1", "max_calls": 20, "max_tokens": 8000}
+```
+
+```python
+def run(inputs, config, *, writer=None, llm=None):
+    if llm is None:
+        raise ContractError("needs an LLM grant (project policy.llm_broker)")
+    out = llm.complete([{"role": "user", "content": "One example sentence."}], max_tokens=60, request_key="ex-1")
+    writer.stage_json("dataset", [{"text": out.text, "call_id": out.call_id}], schema="labeled-text/1")
+```
+
+`llm.complete` raises `eidos_worker.LlmRefused` (with `code`, e.g. `GRANT_EXHAUSTED`, `BUDGET_EXHAUSTED`,
+`GRANT_EXPIRED`) when the broker refuses; a refused request never reached the provider. The project enables the
+broker with the `update_profile_policy` command, e.g. `lab cmd update_profile_policy -p <project> --payload '{"policy": {"llm_broker": {...}}}'` (`policy.llm_broker`: `models`, `max_requests`, `max_tokens`, `max_usd`,
+`price_per_mtok`, `ttl_seconds`). Example: `components/eidos.synthetic.llm-examples`.
+
 ## Wire contract: schema major and supported Python
 
 - **Schema major: 1** (`eidos-wire/1`; `eidos_wire.WIRE_MAJOR`). The messages that cross the worker/server boundary have published JSON Schemas (2020-12) in `schemas/eidos-wire/v1/`: `invocation.schema.json`, `output-manifest.schema.json` and `component-manifest.schema.json`. They are generated from the server boundary models (`scripts/dev/gen_wire_schemas.py`; ADR 0008).

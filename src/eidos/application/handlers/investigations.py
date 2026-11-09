@@ -7,7 +7,7 @@ import uuid
 from eidos.application.service import Ctx, command
 from eidos.domain import charter as charter_rules
 from eidos.domain import turns as turn_rules
-from eidos.domain.errors import BudgetExhausted, Invalid, StaleRevision
+from eidos.domain.errors import BudgetExhausted, Invalid, QuestionRevised, StaleRevision
 
 RUNNING_JOB_POLICIES = ("drain", "checkpoint-and-stop", "cancel")
 BUDGET_DIMS = ("model_tokens", "model_usd", "compute_seconds", "trials", "turns")
@@ -87,6 +87,88 @@ def steer_investigation(ctx: Ctx, p: dict) -> dict:
     ctx.event("investigation.steered", inv.id, {"revision": rec.revision, "by": ctx.principal.id},
               investigation_id=inv.id, wake=True)
     return {"investigation_id": inv.id, "revision": rec.revision}
+
+
+@command("revise_question", "steer")
+def revise_question(ctx: Ctx, p: dict) -> dict:
+    """The human changes the investigation's question mid-investigation (design, "Human changes the question").
+
+    Policy (ADR 0010):
+    - The change is a new investigation revision with an attributed question history entry. It is effective at
+      the NEXT turn: a turn already running keeps the view at its horizon, and a decision it proposes after the
+      change is recorded unapplied (``stale-revision``). It never sees the new question mid-turn.
+    - Admitted work follows ``running_job_policy``: ``drain`` (default; jobs keep running and their results stay
+      citable, labelled with the question revision they were admitted under), ``checkpoint-and-stop`` or
+      ``cancel``. Under a stopping policy the remaining calls of a decision accepted before the change are
+      refused (``QUESTION_REVISED``) instead of admitting new work for the old question.
+    - The change is recorded with exposure: what the reviser could have seen (the ledger horizon, finished jobs,
+      completed turns, assessments) is stored as an exposure event linked to the question revision.
+    Success rules are not changed here; they need ``amend_study_charter``."""
+    charter_rules.reject_threshold_overrides("question revision", p.get("structured") or {})
+    question = str(p.get("question", "")).strip()
+    if not question:
+        raise Invalid("question is required")
+    policy = p.get("running_job_policy", "drain")
+    if policy not in RUNNING_JOB_POLICIES:
+        raise Invalid(f"running_job_policy must be one of {RUNNING_JOB_POLICIES}")
+    inv = ctx.tx.require("investigation", p["investigation_id"], lock=True)
+    if inv.status == "stopped":
+        raise Invalid(f"investigation {inv.id} is stopped")
+    if ctx.expected_revision is not None and inv.revision != ctx.expected_revision:
+        raise StaleRevision(f"investigation at revision {inv.revision}", details={"observed_revision": inv.revision})
+    if question == inv.body.get("question"):
+        raise Invalid("the new question is identical to the current one")
+    horizon = ctx.tx.horizon()
+    jobs = ctx.tx.list_jobs(ctx.project_id, investigation_id=inv.id)
+    finished = sorted(j["id"] for j in jobs if j["status"] in ("succeeded", "failed", "cancelled", "pruned"))
+    live = [j for j in jobs if j["status"] in ("admitted", "queued", "running", "cancel-requested")]
+    turns_done = [t["id"] for t in ctx.tx.list_turns(inv.id) if t["status"] != "open"]
+    plans = {pl.id for pl in ctx.tx.list_records(ctx.project_id, "evidence_plan", limit=100000)
+             if pl.body.get("investigation_id") == inv.id}
+    assessments = sorted(a.id for a in ctx.tx.list_records(ctx.project_id, "assessment", limit=100000)
+                         if a.body.get("plan_id") in plans)
+    disclosed = {"horizon": horizon, "finished_jobs": finished, "completed_turns": turns_done,
+                 "assessments": assessments, "kind": "question-revision"}
+    study_id = None
+    if inv.body.get("charter_ref"):
+        ch = ctx.tx.get_record("charter", inv.body["charter_ref"]["id"])
+        study_id = (ch.body.get("study_id") if ch else None)
+    exposure_id = ctx.tx.add_exposure(ctx.project_id, study_id, ctx.principal.id, f"question:{inv.id}", disclosed)
+    history = list(inv.body.get("question_history") or [])
+    if not history:
+        history.append({"question_revision": 1, "question": inv.body.get("question"), "by": inv.created_by})
+    qrev = history[-1]["question_revision"] + 1
+    entry = {"question_revision": qrev, "question": question[:4000], "previous": inv.body.get("question"),
+             "by": ctx.principal.id, "reason": str(p.get("reason", ""))[:2000], "effective": "next-turn",
+             "after_revision": inv.revision, "running_job_policy": policy, "exposure_id": exposure_id,
+             "horizon": horizon}
+    history.append(entry)
+    body = dict(inv.body)
+    body["question"] = question[:4000]
+    body["question_history"] = history
+    # Turns that began before this revision are stale (their spec carries an older study_revision).
+    body["question_change"] = {"question_revision": qrev, "investigation_revision": inv.revision + 1,
+                               "policy": policy}
+    rec = ctx.tx.put_record("investigation", inv.id, ctx.project_id, body, created_by=ctx.principal.id,
+                            status=inv.status)
+    if rec.revision != inv.revision + 1:  # put_record appends exactly one revision under the row lock
+        raise Invalid("investigation revision moved concurrently; retry")
+    affected: list[str] = []
+    for job in live:  # admitted under the previous question revision (recorded in the event and the history)
+        if policy != "drain" and job["status"] != "cancel-requested":
+            from eidos.application.handlers.runs import record_stop_policy
+            record_stop_policy(ctx, job["id"], policy)
+            ctx.tx.update_job(job["id"], cancel_requested=True)
+            ctx.tx.enqueue("job.cancel", f"cancel:{job['id']}", {"job_id": job["id"], "policy": policy})
+        affected.append(job["id"])
+    _clear_needs_input(ctx, inv, inv.status, "question-revised")
+    ctx.event("investigation.question_revised", inv.id,
+              {"question_revision": qrev, "revision": rec.revision, "by": ctx.principal.id, "policy": policy,
+               "admitted_work": affected, "admitted_under_question_revision": qrev - 1,
+               "exposure_id": exposure_id}, investigation_id=inv.id, wake=True)
+    return {"investigation_id": inv.id, "revision": rec.revision, "question_revision": qrev,
+            "running_job_policy": policy, "admitted_work": affected, "exposure_id": exposure_id,
+            "effective": "next-turn"}
 
 
 def _set_state(ctx: Ctx, p: dict, status: str, etype: str) -> dict:
@@ -449,6 +531,15 @@ def check_exploration_allowed(ctx: Ctx, inv_id: str | None) -> dict | None:
         raise Invalid(f"investigation {inv_id} is {inv.status}; no new work is admitted")
     if not inv.body.get("charter_ref"):
         raise CharterRequired(f"investigation {inv_id} has no committed study charter")
+    change = inv.body.get("question_change") or {}
+    if change.get("policy") in ("cancel", "checkpoint-and-stop") and ctx.principal.has("turn") \
+            and not ctx.principal.has("steer"):
+        last = ctx.tx.last_turn(inv.id)
+        if last and last["status"] == "open" and int(last["study_revision"]) < int(change["investigation_revision"]):
+            raise QuestionRevised(f"the question of {inv_id} was revised (question revision "
+                                  f"{change['question_revision']}, policy {change['policy']}) after turn "
+                                  f"{last['id']} began; its remaining calls admit no new work",
+                                  details={"turn_id": last["id"], **change})
     return inv.body["charter_ref"]
 
 

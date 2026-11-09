@@ -12,7 +12,7 @@ PYPROJECTS = [ROOT / "pyproject.toml", *sorted((ROOT / "packages").glob("*/pypro
 
 
 def test_every_package_declares_apache_2_and_ships_identical_licence_files():
-    assert len(PYPROJECTS) == 4
+    assert len(PYPROJECTS) == 6  # lab, wire, worker SDK, pytorch; since 1.1.0 the optional pyglove and composer adapters
     for f in PYPROJECTS:
         proj = tomllib.loads(f.read_text())["project"]
         assert proj["license"] == "Apache-2.0", f

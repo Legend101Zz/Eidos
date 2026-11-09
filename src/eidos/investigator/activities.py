@@ -292,10 +292,12 @@ class InvestigatorActivities:
         except LabError as exc:
             return {"tool": tool, "index": idx, "ok": False, "code": exc.code, "error": exc.error}
 
-    OPERATOR_TYPES = ["investigation.steered", "investigation.charter_attached", "investigation.resumed",
+    OPERATOR_TYPES = ["investigation.steered", "investigation.question_revised", "investigation.release_withdrawn",
+                      "investigation.charter_attached", "investigation.resumed",
                       "investigation.paused", "investigation.stopped", "charter.amended"]
     NEWS_TYPES = ["job.succeeded", "job.failed", "job.cancelled", "job.pruned", "evidence.ready", "assessment.committed",
-                  "investigation.steered", "investigation.charter_attached", "investigation.resumed",
+                  "investigation.steered", "investigation.question_revised", "investigation.release_withdrawn",
+                  "investigation.charter_attached", "investigation.resumed",
                   "investigation.paused", "investigation.stopped", "component.published", "component.withdrawn",
                   "charter.amended", "exposure.recorded",
                   # effects of the investigator's own calls that need a fresh view to act on

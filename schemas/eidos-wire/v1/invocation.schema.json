@@ -74,6 +74,70 @@
       ],
       "title": "InputBinding",
       "type": "object"
+    },
+    "LlmGrant": {
+      "description": "A scoped, short-lived, budget-limited LLM grant for one attempt (ADR 0013). A grant token, never a key.",
+      "properties": {
+        "expires_at": {
+          "title": "Expires At",
+          "type": "string"
+        },
+        "grant_id": {
+          "title": "Grant Id",
+          "type": "string"
+        },
+        "max_requests": {
+          "minimum": 1,
+          "title": "Max Requests",
+          "type": "integer"
+        },
+        "max_tokens": {
+          "minimum": 1,
+          "title": "Max Tokens",
+          "type": "integer"
+        },
+        "max_usd": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Usd"
+        },
+        "models": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Models",
+          "type": "array"
+        },
+        "socket": {
+          "description": "path of the broker's Unix socket inside the worker's view",
+          "title": "Socket",
+          "type": "string"
+        },
+        "token": {
+          "minLength": 16,
+          "title": "Token",
+          "type": "string"
+        }
+      },
+      "required": [
+        "grant_id",
+        "token",
+        "socket",
+        "models",
+        "max_requests",
+        "max_tokens",
+        "expires_at"
+      ],
+      "title": "LlmGrant",
+      "type": "object"
     }
   },
   "$id": "urn:eidos:schema:eidos-wire:v1:invocation",
@@ -112,6 +176,17 @@
       "additionalProperties": true,
       "title": "Limits",
       "type": "object"
+    },
+    "llm_grant": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LlmGrant"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "ports": {
       "additionalProperties": true,

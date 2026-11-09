@@ -122,6 +122,13 @@ class LaunchSpec:
     writable: list[str] = field(default_factory=list)
     python_prefixes: list[str] = field(default_factory=list)
     deny_read: list[str] = field(default_factory=list)  # Seatbelt: contents unreadable unless listed above
+    # Which OS identity runs the process under linux:bwrap-sealed when the lab runs as root with the
+    # ``eidos-cand`` user: "candidate" (untrusted candidate code: the distinct candidate user) or "lab"
+    # (trusted roles: the assessor and scorer keep the lab identity, inside the same bwrap confinement).
+    identity: str = "candidate"
+    # Unix sockets the process may connect to (the LLM broker when the attempt holds a grant; ADR 0013). No
+    # other network access is opened: bwrap binds just these paths; Seatbelt allows outbound to just these.
+    sockets: list[str] = field(default_factory=list)
 
 
 _CAND_OK: dict[str, bool] = {}
@@ -278,8 +285,11 @@ def seatbelt_policy(spec: LaunchSpec, tmp: str) -> tuple[str, list[str]]:
         return f'(param "{prefix}{len(params) - 1}")'
 
     writable = [norm(w) for w in spec.writable + [tmp]]
-    allowed = list(dict.fromkeys(norm(x) for x in spec.python_prefixes + spec.readonly + [spec.cwd] + writable if x))
+    sockets = [norm(s) for s in spec.sockets]
+    allowed = list(dict.fromkeys(norm(x) for x in spec.python_prefixes + spec.readonly + [spec.cwd] + writable + sockets
+                                 if x))
     rules = ["(version 1)", "(allow default)", "(deny network*)",
+             *[f"(allow network-outbound (literal {par('S', s)}))" for s in sockets],
              # other processes' arguments/environments (lab daemons may hold provider keys) and signals
              "(deny process-info* (target others))",
              # well-known ways to start work outside the sandbox or reach credential services
@@ -319,11 +329,23 @@ def bwrap_argv(spec: LaunchSpec) -> list[str]:
             a += ["--ro-bind", p, p]
     for p in spec.writable:
         a += ["--bind", p, p]
+    for p in spec.sockets:
+        a += ["--bind", p, p]
     a += ["--setenv", "HOME", "/tmp", "--setenv", "PATH", "/usr/bin:/bin"]
     for k, v in spec.env.items():
         a += ["--setenv", k, v]
     a += ["--chdir", spec.cwd, "--"]
     return a + spec.argv
+
+
+def launch_identity(spec: LaunchSpec) -> tuple[int, int] | None:
+    """The (uid, gid) a launch drops to, or None to keep the lab's identity. Only candidate code under
+    linux:bwrap-sealed drops to the candidate user; trusted roles (identity "lab") never do."""
+    if spec.identity not in ("candidate", "lab"):
+        raise ValueError(f"unknown launch identity {spec.identity!r}")
+    if spec.profile != "linux:bwrap-sealed" or spec.identity != "candidate":
+        return None
+    return candidate_uid(spec.argv[0])
 
 
 def launch(spec: LaunchSpec) -> ProcessHandle:
@@ -348,7 +370,7 @@ def launch(spec: LaunchSpec) -> ProcessHandle:
     # its own handler) so it survives to record the exit status.
     wrapper = ["/bin/sh", "-c", 'trap "" USR1; "$@"; echo $? > "$0"', exit_file, *inner]
     preexec = None
-    ids = candidate_uid(spec.argv[0]) if spec.profile == "linux:bwrap-sealed" else None
+    ids = launch_identity(spec)
     if ids:
         uid, gid = ids
         os.chown(adir, uid, gid)
@@ -432,7 +454,7 @@ def run_probes(spec: LaunchSpec, *, label_path: str, credential_path: str, host_
     probe_spec = LaunchSpec(argv=[python, "-I", "-c", PROBE, json.dumps(cfg)], cwd=spec.cwd,
                             attempt_dir=str(Path(spec.attempt_dir) / "probe"), env={}, profile=spec.profile,
                             readonly=spec.readonly, writable=[], python_prefixes=spec.python_prefixes,
-                            deny_read=spec.deny_read)
+                            deny_read=spec.deny_read, identity=spec.identity)
     try:
         h = launch(probe_spec)
         deadline = time.monotonic() + 60
@@ -455,12 +477,27 @@ def run_probes(spec: LaunchSpec, *, label_path: str, credential_path: str, host_
     host_file = Path(host_write_path)
     controls["no-host-write"] = "failed" if host_file.exists() else "passed"
     host_file.unlink(missing_ok=True)
-    ids = candidate_uid(python) if spec.profile == "linux:bwrap-sealed" else None
-    controls["separate-identity"] = "passed" if ids and ids[0] != os.geteuid() else "failed"
+    # separate-identity: candidate code and the trusted roles run as distinct OS identities.
+    # - candidate spec: passed when the candidate process really ran as the candidate user (not the lab's uid);
+    # - lab spec (assessor/scorer): passed when it ran as the lab identity AND a distinct candidate user exists
+    #   that candidate code runs as, so the trusted role never shares an identity with candidate code.
+    lab_uid = os.geteuid()
+    if spec.profile != "linux:bwrap-sealed":
+        ids = None
+        separate = False
+    elif spec.identity == "lab":
+        ids = candidate_uid()
+        separate = bool(ids and ids[0] != lab_uid)
+    else:
+        ids = candidate_uid(python)
+        separate = bool(ids and ids[0] != lab_uid)
+    controls["separate-identity"] = "passed" if separate else "failed"
     if not out.get("computation"):
         controls["permitted-computation"] = "failed"
-    return {"controls": controls, "probe_uid_inside": out.get("uid"),
-            "outer_uid": ids[0] if ids else os.geteuid(), "probe_digest": _digest(PROBE)}
+    outer = (ids[0] if ids else lab_uid) if spec.identity == "candidate" else lab_uid
+    return {"controls": controls, "probe_uid_inside": out.get("uid"), "outer_uid": outer,
+            "identity": spec.identity, "lab_uid": lab_uid, "candidate_uid": ids[0] if ids else None,
+            "probe_digest": _digest(PROBE)}
 
 
 def _digest(s: str) -> str:
@@ -471,7 +508,8 @@ def _digest(s: str) -> str:
 def profile_config_digest(spec: LaunchSpec) -> str:
     shape = LaunchSpec(argv=["<cmd>"], cwd=spec.cwd, attempt_dir="<attempt>", profile=spec.profile,
                        readonly=sorted(spec.readonly), writable=["<staging>", "<scratch>"],
-                       python_prefixes=sorted(spec.python_prefixes), deny_read=sorted(spec.deny_read))
+                       python_prefixes=sorted(spec.python_prefixes), deny_read=sorted(spec.deny_read),
+                       sockets=sorted(spec.sockets))
     cfg: list[Any]
     if spec.profile == "linux:bwrap-sealed":
         cfg = bwrap_argv(shape)

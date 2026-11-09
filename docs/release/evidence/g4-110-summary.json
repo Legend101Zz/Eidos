@@ -1,0 +1,83 @@
+{
+ "check": "g4-110 before/after (ADR 0014)",
+ "host": "owner's Mac (Apple M4, 24 GB), own Ollama on 127.0.0.1:11535, models on the external SSD",
+ "window_utc": "2026-11-09 15:08:55-15:38:20 (29.5 min of the 60-min box); server stopped afterwards",
+ "14B": "not run (RAM/swap; brief)",
+ "definitions": {
+  "typed_decision_obtained": "the runtime returned a decision (no output-retry failure)",
+  "domain_valid": "passes the lab's decision validator (known effect tools, required args)",
+  "executable_pass": "domain-valid and every run_component/plan_trial config satisfies the component's config contract (the G4 pass criterion)"
+ },
+ "results": [
+  {
+   "model": "qwen2.5:3b-instruct",
+   "output_mode": "tool",
+   "scenarios_passed": 4,
+   "scenarios": 8,
+   "valid_decision_scenarios": 5,
+   "typed_decision_obtained": 1,
+   "domain_valid": 1,
+   "executable_pass": 1,
+   "output_retry_failures": 4,
+   "reasks": 0,
+   "seconds": 267.3,
+   "receipt": "g4-110-qwen2.5-3b-instruct-tool.json"
+  },
+  {
+   "model": "qwen2.5:3b-instruct",
+   "output_mode": "json",
+   "scenarios_passed": 5,
+   "scenarios": 8,
+   "valid_decision_scenarios": 5,
+   "typed_decision_obtained": 5,
+   "domain_valid": 3,
+   "executable_pass": 2,
+   "output_retry_failures": 0,
+   "reasks": 0,
+   "seconds": 263.0,
+   "receipt": "g4-110-qwen2.5-3b-instruct-json.json"
+  },
+  {
+   "model": "qwen2.5:3b-instruct",
+   "output_mode": "repair",
+   "scenarios_passed": 2,
+   "scenarios": 8,
+   "valid_decision_scenarios": 5,
+   "typed_decision_obtained": 5,
+   "domain_valid": 1,
+   "executable_pass": 0,
+   "output_retry_failures": 0,
+   "reasks": 1,
+   "seconds": 286.3,
+   "receipt": "g4-110-qwen2.5-3b-instruct-repair.json"
+  },
+  {
+   "model": "qwen2.5:7b-instruct",
+   "output_mode": "tool",
+   "scenarios_passed": 3,
+   "scenarios": 8,
+   "valid_decision_scenarios": 5,
+   "typed_decision_obtained": 0,
+   "domain_valid": 0,
+   "executable_pass": 0,
+   "output_retry_failures": 5,
+   "reasks": 0,
+   "seconds": 567.3,
+   "receipt": "g4-110-qwen2.5-7b-instruct-tool.json"
+  },
+  {
+   "model": "qwen2.5:7b-instruct",
+   "output_mode": "json",
+   "scenarios_passed": 3,
+   "scenarios": 8,
+   "valid_decision_scenarios": 5,
+   "typed_decision_obtained": 5,
+   "domain_valid": 2,
+   "executable_pass": 1,
+   "output_retry_failures": 0,
+   "reasks": 0,
+   "seconds": 348.5,
+   "receipt": "g4-110-qwen2.5-7b-instruct-json.json"
+  }
+ ]
+}

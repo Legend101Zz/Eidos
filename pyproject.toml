@@ -1,6 +1,6 @@
 [project]
 name = "eidos-lab"
-version = "1.0.1"
+version = "1.1.0"
 description = "Eidos: a local research harness for custom PyTorch model investigation"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
@@ -15,8 +15,8 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "eidos-wire",
-    "eidos-worker-sdk",
+    "eidos-wire>=1.1",  # Invocation.llm_grant (the runner always writes it)
+    "eidos-worker-sdk>=1.2",
     "eidos-pytorch",
     "pydantic>=2.11,<3",
     "sqlalchemy>=2.0.40,<2.2",

@@ -71,6 +71,91 @@ jobs:
           curl -fsSL "https://temporal.download/cli/archive/latest?platform=linux&arch=amd64" | tar xz -C /tmp/temporal
       - run: uv run pytest tests/integration -q
 
+  separate-identity:
+    # linux:bwrap-sealed with a distinct candidate user (ADR 0011): needs root, so it has its own job.
+    # A sealed job runs as eidos-cand through the real runner; the assessor runs as the lab identity in bwrap.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: devpass
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: true
+      - run: uv sync
+      - name: root setup (bubblewrap, eidos-cand, interpreter under /opt, SDK readable)
+        run: sudo env "PATH=$PATH" bash scripts/ci/separate_identity_setup.sh "$GITHUB_WORKSPACE"
+      - name: bwrap diagnostics (as root; informational)
+        run: sudo env "PATH=$PATH" EIDOS_CANDIDATE_PYTHON=/opt/eidos/envs/sealed-py312/bin/python .venv/bin/python scripts/ci/sealed_diag.py || true
+      - name: sealed job as eidos-cand + assessment as the lab identity, end to end (as root)
+        run: |
+          sudo env "PATH=$PATH" EIDOS_TEST_PG_ADMIN=postgresql+psycopg://postgres:devpass@127.0.0.1:5432/postgres \
+            EIDOS_CANDIDATE_PYTHON=/opt/eidos/envs/sealed-py312/bin/python EIDOS_REQUIRE_SEPARATE_IDENTITY=1 \
+            .venv/bin/python -m pytest -p no:cacheprovider -rs -q tests/integration/test_separate_identity_e2e.py \
+            tests/integration/test_isolation_probes.py tests/integration/test_assessor_sandbox.py
+
+  secret-store-macos:
+    # Provider keys in the OS secret store (ADR 0012): the real macOS Keychain, through a throwaway keychain file
+    # the tests create and delete (never the login keychain).
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: true
+      - run: uv sync
+      - run: uv run pytest -q -rs tests/unit/test_secret_store.py
+
+  secret-store-linux:
+    # The same with libsecret: secret-tool against gnome-keyring on a private D-Bus session.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: true
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libsecret-tools gnome-keyring dbus-x11
+      - run: uv sync
+      - name: secret-tool round trip on a private session bus with an unlocked gnome-keyring
+        run: |
+          dbus-run-session -- bash -c 'printf "ci-keyring-pw" | gnome-keyring-daemon --unlock --components=secrets >/dev/null \
+            && EIDOS_REQUIRE_SECRET_TOOL=1 uv run pytest -q -rs tests/unit/test_secret_store.py'
+
+  adapter-pyglove:
+    # Optional worker-side PyGlove adapter (ADR 0015) in its own environment with exact pins
+    # (pyglove 0.4.5, torch 2.7.0 CPU, CPython 3.12); never installed into the lab or the SDK.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - run: bash scripts/ci/adapter_pyglove.sh
+
+  adapter-composer:
+    # Optional worker-side MosaicML Composer adapter (ADR 0015) in its own environment with exact pins
+    # (mosaicml 0.32.1, torch 2.7.0 + torchvision 0.22.0 CPU, CPython 3.12): hook-phase fixtures on a short synthetic
+    # batch, phase counts and restore. Never installed into the lab or the SDK.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - run: bash scripts/ci/adapter_composer.sh
+
   worker-compat:
     # Same-repo PRs are already built by the push trigger; run pull_request builds only for forks.
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository

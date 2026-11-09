@@ -255,7 +255,41 @@ def withdraw_component(ctx: Ctx, p: dict) -> dict:
                 ctx.tx.update_job(j["id"], cancel_requested=True)
                 ctx.tx.enqueue("job.cancel", f"cancel:{j['id']}", {"job_id": j["id"], "policy": "cancel"})
                 stopped.append(j["id"])
+    # Evidence plans not yet assessed that depend on the withdrawn method (pinned assessor or template, an arm
+    # component, or an affected job) are blocked: frozen plan and receipts are kept, no assessment under the
+    # withdrawn method is accepted, and only a new attributed reassessment plan can continue (ADR 0010).
+    blocked_plans = []
+    for pl in ctx.tx.list_records(ctx.project_id, "evidence_plan", limit=100000):
+        if pl.status not in ("frozen", "executing", "awaiting-assessment"):
+            continue
+        refs = {(pl.body.get("assessor") or {}).get("ref"), (pl.body.get("template") or {}).get("ref")}
+        jobs = [j for js in (pl.body.get("launch") or {}).get("jobs", {}).values()
+                for j in (js if isinstance(js, list) else [js])]
+        comps = {ctx.tx.get_job(j)["lock"].get("component", {}).get("ref") for j in jobs if ctx.tx.get_job(j)}
+        # steps not yet admitted count too (a later pipeline step bound to the withdrawn release)
+        from eidos.application.handlers.evidence import _pipeline_steps
+        for arm in pl.body.get("arms") or []:
+            try:
+                arm_steps = _pipeline_steps(arm)
+            except Invalid:
+                continue
+            for st in arm_steps:
+                comps.add(st["spec"].get("component_ref") or st["spec"].get("component"))
+        if rel.id in refs or rel.id in comps or set(jobs) & affected:
+            ctx.tx.set_status("evidence_plan", pl.id, pl.status, labels={"health": "affected", "blocked_by": wid})
+            blocked_plans.append(pl.id)
+    # Investigations see the withdrawal at their next turn (never mid-turn): one wake event per investigation
+    # whose work used the release. Admitted work: a scientific withdrawal drains (results stay, marked affected);
+    # a security withdrawal stops it (above).
+    invs = sorted({j["investigation_id"] for j in ctx.tx.list_jobs(ctx.project_id, limit=100000)
+                   if j["investigation_id"] and (j["id"] in affected
+                                                 or j["lock"].get("component", {}).get("ref") == rel.id)})
+    for inv_id in invs:
+        ctx.event("investigation.release_withdrawn", inv_id, {"release": rel.id, "withdrawal": wid,
+                  "severity": severity, "stopped_jobs": [j for j in stopped]}, investigation_id=inv_id, wake=True)
     ctx.event("component.withdrawn", rel.id, {"withdrawal": wid, "affected_assessments": marked,
-                                             "suspended_approvals": suspended, "stopped_jobs": stopped})
+                                             "suspended_approvals": suspended, "stopped_jobs": stopped,
+                                             "blocked_plans": blocked_plans, "investigations": invs})
     return {"withdrawal_id": wid, "affected": sorted(affected), "affected_assessments": marked,
-            "suspended_approvals": suspended, "reassessment_requests": reassess, "stopped_jobs": stopped}
+            "suspended_approvals": suspended, "reassessment_requests": reassess, "stopped_jobs": stopped,
+            "blocked_plans": blocked_plans, "investigations_notified": invs}

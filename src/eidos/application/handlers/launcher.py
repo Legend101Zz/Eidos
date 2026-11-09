@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 from eidos.application.service import Ctx, command
 from eidos.boundary.wire import WireSchemaError, validate_wire
-from eidos.domain.errors import Fenced, Invalid, NotFound
+from eidos.domain.errors import ContentUnverifiable, Fenced, Invalid, NotFound
 from eidos_wire import OutputManifest, WireError
 
 TERMINAL = ("succeeded", "failed", "cancelled", "pruned")
@@ -147,13 +147,23 @@ def publish_outputs(ctx: Ctx, p: dict) -> dict:
         raise
     if schema_error is not None:
         raise Invalid(f"invalid output manifest: {schema_error}", details={"problems": schema_error.problems})
+    # Storage can lag the database, and staged bytes can change or vanish between staging and publication.
+    # Immediately before any reference is inserted, every output is verified again (size and a full rehash,
+    # with a short bounded retry for lag). One unverifiable output refuses the whole publication: nothing is
+    # published, and the refusal says which slots failed and why (missing, size-changed, digest-changed).
+    unverifiable = []
+    for out in man.outputs:
+        reason = ctx.store.check_with_retry(out.digest, out.size)
+        if reason is not None:
+            unverifiable.append({"slot": out.slot, "digest": out.digest, "size": out.size, "reason": reason})
+    if unverifiable:
+        raise ContentUnverifiable(
+            f"staged bytes for {[u['slot'] for u in unverifiable]} are missing or fail verification; nothing published",
+            details={"unverifiable": unverifiable, "job_id": job["id"], "attempt_id": p["attempt_id"]})
     published, duplicates = [], []
     checkpoints = (man.receipt or {}).get("checkpoints", {})
     branch = (job["lock"].get("config") or {}).get("branch")
     for out in man.outputs:
-        if not ctx.store.verify(out.digest, out.size):
-            raise Invalid(f"staged bytes for slot {out.slot!r} are missing or fail verification; nothing published",
-                          details={"slot": out.slot, "digest": out.digest})
         aid = f"art_{job['id'][4:]}_{out.slot}"[:120]
         existing = ctx.tx.get_artifact(aid)
         if existing is not None and (existing["digest"] != out.digest or existing["size"] != out.size
@@ -206,6 +216,9 @@ def finish_attempt(ctx: Ctx, p: dict) -> dict:
     if not att:
         raise NotFound("attempt not found")
     usage = p.get("usage") or {}
+    if job["lock"].get("llm"):  # the attempt's LLM grant ends with it; unreported calls become uncertain spend
+        from eidos.application.handlers.broker import reconcile_grant
+        reconcile_grant(ctx, f"llmg_{att['id']}", reason="attempt-finished")
     scope = job["lock"].get("budget_scope")
     if scope and usage.get("compute_seconds"):
         ctx.tx.record_usage(scope, "compute_seconds", float(usage["compute_seconds"]), att["id"],

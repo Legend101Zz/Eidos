@@ -1,0 +1,434 @@
+{
+  "check": "eidos-live-provider/1",
+  "model_requested": "openai-compatible:qwen2.5:3b-instruct",
+  "base_url": "http://127.0.0.1:11535/v1",
+  "output_mode": "json",
+  "caps": {
+    "max_total_requests": 24,
+    "max_output_tokens": 4096,
+    "temperature": "unset"
+  },
+  "request_timeout_seconds": 300.0,
+  "started_at": 1794237204.977293,
+  "scenarios": [
+    {
+      "name": "conformance-fresh",
+      "expect": "valid-decision",
+      "context_chars": 7539,
+      "outcome": "decision",
+      "usage": {
+        "provider": "openai-compatible",
+        "model": "openai-compatible:qwen2.5:3b-instruct",
+        "input_tokens": 2376,
+        "output_tokens": 176,
+        "calls": 1,
+        "request_ids": [
+          "chatcmpl-177"
+        ],
+        "served_models": [
+          "qwen2.5:3b-instruct"
+        ],
+        "per_request": [
+          {
+            "model": "qwen2.5:3b-instruct",
+            "input_tokens": 2376,
+            "output_tokens": 176,
+            "finish_reason": "stop"
+          }
+        ],
+        "structured_output": {
+          "mode": "json",
+          "json_mode": true,
+          "repairs": [
+            "args-object",
+            "scope-object"
+          ],
+          "reasks": 0,
+          "errors": [],
+          "valid": true
+        }
+      },
+      "served_models": [
+        "qwen2.5:3b-instruct"
+      ],
+      "replies": [
+        "{\"rationale\": \"Evaluate the effectiveness of a recent change in training methods on digit classifier performance.\", \"purpose\": \"hypothesis-test\", \"hypotheses\": [{\"statement\": \"Updating method-0 to include batch normalization will improve classification accuracy compared to its current configuration without batch normalization.\", \"prediction\": \"The model trained with method-0 and batch normalization will have a higher validation accuracy than the model trained with method-0 alone.\", \"falsifier\": \"Validation accuracy remains unchanged or decreases when training with both method-0 and batch normalization compared to training with just method-0.\"}], \"calls\": [{\"tool\": \"lab.update.method-0.with.batch.normalization\", \"args\": {\"inputs\": {\"train\": \"art_train\", \"validation\": \"art_validation\"}}}], \"control\": {\"action\": \"wait_for_jobs\", \"scope\": {}}}"
+      ],
+      "schema_valid": false,
+      "validation_error": "call 0: unknown or non-effect tool 'lab.update.method-0.with.batch.normalization'",
+      "seconds": 33.42,
+      "pass": false
+    },
+    {
+      "name": "conformance-after-baselines",
+      "expect": "valid-decision",
+      "context_chars": 8817,
+      "outcome": "decision",
+      "usage": {
+        "provider": "openai-compatible",
+        "model": "openai-compatible:qwen2.5:3b-instruct",
+        "input_tokens": 2781,
+        "output_tokens": 210,
+        "calls": 1,
+        "request_ids": [
+          "chatcmpl-760"
+        ],
+        "served_models": [
+          "qwen2.5:3b-instruct"
+        ],
+        "per_request": [
+          {
+            "model": "qwen2.5:3b-instruct",
+            "input_tokens": 2781,
+            "output_tokens": 210,
+            "finish_reason": "stop"
+          }
+        ],
+        "structured_output": {
+          "mode": "json",
+          "json_mode": true,
+          "repairs": [
+            "args-object"
+          ],
+          "reasks": 0,
+          "errors": [],
+          "valid": true
+        }
+      },
+      "served_models": [
+        "qwen2.5:3b-instruct"
+      ],
+      "replies": [
+        "{\n    \"rationale\": \"Analyze the performance of different seeds for improving the digit classifier's accuracy.\",\n    \"purpose\": \"hypothesis-test\",\n    \"hypotheses\": [\n        {\n            \"statement\": \"Increasing the number of training steps will lead to improved validation accuracy.\",\n            \"prediction\": \"Validation accuracy should increase as a function of the number of training steps.\",\n            \"falsifier\": \"The validation accuracy plateaus or decreases when more steps are taken.\"\n        }\n    ],\n    \"calls\": [\n        {\n            \"tool\": \"plan_trial\",\n            \"args\": {\n                \"component_ref\": \"lab.generated.method-001@1.0.0\",\n                \"inputs\": {\n                    \"seed\": [0, 2, 5, 7, 9]\n                },\n                \"config\": {\n                    \"timeout_seconds\": 3600\n                }\n            }\n        }\n    ],\n    \"control\": {\n        \"action\": \"wait_for_jobs\"\n    }\n}"
+      ],
+      "schema_valid": true,
+      "executable": true,
+      "tools": [
+        "plan_trial"
+      ],
+      "calls": [
+        {
+          "tool": "plan_trial",
+          "args": "{\"component_ref\": \"lab.generated.method-001@1.0.0\", \"config\": {\"timeout_seconds\": 3600}, \"inputs\": {\"seed\": [0, 2, 5, 7, 9]}, \"purpose\": \"hypothesis-test\"}"
+        }
+      ],
+      "control": {
+        "action": "wait_for_jobs",
+        "summary": ""
+      },
+      "seconds": 45.91,
+      "pass": true
+    },
+    {
+      "name": "conformance-failed-job",
+      "expect": "valid-decision",
+      "context_chars": 7902,
+      "outcome": "decision",
+      "usage": {
+        "provider": "openai-compatible",
+        "model": "openai-compatible:qwen2.5:3b-instruct",
+        "input_tokens": 2487,
+        "output_tokens": 174,
+        "calls": 1,
+        "request_ids": [
+          "chatcmpl-755"
+        ],
+        "served_models": [
+          "qwen2.5:3b-instruct"
+        ],
+        "per_request": [
+          {
+            "model": "qwen2.5:3b-instruct",
+            "input_tokens": 2487,
+            "output_tokens": 174,
+            "finish_reason": "stop"
+          }
+        ],
+        "structured_output": {
+          "mode": "json",
+          "json_mode": true,
+          "repairs": [
+            "args-object",
+            "scope-object"
+          ],
+          "reasks": 0,
+          "errors": [],
+          "valid": true
+        }
+      },
+      "served_models": [
+        "qwen2.5:3b-instruct"
+      ],
+      "replies": [
+        "{\"rationale\": \"Identify and resolve the issue in the previous failed training job to enable further experiments.\", \"purpose\": \"reproduction\", \"hypotheses\": [{\"statement\": \"The failure in the latest job is due to a misconfiguration in the command-line arguments for training.\", \"prediction\": \"Resolving the configuration will allow the model to train successfully, and the classification performance can be evaluated with improved accuracy.\", \"falsifier\": \"After resolving the configuration issue, if training fails again or does not complete successfully, then the configuration is incorrect.\"}], \"calls\": [{\"tool\": \"bind_component\", \"args\": {\"component_ref\": \"eidos.project.command@1.0.4\"}}], \"control\": {\"action\": \"wait_for_jobs\", \"summary\": \"Waiting for the bind component job to finish.\", \"scope\": {}}}"
+      ],
+      "schema_valid": true,
+      "executable": true,
+      "tools": [
+        "bind_component"
+      ],
+      "calls": [
+        {
+          "tool": "bind_component",
+          "args": "{\"component_ref\": \"eidos.project.command@1.0.4\"}"
+        }
+      ],
+      "control": {
+        "action": "wait_for_jobs",
+        "summary": "Waiting for the bind component job to finish.",
+        "scope": {}
+      },
+      "seconds": 41.03,
+      "pass": true
+    },
+    {
+      "name": "conformance-large-catalog",
+      "expect": "valid-decision",
+      "context_chars": 12708,
+      "outcome": "decision",
+      "usage": {
+        "provider": "openai-compatible",
+        "model": "openai-compatible:qwen2.5:3b-instruct",
+        "input_tokens": 4021,
+        "output_tokens": 273,
+        "calls": 1,
+        "request_ids": [
+          "chatcmpl-590"
+        ],
+        "served_models": [
+          "qwen2.5:3b-instruct"
+        ],
+        "per_request": [
+          {
+            "model": "qwen2.5:3b-instruct",
+            "input_tokens": 4021,
+            "output_tokens": 273,
+            "finish_reason": "stop"
+          }
+        ],
+        "structured_output": {
+          "mode": "json",
+          "json_mode": true,
+          "repairs": [
+            "args-object",
+            "scope-object"
+          ],
+          "reasks": 0,
+          "errors": [],
+          "valid": true
+        }
+      },
+      "served_models": [
+        "qwen2.5:3b-instruct"
+      ],
+      "replies": [
+        "{\n  \"rationale\": \"Improve the digit classifier by selecting from available method to experiment with different approaches and models.\",\n  \"purpose\": \"hypothesis-test\",\n  \"hypotheses\": [\n    {\n      \"statement\": \"By selecting a new method, we can potentially improve the accuracy of the digit classification model.\",\n      \"prediction\": \"The selected method will lead to an increase in prediction accuracy compared to the current model using default methods.\",\n      \"falsifier\": \"If after testing with different methods, no significant improvement in accuracy is observed, then it cannot be concluded that new methods could enhance the model.\"\n    }\n  ],\n  \"calls\": [\n    {\n      \"tool\": \"plan_trial\",\n      \"args\": {\n        \"component_ref\": \"author_component:files:{path:'eidos-method-experiments/src/digit_classification_ensemble.py', path2text:''}\",\n        \"inputs\": {},\n        \"config\": {},\n        \"environment\": \"default\"\n      }\n    },\n    {\n      \"tool\": \"launch_trial\",\n      \"args\": {\n        \"trial_id\": \"plan_trial_job_id\"\n      }\n    }\n  ],\n  \"control\": {\n    \"action\": \"wait_for_jobs\",\n    \"summary\": \"Waiting for the trial to complete and evaluate results.\",\n    \"scope\": {}\n  }\n}"
+      ],
+      "schema_valid": true,
+      "executable": false,
+      "contract_problems": [
+        "call 0: unknown component \"author_component:files:{path:'eidos-method-experiments/src/digit_classification_ensemble.py', path2text:''}\""
+      ],
+      "tools": [
+        "plan_trial",
+        "launch_trial"
+      ],
+      "calls": [
+        {
+          "tool": "plan_trial",
+          "args": "{\"component_ref\": \"author_component:files:{path:'eidos-method-experiments/src/digit_classification_ensemble.py', path2text:''}\", \"config\": {}, \"environment\": \"default\", \"inputs\": {}, \"purpose\": \"hypothesis-test\"}"
+        },
+        {
+          "tool": "launch_trial",
+          "args": "{\"purpose\": \"hypothesis-test\", \"trial_id\": \"plan_trial_job_id\"}"
+        }
+      ],
+      "control": {
+        "action": "wait_for_jobs",
+        "summary": "Waiting for the trial to complete and evaluate results.",
+        "scope": {}
+      },
+      "seconds": 71.35,
+      "pass": false
+    },
+    {
+      "name": "read-tools-available",
+      "expect": "valid-decision",
+      "context_chars": 7965,
+      "outcome": "decision",
+      "usage": {
+        "provider": "openai-compatible",
+        "model": "openai-compatible:qwen2.5:3b-instruct",
+        "input_tokens": 2822,
+        "output_tokens": 124,
+        "calls": 1,
+        "request_ids": [
+          "chatcmpl-551"
+        ],
+        "served_models": [
+          "qwen2.5:3b-instruct"
+        ],
+        "per_request": [
+          {
+            "model": "qwen2.5:3b-instruct",
+            "input_tokens": 2822,
+            "output_tokens": 124,
+            "finish_reason": "stop"
+          }
+        ],
+        "structured_output": {
+          "mode": "json",
+          "json_mode": true,
+          "repairs": [
+            "args-object"
+          ],
+          "reasks": 0,
+          "errors": [],
+          "valid": true
+        }
+      },
+      "served_models": [
+        "qwen2.5:3b-instruct"
+      ],
+      "replies": [
+        "{\"rationale\": \"Identify potential improvements for the digit classifier by searching the component catalog.\", \"purpose\": \"open-search\", \"hypotheses\": [{\"statement\": \"There are available components that can enhance the classifier's performance.\", \"prediction\": \"Discovering and integrating a new method from the catalog can potentially increase accuracy.\", \"falsifier\": \"No enhancement found after searching the component catalog.\"}], \"calls\": [{ \"tool\": \"search_components\", \"args\": {\"capability\": \"classification-score\", \"text\": \"method-\"} }], \"control\": {\"action\": \"wait_for_jobs\"}}"
+      ],
+      "schema_valid": false,
+      "validation_error": "call 0: unknown or non-effect tool 'search_components'",
+      "seconds": 39.69,
+      "pass": false
+    },
+    {
+      "name": "provider-timeout",
+      "expect": "model-call-failed:true",
+      "context_chars": 7539,
+      "outcome": "model-call-failed",
+      "retryable": true,
+      "error": "ModelTimeoutError: Request timed out.",
+      "possible_usage": {
+        "provider": "openai-compatible",
+        "model": "openai-compatible:qwen2.5:3b-instruct",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "calls": 0,
+        "request_ids": [],
+        "served_models": [],
+        "per_request": [],
+        "failed_request": {
+          "error": "ModelTimeoutError",
+          "status_code": null
+        },
+        "structured_output": {
+          "mode": "json",
+          "json_mode": true,
+          "repairs": [],
+          "reasks": 0,
+          "errors": [],
+          "valid": false
+        }
+      },
+      "seconds": 0.03,
+      "pass": true
+    },
+    {
+      "name": "request-limit-with-tool-loop",
+      "expect": "bounded-or-decision",
+      "context_chars": 8070,
+      "outcome": "decision",
+      "usage": {
+        "provider": "openai-compatible",
+        "model": "openai-compatible:qwen2.5:3b-instruct",
+        "input_tokens": 2846,
+        "output_tokens": 141,
+        "calls": 1,
+        "request_ids": [
+          "chatcmpl-915"
+        ],
+        "served_models": [
+          "qwen2.5:3b-instruct"
+        ],
+        "per_request": [
+          {
+            "model": "qwen2.5:3b-instruct",
+            "input_tokens": 2846,
+            "output_tokens": 141,
+            "finish_reason": "stop"
+          }
+        ],
+        "structured_output": {
+          "mode": "json",
+          "json_mode": true,
+          "repairs": [
+            "scope-object"
+          ],
+          "reasks": 0,
+          "errors": [],
+          "valid": true
+        }
+      },
+      "served_models": [
+        "qwen2.5:3b-instruct"
+      ],
+      "replies": [
+        "{\"rationale\": \"Evaluate the current classifier performance and explore potential improvements by analyzing existing methods in the catalog.\", \"purpose\": \"measurement-development\", \"hypotheses\": [{\"statement\": \"Current digit classifier performs at 84% accuracy, which is close to its theoretical maximum with available resources.\", \"prediction\": \"Improving the classifier will not significantly increase its accuracy beyond 84%.\", \"falsifier\": \"Training and validation results show an accuracy of greater than 86%.\"}], \"calls\": [], \"control\": {\"action\": \"request_input\", \"summary\": \"Request input for selecting a method to improve the digit classifier from the catalog.\", \"scope\": {}}}"
+      ],
+      "schema_valid": true,
+      "executable": true,
+      "tools": [],
+      "calls": [],
+      "control": {
+        "action": "request_input",
+        "summary": "Request input for selecting a method to improve the digit classifier from the catalog.",
+        "scope": {}
+      },
+      "seconds": 31.6,
+      "pass": true
+    },
+    {
+      "name": "unknown-model-id",
+      "expect": "model-call-failed:false",
+      "context_chars": 7539,
+      "outcome": "model-call-failed",
+      "retryable": false,
+      "error": "ModelNotFoundError: status_code: 404, model_name: eidos-no-such-model, body: {'message': 'model \"eidos-no-such-model\" not found, try pulling it first', 'type': 'api_error', 'param': None, 'code': None}",
+      "possible_usage": {
+        "provider": "openai-compatible",
+        "model": "openai-compatible:eidos-no-such-model",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "calls": 0,
+        "request_ids": [],
+        "served_models": [],
+        "per_request": [],
+        "failed_request": {
+          "error": "ModelNotFoundError",
+          "status_code": 404
+        },
+        "structured_output": {
+          "mode": "json",
+          "json_mode": true,
+          "repairs": [],
+          "reasks": 0,
+          "errors": [],
+          "valid": false
+        }
+      },
+      "seconds": 0.01,
+      "pass": true
+    }
+  ],
+  "transport_retries_disabled": true,
+  "total_requests_counted": 8,
+  "finished_at": 1794237469.6763551,
+  "summary": {
+    "scenarios": 8,
+    "passed": 5,
+    "schema_conformance": [
+      false,
+      true,
+      true,
+      true,
+      false
+    ]
+  }
+}
