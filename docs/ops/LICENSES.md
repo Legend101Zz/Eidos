@@ -54,7 +54,7 @@ Python environment: the repository `.venv` (runtime and dev dependency groups). 
 | click | 8.5.1 | BSD-3-Clause | runtime |  |
 | cryptography | 50.0.2 | Apache-2.0 OR BSD-3-Clause | runtime |  |
 | docstring_parser | 0.18.0 | MIT / MIT License | runtime |  |
-| eidos-lab | 1.0.0rc1 | Apache-2.0 (this project's own package) | runtime |  |
+| eidos-lab | 1.0.0 | Apache-2.0 (this project's own package) | runtime |  |
 | eidos-pytorch | 1.1.0 | Apache-2.0 (this project's own package) | runtime |  |
 | eidos-wire | 1.0.0 | Apache-2.0 (this project's own package) | runtime |  |
 | eidos-worker-sdk | 1.1.0 | Apache-2.0 (this project's own package) | runtime |  |

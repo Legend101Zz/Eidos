@@ -1,6 +1,6 @@
-# Eidos v1.0.0-rc1 release notes (2026-11-09)
+# Eidos v1.0.0 release notes (2026-11-09)
 
-This is the release candidate for v1.0.0 (package version `1.0.0rc1`). The final v1.0.0 follows after the owner's machine sleep/restart receipts. It will differ from this RC only by the version string, unless that check finds a defect. Gates: `ACCEPTANCE_MATRIX.md` § E.
+This is the v1.0.0 release (package version `1.0.0`). It follows `eidos-v1.0.0-rc1` and differs from it only by the version string and one CI-only fix (Go set up in the macOS job for the Temporal source-build fallback). It ships without the hardware sleep/restart check (see limitations). Gates: `ACCEPTANCE_MATRIX.md` § E.
 
 ## What v1.0.0 is
 
@@ -34,9 +34,9 @@ See `CHANGELOG.md`. In short:
   - The ops scripts work from paths with spaces.
 - **CI.** The setup-uv fallback no longer masks other failures. Wheel licence metadata is checked.
 
-## Metrics: v1.0.0-rc1 compared with eidos-v0.7.0
+## Metrics: v1.0.0 compared with eidos-v0.7.0
 
-| Measure | eidos-v0.7.0 | v1.0.0-rc1 |
+| Measure | eidos-v0.7.0 | v1.0.0 |
 |---|---|---|
 | Test functions (all of `tests/`, packages and components) | 218 | 244 |
 | Local unit + integration + MCP + reporting suite on the qualification Mac | 140 passed, 4 skipped | 167 passed, 4 skipped on the release tree (G9) |
@@ -66,7 +66,7 @@ See `CHANGELOG.md`. In short:
 
 - **macOS isolation is same-user.** Seatbelt does not contain a hostile same-user program: launchd/XPC stay reachable by other routes, mach IPC is unfiltered, signals are allowed, hard links may be possible, and `sandbox-exec` is deprecated. Sealed evaluation is Linux-only.
 - **Distinct candidate identity** on Linux needs root, the `eidos-cand` user and a candidate-readable interpreter. Otherwise `separate-identity` is reported as failed (truthfully). With a distinct identity the assessor fails closed.
-- **Machine sleep and OS restart recovery not yet verified on hardware (owner check R1 pending); abrupt-stop and service-kill recovery are verified.** The final v1.0.0 follows after the owner's sleep/restart receipts; it differs from this RC only by the version string unless R1 finds a defect.
+- **Machine sleep and OS restart recovery are not verified on hardware.** v1.0.0 was released by the owner's decision without the hardware check R1. Abrupt-stop and service-kill recovery are verified. `scripts/qualify/sleep_restart_check.sh` runs that check. If it finds a defect, the fix goes into a 1.0.x release.
 - **Hosted OpenAI-compatible services** are protocol-compatible but not separately qualified. The adapter was verified against a local Ollama endpoint. No local model of 14B or less passed full decision-schema conformance on the qualification Mac.
 - **Multi-day investigations** and real **distributed** or **CUDA** runs were not exercised.
 - **Qualification suites are author-written.** Independent scientific controls belong to the A16 evaluation.

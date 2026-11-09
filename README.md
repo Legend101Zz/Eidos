@@ -6,7 +6,7 @@
 
 Eidos is for ML researchers who want an LLM to help investigate their own PyTorch models on their own machine, without letting it grade its own work. An investigator diagnoses failures, writes and publishes research components, runs trials and checkpoint branches, and exports models. Claims count only when they come from a frozen, qualified evidence plan and an independent assessor. Every command, job, charge and isolation receipt is in a PostgreSQL ledger.
 
-**Current release: v1.0.0-rc1** (package version `1.0.0rc1`). v1.0.0 follows after one remaining hardware check: real machine sleep and OS restart (see [Status](#status-and-evidence)).
+**Current release: v1.0.0** (package version `1.0.0`). Machine sleep and OS restart recovery are not yet verified on hardware; see [Status](#status-and-evidence).
 
 ## Key features
 
@@ -172,7 +172,7 @@ Details and limits: [`docs/release/SUPPORTED.md`](docs/release/SUPPORTED.md), [A
 | G3 isolation honesty | pass | `tests/unit/test_seatbelt_policy.py`, `tests/integration/test_sealed_plan_refusal.py` |
 | G4 OpenAI-compatible | adapter verified; no local model of 14B or less passed full conformance (`qwen2.5:14b`: 4/8) | [`g4-*.json`](docs/release/evidence/) |
 | G5 real-model investigation (A8) | pass: `claude-sonnet-5-5` completed the full journey autonomously. The run receipt failed one check because of a bug in the checking script's export loader; the checks were re-evaluated from the ledger, with no model call, in `a8-sonnet-3-recheck.json` | [`a8-sonnet-3*.json`](docs/release/evidence/) |
-| G6 local operations | disk exhaustion, service kills and abrupt stop pass on macOS; **machine sleep/restart pending (hardware check)** | [`g6-*.json`](docs/release/evidence/) |
+| G6 local operations | disk exhaustion, service kills and abrupt stop pass on macOS; **machine sleep/restart not verified on hardware** (released without it by owner decision) | [`g6-*.json`](docs/release/evidence/) |
 | G7 review items | pass | `CHANGELOG.md` |
 | G8 docs | pass | this page, `docs/` |
 | G9 final verification | pass: suite 167 passed / 4 skipped, switch journey 154/154, macOS owner kit 15/15, CI 10/10, independent review | [`g9-*`](docs/release/evidence/), `ACCEPTANCE_MATRIX.md` § E |

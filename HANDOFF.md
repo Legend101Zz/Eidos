@@ -1,11 +1,11 @@
-# v1.0.0-rc1 handoff (2026-11-09)
+# v1.0.0 handoff (2026-11-09)
 
 **State:** see the gate table in `ACCEPTANCE_MATRIX.md` § E, and the session's `PROGRESS.md`/`REQUESTS.md` on the SSD (`/Volumes/Mrigesh SSD/eidos-v1/`).
 
 - **Scope:** `docs/release/SUPPORTED.md`. v1.0.0 is the software release (A1–A15). A16 (scientific) is a separate later release with `eval-*` tags.
 - **Licence:** Apache-2.0 (`LICENSE`, `NOTICE`; `research/public/` excluded).
 - **Release documents:** `CHANGELOG.md`, `docs/release/RELEASE_NOTES_v1.0.0.md`. Evidence: `docs/release/evidence/`, plus `docs/mac/STATUS.md` § v1.0.0 release session.
-- **Current release:** v1.0.0-rc1 (package `1.0.0rc1`). The final v1.0.0 follows after the owner's real machine sleep and restart check (`scripts/qualify/sleep_restart_check.sh`; R1). It will differ only by the version string unless that check finds a defect.
+- **Current release:** v1.0.0 (package `1.0.0`), released on 2026-11-09 after `eidos-v1.0.0-rc1`. It differs from the RC by the version string and one CI-only fix. The machine sleep/restart check (`scripts/qualify/sleep_restart_check.sh`; R1) was not run before release: this is a documented limitation.
 
 ---
 
