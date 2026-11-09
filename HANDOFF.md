@@ -78,7 +78,7 @@ The lab-free driver's earlier results overstated the full lab until run 1's defe
 - **Code:** work on `build/eidos-local-v1`. The tags above are immutable; tag only CI-green SHAs.
 - **Status and next actions:** `IMPLEMENTATION_STATUS.md`, `ACCEPTANCE_MATRIX.md`, `docs/decisions/`.
 - **Local test commands:** `IMPLEMENTATION_STATUS.md` § How to run.
-- **CI:** `.github/workflows/ci.yml`, 10 jobs; see `docs/ops/CI.md`.
+- **CI:** `.github/workflows/ci.yml`, 15 jobs since 1.1.0; see `docs/ops/CI.md`.
 - **Mac work:** `docs/ops/MAC_QUALIFICATION_RUNBOOK.md`, `docs/ops/STORAGE_PATHS.md`. Mac results and requests: `docs/mac/`.
 - **Real-LLM checks (controller-run, capped):**
   - lab-free: `scripts/qualify/live_bundle_investigation.py`;

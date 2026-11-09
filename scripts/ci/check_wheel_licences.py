@@ -14,12 +14,16 @@ import zipfile
 from pathlib import Path
 
 PACKAGES = ("eidos_lab", "eidos_wire", "eidos_worker_sdk", "eidos_pytorch")
+# Optional worker-side adapters (ADR 0015): built and checked by their own CI jobs, outside the lab workspace.
+OPTIONAL = ("eidos_pyglove", "eidos_composer")
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("dist")
     ap.add_argument("--expect-version", help="required version of eidos-lab (e.g. 1.0.0)")
+    ap.add_argument("--only", nargs="+", metavar="PKG",
+                    help="check exactly these distributions (e.g. eidos_pyglove) instead of the four lab packages")
     a = ap.parse_args()
     repo = Path(__file__).resolve().parents[2]
     licence_sha = hashlib.sha256((repo / "LICENSE").read_bytes()).hexdigest()
@@ -27,7 +31,7 @@ def main() -> int:
     seen = set()
     for whl in sorted(Path(a.dist).glob("*.whl")):
         pkg = whl.name.split("-")[0]
-        if pkg not in PACKAGES:
+        if pkg not in (tuple(a.only) if a.only else PACKAGES + OPTIONAL):
             continue
         seen.add(pkg)
         with zipfile.ZipFile(whl) as z:
@@ -45,7 +49,7 @@ def main() -> int:
             if pkg == "eidos_lab" and a.expect_version and meta.get("Version") != a.expect_version:
                 problems.append(f"{whl.name}: version {meta.get('Version')} != {a.expect_version}")
         print(f"{whl.name}: License-Expression={meta.get('License-Expression')} Version={meta.get('Version')}")
-    missing = set(PACKAGES) - seen
+    missing = set(a.only or PACKAGES) - seen
     if missing:
         problems.append(f"wheels missing for {sorted(missing)}")
     for p in problems:

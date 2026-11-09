@@ -44,3 +44,8 @@ if grep -qE '[0-9]+ skipped' "$CI_WORK/pytest.log"; then
   echo "eidos-pyglove tests were skipped" >&2
   exit 1
 fi
+
+# Licence metadata of the adapter wheel (Apache-2.0, LICENSE and NOTICE), as for the lab packages.
+rm -rf "$CI_WORK/dist"
+uv build "$REPO/packages/eidos-pyglove" -o "$CI_WORK/dist"
+"$PY" "$REPO/scripts/ci/check_wheel_licences.py" "$CI_WORK/dist" --only eidos_pyglove

@@ -11,7 +11,7 @@ from eidos_worker.llm import LlmClient, LlmRefused, LlmResult
 from eidos_worker.reader import ArtifactReader
 from eidos_worker.writer import ArtifactWriter
 
-__version__ = "1.0.0"
+__version__ = "1.2.0"
 
 __all__ = [
     "ArtifactReader",

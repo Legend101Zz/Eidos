@@ -37,3 +37,8 @@ print("installed: torch", torch, "mosaicml", metadata.version("mosaicml"), "eido
 PY
 cd "$CI_WORK"
 "$PY" -m pytest -q -p no:cacheprovider "$REPO/packages/eidos-composer/tests"
+
+# Licence metadata of the adapter wheel (Apache-2.0, LICENSE and NOTICE), as for the lab packages.
+rm -rf "$CI_WORK/dist"
+uv build "$REPO/packages/eidos-composer" -o "$CI_WORK/dist"
+"$PY" "$REPO/scripts/ci/check_wheel_licences.py" "$CI_WORK/dist" --only eidos_composer

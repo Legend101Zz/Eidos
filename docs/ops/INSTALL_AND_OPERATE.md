@@ -8,7 +8,7 @@ The authoritative v1 scope is **`docs/release/SUPPORTED.md`**. In short:
 
 | Profile | v1 status |
 |---|---|
-| Linux x86_64, CPU | Supported. Hosted CI (Ubuntu 24.04, Python 3.12, PostgreSQL 16, Temporal 1.32.2), 10 jobs. |
+| Linux x86_64, CPU | Supported. Hosted CI (Ubuntu 24.04, Python 3.12, PostgreSQL 16, Temporal 1.32.2), 15 jobs (13 on Linux) since 1.1.0. |
 | macOS arm64, CPU and MPS | Supported. Qualified on the owner's Apple M4 (macOS 26.3.1): owner kit, MPS parity and cross-device resume (`docs/mac/STATUS.md`). |
 | `linux:bwrap-sealed` | Supported; **the only profile for sealed (hostile-code) evaluation**. When the lab runs as root with the `eidos-cand` user, candidate code runs as that distinct OS identity if it can execute the project interpreter, and the assessor keeps the lab identity (since 1.1.0; ADR 0011). Root setup: § "Separate candidate identity (root)" below; `separate-identity` then passes for both roles. |
 | `macos:seatbelt-sealed` | Supported, **same OS user**. `sandbox-exec` with a generated profile: the lab home, credential directories and `$HOME` are unreadable (except the attempt's own files); writes go only to staging/scratch/resume and a private tmp; no network; cleared environment; no inspection of other processes. It does **not** contain a hostile same-user program (launchd/XPC by other routes, mach IPC, signals). Plans requiring sealed execution are **refused** on macOS, and a Seatbelt receipt never satisfies them. The macOS assessor also runs under Seatbelt as the same user; its receipt reports `same_os_user: true`. |

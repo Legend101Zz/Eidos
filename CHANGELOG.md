@@ -2,6 +2,66 @@
 
 All notable changes to Eidos. Tags are annotated, created only on CI-green commits, and never moved. Development tags `eidos-v0.x` were freezes, not releases.
 
+## 1.1.0 (2026-11-09)
+
+The remaining harness features of the design. Details and metrics: `docs/release/RELEASE_NOTES_v1.1.0.md`.
+Packages: `eidos-lab` 1.1.0, `eidos-wire` 1.1.0, `eidos-worker-sdk` 1.2.0, `eidos-pytorch` 1.1.0 (unchanged), new
+`eidos-pyglove` 0.1.0 and `eidos-composer` 0.1.0. No ledger migration.
+
+### Recovery cases of the failure table (ADR 0010)
+- **Storage/database lag:** `publish_outputs` re-verifies every staged output (size and full rehash, with a short
+  bounded re-check) immediately before publishing, and refuses the whole publication with `CONTENT_UNVERIFIABLE` and a
+  per-slot reason (`missing`, `size-changed`, `digest-changed`). The runner re-stages once from its own staging files
+  and otherwise fails the attempt with category `storage`. A damaged blob is replaced on re-staging, never trusted.
+- **Question changed / release withdrawn mid-investigation:** new `revise_question` (effective at the next turn, admitted
+  work by `drain`/`checkpoint-and-stop`/`cancel`, recorded with an exposure row); a withdrawal wakes affected
+  investigations, and a withdrawn release admits no new work (`WITHDRAWN_METHOD`).
+- **Assessor restart / evidence twice:** order-insensitive evidence-set digest, the same receipt returned on a
+  duplicate, an `assessment.deduplicated` event; the assessor activity's command key covers the whole payload
+  (a re-evaluating restart used to hit a command-key conflict).
+- **Assessment method withdrawn during confirmation:** affected plans are blocked; the assessment fails closed; new
+  `reassess_evidence_plan` creates an attributed plan under a corrected, approved assessor, reusing the receipts.
+- **Branch request loses its reply:** pinned down by a test (same branch, one child job).
+
+### Separate candidate identity on Linux (ADR 0011)
+- Launch specs name an identity: candidate code runs as `eidos-cand`; the assessor keeps the lab identity inside bwrap.
+  With a distinct identity the assessor used to fail closed. Receipts report `identity`, `lab_uid`, `candidate_uid`.
+- The sandbox now binds the symlinked directories on an interpreter's resolution path (uv's
+  `cpython-3.12-<platform>` link); without them the venv interpreter was missing inside bwrap.
+- Root setup script `scripts/ci/separate_identity_setup.sh`, documented in `docs/ops/INSTALL_AND_OPERATE.md`; CI job
+  `separate-identity` runs a sealed job as `eidos-cand` plus its assessment end to end as root.
+
+### Provider keys in the OS secret store (ADR 0012)
+- `lab credentials set|delete|status <provider>` (key from stdin or a hidden prompt, never an argument; status never
+  prints it); macOS Keychain via `/usr/bin/security -i` (the key never in argv), Linux libsecret via `secret-tool`;
+  no plaintext fallback. `lab start` reads stored keys when `--credentials-stdin` is not given; keys still reach only
+  the investigator worker. CI jobs `secret-store-macos` (temporary keychain) and `secret-store-linux` (gnome-keyring).
+
+### Credential broker for component LLM calls (ADR 0013)
+- Components that declare `llm` use get a scoped, short-lived, budget-limited grant per attempt (models, requests,
+  tokens, USD, expiry, invocation identity) when the project enables `policy.llm_broker`. The broker runs in the
+  investigator worker on a Unix socket, reserves against the investigation's ledger before every provider call,
+  settles actual usage, records an `llm_call` receipt, and charges uncertain usage after timeouts or a broker crash.
+- Sealed runs get a grant only when allowed and reach only the broker socket (bwrap bind; Seatbelt allow rule).
+- `eidos_worker.llm` client (standard library, Python 3.9+), injected as `llm`/`context.llm`; `Invocation.llm_grant`
+  in the wire contract (eidos-wire 1.1, schemas and fixtures regenerated); example `components/eidos.synthetic.llm-examples`.
+
+### Structured-output repair for local models (ADR 0014)
+- `investigator.settings.output_mode`: `tool` (default), `repair` (strict JSON extraction, one schema-guided re-ask),
+  `json` (plus OpenAI-compatible JSON mode). Repairs and re-asks are recorded in usage and decision settings.
+- Re-measured G4 with qwen2.5 3B and 7B: decisions obtained 1→5 and 0→5 of 5; executable decisions 1→2 and 0→1 of 5.
+  The remaining failures are semantic (unknown tools), refused by the lab's validator.
+
+### PyGlove and Composer adapters, behaviour suite (ADR 0015, supersedes ADR 0009)
+- `eidos-pyglove` 0.1.0 (pyglove 0.4.5) and `eidos-composer` 0.1.0 (mosaicml 0.32.1, verified event phases with
+  hook-phase fixtures and restore), optional worker-side packages outside the lab workspace, each with a pinned CI job.
+- `behavior-suite/1` (`components/eidos.behavior.suite`): CheckList-style invariance and direction-of-change templates
+  scored from recorded raw predictions.
+
+### CI
+- 15 jobs (was 10): `separate-identity`, `secret-store-macos`, `secret-store-linux`, `adapter-pyglove`,
+  `adapter-composer`. `check_wheel_licences.py --only` checks the adapter wheels.
+
 ## 1.0.1 (2026-11-09)
 
 A design-conformance release. It closes three gaps that a check against the architecture (Revision 4) found and that nobody had recorded. It brings no new features and no ledger migration. Details: `docs/release/RELEASE_NOTES_v1.0.1.md`.
