@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [build/eidos-local-v1, "task/**"]
+    branches: [main, build/eidos-local-v1, "task/**"]
   pull_request:
     branches: [main]
 

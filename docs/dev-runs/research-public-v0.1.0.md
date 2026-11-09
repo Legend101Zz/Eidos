@@ -8,7 +8,7 @@ contracts; they make no capability or superiority claim.
 
 | Item | Value |
 |---|---|
-| Source commit | `c0c6d7ad09fb1c92296f27b4172ed6fdf5412138` (imported as `f55b9b3`, subtree `research/public/` only) |
+| Source commit | `c0c6d7ad09fb1c92296f27b4172ed6fdf5412138` (imported as `f55b9b3`, subtree `research/public/` only). After the 2026-11-09 commit ID rewrite: `6a6594af0e6a1f4baa429a4c080122c023a0cce8`, imported as `ac17cfe`, same trees ([map](../release/COMMIT_ID_MAP.md)) |
 | Release id / interfaces | `research-public-v0.1.0`; `eidos-task/0.2`, `eidos-answer/0.2`, `eidos-task-bundle/0.1`, charter draft-0.3 |
 | `PUBLIC_MANIFEST.json` sha256 | `767ed63d1bfb23a9718c4e73ce15266c3a1b965e59026116ab05c8998a40e2a7` (54/54 files verified by sha256 and bytes; 0 unlisted) |
 | Separately distributed archive (not in repo) | `eda0b28f8ad24448bab6277c6517955bf12a6b805f323dc35ad189bd71fd5a12` |
