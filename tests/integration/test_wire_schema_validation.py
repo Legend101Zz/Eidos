@@ -10,7 +10,7 @@ import pytest
 
 from eidos.application.handlers.runs import admit_job
 from eidos.application.service import Ctx
-from eidos.domain.errors import Invalid
+from eidos.domain.errors import Fenced, Invalid
 
 pytestmark = pytest.mark.pg
 
@@ -47,3 +47,13 @@ def test_publish_accepts_a_newer_minor_manifest_with_unknown_fields(lab):
                              "checksum_algorithm": "sha256"}]}
     pub = lab.cmd(launcher, "publish_outputs", {**base, "manifest": manifest}, project=pid)["result"]
     assert pub["published"]
+
+
+def test_a_stale_attempt_is_fenced_before_its_manifest_is_schema_checked(lab):
+    """Fencing comes first: a superseded attempt gets Fenced (and the stale-publication event), not Invalid."""
+    pid, launcher, old = _attempt(lab)
+    new = lab.cmd(launcher, "start_attempt", {"job_id": old["job_id"]}, project=pid, key=f"start:{old['job_id']}:run2:1")["result"]
+    assert new["epoch"] > old["epoch"]
+    manifest = {"wire": "eidos-wire/1", **old, "status": "succeeded", "receipt": ["not", "an", "object"]}
+    with pytest.raises(Fenced):
+        lab.cmd(launcher, "publish_outputs", {**old, "manifest": manifest}, project=pid)

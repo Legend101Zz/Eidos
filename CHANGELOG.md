@@ -22,7 +22,7 @@ A design-conformance release. It closes three gaps that a check against the arch
   - In the server environment, the valid fixtures validate against the schemas and the invalid ones fail. `jsonschema` is a dev dependency only.
   - In the worker-compat matrix (Python 3.9 with pydantic<2), the SDK emits exactly the golden fixtures. The worker packages stay standard-library only.
 - **The server validates received messages against the schema:**
-  - the command service's `publish_outputs`, which refuses a violation as `INVALID` with field-level `problems`;
+  - the command service's `publish_outputs`, which refuses a violation as `INVALID` with field-level `problems`. The check runs after the terminal and fence checks, so a stale attempt is still reported as fenced;
   - the runner's and the assessor's manifest reads;
   - component registration.
 

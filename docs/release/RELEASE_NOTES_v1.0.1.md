@@ -35,8 +35,8 @@ v1.0.1 is a **design-conformance release** after v1.0.0. A check against the arc
 | Wire JSON Schema files | 0 | **3** (`invocation`, `output-manifest`, `component-manifest`) |
 | Wire golden fixtures | 0 | **15**: 6 valid (2 of them newer-minor) and 9 `invalid-*` |
 | Server-side schema validation points | 0 | 4: `publish_outputs`, runner manifest read, assessor manifest read, component registration |
-| Test functions (all of `tests/`, packages and components) | 244 | 259 |
-| Local unit + integration + MCP + reporting suite | 167 passed, 4 skipped | 198 passed, 4 skipped (no new skips), plus worker packages 22 passed, 1 skipped |
+| Test functions (all of `tests/`, packages and components) | 244 | 260 |
+| Local unit + integration + MCP + reporting suite | 167 passed, 4 skipped | 199 passed, 4 skipped (no new skips), plus worker packages 22 passed, 1 skipped |
 | Worker SDK test functions (`packages/eidos-worker-sdk/tests`; they also run in the worker-compat matrix) | 13 | 15 |
 | CI jobs per push | 10 | 10; `lint-and-unit` adds the mypy and schema-regeneration steps |
 | ADRs | 7 | 9 |
