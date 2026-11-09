@@ -14,6 +14,7 @@ import subprocess
 import time
 from collections.abc import Callable
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import eidos_pytorch
@@ -35,7 +36,15 @@ from eidos.runtime.launcher import (
 )
 from eidos_wire import InputBinding, Invocation, OutputManifest, WireError, sha256_file
 
-SDK_PATHS = sorted({str(Path(m.__file__).resolve().parent.parent) for m in (eidos_wire, eidos_worker, eidos_pytorch)})
+
+def _sdk_root(m: ModuleType) -> str:
+    """Directory that contains the SDK package ``m`` (a namespace package has no ``__file__``)."""
+    if m.__file__ is None:
+        raise RuntimeError(f"SDK package {m.__name__} has no __file__; cannot expose it to the sandbox")
+    return str(Path(m.__file__).resolve().parent.parent)
+
+
+SDK_PATHS = sorted({_sdk_root(m) for m in (eidos_wire, eidos_worker, eidos_pytorch)})
 HEARTBEAT_SECONDS = 10.0
 
 VALIDATE_SNIPPET = (

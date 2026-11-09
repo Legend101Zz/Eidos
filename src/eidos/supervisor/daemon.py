@@ -16,6 +16,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -70,7 +71,7 @@ class Supervisor:
         ch.state = "running"
 
     def write_status(self, phase: str) -> None:
-        st = {"phase": phase, "supervisor_pid": os.getpid(), "updated_at": time.time(),
+        st: dict[str, Any] = {"phase": phase, "supervisor_pid": os.getpid(), "updated_at": time.time(),
               "services": {"postgres": {"state": ("running" if svc.pg_running(self.cfg) else
                                                      ("failed" if self._pg_state == "failed" else "stopped")),
                                            "restarts": len(self._pg_restarts), "last_error": self._pg_last_error}}}

@@ -12,6 +12,7 @@ def run_migrations_online() -> None:
     if connectable is not None:
         _run(connectable)
         return
+    assert url is not None, "alembic config must set sqlalchemy.url when no connection is supplied"
     engine = create_engine(url, poolclass=pool.NullPool)
     with engine.begin() as conn:
         _run(conn)

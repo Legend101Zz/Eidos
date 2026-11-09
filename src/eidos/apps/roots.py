@@ -7,6 +7,7 @@ import concurrent.futures
 import logging
 import os
 import sys
+from typing import cast
 
 from eidos.persistence.roles import roles_from_config
 from eidos.settings import LabConfig
@@ -36,6 +37,7 @@ def run_api(cfg: LabConfig) -> None:
 
     from eidos.api.app import create_app
     from eidos.api.relay import OutboxRelay
+    from eidos.application.ports import Ledger
     from eidos.application.service import CommandService, load_handlers
     from eidos.persistence.ledger import SqlLedger
     from eidos.runtime.artifacts import LocalArtifactStore
@@ -52,9 +54,12 @@ def run_api(cfg: LabConfig) -> None:
                 loop.call_soon_threadsafe(self.relay.notify)
 
     notifier = Notifier()
-    service = CommandService(ledger, store, settings={"max_upload_bytes": 4 << 30, "lab_root": str(cfg.root),
-                                                      "sealed_available": cfg.sealed_available,
-                                                      "sealed_profile": cfg.sealed_profile}, notifier=notifier)
+    # SqlLedger implements the Ledger port; the port's LedgerTx declares a typing-only ``__getattr__``
+    # escape hatch for methods not yet spelled out in the Protocol, which the concrete class omits.
+    service = CommandService(cast(Ledger, ledger), store,
+                             settings={"max_upload_bytes": 4 << 30, "lab_root": str(cfg.root),
+                                       "sealed_available": cfg.sealed_available,
+                                       "sealed_profile": cfg.sealed_profile}, notifier=notifier)
     loop = None
 
     async def main():

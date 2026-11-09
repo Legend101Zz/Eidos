@@ -189,7 +189,7 @@ def export_answer(client: Any, project: str, *, task_id: str, run_id: str, out: 
                          "role": "training", "supports": "candidate provenance (Eidos job receipt)",
                          "limitations": "self-reported by the project command; one training seed"})
     if baseline_score_job and candidate_score_job:
-        rows = {}
+        rows: dict[str, Any] = {}
         for name, jid in (("baseline", baseline_score_job), ("candidate", candidate_score_job)):
             j = _job(client, project, jid)
             tmp = out / f".{name}.jsonl"
@@ -239,8 +239,8 @@ def export_answer(client: Any, project: str, *, task_id: str, run_id: str, out: 
 
 def _reload_check(client, project, python, cdir: Path, out: Path, val_in: str, val_pred: str) -> None:
     import tempfile
-    with tempfile.TemporaryDirectory() as d:
-        d = Path(d)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        d = Path(tmpdir)
         client.download(project, val_in, d / "validation.npz")
         client.download(project, val_pred, d / "recorded.npz")
         r = subprocess.run(env=_job_env(), args=[python, str(cdir / "project.py"), "infer", "--model", str(cdir / "model.pt"),

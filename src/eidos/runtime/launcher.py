@@ -23,6 +23,7 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -175,7 +176,7 @@ class IsolationUnavailable(RuntimeError):
     pass
 
 
-def run_contained(argv: list[str], *, cwd: str, writable: list[str], readonly: list[str] = (), python: str | None = None,
+def run_contained(argv: list[str], *, cwd: str, writable: list[str], readonly: Sequence[str] = (), python: str | None = None,
                   timeout: float = 300, allow_same_user: bool = False, env: dict[str, str] | None = None,
                   attempt_dir: str | None = None) -> dict[str, Any]:
     """Run an untrusted (e.g. model-authored) command under the strongest available profile.
@@ -471,10 +472,12 @@ def profile_config_digest(spec: LaunchSpec) -> str:
     shape = LaunchSpec(argv=["<cmd>"], cwd=spec.cwd, attempt_dir="<attempt>", profile=spec.profile,
                        readonly=sorted(spec.readonly), writable=["<staging>", "<scratch>"],
                        python_prefixes=sorted(spec.python_prefixes), deny_read=sorted(spec.deny_read))
+    cfg: list[Any]
     if spec.profile == "linux:bwrap-sealed":
         cfg = bwrap_argv(shape)
     elif spec.profile == "macos:seatbelt-sealed":
-        cfg = list(seatbelt_policy(shape, "<tmp>"))
+        policy, params = seatbelt_policy(shape, "<tmp>")
+        cfg = [policy, params]  # same JSON as before (list of the (text, params) pair), so recorded digests hold
     else:
         cfg = ["host-process"]
     return _digest(json.dumps(cfg))

@@ -114,7 +114,9 @@ def _bind_extensions(ctx: Ctx, lock: dict, env: dict) -> None:
     if not exts:
         return
     from eidos_wire.manifest import PHASES
-    resolved, records, bundles = [], [], {}
+    resolved: list[Any] = []
+    records: list[dict[str, Any]] = []
+    bundles: dict[str, dict[str, Any]] = {}
     for i, ext in enumerate(exts):
         ref = ext.get("component_ref") if isinstance(ext, dict) else None
         if not ref:

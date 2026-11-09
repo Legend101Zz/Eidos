@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-_TYPES = {"object": dict, "array": list, "string": str, "boolean": bool, "integer": int, "number": (int, float)}
+_TYPES: dict[str, type | tuple[type, ...]] = {"object": dict, "array": list, "string": str, "boolean": bool, "integer": int, "number": (int, float)}
 
 
 def validate_config(value: Any, schema: dict[str, Any], path: str = "config") -> list[str]:

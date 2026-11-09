@@ -236,7 +236,9 @@ class LedgerTx:
                      investigation_id: str | None = None) -> int:
         # Gap-free, commit-ordered sequence: the counter row stays locked until this transaction
         # commits, so no reader can observe seq N+1 while seq N is still uncommitted.
-        seq = self._one("UPDATE event_counter SET last_seq = last_seq + 1 WHERE id = 1 RETURNING last_seq")["last_seq"]
+        counter = self._one("UPDATE event_counter SET last_seq = last_seq + 1 WHERE id = 1 RETURNING last_seq")
+        assert counter is not None  # the singleton row is seeded by migration 0003
+        seq = counter["last_seq"]
         self.c.execute(text("INSERT INTO events(seq, project_id, investigation_id, type, subject, body, command_id)"
                             " VALUES (:q,:p,:i,:t,:s,CAST(:b AS jsonb),:c)"),
                        {"q": seq, "p": project_id, "i": investigation_id, "t": etype, "s": subject, "b": _j(body),
@@ -437,7 +439,8 @@ class LedgerTx:
         (released or charged) under the same refs."""
         rows = self._all("SELECT dimension, ref, kind, amount FROM budget_entries WHERE scope_id=:s AND ref LIKE :p",
                          s=scope, p=_like_prefix(ref_prefix))
-        res, done = {}, {}
+        res: dict[tuple[str, str], float] = {}
+        done: dict[tuple[str, str], float] = {}
         for r in rows:
             amt = float(r["amount"])
             if r["kind"] == "reserve":
@@ -500,6 +503,7 @@ class LedgerTx:
         row = self._one("INSERT INTO exposures(project_id, study_id, principal_id, subject, disclosed)"
                         " VALUES (:p,:s,:u,:sub,CAST(:d AS jsonb)) RETURNING id",
                         p=project_id, s=study_id, u=principal_id, sub=subject, d=_j(disclosed))
+        assert row is not None  # INSERT ... RETURNING always yields the new row
         return row["id"]
 
     def exposures(self, project_id: str, study_id: str | None = None, since: datetime | None = None) -> list[dict]:

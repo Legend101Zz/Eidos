@@ -42,7 +42,7 @@ def _build(cls, data: dict, kind: str):
     required = {
         f.name
         for f in dataclasses.fields(cls)
-        if f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING  # type: ignore[misc]
+        if f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING
     }
     missing = required - set(data)
     if missing:
@@ -201,7 +201,7 @@ def json_schema(cls) -> dict:
             return {"type": "object", "additionalProperties": conv(args[1]) if args else {}}
         if origin in (list, List):
             return {"type": "array", "items": conv(args[0]) if args else {}}
-        if dataclasses.is_dataclass(tp):
+        if isinstance(tp, type) and dataclasses.is_dataclass(tp):
             return {"$ref": f"#/$defs/{tp.__name__}"}
         return {}
 
@@ -212,10 +212,10 @@ def json_schema(cls) -> dict:
         props, req = {}, []
         for f in dataclasses.fields(c):
             props[f.name] = conv(h[f.name])
-            if f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING:  # type: ignore[misc]
+            if f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING:
                 req.append(f.name)
             for a in [h[f.name], *typing.get_args(h[f.name]), *[x for t in typing.get_args(h[f.name]) for x in typing.get_args(t)]]:
-                if dataclasses.is_dataclass(a) and a.__name__ not in defs:
+                if isinstance(a, type) and dataclasses.is_dataclass(a) and a.__name__ not in defs:
                     defs[a.__name__] = {}
                     defs[a.__name__] = build(a)
         return {"type": "object", "properties": props, "required": req}

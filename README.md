@@ -197,6 +197,7 @@ CI runs 10 jobs on every push: lint and unit, integration (PostgreSQL and Tempor
 ```bash
 uv sync
 uv run ruff check src tests && uv run lint-imports
+bash scripts/ci/mypy.sh              # mypy: server at 3.12, worker packages also at a 3.9 target
 uv run pytest tests/unit tests/mcp tests/reporting -q
 EIDOS_TEST_PG_ADMIN=postgresql+psycopg://postgres:<password>@127.0.0.1:5432/postgres uv run pytest tests/integration -q
 bash tests/journeys/run_ci.sh        # the 154-check switch-order acceptance journey from fresh wheels

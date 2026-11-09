@@ -24,12 +24,12 @@ def _token() -> str:
     return "eidos_" + secrets.token_urlsafe(32)
 
 
-def enroll_principals(cfg: LabConfig, *, rotate: bool = True) -> dict[str, str]:
+def enroll_principals(cfg: LabConfig, *, rotate: bool = True) -> dict[str, list[str]]:
     """(Re-)issue tokens for the operator and every service principal. Only hashes go to the ledger."""
     from eidos.application.scopes import scopes_for
     from eidos.persistence.ledger import SqlLedger
     ledger = SqlLedger(roles_from_config(cfg).url("writer"), pool_size=1)
-    issued = {}
+    issued: dict[str, list[str]] = {}
     try:
         with ledger.transaction() as tx:
             entries = {"admin": (["researcher", "admin"], ["sealed:write"], "human")}

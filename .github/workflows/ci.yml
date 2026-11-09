@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main, build/eidos-local-v1, "task/**"]
+    branches: [main, build/eidos-local-v1, "task/**", "release/**"]
   pull_request:
     branches: [main]
 
@@ -31,6 +31,8 @@ jobs:
       - run: uv sync
       - run: uv run ruff check src tests
       - run: uv run lint-imports
+      - name: mypy (server at 3.12; worker packages also at a 3.9 target)
+        run: bash scripts/ci/mypy.sh
       - name: shellcheck (errors) over CI, qualification, journey and ops scripts
         run: shellcheck -S error scripts/ci/*.sh scripts/qualify/*.sh scripts/qualify/mcp_clients/*.sh scripts/journeys/*.sh tests/journeys/*.sh tests/ops/*.sh
       - run: uv run pytest tests/unit -q

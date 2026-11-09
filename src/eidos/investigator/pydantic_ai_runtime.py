@@ -135,16 +135,16 @@ def build_model(cfg: dict[str, Any]):
         from anthropic import AsyncAnthropic
         from pydantic_ai.models.anthropic import AnthropicModel
         from pydantic_ai.providers.anthropic import AnthropicProvider
-        client = AsyncAnthropic(api_key=os.environ.get(cfg.get("api_key_env", "ANTHROPIC_API_KEY")), max_retries=0,
-                                timeout=timeout)
-        return AnthropicModel(name, provider=AnthropicProvider(anthropic_client=client))
+        anthropic_client = AsyncAnthropic(api_key=os.environ.get(cfg.get("api_key_env", "ANTHROPIC_API_KEY")),
+                                          max_retries=0, timeout=timeout)
+        return AnthropicModel(name, provider=AnthropicProvider(anthropic_client=anthropic_client))
     if provider in ("openai", "openai-compatible"):
         from openai import AsyncOpenAI
         from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.providers.openai import OpenAIProvider
-        client = AsyncOpenAI(api_key=os.environ.get(cfg.get("api_key_env", "OPENAI_API_KEY"), "unused"),
-                             base_url=cfg.get("base_url"), max_retries=0, timeout=timeout)
-        return OpenAIChatModel(name, provider=OpenAIProvider(openai_client=client))
+        openai_client = AsyncOpenAI(api_key=os.environ.get(cfg.get("api_key_env", "OPENAI_API_KEY"), "unused"),
+                                    base_url=cfg.get("base_url"), max_retries=0, timeout=timeout)
+        return OpenAIChatModel(name, provider=OpenAIProvider(openai_client=openai_client))
     raise ModelCallFailed(f"unsupported model spec {spec!r}", retryable=False)
 
 

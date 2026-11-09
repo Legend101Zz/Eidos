@@ -62,7 +62,7 @@ def dependency_conflicts(requirements: dict[str, list[str]], installed: dict[str
             name, op, ver = m.group(1).lower().replace("_", "-"), m.group(2), m.group(3)
             if op and ver:
                 by_pkg.setdefault(name, []).append((owner, op, ver))
-    conflicts = []
+    conflicts: list[dict[str, Any]] = []
     for name, cons in by_pkg.items():
         inst = installed.get(name)
         if inst is not None:

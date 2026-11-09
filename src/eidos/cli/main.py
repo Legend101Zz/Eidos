@@ -71,7 +71,7 @@ def _json_arg(s: str | None) -> dict:
 
 @app.command("cmd")
 def cmd(name: str, payload: str = typer.Option("{}", help="JSON or @file"), project: str = typer.Option(None, "-p"),
-        key: str = typer.Option(None, help="command key (reuse to retry safely)"), expected_revision: int = None):
+        key: str = typer.Option(None, help="command key (reuse to retry safely)"), expected_revision: int | None = None):
     """Run any domain command (escape hatch; same authorization as named commands)."""
     try:
         out(client().command(name, _json_arg(payload), project=project, key=key, expected_revision=expected_revision))
@@ -178,7 +178,7 @@ def register_env(project: str, python: str = typer.Option(..., help="the project
 # -- artifacts --------------------------------------------------------------------------------
 
 @artifact_app.command("upload")
-def artifact_upload(project: str, path: Path, schema: str = None, media_type: str = "application/octet-stream",
+def artifact_upload(project: str, path: Path, schema: str | None = None, media_type: str = "application/octet-stream",
                     role: str = "input", access_class: str = "project"):
     try:
         out(client().upload(project, path, schema=schema, media_type=media_type, role=role, access_class=access_class,
@@ -283,8 +283,8 @@ def component_publish(project: str, bundle_artifact_id: str, validation_job_id: 
 
 
 @component_app.command("bind")
-def component_bind(project: str, ref: str, capability: str = None, mode: str = "replace",
-                   acknowledge_metric_change: bool = False, expected_revision: int = None):
+def component_bind(project: str, ref: str, capability: str | None = None, mode: str = "replace",
+                   acknowledge_metric_change: bool = False, expected_revision: int | None = None):
     try:
         out(client().command("bind_component", {"component_ref": ref, "capability": capability, "mode": mode,
                              "acknowledge_metric_change": acknowledge_metric_change}, project=project,
@@ -312,7 +312,7 @@ def component_withdraw(project: str, ref: str, defect: str = typer.Option(...), 
 
 
 @component_app.command("list")
-def component_list(project: str, text: str = "", capability: str = None):
+def component_list(project: str, text: str = "", capability: str | None = None):
     try:
         out(client().query("search_components", {"text": text, "capability": capability, "limit": 100}, project=project))
     except LabError as exc:
@@ -330,7 +330,7 @@ def component_describe(project: str, ref: str):
 # -- charters / investigations -----------------------------------------------------------------
 
 @charter_app.command("commit")
-def charter_commit(project: str, charter: Path, investigation: str = None):
+def charter_commit(project: str, charter: Path, investigation: str | None = None):
     try:
         out(client().command("commit_study_charter", {"charter": json.loads(charter.read_text()),
                              "investigation_id": investigation}, project=project))
@@ -358,14 +358,15 @@ def charter_show(project: str, charter_id: str, history: bool = False):
 
 
 @inv_app.command("start")
-def inv_start(project: str, question: str = typer.Option(...), charter: str = None, model_artifact: str = None,
+def inv_start(project: str, question: str = typer.Option(...), charter: str | None = None, model_artifact: str | None = None,
               environment: str = "default", limit: list[str] = typer.Option([], help="dimension=value"),
-              runtime: str = "fixture", model: str = None, policy: str = None, max_turns: int = 40,
-              investigation_id: str = None, key: str = None,
+              runtime: str = "fixture", model: str | None = None, policy: str | None = None, max_turns: int = 40,
+              investigation_id: str | None = None, key: str | None = None,
               input_artifact: list[str] = typer.Option([], "--input", help="declared input port=artifact_id"),
               settings: str = typer.Option(None, help="runtime settings JSON, e.g. max_requests_per_decision, price_per_mtok"),
               max_model_calls_per_turn: int = 4):
-    inv = {"runtime": runtime, "model": model, "max_turns": max_turns, "max_model_calls_per_turn": max_model_calls_per_turn}
+    inv: dict[str, Any] = {"runtime": runtime, "model": model, "max_turns": max_turns,
+                           "max_model_calls_per_turn": max_model_calls_per_turn}
     if policy or settings:
         inv["settings"] = {**({"policy": policy} if policy else {}), **(json.loads(settings) if settings else {})}
     payload = {"question": question, "charter_id": charter, "model_artifact_id": model_artifact, "environment": environment,
@@ -379,7 +380,7 @@ def inv_start(project: str, question: str = typer.Option(...), charter: str = No
 
 
 @inv_app.command("steer")
-def inv_steer(project: str, investigation: str, instruction: str, expected_revision: int = None):
+def inv_steer(project: str, investigation: str, instruction: str, expected_revision: int | None = None):
     try:
         out(client().command("steer_investigation", {"investigation_id": investigation, "instruction": instruction},
                              project=project, expected_revision=expected_revision))
@@ -418,7 +419,7 @@ def inv_show(project: str, investigation: str):
 
 
 @inv_app.command("events")
-def inv_events(project: str, investigation: str = None, cursor: int = 0, follow: bool = False):
+def inv_events(project: str, investigation: str | None = None, cursor: int = 0, follow: bool = False):
     """Stream events from a cursor; reattach later with the printed next cursor."""
     c = client()
     while True:
@@ -436,8 +437,8 @@ def inv_events(project: str, investigation: str = None, cursor: int = 0, follow:
 
 @app.command("run")
 def run(project: str, component: str, input: list[str] = typer.Option([], help="port=artifact_id"),
-        config: str = "{}", environment: str = None, purpose: str = "open-search", wait: bool = False,
-        investigation: str = None, isolation_profile: str = None, wall_seconds: int = 900):
+        config: str = "{}", environment: str | None = None, purpose: str = "open-search", wait: bool = False,
+        investigation: str | None = None, isolation_profile: str | None = None, wall_seconds: int = 900):
     c = client()
     try:
         r = c.command("run_component", {"component_ref": component, "inputs": _kv(input), "config": _json_arg(config),
@@ -477,7 +478,7 @@ def job_cancel(project: str, job_id: str):
 @checkpoint_app.command("branch")
 def checkpoint_branch(project: str, parent: str = typer.Option(..., help="parent checkpoint artifact id"),
                       component: str = typer.Option(...), migration: str = typer.Option(..., help="JSON or @file"),
-                      stream_policy: str = "paired", seed: int = None, intervention: str = '{"kind": "none"}',
+                      stream_policy: str = "paired", seed: int | None = None, intervention: str = '{"kind": "none"}',
                       config: str = "{}", input: list[str] = typer.Option([]), launch: bool = True,
                       wall_seconds: int = 900):
     c = client()
@@ -495,7 +496,7 @@ def checkpoint_branch(project: str, parent: str = typer.Option(..., help="parent
 
 @app.command("export")
 def export(project: str, checkpoint: str = typer.Option(...), behavior_job: str = typer.Option(...),
-           dest: Path = typer.Option(None), investigation: str = None):
+           dest: Path = typer.Option(None), investigation: str | None = None):
     """Record a model export (requires a passing fresh-process behaviour check) and download it."""
     c = client()
     try:
@@ -533,9 +534,9 @@ def task_import(project: str, bundle: Path, python: str = typer.Option(..., help
 def task_answer(project: str, task_id: str = typer.Option(...), run_id: str = typer.Option(...),
                 out_dir: Path = typer.Option(...), python: str = typer.Option(...),
                 test_inputs: Path = typer.Option(None), candidate_job: str = typer.Option(None),
-                baseline_score_job: str = None, candidate_score_job: str = None,
+                baseline_score_job: str | None = None, candidate_score_job: str | None = None,
                 status: str = typer.Option(...), claim_type: str = typer.Option(...), claim: str = typer.Option(...),
-                scope: str = typer.Option(...), investigation: str = None,
+                scope: str = typer.Option(...), investigation: str | None = None,
                 run_label: str = typer.Option(..., help="e.g. 'fixture-provider run' or 'builder-assisted run'"),
                 validator: Path = typer.Option(None, help="path to the release's validate_answer.py")):
     """Export an eidos-answer/0.2 submission (candidate inference on test inputs in a separate process)."""
@@ -550,7 +551,7 @@ def task_answer(project: str, task_id: str = typer.Option(...), run_id: str = ty
 
 
 @app.command("report")
-def report(project: str, investigation: str = None, out_dir: Path = typer.Option(Path("reports"))):
+def report(project: str, investigation: str | None = None, out_dir: Path = typer.Option(Path("reports"))):
     """Generate a static HTML report from authorized views (cannot change scientific state)."""
     from eidos.reporting.html import write_report
     try:

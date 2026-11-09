@@ -74,7 +74,8 @@ def _wait(rationale: str, calls: list[dict[str, Any]], purpose: str = "hypothesi
     return {"rationale": rationale, "purpose": purpose, "calls": calls, "control": {"action": "wait_for_jobs"}}
 
 
-def _run(ref: str, inputs: dict[str, str], config: dict[str, Any], **extra: Any) -> dict[str, Any]:
+def _run(ref: str, inputs: dict[str, str | None], config: dict[str, Any], **extra: Any) -> dict[str, Any]:
+    # An output slot the producing job did not emit stays None here; the server validates the resolved call.
     return {"tool": "run_component", "args": {"component_ref": ref, "inputs": inputs, "config": config,
                                               "wall_seconds": WALL, **extra}}
 
@@ -101,7 +102,7 @@ def switch_order_scripted(req: DecisionRequest) -> dict[str, Any]:
     train, evaluate, edit = (_catalog_ref(view, p) for p in ("eidos.pytorch.train@", "eidos.pytorch.evaluate@",
                                                               "eidos.pytorch.weight-edit@"))
     scorer, behave = _catalog_ref(view, "lab.pairs.by_group@"), _catalog_ref(view, "eidos.pytorch.behavior-check@")
-    if not all((train, evaluate, edit, scorer, behave)):
+    if not (train and evaluate and edit and scorer and behave):
         return {"rationale": "required components missing from the catalog", "calls": [],
                 "control": {"action": "request_input", "summary": "install train/evaluate/edit/score/behaviour components"}}
 
@@ -136,13 +137,14 @@ def switch_order_scripted(req: DecisionRequest) -> dict[str, Any]:
                             "scope": {"model": "OrderedSwitchNet seed 41 step 45"}}}
     # 3. author a diagnostic component, publish it, run it on the scorer's report ---------------------------
     validations = [j for j in _jobs(view, "builtin:validator", status=None) if j.get("purpose") == "build"]
-    gap_ref = next((c["ref"] for c in view.get("catalog") or [] if str(c.get("ref", "")).startswith("fixture.stratum-gap@")), None)
-    if not validations and not gap_ref:
-        return _wait("both-correct is low while reference accuracy is high: author a stratum-gap diagnostic", [
-            _note(f"both_correct_rate={bc} reference_accuracy={ra} (job {base_score['id']})"),
-            {"tool": "author_component", "args": {"environment": "default", "files": {
-                "eidos-component.json": DIAGNOSTIC_MANIFEST, "stratum_gap.py": DIAGNOSTIC_CODE}}}], "measurement-development")
-    if validations and not gap_ref:
+    gap_ref = _catalog_ref(view, "fixture.stratum-gap@")
+    if not gap_ref:
+        if not validations:
+            return _wait("both-correct is low while reference accuracy is high: author a stratum-gap diagnostic", [
+                _note(f"both_correct_rate={bc} reference_accuracy={ra} (job {base_score['id']})"),
+                {"tool": "author_component", "args": {"environment": "default", "files": {
+                    "eidos-component.json": DIAGNOSTIC_MANIFEST, "stratum_gap.py": DIAGNOSTIC_CODE}}}],
+                "measurement-development")
         v = validations[-1]
         return _wait("publish the validated diagnostic", [{"tool": "publish_component", "args": {
             "bundle_artifact_id": (v.get("inputs") or {}).get("bundle"), "validation_job_id": v["id"]}},

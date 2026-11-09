@@ -7,7 +7,7 @@ import asyncio
 import hashlib
 import logging
 import time
-from typing import Any
+from typing import Any, cast
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -68,7 +68,7 @@ def create_app(service: CommandService, *, relay: Any = None, maintenance_flag: 
     async def domain_error(_: Request, exc: DomainError):
         return JSONResponse(status_code=exc.http_status, content={"error": exc.to_dict()})
 
-    from eidos.runtime.artifacts import DiskPressure, StoreError
+    from eidos.runtime.artifacts import DiskPressure, LocalArtifactStore, StoreError
 
     @app.exception_handler(StoreError)
     async def store_error(_: Request, exc: StoreError):
@@ -134,7 +134,8 @@ def create_app(service: CommandService, *, relay: Any = None, maintenance_flag: 
             raise Invalid("X-Eidos-Command-Key header is required")
         import os
         import tempfile
-        store = service.store
+        # The API process is always wired to the local store (it owns the staging directory).
+        store = cast(LocalArtifactStore, service.store)
         fd, tmp = tempfile.mkstemp(dir=store.staging)
         h = hashlib.sha256()
         size = 0

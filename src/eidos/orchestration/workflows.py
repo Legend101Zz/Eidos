@@ -55,14 +55,19 @@ class InvestigationWorkflow:
         return {"status": self._status, "turns_this_run": self._turns, "wakes": self._wakes,
                 "history_length": workflow.info().get_current_history_length()}
 
+    async def _wait_for_wake_or_full(self, seen: int, history_limit: int, idle: int) -> None:
+        """Block until a wake past ``seen`` arrives or the history crosses its limit; ``TimeoutError`` after ``idle`` s.
+        ``seen`` is bound as a parameter, so a later reassignment in the caller's loop cannot change the condition."""
+        await workflow.wait_condition(
+            lambda: self._wakes > seen or workflow.info().get_current_history_length() > history_limit,
+            timeout=timedelta(seconds=idle))
+
     async def _wait_for_operator(self, a: dict, inv: str, history_limit: int, idle: int) -> None:
         self._status = "needs operator input (repeated refused proposals)"
         while True:
             seen = self._wakes
             try:
-                await workflow.wait_condition(lambda seen=seen: self._wakes > seen
-                                              or workflow.info().get_current_history_length() > history_limit,
-                                              timeout=timedelta(seconds=idle))
+                await self._wait_for_wake_or_full(seen, history_limit, idle)
             except TimeoutError:
                 pass
             if workflow.info().get_current_history_length() > history_limit:
@@ -93,9 +98,7 @@ class InvestigationWorkflow:
         seen = self._wakes  # once: a wake during check_news is still seen by the next wait
         while True:
             try:
-                await workflow.wait_condition(lambda seen=seen: self._wakes > seen
-                                              or workflow.info().get_current_history_length() > history_limit,
-                                              timeout=timedelta(seconds=idle))
+                await self._wait_for_wake_or_full(seen, history_limit, idle)
             except TimeoutError:
                 pass
             if self._wakes > seen:
@@ -184,10 +187,7 @@ class InvestigationWorkflow:
                     try:
                         # Signals add history while waiting; leave the wait (and roll over at the loop
                         # top) once the history crosses its limit, so a wake storm cannot grow it.
-                        await workflow.wait_condition(
-                            lambda seen=seen: self._wakes > seen
-                            or workflow.info().get_current_history_length() > history_limit,
-                            timeout=timedelta(seconds=idle))
+                        await self._wait_for_wake_or_full(seen, history_limit, idle)
                         if not needs_input or workflow.info().get_current_history_length() > history_limit:
                             break
                         seen = self._wakes  # job/evidence wakes do not end a needs-input wait; operator news does
@@ -226,7 +226,9 @@ class TurnWorkflow:
             return {"started": False, "reason": b.get("reason")}
         tid = b["turn_id"]
         base = {"turn_id": tid, "project_id": a["project_id"], "investigation_id": a["investigation_id"]}
-        stop, control, receipts = "calls-exhausted", {}, []
+        stop = "calls-exhausted"
+        control: dict[str, Any] = {}
+        receipts: list[dict[str, Any]] = []
         invalid_run = 0
         failed_waits = 0  # accepted waits whose calls left nothing outstanding
         try:

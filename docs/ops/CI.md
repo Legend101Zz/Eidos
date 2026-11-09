@@ -3,12 +3,12 @@
 Workflow: `.github/workflows/ci.yml`. Standard GitHub-hosted runners only (`ubuntu-24.04`, `macos-15` arm64); no secrets, no paid runners, no real LLM providers.
 
 ## Triggers
-`push` to `build/eidos-local-v1` and `task/**`; `pull_request` only for PRs targeting `main`. A commit on a task branch is therefore built once, not twice. `concurrency` cancels superseded runs of the same ref. Workflow permissions: `contents: read`. Every job has `timeout-minutes`. Uploaded artifacts are kept 3 days.
+`push` to `main`, `build/eidos-local-v1`, `task/**` and `release/**`; `pull_request` only for PRs targeting `main`. A commit on a task branch is therefore built once, not twice. `concurrency` cancels superseded runs of the same ref. Workflow permissions: `contents: read`. Every job has `timeout-minutes`. Uploaded artifacts are kept 3 days.
 
 ## Jobs
 | Job | Proves |
 |---|---|
-| `lint-and-unit` | ruff, import-linter contracts, unit tests |
+| `lint-and-unit` | ruff, import-linter contracts, mypy (`scripts/ci/mypy.sh`: the server tree and worker packages at Python 3.12 from the locked mypy and `pyproject.toml` `[tool.mypy]`; the three worker packages again with a Python 3.9 target through a pinned `uvx mypy==1.19.1`, because mypy 2.x no longer targets 3.9), shellcheck, unit tests, MCP and reporting tests |
 | `integration` | integration tests against a PostgreSQL 16 service and the Temporal CLI dev server |
 | `worker-compat` | worker packages install and pass without server deps (Python 3.9 + pydantic<2; Python 3.12 + CPU torch unchanged) |
 | `components` | built-in component suite (`tests/components`, 59 tests): manifests/fixtures, each component through the worker SDK, end-to-end CPU switch-order replication. Lab venv (`uv sync`) runs pytest and is asserted torch-free; one project venv with CPU torch 2.15.0 (`fetch_cpu_torch.sh` wheelhouse) + numpy serves as both `EIDOS_TORCH_PYTHON` and `EIDOS_NUMPY_PYTHON`; fixture checkpoints are regenerated in it first; any skipped test fails the job. Log uploaded on failure |
@@ -24,6 +24,7 @@ Workflow: `.github/workflows/ci.yml`. Standard GitHub-hosted runners only (`ubun
 ## Running the scripts locally (`scripts/ci/`)
 - `fresh_install.sh`: build + clean venv + full lab lifecycle. Env: `CI_WORK`, `LAB_HOME`, `LAB_API_PORT`, `LAB_PG_PORT`, `LAB_TEMPORAL_PORT`, `PG_BIN`, `TEMPORAL_SOURCE` (directory containing `temporal-server`/`temporal-sql-tool`; omit to download the pinned release).
 - `components.sh`: component suite as in the `components` job. Env: `CI_WORK`, `EIDOS_WHEELHOUSE` (reuse an existing CPU torch wheelhouse).
+- `mypy.sh`: both mypy invocations of the `lint-and-unit` job. No environment variables; needs `uv` (and network for the pinned `uvx` mypy on first use).
 - `build_and_install.sh`, `lab_cycle.sh {init|start|doctor|project|status|stop|all}`, `sdk_tests.sh`, `research_smoke.sh`.
 - Requires `uv`, PostgreSQL >= 14 binaries. When run as root the lab uses `runuser -u postgres`; as a normal user (CI) it runs PostgreSQL as that user.
 - `upgrade_across_releases.sh`: the `upgrade-across-releases` job. Env: `OLD_TAG` (default `eidos-v0.1.0`), `CI_WORK`, `LAB_API_PORT`, `LAB_PG_PORT`, `LAB_TEMPORAL_PORT`, `PG_BIN`, `TEMPORAL_SOURCE`, `KEEP_WORK=1`. Helper: `scripts/ci/upgrade/check.py` (seed / snapshot / verify). Results: `$CI_WORK/out/result.json`. The upgrade is in place (new wheels over the same venv, which `lab.json` `lab_python` names): `lab upgrade` does not rewrite `lab_python`.
