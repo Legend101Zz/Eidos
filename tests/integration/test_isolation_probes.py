@@ -13,6 +13,15 @@ from eidos.runtime.launcher import LaunchSpec, bwrap_available, run_probes
 
 
 def _probe(tmp_path, profile, cwd=None):
+    if os.geteuid() == 0:
+        # As root with the eidos-cand user, the probe runs as that user (ADR 0011): its attempt directory must be
+        # reachable, and pytest's root tmp_path is 0700. A real lab home is 0711 for the same reason.
+        import pathlib
+        import tempfile
+        fresh = pathlib.Path(tempfile.mkdtemp(dir="/tmp"))
+        os.chmod(fresh, 0o755)
+        cwd = fresh if cwd == tmp_path else cwd
+        tmp_path = fresh
     secret = tmp_path / "secrets" / "admin.token"
     secret.parent.mkdir()
     secret.write_text("token")
