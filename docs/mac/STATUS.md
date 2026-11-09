@@ -164,7 +164,7 @@ because of the `files` default difference above.
 
 ## Other evidence from this session
 
-Full macOS test run by a Sonnet subagent (own PostgreSQL on 5499, Temporal CLI dev server, private lab ports), at
+Full macOS test run (own PostgreSQL on 5499, Temporal CLI dev server, private lab ports), at
 b7d9ed1 and again at e36bfb1: unit 43, integration 67 (+3 legitimate bwrap/`/opt/eidos` skips), mcp 18 (+1 skip;
 19/19 against a live lab), reporting 7, components 59 (no skips), sdk 20, eidos-pytorch 19 (torch 2.15.0 Mac wheel),
 `fresh_install.sh` ok, `e2e_journey.sh` JOURNEY PASS, switch journey 154/154, `upgrade_across_releases.sh` 33/33,
@@ -179,7 +179,7 @@ my control: `~/Library/Caches/ollama/updates/.../Ollama-darwin.zip` (218 MB, 16:
 Merged `origin/build/eidos-local-v1` (no new commits after fa8c19e's successors already merged). On the final head:
 ruff (src tests scripts) clean, import contracts 5/5, unit 43, contained/home/seatbelt-policy 15, eidos-pytorch 19
 (torch 2.15.0 arm64, MPS tests ran on MPS), components 59 (no skips). The full lab-level suites (integration, journeys,
-fresh install, upgrade) ran green at e36bfb1 (subagent); later commits changed only scripts, docs and one test.
+fresh install, upgrade) ran green at e36bfb1; later commits changed only scripts, docs and one test.
 All servers started by this session (lab, kit labs, Ollama on 11535, test PostgreSQL on 5499) are stopped.
 Internal disk free: 24.9 GiB at start, 24.5 GiB at end (≈0.33 GiB, of which 218 MB is the Ollama update cache noted
 in REQUESTS.md; the rest is system/client-session noise; no Eidos data on the internal disk).
@@ -301,7 +301,7 @@ Per-decision request cap is exact in this run (5, 5, 5, 1, 5, 5).
   (ancillary total 335c of 1000c including 56c from before this session; 665c available). Claude Code / Codex runs used
   the Max subscription / Codex account.
 - Servers started by this session, all stopped: the Mac lab (`$S/lab`: supervisor, PostgreSQL, Temporal, workers),
-  the kit labs (removed by the kit), Ollama on 127.0.0.1:11535 (PID 92794, killed by PID), the subagent's test
+  the kit labs (removed by the kit), Ollama on 127.0.0.1:11535 (PID 92794, killed by PID), the test run's
   PostgreSQL on 5499 and its labs on 19765/19544/19633+. Still running and **not** ours: the owner's Homebrew
   PostgreSQL (PID 813) and Ollama.app's own `ollama serve` (PID 883).
 - Internal disk free: 24.9 GiB at start (26,112,068 KB), **23.96 GiB at end** (25,123,712 KB), a drop of 0.94 GiB.
@@ -316,7 +316,7 @@ All under `/Volumes/Mrigesh SSD/eidos-mac/` (sizes at wrap-up):
 
 | Path | Size | What |
 |---|---|---|
-| `suite/` (keep `suite/logs*/` if wanted) | 5.6 GB | subagent test scratch: venvs, PG data, journey labs/outputs |
+| `suite/` (keep `suite/logs*/` if wanted) | 5.6 GB | test-run scratch: venvs, PG data, journey labs/outputs |
 | `ollama-models/` | 1.8 GB | `qwen2.5:3b-instruct` pulled for item 4 |
 | `ollama-home/` | 8 KB | HOME used for the private Ollama server |
 | `venvs/research/` | 1.0 GB | research env (torch 2.15.0, numpy) |

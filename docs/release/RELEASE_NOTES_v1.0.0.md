@@ -1,6 +1,6 @@
-# Eidos v1.0.0 release notes
+# Eidos v1.0.0-rc1 release notes (2026-11-09)
 
-**Status of this document:** draft for the release candidate `eidos-v1.0.0-rc1`. The "Qualification evidence" section is completed as each gate's evidence arrives. The final `eidos-v1.0.0` tag needs every gate in `ACCEPTANCE_MATRIX.md` § Release gates, including the owner's machine sleep/restart evidence.
+This is the release candidate for v1.0.0 (package version `1.0.0rc1`). The final v1.0.0 follows after the owner's machine sleep/restart receipts. It will differ from this RC only by the version string, unless that check finds a defect. Gates: `ACCEPTANCE_MATRIX.md` § E.
 
 ## What v1.0.0 is
 
@@ -34,6 +34,21 @@ See `CHANGELOG.md`. In short:
   - The ops scripts work from paths with spaces.
 - **CI.** The setup-uv fallback no longer masks other failures. Wheel licence metadata is checked.
 
+## Metrics: v1.0.0-rc1 compared with eidos-v0.7.0
+
+| Measure | eidos-v0.7.0 | v1.0.0-rc1 |
+|---|---|---|
+| Test functions (unit, integration, MCP, reporting, packages, components) | 218 | 241 |
+| Local fast + integration suite on the qualification Mac | 140 passed, 4 skipped | see G9 in `ACCEPTANCE_MATRIX.md` § E (158 passed, 4 skipped at `329d9c3`, before the last fixes) |
+| CI jobs per push (all green) | 10 | 10, plus a wheel licence check and a setup fallback that no longer masks failures |
+| Release gates G1–G9 defined and recorded | none | G1–G5, G7, G8 pass; G6 passes except the hardware sleep/restart check; G9 on the final tree |
+| Licence | none declared | Apache-2.0 in every package and wheel |
+| A8 with a real model | a full-lab D02 exploration run concluded once (exploration only: no qualified assessment, no export) | **full A8 journey** with `claude-sonnet-5-5`, all 15 checks: diagnosis, new component published and run, trial, branch, qualified assessment (`inconclusive`), behaviour check, strict-loading export, worker SIGKILL and hand-off; USD 1.81 |
+| OpenAI-compatible provider | `qwen2.5:3b`: 3/8 scenarios | `qwen2.5:14b`: 4/8 (adapter verified; conformance failure recorded); Anthropic 8/8 |
+| Local operations on macOS | not exercised on the Mac | disk exhaustion 13/13 on a real 2 GiB volume; every service SIGKILLed and restarted, including PostgreSQL; abrupt stop A/B pass |
+| Switch-order acceptance journey on macOS | 154/154 in CI (Linux) | 154/154 on the Mac as well |
+| Defects found and fixed with regression tests in this cycle | — | more than 20 (each listed in the CHANGELOG): isolation honesty, ledger writer fence, a budget double release, reconciler loop, budget envelope, three HTTP 500s found by real runs, PostgreSQL supervision, doctor disk display, Temporal port limit, among others |
+
 ## Known-affected earlier tags
 
 | Tags | Problem | Fixed in |
@@ -51,7 +66,8 @@ See `CHANGELOG.md`. In short:
 
 - **macOS isolation is same-user.** Seatbelt does not contain a hostile same-user program: launchd/XPC stay reachable by other routes, mach IPC is unfiltered, signals are allowed, hard links may be possible, and `sandbox-exec` is deprecated. Sealed evaluation is Linux-only.
 - **Distinct candidate identity** on Linux needs root, the `eidos-cand` user and a candidate-readable interpreter. Otherwise `separate-identity` is reported as failed (truthfully). With a distinct identity the assessor fails closed.
-- **Hosted OpenAI-compatible services** are protocol-compatible but not separately qualified. The adapter was qualified against a local Ollama endpoint.
+- **Machine sleep and OS restart recovery not yet verified on hardware (owner check R1 pending); abrupt-stop and service-kill recovery are verified.** The final v1.0.0 follows after the owner's sleep/restart receipts; it differs from this RC only by the version string unless R1 finds a defect.
+- **Hosted OpenAI-compatible services** are protocol-compatible but not separately qualified. The adapter was verified against a local Ollama endpoint. No local model of 14B or less passed full decision-schema conformance on the qualification Mac.
 - **Multi-day investigations** and real **distributed** or **CUDA** runs were not exercised.
 - **Qualification suites are author-written.** Independent scientific controls belong to the A16 evaluation.
 - **Performance targets** were measured once on a hosted host, not on a declared reference machine.
