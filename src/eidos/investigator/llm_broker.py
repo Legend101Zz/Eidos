@@ -170,7 +170,7 @@ class LlmBroker:
         th = hashlib.sha256(token.encode()).hexdigest()
         rk = body.get("request_key")
         payload = {"token_sha256": th, "model": body.get("model"), "max_tokens": max_tokens,
-                   "input_chars": sum(len(m["content"]) for m in msgs), "request_key": rk}
+                   "input_bytes": sum(len(m["content"].encode()) for m in msgs), "request_key": rk}
         try:
             res = self.client.command("broker_reserve_call", payload, project=project,
                                       # a fresh key per request: a retried request_key is recognised by the
@@ -180,8 +180,11 @@ class LlmBroker:
             status = exc.status if 400 <= exc.status < 500 else 502
             return self._err(status, exc.code or "REFUSED", (exc.error or {}).get("message", ""))
         if res.get("replayed"):
-            return 200, {"call_id": res["call_id"], "model": res["model"], "replayed": True, "status": res.get("status"),
-                         "text": None, **(res.get("result") or {})}
+            # The broker keeps no response bodies: a repeated request_key is refused (not re-sent, not re-charged),
+            # with the earlier call's identity and usage, so a client can never mistake it for new text.
+            return self._err(409, "REQUEST_REPLAYED", f"request_key {rk!r} was already used by call {res['call_id']} "
+                             f"({res.get('status')}); its response is not stored", call_id=res["call_id"],
+                             previous=res.get("result"))
         cid, model = res["call_id"], res["model"]
         provider = self.providers.get(model.split(":", 1)[0])
         settle = {"call_id": cid}
@@ -217,14 +220,33 @@ class LlmBroker:
             return None
 
 
+MAX_CONNECTIONS = 32
+CONNECTION_TIMEOUT = 30.0
+
+
 class _UnixHTTPServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
     broker: LlmBroker
+    _slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        # Bounded concurrency: a local client cannot exhaust threads or descriptors of the worker holding the keys.
+        if not self._slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        super().process_request(request, client_address)
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
 
 
 class _Handler(BaseHTTPRequestHandler):
     server: _UnixHTTPServer
     protocol_version = "HTTP/1.1"
+    timeout = CONNECTION_TIMEOUT  # an idle or slow client is dropped
 
     def address_string(self) -> str:
         return "unix"

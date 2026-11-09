@@ -266,6 +266,15 @@ def withdraw_component(ctx: Ctx, p: dict) -> dict:
         jobs = [j for js in (pl.body.get("launch") or {}).get("jobs", {}).values()
                 for j in (js if isinstance(js, list) else [js])]
         comps = {ctx.tx.get_job(j)["lock"].get("component", {}).get("ref") for j in jobs if ctx.tx.get_job(j)}
+        # steps not yet admitted count too (a later pipeline step bound to the withdrawn release)
+        from eidos.application.handlers.evidence import _pipeline_steps
+        for arm in pl.body.get("arms") or []:
+            try:
+                arm_steps = _pipeline_steps(arm)
+            except Invalid:
+                continue
+            for st in arm_steps:
+                comps.add(st["spec"].get("component_ref") or st["spec"].get("component"))
         if rel.id in refs or rel.id in comps or set(jobs) & affected:
             ctx.tx.set_status("evidence_plan", pl.id, pl.status, labels={"health": "affected", "blocked_by": wid})
             blocked_plans.append(pl.id)

@@ -58,6 +58,23 @@ Packages: `eidos-lab` 1.1.0, `eidos-wire` 1.1.0, `eidos-worker-sdk` 1.2.0, `eido
 - `behavior-suite/1` (`components/eidos.behavior.suite`): CheckList-style invariance and direction-of-change templates
   scored from recorded raw predictions.
 
+### Independent review before release (fixed)
+A separate read-only review of the diff against v1.0.1 found two blockers and several should-fixes; all were fixed
+with tests:
+- `lab upgrade` did not enrol the new `svc-llm-broker` principal, so upgraded labs had no broker (now enrolled with
+  existing tokens kept; the upgrade-across-releases job checks it).
+- A pipeline step bound to a release withdrawn mid-plan made the finishing predecessor's `finish_attempt` fail, so that
+  job never became terminal. Refused step admissions are now recorded as blocked steps (inside a savepoint), and pending
+  steps count when a withdrawal looks for affected plans.
+- Broker: one token per input byte reserved (a 4-characters-per-token estimate could overspend); a `model_usd` scope
+  refuses unpriced models; a repeated `request_key` is refused (`REQUEST_REPLAYED`) instead of returning empty text;
+  reconciliation locks each call so it cannot double-settle with the broker; at most 32 connections with a 30 s idle
+  timeout; the sealed-run allowance needs a researcher or `policy.llm_broker.allow_sealed` (the investigator cannot
+  grant it to itself); Seatbelt sandboxes can connect to the broker socket but not replace it; the lab requires
+  `eidos-wire>=1.1` and `eidos-worker-sdk>=1.2`.
+- Repair layer: non-JSON Python literals are refused cleanly; the re-ask is capped by the decision's remaining tokens.
+- Sandbox: symlinked interpreter ancestors that hold the home or credential directories are not bound.
+
 ### CI
 - 15 jobs (was 10): `separate-identity`, `secret-store-macos`, `secret-store-linux`, `adapter-pyglove`,
   `adapter-composer`. `check_wheel_licences.py --only` checks the adapter wheels.

@@ -44,6 +44,10 @@ All six work items of the 1.1.0 brief were delivered; none was stopped.
 5. **Structured-output repair** (ADR 0014): `output_mode` `tool` (default), `repair`, `json`.
 6. **Adapters and behaviour suite** (ADR 0015): `eidos-pyglove`, `eidos-composer`, `behavior-suite/1`.
 
+7. **Independent review before release.** A read-only review of the full diff found two blockers (upgraded labs got no
+   LLM broker principal; a release withdrawn mid-pipeline could leave a finishing job non-terminal) and several
+   should-fixes in the broker, the repair layer and the sandbox binds. All were fixed with tests (`CHANGELOG.md`).
+
 ## Packages
 
 | Package | 1.0.1 | 1.1.0 |
@@ -61,8 +65,8 @@ All six work items of the 1.1.0 brief were delivered; none was stopped.
 |---|---|---|
 | `ACCEPTANCE_MATRIX.md` § C rows `not-started` | 6 | **1** (node preemption / lost rank, distributed: unqualified) |
 | § C rows verified by integration tests since the previous release | — | **5** |
-| Test functions (all of `tests/`, packages and components) | 260 | **410** |
-| Local unit + integration + MCP + reporting suite | 199 passed, 4 skipped | __SUITE__ |
+| Test functions (all of `tests/`, packages and components) | 260 | **414** |
+| Local unit + integration + MCP + reporting suite | 199 passed, 4 skipped | **371 passed, 7 skipped** (the 3 new skips are Linux-root-only tests that run in the `separate-identity` CI job); worker SDK 26 passed, also on Python 3.9 + pydantic 1.10 |
 | CI jobs per push | 10 | **15** (`separate-identity`, `secret-store-macos`, `secret-store-linux`, `adapter-pyglove`, `adapter-composer`) |
 | ADRs | 9 | **15** (0010–0015; 0015 supersedes 0009) |
 | Wire golden fixtures | 15 | 17 (a valid invocation with an LLM grant, an invalid one without its token) |

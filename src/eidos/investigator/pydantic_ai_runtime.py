@@ -281,7 +281,9 @@ class PydanticAIRuntime:
         except (so.StructuredOutputError, ValidationError, ValueError) as exc:
             msg = so.validation_message(exc)
             report["errors"].append(msg)
-            if not reask_budget:
+            spent = usage_from_messages(all_messages, self._provider(), model)
+            left = int(self.config.get("max_tokens_per_decision", 120_000)) - spent["input_tokens"] - spent["output_tokens"]
+            if not reask_budget or left <= 0:  # the re-ask stays inside the decision's token reservation
                 return self._bounded(all_messages, model, max_requests, msg, "structured-output-invalid", report)
             report["reasks"] += 1
             fix_agent = self._agent(req, with_tools=False, output_type=str, instructions=instructions)
@@ -290,7 +292,8 @@ class PydanticAIRuntime:
                     fixed = fix_agent.run_sync(
                         "Your reply could not be used as a decision: " + msg + "\nReply with ONLY the corrected JSON "
                         "object in the required shape, nothing else.", message_history=_close_tool_calls(all_messages),
-                        usage_limits=UsageLimits(request_limit=1), model_settings=settings or None)
+                        usage_limits=UsageLimits(request_limit=1, total_tokens_limit=left),
+                        model_settings=settings or None)
                     all_messages += list(fixed.new_messages())
                     proposal = parse(fixed.output)
                     report["valid"] = True

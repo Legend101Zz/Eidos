@@ -11,7 +11,14 @@ from eidos.application.handlers.runs import admit_job, resolve_lock, strongest_p
 from eidos.application.service import Ctx, command
 from eidos.domain import evidence as ev
 from eidos.domain import isolation, qualification
-from eidos.domain.errors import Forbidden, Invalid, NotFound, QualificationMissing, WithdrawnMethod
+from eidos.domain.errors import (
+    DomainError,
+    Forbidden,
+    Invalid,
+    NotFound,
+    QualificationMissing,
+    WithdrawnMethod,
+)
 from eidos_wire import canonical_json, sha256_bytes
 
 
@@ -223,7 +230,16 @@ def _advance(ctx: Ctx, plan, launch: dict) -> dict:
                     launch["blocked"][st["key"]] = blocked
                     progressed = True
                 elif ready:
-                    jid = _admit_step(ctx, plan, arm, st, inputs, scope, inv_id)
+                    # A step whose admission is refused (a withdrawn release, an exhausted budget, a resolution error)
+                    # is blocked with its reason; it must never make the finishing predecessor's transaction fail,
+                    # which would leave that job running forever (1.1.0 review). The savepoint undoes partial writes.
+                    try:
+                        with ctx.tx.savepoint():
+                            jid = _admit_step(ctx, plan, arm, st, inputs, scope, inv_id)
+                    except DomainError as exc:
+                        launch["blocked"][st["key"]] = f"admission refused: {exc.code}: {exc.message}"[:500]
+                        progressed = True
+                        continue
                     launch["steps"][st["key"]] = jid
                     launch["jobs"].setdefault(arm["id"], []).append(jid)
                     progressed = True

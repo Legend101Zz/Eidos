@@ -140,7 +140,7 @@ def run(inputs, config, *, writer=None, llm=None):
 
 `llm.complete` raises `eidos_worker.LlmRefused` (with `code`, e.g. `GRANT_EXHAUSTED`, `BUDGET_EXHAUSTED`,
 `GRANT_EXPIRED`) when the broker refuses; a refused request never reached the provider. The project enables the
-broker with `lab`'s `update_profile_policy` (`policy.llm_broker`: `models`, `max_requests`, `max_tokens`, `max_usd`,
+broker with the `update_profile_policy` command, e.g. `lab cmd update_profile_policy -p <project> --payload '{"policy": {"llm_broker": {...}}}'` (`policy.llm_broker`: `models`, `max_requests`, `max_tokens`, `max_usd`,
 `price_per_mtok`, `ttl_seconds`). Example: `components/eidos.synthetic.llm-examples`.
 
 ## Wire contract: schema major and supported Python

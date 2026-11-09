@@ -89,13 +89,13 @@ def extract_json(text: str) -> tuple[dict[str, Any], list[str]]:
             py = re.sub(r"\btrue\b", "True", re.sub(r"\bfalse\b", "False", re.sub(r"\bnull\b", "None", fixed)))
             try:
                 obj = ast.literal_eval(py)
-            except (ValueError, SyntaxError, MemoryError, RecursionError):
+                obj = json.loads(json.dumps(obj))  # sets, bytes, complex, non-string keys: not JSON
+            except (ValueError, SyntaxError, MemoryError, RecursionError, TypeError, OverflowError):
                 raise StructuredOutputError(f"the reply is not valid JSON ({exc.msg} at char {exc.pos})",
                                             repairs) from None
             if fixed != candidate:
                 repairs.append("trailing-comma")
             repairs.append("single-quotes-or-python-literals")
-            obj = json.loads(json.dumps(obj))  # literal_eval may yield tuples/sets: back to JSON types
     if not isinstance(obj, dict):
         raise StructuredOutputError("the reply's JSON is not an object", repairs)
     return obj, repairs

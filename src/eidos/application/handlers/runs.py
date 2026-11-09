@@ -212,11 +212,17 @@ def resolve_lock(ctx: Ctx, p: dict, *, extra_config: dict | None = None) -> dict
     # unless the run or the plan allows the broker explicitly. Absent (not null) when there is none, so locks of
     # components without LLM use keep their digests.
     from eidos.application.handlers.broker import llm_lock
-    llm = llm_lock(target["manifest"], get_profile(ctx).body.get("policy", {}), p, profile=profile_name)
+    policy = get_profile(ctx).body.get("policy", {})
+    # The sealed-run allowance is a human decision: honoured from a principal that may steer (researcher/admin)
+    # or from project policy (llm_broker.allow_sealed); the investigator setting it in its own calls has no effect.
+    sealed_ok = bool(p.get("allow_llm_broker")) and (
+        ctx.principal.has("steer") or bool((policy.get("llm_broker") or {}).get("allow_sealed")))
+    llm = llm_lock(target["manifest"], policy, {**p, "allow_llm_broker": sealed_ok}, profile=profile_name)
     if llm:
         lock["llm"] = llm
     elif p.get("allow_llm_broker") and target["manifest"].get("llm"):
-        lock["llm_refused"] = "the project policy does not enable the LLM broker"
+        lock["llm_refused"] = ("the project policy does not enable the LLM broker" if not policy.get("llm_broker")
+                               else "a sealed run's broker allowance needs a researcher or policy.llm_broker.allow_sealed")
     return lock
 
 

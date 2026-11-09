@@ -17,7 +17,7 @@ Thank you for helping. This page is short on purpose. For the research and testi
 
 ## CI
 
-CI (`.github/workflows/ci.yml`, 10 jobs) runs on every push to `task/**`, `release/**` and `main`. For a PR from a branch in this repository, the PR's own run shows as *skipped*: the push run has already built the same commit, so read that one.
+CI (`.github/workflows/ci.yml`, 15 jobs since v1.1.0) runs on every push to `task/**`, `release/**` and `main`. For a PR from a branch in this repository, the PR's own run shows as *skipped*: the push run has already built the same commit, so read that one.
 
 Before pushing, run the fast checks locally:
 

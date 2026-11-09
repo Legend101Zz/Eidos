@@ -210,6 +210,9 @@ def upgrade(cfg: LabConfig) -> dict:
     before = current_revision(roles_from_config(cfg))
     migrate(roles_from_config(cfg))
     after = current_revision(roles_from_config(cfg))
+    # Principals added by a newer release (since 1.1.0: svc-llm-broker) are enrolled; existing tokens are kept.
+    from eidos.supervisor.ops import enroll_principals
+    enrolled = sorted(enroll_principals(cfg, rotate=False))
     import sys
 
     import eidos
@@ -225,4 +228,5 @@ def upgrade(cfg: LabConfig) -> dict:
     else:
         svc.pg_stop(cfg)
     return {"ledger_revision": {"before": before, "after": after}, "version": cfg.version, "restarted": was_running,
+            "principals_enrolled": enrolled,
             "lab_python": {"before": previous_python, "after": cfg.lab_python}}

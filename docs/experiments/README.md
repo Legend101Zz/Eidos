@@ -2,7 +2,7 @@
 
 This is the working plan for the people who test Eidos and run its research study: the owner and a teammate. It takes about ten minutes to read. It assumes you know ML engineering but have never seen Eidos.
 
-Status on 2026-11-09: Eidos v1.0.1 is released. **No comparative experiment has been run.** Nothing below is a result; it is what we plan to do and the rules we hold ourselves to. The source of truth for the study design is [`research/public/STUDY_PROTOCOL.md`](../../research/public/STUDY_PROTOCOL.md) (charter draft 0.3). Where this page and the protocol disagree, the protocol wins.
+Status on 2026-11-09: Eidos v1.0.1 is released and v1.1.0 is prepared (harness features only, no experiment). **No comparative experiment has been run.** Nothing below is a result; it is what we plan to do and the rules we hold ourselves to. The source of truth for the study design is [`research/public/STUDY_PROTOCOL.md`](../../research/public/STUDY_PROTOCOL.md) (charter draft 0.3). Where this page and the protocol disagree, the protocol wins.
 
 Contents: [what and why](#what-we-are-testing-and-why) · [study at a glance](#the-study-at-a-glance) · [phases](#phases-and-checklists) · [GitHub](#how-we-use-github) · [grading](#grading-on-github-actions) · [roles](#roles-who-does-what) · [open decisions](#decisions-still-open-for-the-owner) · [ground rules](#ground-rules) · [getting started](#getting-started-for-the-teammate)
 
@@ -14,7 +14,7 @@ We test two different things. Keep them apart: a pass in one says nothing about 
 |---|---|---|
 | Question | Does the software behave correctly? | Does the same LLM make more independently verified, useful model improvements through Eidos than as a well-equipped coding agent? |
 | Examples | Crash recovery, sandbox isolation, budget enforcement, upgrades, MCP clients | A four-arm comparison on PyTorch tasks, graded by an independent grader |
-| Where it lives | CI (10 jobs), `tests/`, the acceptance matrix ([`ACCEPTANCE_MATRIX.md`](../../ACCEPTANCE_MATRIX.md)) | This plan, `research/public/`, a private grading repo |
+| Where it lives | CI (15 jobs), `tests/`, the acceptance matrix ([`ACCEPTANCE_MATRIX.md`](../../ACCEPTANCE_MATRIX.md)) | This plan, `research/public/`, a private grading repo |
 | Status | v1.0.1 passed its release gates (see the [README](../../README.md#status-and-evidence)); machine sleep/restart is not yet verified on hardware | Not started. The acceptance matrix lists it as A16, a separate later release |
 
 Question (b) is the question of the paper in preparation. The design states it in the section "Complete local v1 and scientific acceptance" of [`model-research-harness-design.md`](../design/eidos-claude-handoff/architecture/model-research-harness-design.md).

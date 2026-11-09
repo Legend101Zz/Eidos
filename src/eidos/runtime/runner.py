@@ -126,7 +126,10 @@ def python_prefixes(python: str) -> list[str]:
         protected = [os.path.realpath(str(Path.home())), *(os.path.realpath(d) for d in credential_dirs())]
         extra = [e for e in extra if not any(os.path.realpath(e) == d or d.startswith(os.path.realpath(e).rstrip("/") + "/")
                                              for d in protected)]
-        _PREFIX_CACHE[python] = sorted(set(prefixes) | real | set(extra) | symlink_hops(python))
+        hops = {h for h in symlink_hops(python)
+                if not any(os.path.realpath(h) == d or d.startswith(os.path.realpath(h).rstrip("/") + "/")
+                           for d in protected)}  # a symlinked ancestor holding $HOME or credentials is never bound
+        _PREFIX_CACHE[python] = sorted(set(prefixes) | real | set(extra) | hops)
     return _PREFIX_CACHE[python]
 
 

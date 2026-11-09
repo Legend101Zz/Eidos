@@ -29,7 +29,9 @@ but had no way to call a model.
    `max_calls`, `max_tokens`, optional `models`, `max_usd`) **and** the project policy enables the broker
    (`policy.llm_broker`: models allowlist, limits, prices, TTL), the resolver writes an `llm` section into the run
    lock: the model allowlist and limits are the minimum of manifest, policy and run request. Under a sealed
-   profile the lock gets no `llm` section unless the run or the evidence plan sets `allow_llm_broker: true`
+   profile the lock gets no `llm` section unless the run or the evidence plan sets `allow_llm_broker: true` **and** the
+   admitting principal may steer (a researcher, not the investigator) or the project policy sets
+   `llm_broker.allow_sealed`
    (recorded in the lock). A `max_usd` limit without prices for every allowed model is refused, as for the
    investigator.
 2. **Grant per attempt.** The launcher generates a random token, sends only its SHA-256 with `issue_llm_grant`
@@ -40,7 +42,8 @@ but had no way to call a model.
    HTTP over a Unix domain socket (`$EIDOS_HOME/run/llm-broker.sock`). For each request it:
    (a) authenticates the token by hash and checks model, request count, token and USD limits, expiry and that the
    grant's attempt is still the job's current, non-terminal attempt (`broker_reserve_call`); (b) reserves the
-   request's maximum (input estimate + `max_tokens`, and its USD at the grant's prices) against the job's budget
+   request's maximum (one token per input byte, a conservative upper bound, plus `max_tokens`, and its USD at the
+   grant's prices; a scope with a `model_usd` limit refuses a model without a price, `BUDGET_UNPRICED`) against the job's budget
    scope, the investigation's ledger, which refuses when the remaining budget cannot cover it; (c) only then calls
    the provider with the lab's key; (d) settles actual usage (`broker_settle_call`), releasing the rest, and
    records the call as an `llm_call` receipt (model, provider request id, usage, USD, response digest). A request
@@ -52,7 +55,8 @@ but had no way to call a model.
    spend = reserved) and the grant is closed.
 5. **Network.** A component with a grant reaches only the broker socket: under `linux:bwrap-sealed` the socket is
    bind-mounted into the sandbox and the network namespace stays unshared; under Seatbelt only that socket path is
-   allowed for outbound connections. Without a grant nothing is mounted or allowed.
+   allowed for outbound connections (no write access to it, so sandboxed code cannot replace it). The broker serves
+   at most 32 connections at a time with a 30-second idle timeout. Without a grant nothing is mounted or allowed.
 6. **Worker SDK.** `eidos_worker.llm.LlmClient` (standard library only, Python 3.9+): `llm.complete(messages,
    max_tokens, model=None)` returns text and usage, raises `LlmRefused` with the broker's code. A component gets it
    as the injected keyword `llm` or as `context.llm`; without a grant both are `None`.
@@ -63,10 +67,11 @@ but had no way to call a model.
   `{"grant_id", "token", "socket", "models": [..], "max_requests", "max_tokens", "max_usd"|null, "expires_at"}`.
 - Broker request: `POST /v1/llm/complete`, header `Authorization: Bearer <token>`, body
   `{"messages": [{"role": "system"|"user"|"assistant", "content": str}], "max_tokens": int, "model": str|null,
-  "request_key": str|null}`. `request_key` makes a retried request return the same call.
+  "request_key": str|null}`. `request_key` (at most 200 characters) identifies a request: a repeated key is refused with `409 REQUEST_REPLAYED`
+  and the earlier call id and usage (the broker stores no response bodies), never re-sent or re-charged.
 - Broker response `200`: `{"call_id", "model", "text", "usage": {"input_tokens", "output_tokens"}, "usd"}`.
   Refusals: `4xx` with `{"error": {"code", "message"}}`; codes `GRANT_INVALID`, `GRANT_EXPIRED`,
-  `WRONG_INVOCATION`, `MODEL_NOT_ALLOWED`, `GRANT_EXHAUSTED`, `BUDGET_EXHAUSTED`, `PROVIDER_ERROR`,
+  `WRONG_INVOCATION`, `MODEL_NOT_ALLOWED`, `GRANT_EXHAUSTED`, `BUDGET_EXHAUSTED`, `BUDGET_UNPRICED`, `REQUEST_REPLAYED`, `PROVIDER_ERROR`,
   `OUTCOME_UNKNOWN`.
 
 ## Alternatives

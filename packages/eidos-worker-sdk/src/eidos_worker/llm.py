@@ -100,7 +100,9 @@ class LlmClient:
         if resp.status != 200:
             err = data.get("error") or {}
             raise LlmRefused(str(err.get("code", "BROKER_ERROR")), str(err.get("message", "")), resp.status)
-        return LlmResult(text=str(data.get("text", "")), model=str(data.get("model")), call_id=str(data.get("call_id")),
+        if not isinstance(data.get("text"), str):
+            raise LlmRefused("BROKER_PROTOCOL", "the broker returned no text for this call", resp.status)
+        return LlmResult(text=data["text"], model=str(data.get("model")), call_id=str(data.get("call_id")),
                          usage=dict(data.get("usage") or {}), usd=data.get("usd"))
 
     def __repr__(self) -> str:  # never show the token

@@ -18,7 +18,6 @@ from eidos.domain.errors import BudgetExhausted, DomainError, Fenced, Invalid, N
 
 TERMINAL = ("succeeded", "failed", "cancelled", "pruned")
 DEFAULT_TTL = 3600
-CHARS_PER_TOKEN = 4
 
 
 class GrantRefused(DomainError):
@@ -148,6 +147,8 @@ def broker_reserve_call(ctx: Ctx, p: dict) -> dict:
         raise _refuse("MODEL_NOT_ALLOWED", f"model {model!r} is not in this grant", allowed=g.body["models"])
     calls = _calls(ctx, g.id)
     rk = p.get("request_key")
+    if rk is not None and (not isinstance(rk, str) or len(rk) > 200):
+        raise Invalid("request_key must be a string of at most 200 characters")
     if rk:
         for c in calls:
             if c.body.get("request_key") == rk:
@@ -156,7 +157,9 @@ def broker_reserve_call(ctx: Ctx, p: dict) -> dict:
     max_out = int(p.get("max_tokens") or 0)
     if max_out <= 0:
         raise Invalid("max_tokens must be a positive integer")
-    est_in = int(p.get("input_chars", 0)) // CHARS_PER_TOKEN + 1
+    # Conservative: one token per input byte (no tokenizer reaches more tokens than bytes in practice), so the
+    # reservation is an upper bound and a request is refused before the provider when it might exceed the limits.
+    est_in = int(p.get("input_bytes", p.get("input_chars", 0))) + 1
     tokens = float(est_in + max_out)
     used_req = len(calls)
     used_tok = sum(float(c.body.get("charged_tokens", c.body["reserved_tokens"])) for c in calls)
@@ -175,6 +178,10 @@ def broker_reserve_call(ctx: Ctx, p: dict) -> dict:
     reserved: dict[str, float] = {}
     if scope:
         budgets = ctx.tx.budgets(scope)
+        if "model_usd" in budgets and not (g.body.get("price_per_mtok") or {}).get(model):
+            # Without a price the USD limit could never apply (same rule as the investigator's model_usd limit).
+            raise _refuse("BUDGET_UNPRICED", f"the budget scope has a model_usd limit but {model} has no price "
+                          "in policy.llm_broker.price_per_mtok", scope=scope)
         try:
             for dim, amount in (("model_tokens", tokens), ("model_usd", usd)):
                 if dim in budgets and amount > 0:
@@ -247,8 +254,12 @@ def reconcile_grant(ctx: Ctx, gid: str, *, reason: str) -> dict:
     g = ctx.tx.get_record("llm_grant", gid, lock=True)
     if g is None:
         return {"grant_id": gid, "closed": False}
-    open_calls = [c for c in _calls(ctx, gid) if c.status == "reserved"]
-    for c in open_calls:
+    open_calls = []
+    for listed in _calls(ctx, gid):
+        c = ctx.tx.get_record("llm_call", listed.id, lock=True)  # a concurrent broker settlement wins, never both
+        if c is None or c.status != "reserved":
+            continue
+        open_calls.append(c)
         _settle(ctx, c, status="uncertain", usage={}, request_id=None, response_digest=None,
                 error={"category": "unreported", "message": f"no settlement from the broker ({reason})"},
                 reason=reason)

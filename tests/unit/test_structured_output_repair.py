@@ -139,3 +139,17 @@ def test_recorded_local_model_replies(path):
             obj, _ = so.normalize(obj)
             from eidos.investigator.pydantic_ai_runtime import Decision
             Decision.model_validate(obj)
+
+
+@pytest.mark.parametrize("text", ["{1, 2}", "{[1]: 2}", "{b'a': 1}", "{'a': -1j}"])
+def test_python_literals_that_are_not_json_are_refused_cleanly(text):
+    with pytest.raises(so.StructuredOutputError):
+        so.extract_json(text)
+
+
+def test_no_reask_when_the_decision_token_budget_is_spent():
+    m, seen = _model(["not json " * 50, json.dumps(GOOD)])
+    res = PydanticAIRuntime({"_model_object": m, "model": "function:test", "output_mode": "repair",
+                             "max_requests_per_decision": 3, "max_tokens_per_decision": 10}).decide(req())
+    assert len(seen) == 1 and res.usage["structured_output"]["reasks"] == 0  # never beyond the token reservation
+    assert res.proposal["control"]["bounded_outcome"] in ("structured-output-invalid", "request-budget-exhausted")

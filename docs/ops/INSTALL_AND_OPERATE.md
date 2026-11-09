@@ -31,7 +31,7 @@ exactly these steps (`scripts/ci/separate_identity_setup.sh`) on Ubuntu 24.04.
 5. Put each sealed-evaluation interpreter where `eidos-cand` can execute it, never in a root-only or home
    directory: `UV_PYTHON_INSTALL_DIR=/opt/eidos/python uv python install 3.12`, then
    `UV_PYTHON_INSTALL_DIR=/opt/eidos/python uv venv --python 3.12 /opt/eidos/envs/<name>`, install the project's
-   dependencies into it, and `chmod -R a+rX /opt/eidos`. Register it with `lab env register` as usual.
+   dependencies into it, and `chmod -R a+rX /opt/eidos`. Register it with `lab project register-env` as usual.
 6. Make the worker SDK the runner binds into the sandbox readable by `eidos-cand`: give every parent directory of
    the lab's installation `o+x` and the installation itself `o+rX` (the setup script does this for a path you
    pass it).

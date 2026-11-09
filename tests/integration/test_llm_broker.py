@@ -58,13 +58,13 @@ class FakeProvider:
         return ProviderResult(text, input_tokens=7, output_tokens=5, request_id=f"req-{len(self.calls)}")
 
 
-def _setup(lab, *, budgets=None, manifest=None):
+def _setup(lab, *, budgets=None, manifest=None, policy=None):
     from test_command_path import _publish, _register_lab_env
     pid = f"p{uuid.uuid4().hex[:8]}"
     lab.cmd(lab.admin, "create_project", {"project_id": pid, "budgets": budgets or {
         "compute_seconds": 10_000, "trials": 50, "model_tokens": 5000, "model_usd": 1.0}})
     _register_lab_env(lab, pid)
-    lab.cmd(lab.admin, "update_profile_policy", {"policy": POLICY}, project=pid)
+    lab.cmd(lab.admin, "update_profile_policy", {"policy": policy or POLICY}, project=pid)
     ref = _publish(lab, pid, manifest or MANIFEST, {"m.py": CODE})["component_ref"]
     broker_pr = lab.principal(f"svc-llm-broker-{pid}", ["llm-broker"], [pid])
     launcher = lab.principal(f"svc-launcher-{pid}", ["launcher"], [pid])
@@ -184,8 +184,8 @@ def test_the_investigation_ledger_refuses_before_the_provider(lab):
     env = {"pid": pid, "ref": ref, "launcher": launcher, "provider": provider,
            "broker": LlmBroker(ShimClient(lab, broker_pr), {"fake": provider}, secrets=(KEY,))}
     job, st, token, _ = _grant(lab, env)
-    assert _ask(env, token, max_tokens=50)[0] == 200  # reserves 51, settles 12
-    status, err = _ask(env, token, max_tokens=70)  # 71 more would exceed the ledger's 80
+    assert _ask(env, token, max_tokens=50)[0] == 200  # reserves 52, settles 12
+    status, err = _ask(env, token, max_tokens=70)  # 72 more would exceed the ledger's 80
     assert status == 403 and err["error"]["code"] == "BUDGET_EXHAUSTED" and len(provider.calls) == 1
     b = lab.q(lab.admin, "budgets", {"scope": f"project:{pid}"}, project=pid)["budgets"]
     assert b["model_tokens"]["used"] == 12 and b["model_tokens"]["reserved"] == 0
@@ -213,13 +213,14 @@ def test_expired_unknown_and_wrong_invocation_grants_are_refused(lab, broker_env
     assert len(env["provider"].calls) == 1
 
 
-def test_a_retried_request_key_returns_the_same_call(lab, broker_env):
+def test_a_retried_request_key_is_refused_with_the_earlier_call_never_resent(lab, broker_env):
     env = broker_env
     job, st, token, _ = _grant(lab, env)
     a = _ask(env, token, request_key="r1")
     b = _ask(env, token, request_key="r1")
-    assert a[0] == b[0] == 200 and b[1].get("replayed") is True and b[1]["call_id"] == a[1]["call_id"]
-    assert len(env["provider"].calls) == 1
+    assert a[0] == 200 and b[0] == 409 and b[1]["error"]["code"] == "REQUEST_REPLAYED"
+    assert b[1]["error"]["call_id"] == a[1]["call_id"] and len(env["provider"].calls) == 1  # not re-sent or re-charged
+    assert _ask(env, token, request_key="x" * 201)[0] == 400
 
 
 def test_provider_timeout_is_charged_as_uncertain_with_the_reserved_maximum(lab, broker_env):
@@ -229,10 +230,10 @@ def test_provider_timeout_is_charged_as_uncertain_with_the_reserved_maximum(lab,
     status, err = _ask(env, token, n=8, max_tokens=50)
     assert status == 504 and err["error"]["code"] == "OUTCOME_UNKNOWN" and KEY not in json.dumps(err)
     call = lab.q(lab.admin, "get_record", {"kind": "llm_call", "id": err["error"]["call_id"]}, project=pid)
-    assert call["status"] == "uncertain" and call["body"]["uncertain"] and call["body"]["charged_tokens"] == 53
+    assert call["status"] == "uncertain" and call["body"]["uncertain"] and call["body"]["charged_tokens"] == 59  # 8 B + 1 + 50
     assert KEY not in json.dumps(call)
     b = lab.q(lab.admin, "budgets", {"scope": f"project:{pid}"}, project=pid)["budgets"]
-    assert b["model_tokens"]["uncertain"] == 53 and b["model_tokens"]["reserved"] == 0
+    assert b["model_tokens"]["uncertain"] == 59 and b["model_tokens"]["reserved"] == 0
 
 
 def test_a_reservation_left_open_by_a_dead_broker_is_settled_as_uncertain_when_the_attempt_ends(lab, broker_env):
@@ -241,20 +242,38 @@ def test_a_reservation_left_open_by_a_dead_broker_is_settled_as_uncertain_when_t
     job, st, token, _ = _grant(lab, env)
     # The broker reserved, then died before calling the provider or settling.
     r = lab.cmd(env["broker_pr"], "broker_reserve_call", {"token_sha256": hashlib.sha256(token.encode()).hexdigest(),
-                "max_tokens": 100, "input_chars": 40, "model": "fake:echo"}, project=pid)["result"]
+                "max_tokens": 100, "input_bytes": 40, "model": "fake:echo"}, project=pid)["result"]
     b = lab.q(lab.admin, "budgets", {"scope": f"project:{pid}"}, project=pid)["budgets"]
-    assert b["model_tokens"]["reserved"] == 111
+    assert b["model_tokens"]["reserved"] == 141  # one token per input byte (+1) plus max_tokens
     lab.cmd(env["launcher"], "finish_attempt", {"job_id": job, "attempt_id": st["attempt_id"], "epoch": st["epoch"],
             "status": "succeeded"}, project=pid)
     call = lab.q(lab.admin, "get_record", {"kind": "llm_call", "id": r["call_id"]}, project=pid)
     assert call["status"] == "uncertain" and call["body"]["settled_by"] == "attempt-finished"
     b = lab.q(lab.admin, "budgets", {"scope": f"project:{pid}"}, project=pid)["budgets"]
-    assert b["model_tokens"]["reserved"] == 0 and b["model_tokens"]["uncertain"] == 111
+    assert b["model_tokens"]["reserved"] == 0 and b["model_tokens"]["uncertain"] == 141
     assert _records(lab, pid, "llm_grant")[0]["status"] == "closed"
 
 
-def test_sealed_runs_get_no_grant_unless_allowed(lab, broker_env):
+def test_a_usd_budget_without_a_model_price_is_refused_before_the_provider(lab):
+    from test_turn_recovery import ShimClient
+    policy = {"llm_broker": {"models": ["fake:echo"], "max_requests": 3, "max_tokens": 600}}  # no prices, no max_usd
+    pid, ref, broker_pr, launcher = _setup(lab, policy=policy)
+    provider = FakeProvider(KEY)
+    env = {"pid": pid, "ref": ref, "launcher": launcher, "provider": provider,
+           "broker": LlmBroker(ShimClient(lab, broker_pr), {"fake": provider}, secrets=(KEY,))}
+    job, st, token, _ = _grant(lab, env)
+    status, err = _ask(env, token)
+    assert status == 403 and err["error"]["code"] == "BUDGET_UNPRICED" and provider.calls == []
+
+
+def test_sealed_runs_get_no_grant_unless_a_researcher_or_policy_allows_it(lab, broker_env):
     env, pid = broker_env, broker_env["pid"]
+    investigator = lab.principal(f"inv-{pid}", ["investigator"], [pid])
+    job = lab.cmd(investigator, "run_component", {"component_ref": env["ref"], "environment": "lab",
+                  "isolation_profile": "linux:bwrap-sealed", "allow_llm_broker": True, "config": {}},
+                  project=pid)["result"]["job_id"]
+    lock = lab.q(lab.admin, "get_job", {"job_id": job}, project=pid)["lock"]
+    assert "llm" not in lock and "researcher or policy" in lock["llm_refused"]  # the investigator cannot open it
     for profile in ("linux:bwrap-sealed", "macos:seatbelt-sealed"):
         job = lab.cmd(lab.admin, "run_component", {"component_ref": env["ref"], "environment": "lab",
                       "isolation_profile": profile, "config": {}}, project=pid)["result"]["job_id"]

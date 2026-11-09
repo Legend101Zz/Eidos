@@ -303,7 +303,6 @@ def seatbelt_policy(spec: LaunchSpec, tmp: str) -> tuple[str, list[str]]:
                       + " ".join(f"(subpath {par('R', a)})" for a in inner) + ")))")
         rules.append(f"(deny file-read-data file-read-xattr {target})")
     keep = ['(subpath "/dev")'] + [f"(subpath {par('W', w)})" for w in dict.fromkeys(writable)]
-    keep += [f"(literal {par('K', s)})" for s in sockets]
     keep += [f"(literal {par('L', norm(str(Path(spec.attempt_dir) / f)))})" for f in ("stdout.log", "stderr.log")]
     rules.append("(deny file-write* (require-not (require-any " + " ".join(keep) + ")))")
     return "\n".join(rules), params

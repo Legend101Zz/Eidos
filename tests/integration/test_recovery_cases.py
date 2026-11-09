@@ -400,3 +400,22 @@ def test_branch_request_retried_with_the_same_key_returns_the_same_branch(lab):
     jobs = lab.q(lab.admin, "list_jobs", {}, project=pid)
     jobs = jobs.get("jobs") if isinstance(jobs, dict) else jobs
     assert [j["id"] for j in jobs if j.get("trial_id") == tid] == [l1["result"]["job_id"]]
+
+
+def test_a_release_withdrawn_mid_pipeline_blocks_the_later_step_and_never_wedges_the_finishing_job(lab):
+    """1.1.0 review: a later pipeline step bound to a withdrawn release used to make the finishing predecessor's
+    transaction fail (resolve_lock refuses withdrawn releases), so that job could never become terminal."""
+    from test_plan_pipelines import _finish, _setup
+    pid, plan_id = _setup(lab)
+    lab.cmd(lab.admin, "launch_evidence_plan", {"plan_id": plan_id}, project=pid)
+    w = lab.cmd(lab.admin, "withdraw_component", {"component_ref": "p.eval@1.0.0", "defect": "wrong pairing"},
+                project=pid)["result"]
+    assert w["blocked_plans"] == [plan_id]  # pending (not yet admitted) steps count
+    launcher = lab.principal(f"l-{pid}", ["launcher"], [pid])
+    plan = lab.q(lab.admin, "get_record", {"kind": "evidence_plan", "id": plan_id}, project=pid)
+    train = plan["body"]["launch"]["steps"]["baseline/baseline.s1.train"]
+    _finish(lab, pid, launcher, train, slot="checkpoint")  # must commit
+    assert lab.q(lab.admin, "get_job", {"job_id": train}, project=pid)["status"] == "succeeded"
+    plan = lab.q(lab.admin, "get_record", {"kind": "evidence_plan", "id": plan_id}, project=pid)
+    reason = plan["body"]["launch"]["blocked"]["baseline/baseline.s1.evaluate"]
+    assert reason.startswith("admission refused: WITHDRAWN_METHOD")

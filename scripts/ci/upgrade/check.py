@@ -348,6 +348,10 @@ def verify() -> None:
         "doctor reports migration at head",
         any(c["check"] == "ledger-migration" and HEAD_REVISION in c["detail"] for c in doctor),
     )
+    ck(
+        "upgrade enrolled the LLM broker principal (new in 1.1.0)",
+        (HOME / "config" / "secrets" / "svc-llm-broker.token").is_file(),
+    )
 
     result = {
         "old_tag": seed_doc["old_tag"],
