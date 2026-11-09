@@ -2,23 +2,32 @@
 
 [![CI](https://github.com/Legend101Zz/Eidos/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Legend101Zz/Eidos/actions/workflows/ci.yml) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE) ![Platforms: Linux | macOS](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS-lightgrey.svg) ![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)
 
-**A local research harness in which an LLM investigates your PyTorch models under recorded evidence rules.**
+Over the past two years, LLMs have gone from autocompleting code to doing real machine-learning work. Wrapped in a harness, the loop of tools, memory, feedback and limits around the model, a coding agent such as Claude Code or Codex can read a training script, form a hypothesis, change the code, launch a run and read the result, for hours at a time. Researchers have started to measure how far this goes:
 
-Eidos lets an LLM investigate your own PyTorch models on your own machine without grading its own work. The LLM, called the investigator, diagnoses failures, writes new research components, runs trials and checkpoint branches, and exports models. A claim counts only when it comes from an evidence plan frozen in advance and a separate, qualified assessor agrees. Every command, job, cost and isolation check is recorded in a PostgreSQL ledger.
+- [AIDE](https://arxiv.org/abs/2502.13138) treats ML engineering as a search over code. It explores a tree of candidate programs and is a strong baseline on practical ML tasks.
+- [MLGym](https://arxiv.org/abs/2502.14499) gives research agents open-ended AI research tasks in a gym-style environment.
+- [RE-Bench](https://arxiv.org/abs/2411.15114) put frontier agents next to human experts on ML research-engineering tasks. The agents scored higher on short time budgets; the experts pulled ahead when both had more time.
+- The [LLM speedrunning benchmark](https://arxiv.org/abs/2506.22419) asked agents to reproduce known speedups of NanoGPT training, and found that they struggled even with detailed hints.
+- [AIRS-Bench](https://arxiv.org/abs/2602.06855) collects diverse AI research tasks and prepares data separately for the agent and for the evaluator.
+
+Two lessons stand out. First, the harness matters: the same model can behave very differently depending on the loop around it. Second, today's harnesses are built to push a score up. Nothing in them stops an agent from tuning against its own evaluation until something improves, grading its own work, losing track of which results it has already seen, or reporting one lucky seed as a finding. Human researchers have old habits against exactly these failures: decide what counts as success before you look, let someone else check, keep a lab notebook, and report the nulls.
+
+That gap is where Eidos started. **Eidos is a research harness that builds those habits into the loop.**
+- You bring your own PyTorch project, a question about your model and a budget.
+- An LLM, the *investigator*, works on it on your machine, one bounded turn at a time. It diagnoses failures, writes new research components, runs trials and checkpoint branches, and exports models.
+- Success rules are committed before it starts exploring. A claim counts only when it comes from an evidence plan frozen in advance and a separate, qualified assessor agrees.
+- Every command, cost and look at a result is written to a ledger.
+- At the end you get the strongest answer the evidence supports, a model you can load if one really improved, and a report that keeps the failures and the limitations.
+
+Whether this discipline actually makes an LLM a better researcher is an open question, and Eidos was built to answer it. It is the instrument for a study, written up as a paper in preparation, that compares the same LLM with and without it ([below](#the-research-behind-it-paper-in-preparation)).
 
 **Current release: v1.0.1** (package version `1.0.1`, tag `eidos-v1.0.1`). It is a design-conformance follow-up to v1.0.0: mypy in CI, versioned wire JSON Schemas with server-side validation, and the deferred PyGlove/Composer adapters recorded ([release notes](docs/release/RELEASE_NOTES_v1.0.1.md)). Machine sleep and OS restart recovery are not yet verified on hardware; see [Status](#status-and-evidence).
 
-Contents: [Why](#why-eidos-exists) · [Research](#the-research-behind-it-paper-in-preparation) · [How it works](#how-it-works) · [Use it today](#what-you-can-do-with-it-today) · [Scope](#supported-scope-v1) · [Status](#status-and-evidence) · [Docs](#documentation-map) · [Contributing](#contributing) · [Licence](#license)
+Contents: [How it stays honest](#how-eidos-keeps-the-investigator-honest) · [Research](#the-research-behind-it-paper-in-preparation) · [How it works](#how-it-works) · [Use it today](#what-you-can-do-with-it-today) · [Scope](#supported-scope-v1) · [Status](#status-and-evidence) · [Docs](#documentation-map) · [Contributing](#contributing) · [Licence](#license)
 
-## Why Eidos exists
+## How Eidos keeps the investigator honest
 
-An LLM agent doing ML research tends to fail in four ways:
-- it **fiddles** with the code until a number improves;
-- it **grades its own work**;
-- it **forgets** what it has already seen, and so cannot say what was chosen after looking at results;
-- it **over-claims**, turning a lucky run into "the fix works".
-
-Eidos makes the LLM work like a careful researcher:
+Each habit of a careful researcher maps to something the harness enforces, rather than something the LLM is asked to remember:
 
 | Habit of a careful researcher | What Eidos enforces |
 |---|---|
@@ -38,7 +47,7 @@ The run cost USD 1.81 in model calls.
 
 ## The research behind it (paper in preparation)
 
-Eidos is the instrument for a study that asks: **does the same LLM make more independently verified, useful model improvements through Eidos than as a well-equipped coding agent?** The study compares four arms that share one LLM, one task set and one resource envelope:
+The study asks one question: **does the same LLM make more independently verified, useful model improvements through Eidos than as a well-equipped coding agent?** To make that a fair test, it compares four arms that share one LLM, one task set and one resource envelope, so the only difference is what the LLM works through:
 
 | Arm | What the LLM gets |
 |---|---|
@@ -66,7 +75,7 @@ flowchart LR
 
 ## How it works
 
-**The research loop.**
+**The research loop.** An investigation moves through the same stages a careful researcher would, and each stage leaves a record:
 
 ```mermaid
 flowchart LR
@@ -173,6 +182,8 @@ Details and limits: [`docs/release/SUPPORTED.md`](docs/release/SUPPORTED.md), [A
 - Exposures (reads of outcomes) are recorded, so later claims can be checked against what was seen.
 
 ## What you can do with it today
+
+Everything below runs on one machine: a laptop or workstation with Linux or macOS, no cloud account and no cluster. The lab manages its own PostgreSQL and Temporal services.
 
 ### Install
 
