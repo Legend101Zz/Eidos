@@ -93,6 +93,8 @@ jobs:
       - run: uv sync
       - name: root setup (bubblewrap, eidos-cand, interpreter under /opt, SDK readable)
         run: sudo env "PATH=$PATH" bash scripts/ci/separate_identity_setup.sh "$GITHUB_WORKSPACE"
+      - name: bwrap diagnostics (as root; informational)
+        run: sudo env "PATH=$PATH" EIDOS_CANDIDATE_PYTHON=/opt/eidos/envs/sealed-py312/bin/python .venv/bin/python scripts/ci/sealed_diag.py || true
       - name: sealed job as eidos-cand + assessment as the lab identity, end to end (as root)
         run: |
           sudo env "PATH=$PATH" EIDOS_TEST_PG_ADMIN=postgresql+psycopg://postgres:devpass@127.0.0.1:5432/postgres \
