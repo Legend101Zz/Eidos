@@ -71,6 +71,35 @@ jobs:
           curl -fsSL "https://temporal.download/cli/archive/latest?platform=linux&arch=amd64" | tar xz -C /tmp/temporal
       - run: uv run pytest tests/integration -q
 
+  separate-identity:
+    # linux:bwrap-sealed with a distinct candidate user (ADR 0011): needs root, so it has its own job.
+    # A sealed job runs as eidos-cand through the real runner; the assessor runs as the lab identity in bwrap.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: devpass
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: true
+      - run: uv sync
+      - name: root setup (bubblewrap, eidos-cand, interpreter under /opt, SDK readable)
+        run: sudo env "PATH=$PATH" bash scripts/ci/separate_identity_setup.sh "$GITHUB_WORKSPACE"
+      - name: sealed job as eidos-cand + assessment as the lab identity, end to end (as root)
+        run: |
+          sudo env "PATH=$PATH" EIDOS_TEST_PG_ADMIN=postgresql+psycopg://postgres:devpass@127.0.0.1:5432/postgres \
+            EIDOS_CANDIDATE_PYTHON=/opt/eidos/envs/sealed-py312/bin/python EIDOS_REQUIRE_SEPARATE_IDENTITY=1 \
+            .venv/bin/python -m pytest -p no:cacheprovider -rs -q tests/integration/test_separate_identity_e2e.py \
+            tests/integration/test_isolation_probes.py tests/integration/test_assessor_sandbox.py
+
   worker-compat:
     # Same-repo PRs are already built by the push trigger; run pull_request builds only for forks.
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository

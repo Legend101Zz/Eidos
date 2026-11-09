@@ -112,3 +112,21 @@ def test_seatbelt_lab_refuses_plans_requiring_sealed_execution():
     assert sealed_refusal({"sealed": True}, "dev:same-user")
     assert sealed_refusal({"sealed": True}, "linux:bwrap-sealed") is None
     assert sealed_refusal({"profile": "dev:same-user", "controls": []}, "macos:seatbelt-sealed") is None
+
+
+def test_only_candidate_code_drops_to_the_candidate_user(monkeypatch):
+    """ADR 0011: under linux:bwrap-sealed with a distinct candidate user, candidate code runs as that user, and
+    the assessor/scorer (identity "lab") keep the lab identity; other profiles never change identity."""
+    import pytest
+
+    import eidos.runtime.launcher as L
+    monkeypatch.setattr(L, "candidate_uid", lambda python=None: (4242, 4242))
+    spec = L.LaunchSpec(argv=["/opt/py"], cwd="/", attempt_dir="/tmp/x", profile="linux:bwrap-sealed")
+    assert L.launch_identity(spec) == (4242, 4242)
+    spec.identity = "lab"
+    assert L.launch_identity(spec) is None
+    for profile in ("dev:same-user", "macos:seatbelt-sealed"):
+        assert L.launch_identity(L.LaunchSpec(argv=["/opt/py"], cwd="/", attempt_dir="/tmp/x", profile=profile)) is None
+    spec.identity = "root"
+    with pytest.raises(ValueError):
+        L.launch_identity(spec)

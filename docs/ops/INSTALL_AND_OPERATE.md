@@ -10,10 +10,39 @@ The authoritative v1 scope is **`docs/release/SUPPORTED.md`**. In short:
 |---|---|
 | Linux x86_64, CPU | Supported. Hosted CI (Ubuntu 24.04, Python 3.12, PostgreSQL 16, Temporal 1.32.2), 10 jobs. |
 | macOS arm64, CPU and MPS | Supported. Qualified on the owner's Apple M4 (macOS 26.3.1): owner kit, MPS parity and cross-device resume (`docs/mac/STATUS.md`). |
-| `linux:bwrap-sealed` | Supported; **the only profile for sealed (hostile-code) evaluation**. When the lab runs as root with the `eidos-cand` user, candidate code runs as that distinct OS identity if it can execute the project interpreter. Provision sealed-evaluation environments under a world-readable prefix (e.g. `UV_PYTHON_INSTALL_DIR=/opt/eidos/python uv python install 3.12`, venv under `/opt/eidos/envs/`, `chmod -R a+rX`); `separate-identity` then passes. |
+| `linux:bwrap-sealed` | Supported; **the only profile for sealed (hostile-code) evaluation**. When the lab runs as root with the `eidos-cand` user, candidate code runs as that distinct OS identity if it can execute the project interpreter, and the assessor keeps the lab identity (since 1.1.0; ADR 0011). Root setup: § "Separate candidate identity (root)" below; `separate-identity` then passes for both roles. |
 | `macos:seatbelt-sealed` | Supported, **same OS user**. `sandbox-exec` with a generated profile: the lab home, credential directories and `$HOME` are unreadable (except the attempt's own files); writes go only to staging/scratch/resume and a private tmp; no network; cleared environment; no inspection of other processes. It does **not** contain a hostile same-user program (launchd/XPC by other routes, mach IPC, signals). Plans requiring sealed execution are **refused** on macOS, and a Seatbelt receipt never satisfies them. The macOS assessor also runs under Seatbelt as the same user; its receipt reports `same_os_user: true`. |
 | `macos:lima-vm-sealed` | Not supported in v1 (not implemented). |
 | CUDA, distributed training, Windows/WSL | Not supported in v1. |
+
+## Separate candidate identity (root)
+
+`linux:bwrap-sealed` always confines candidate code in its own namespaces. With these root steps, candidate code
+also runs as a distinct OS user, `eidos-cand`, while the assessor and scorer keep the lab identity (ADR 0011).
+Receipts then report `separate-identity: passed`, and plans may require it. The CI job `separate-identity` runs
+exactly these steps (`scripts/ci/separate_identity_setup.sh`) on Ubuntu 24.04.
+
+1. Run the lab as root (the launcher must be able to switch to another user).
+2. Install bubblewrap: `apt-get install bubblewrap`.
+3. Allow unprivileged user namespaces for the candidate user. On Ubuntu 24.04 AppArmor restricts them:
+   `sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` (persist it in `/etc/sysctl.d/`), or install an
+   AppArmor profile that allows `bwrap` to create user namespaces.
+4. Create the user: `useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin eidos-cand`.
+5. Put each sealed-evaluation interpreter where `eidos-cand` can execute it, never in a root-only or home
+   directory: `UV_PYTHON_INSTALL_DIR=/opt/eidos/python uv python install 3.12`, then
+   `UV_PYTHON_INSTALL_DIR=/opt/eidos/python uv venv --python 3.12 /opt/eidos/envs/<name>`, install the project's
+   dependencies into it, and `chmod -R a+rX /opt/eidos`. Register it with `lab env register` as usual.
+6. Make the worker SDK the runner binds into the sandbox readable by `eidos-cand`: give every parent directory of
+   the lab's installation `o+x` and the installation itself `o+rX` (the setup script does this for a path you
+   pass it).
+7. Make the lab home traversable but not listable: `chmod 0711 "$EIDOS_HOME"`. Its config and secrets stay 0700/0600.
+8. Check: `runuser -u eidos-cand -- /opt/eidos/envs/<name>/bin/python -I -c pass` and
+   `runuser -u eidos-cand -- bwrap --ro-bind / / --unshare-all true` must both succeed; `lab doctor` then reports
+   `sealed-profile:separate-identity` as available.
+
+If `eidos-cand` cannot execute the interpreter, the candidate identity is not used: the job runs in the same
+namespaces as the lab user and its receipt reports `separate-identity: failed` (never a silent pass). If it can
+execute the interpreter but cannot read the worker SDK, the job fails at start with an import error in its stderr.
 
 ## Prerequisites
 

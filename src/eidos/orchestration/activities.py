@@ -188,7 +188,10 @@ class AssessorActivities:
                               writable=[inv.staging_dir, inv.scratch_dir],
                               env={"PYTHONPATH": os.pathsep.join([*SDK_PATHS, lab_src, str(src)])},
                               python_prefixes=python_prefixes(self.lab_python) if profile != "dev:same-user" else [],
-                              deny_read=deny if profile != "dev:same-user" else [])
+                              deny_read=deny if profile != "dev:same-user" else [],
+                              # Trusted role: the lab identity, never the candidate user (the evidence is
+                              # readable only by the lab identity; a candidate-identity assessor failed closed).
+                              identity="lab")
             from eidos.domain.isolation import profile_traits
             # same_os_user is reported so a macOS (Seatbelt) or development assessment says plainly that
             # the assessor ran as the lab's own OS user (docs/release/SUPPORTED.md).
