@@ -102,7 +102,8 @@ class CommandService:
                 normalized_arguments: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         """``normalized_arguments``: argument shapes the MCP adapter normalized before sending (ADR 0017). Recorded
         in the receipt only; ``payload`` is validated exactly as for any other caller, and the idempotency hash
-        covers the payload, not this record."""
+        covers the payload, not this record. The receipt's ``normalized_arguments`` is this invocation's (logged for
+        every invocation); a replay also returns the committing call's as ``admission_normalized_arguments``."""
         spec = COMMANDS.get(name)
         if spec is None:
             raise NotFound(f"unknown command {name!r}")
@@ -123,6 +124,10 @@ class CommandService:
                 log.warning("command retried after transient database conflict",
                             extra={"command": name, "sqlstate": state, "attempt": attempt + 1})
                 time.sleep(0.05 * (attempt + 1))
+        if normalized_arguments:  # per invocation, replays included (F2b)
+            log.info("command arguments normalized", extra={"command": name, "principal": principal.id,
+                     "project": pid, "command_key": command_key, "replayed": bool(receipt.get("replayed")),
+                     "normalized_arguments": normalized_arguments})
         if receipt.get("replayed"):
             return receipt
         log.info("command committed", extra={"command": name, "principal": principal.id, "project": pid,
@@ -147,6 +152,14 @@ class CommandService:
                         details={"command_key": command_key, "original_command": existing["command_type"]})
                 receipt = dict(existing["receipt"] or {})
                 receipt["replayed"] = True
+                # F2b: ``normalized_arguments`` always describes THIS invocation; the original admission's record,
+                # if any, is returned separately (the stored receipt is unchanged), so a retry that was normalized
+                # differently from the call that committed is never reported as the other one.
+                admitted = receipt.pop("normalized_arguments", None)
+                if admitted:
+                    receipt["admission_normalized_arguments"] = admitted
+                if normalized_arguments:
+                    receipt["normalized_arguments"] = list(normalized_arguments)
                 return receipt
             ctx = Ctx(tx, principal, pid, command_key, self.store, self.settings, expected_revision)
             result = spec.fn(ctx, payload)

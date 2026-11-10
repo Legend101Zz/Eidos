@@ -57,7 +57,15 @@ class FakeClient:
         hit = self.lab.receipts.get((project or "", key))
         if hit:
             if hit[0] == fp:
-                return {**hit[1], "replayed": True}
+                # as the real service: ``normalized_arguments`` is THIS call's (absent if it had none) and the
+                # committing call's record comes back as ``admission_normalized_arguments``; the store is unchanged
+                replay = {k: v for k, v in hit[1].items() if k != "normalized_arguments"}
+                replay["replayed"] = True
+                if hit[1].get("normalized_arguments"):
+                    replay["admission_normalized_arguments"] = hit[1]["normalized_arguments"]
+                if normalized_arguments is not _ABSENT and normalized_arguments:
+                    replay["normalized_arguments"] = list(normalized_arguments)
+                return replay
             if hit[0] != fp:
                 raise LabError(409, {"code": "COMMAND_KEY_CONFLICT", "message": "key reused with different payload",
                                      "next_action": "Use a new command_key."})

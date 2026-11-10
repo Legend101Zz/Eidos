@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import uuid
 
 import pytest
@@ -63,6 +64,24 @@ def stored_receipt(lab, pid, principal, key):
     return row["receipt"]
 
 
+def stored_row(lab, pid, principal, key):
+    """The whole ``commands`` row (hash, status, receipt, delegation, created_at): replays must not change any of it."""
+    with lab.ledger.transaction() as tx:
+        return tx._one("SELECT * FROM commands WHERE project_id=:p AND principal_id=:u AND command_key=:k",
+                       p=pid, u=principal.id, k=key)
+
+
+def run_once(lab, pid, ref, key, record=None, config=None):
+    """One ``run_component`` invocation through the command service with ``record`` as its normalized_arguments."""
+    payload = {"component_ref": ref, "environment": "lab", "config": copy.deepcopy(NORMALIZED if config is None else config)}
+    return lab.svc.execute(lab.admin, "run_component", project_id=pid, command_key=key, payload=payload,
+                           normalized_arguments=record)
+
+
+def event_ids(lab, pid):
+    return [e["seq"] for e in lab.q(lab.admin, "list_events", {"limit": 500}, project=pid)["events"]]
+
+
 class ShimClient:
     """LabClient-compatible adapter that calls the command service in-process (as in test_turn_recovery), passing
     ``normalized_arguments`` through exactly as LabClient does: only when there are some."""
@@ -109,6 +128,7 @@ def test_receipt_stores_normalized_arguments_and_a_replay_returns_it(lab):
     again = lab.svc.execute(lab.admin, "run_component", project_id=pid, command_key="k-n1", payload=payload,
                             normalized_arguments=RECORD)
     assert again["replayed"] is True and again["normalized_arguments"] == RECORD
+    assert again["admission_normalized_arguments"] == RECORD  # a replay always names the committed call's record
     assert again["result"] == first["result"]
     stored = stored_receipt(lab, pid, lab.admin, "k-n1")
     assert stored["normalized_arguments"] == RECORD and stored["replayed"] is False
@@ -136,11 +156,126 @@ def test_the_record_is_not_part_of_the_idempotency_hash(lab):
         r = lab.svc.execute(lab.admin, "run_component", project_id=pid, command_key="k-h", payload=payload,
                             normalized_arguments=other)
         assert r["replayed"] is True and r["result"] == first["result"]
-        assert r["normalized_arguments"] == RECORD  # the original admission's record, not the retry's
+        # F2b: ``normalized_arguments`` is THIS invocation's; the committed call's record is reported separately
+        assert r.get("normalized_arguments") == other
+        assert r["admission_normalized_arguments"] == RECORD
     changed = {**payload, "config": {**NORMALIZED, "seed": 12}}
     with pytest.raises(CommandConflict):  # a different payload under the same key is still a conflict
         lab.svc.execute(lab.admin, "run_component", project_id=pid, command_key="k-h", payload=changed,
                         normalized_arguments=RECORD)
+
+
+# -- (a2) F2b: a replay's ``normalized_arguments`` is THIS invocation's; the committed call's is separate ------------
+
+OTHER_RECORD = [{"path": "config.seed", "rule": "numeric-string", "expected": "integer", "original": "11",
+                 "normalized": 11}]
+
+
+def test_native_first_call_then_a_normalized_retry_reports_the_retrys_record_only(lab):
+    pid, ref = setup(lab)
+    first = run_once(lab, pid, ref, "k-r1")
+    assert first["replayed"] is False and "normalized_arguments" not in first
+    retry = run_once(lab, pid, ref, "k-r1", RECORD)
+    assert retry["replayed"] is True
+    assert retry["normalized_arguments"] == RECORD  # what THIS call normalized
+    assert "admission_normalized_arguments" not in retry  # the committed call had nothing normalized
+    assert retry["result"] == first["result"] and retry["events"] == first["events"]
+    assert admitted_runs(lab, pid)[0]["id"] == first["result"]["job_id"] and len(admitted_runs(lab, pid)) == 1
+    # the retry's record is not written back: the stored receipt still says the first call was native
+    stored = stored_receipt(lab, pid, lab.admin, "k-r1")
+    assert "normalized_arguments" not in stored and "admission_normalized_arguments" not in stored
+    assert stored["replayed"] is False
+
+
+@pytest.mark.parametrize("retry_record", [None, []])
+def test_normalized_first_call_then_a_native_retry_has_no_normalized_arguments_but_names_the_admissions(
+        lab, retry_record):
+    pid, ref = setup(lab)
+    first = run_once(lab, pid, ref, "k-r2", RECORD)
+    assert first["normalized_arguments"] == RECORD and "admission_normalized_arguments" not in first
+    retry = run_once(lab, pid, ref, "k-r2", retry_record)
+    assert retry["replayed"] is True
+    assert "normalized_arguments" not in retry  # nothing was normalized in THIS invocation
+    assert retry["admission_normalized_arguments"] == RECORD
+    assert retry["result"] == first["result"] and retry["events"] == first["events"]
+    assert len(admitted_runs(lab, pid)) == 1
+
+
+def test_two_differently_normalized_calls_are_reported_separately(lab):
+    pid, ref = setup(lab)
+    first = run_once(lab, pid, ref, "k-r3", RECORD)
+    retry = run_once(lab, pid, ref, "k-r3", OTHER_RECORD)
+    assert retry["replayed"] is True
+    assert retry["normalized_arguments"] == OTHER_RECORD
+    assert retry["admission_normalized_arguments"] == RECORD
+    assert [c["path"] for c in retry["normalized_arguments"]] == ["config.seed"]
+    assert [c["path"] for c in retry["admission_normalized_arguments"]] == [
+        "config.argv", "config.seed", "config.timeout_seconds"]
+    assert first["normalized_arguments"] == RECORD  # the first call's own receipt is what it was
+    # a third retry with yet another record: still the first call's record as the admission's, its own as its own
+    third = run_once(lab, pid, ref, "k-r3", [RECORD[0]])
+    assert third["normalized_arguments"] == [RECORD[0]] and third["admission_normalized_arguments"] == RECORD
+    assert len(admitted_runs(lab, pid)) == 1
+
+
+@pytest.mark.parametrize("first_record", [None, RECORD])
+def test_a_later_plain_replay_returns_the_stored_first_call_record_as_the_admissions(lab, first_record):
+    pid, ref = setup(lab)
+    key = "k-r4"
+    first = run_once(lab, pid, ref, key, first_record)
+    run_once(lab, pid, ref, key, OTHER_RECORD)  # intermediate retries, normalized differently
+    run_once(lab, pid, ref, key, RECORD)
+    run_once(lab, pid, ref, key, None)
+    for _ in range(2):
+        plain = run_once(lab, pid, ref, key)  # a plain replay: nothing normalized in this invocation
+        assert plain["replayed"] is True and plain["result"] == first["result"]
+        assert "normalized_arguments" not in plain
+        if first_record:  # the committed call's record, never an intermediate retry's
+            assert plain["admission_normalized_arguments"] == RECORD
+        else:
+            assert "admission_normalized_arguments" not in plain
+    assert len(admitted_runs(lab, pid)) == 1
+
+
+def test_replays_never_modify_the_stored_receipt_or_the_command_row(lab):
+    pid, ref = setup(lab)
+    for key, first_record in (("k-s1", RECORD), ("k-s2", None)):
+        run_once(lab, pid, ref, key, first_record)
+        row = stored_row(lab, pid, lab.admin, key)
+        events = event_ids(lab, pid)
+        assert events  # the first call's events are in the ledger
+        for record in (None, [], OTHER_RECORD, RECORD, [RECORD[0]], None):
+            run_once(lab, pid, ref, key, record)
+            assert stored_row(lab, pid, lab.admin, key) == row  # hash, status, receipt, delegation, created_at
+            assert event_ids(lab, pid) == events  # and nothing new was emitted
+        receipt = row["receipt"]
+        assert receipt["replayed"] is False and "admission_normalized_arguments" not in receipt
+        assert receipt.get("normalized_arguments") == first_record
+    assert len(admitted_runs(lab, pid)) == 2
+
+
+def test_a_replay_with_a_changed_payload_is_still_a_conflict_and_leaves_the_row_alone(lab):
+    pid, ref = setup(lab)
+    run_once(lab, pid, ref, "k-r5", RECORD)
+    row = stored_row(lab, pid, lab.admin, "k-r5")
+    with pytest.raises(CommandConflict):
+        run_once(lab, pid, ref, "k-r5", OTHER_RECORD, config={**NORMALIZED, "seed": 12})
+    assert stored_row(lab, pid, lab.admin, "k-r5") == row
+
+
+def test_the_normalization_of_every_invocation_is_logged_replays_included(lab, caplog):
+    pid, ref = setup(lab)
+    with caplog.at_level(logging.INFO, logger="eidos.commands"):
+        run_once(lab, pid, ref, "k-log", RECORD)
+        run_once(lab, pid, ref, "k-log", OTHER_RECORD)
+        run_once(lab, pid, ref, "k-log", None)  # nothing normalized: nothing to log
+        run_once(lab, pid, ref, "k-log-native")
+    logged = [r for r in caplog.records if r.getMessage() == "command arguments normalized"]
+    assert [(r.command_key, r.replayed, r.normalized_arguments) for r in logged] == [
+        ("k-log", False, RECORD), ("k-log", True, OTHER_RECORD)]
+    assert all(r.command == "run_component" and r.principal == "admin" and r.project == pid for r in logged)
+    committed = [r for r in caplog.records if r.getMessage() == "command committed"]
+    assert [r.command_key for r in committed] == ["k-log", "k-log-native"]  # replays are not committed again
 
 
 # -- (b) the lab validators are unchanged -----------------------------------------------------------------------------
@@ -205,6 +340,7 @@ def test_gateway_reads_the_real_config_schema_normalizes_and_the_receipt_carries
     {"argv": {"item": "python"}},                       # scalar item
     {"argv": {"item": ARGV, "other": 1}},               # extra key
     {"seed": " 11"}, {"seed": "1.0"}, {"timeout_seconds": "NaN"},
+    {"timeout_seconds": "1e-400"}, {"timeout_seconds": "9007199254740993.0"}, {"timeout_seconds": "1e400"},
 ])
 def test_gateway_leaves_ambiguous_shapes_for_the_lab_to_refuse(lab, config):
     pid, ref = setup(lab)
@@ -215,6 +351,56 @@ def test_gateway_leaves_ambiguous_shapes_for_the_lab_to_refuse(lab, config):
     assert e.value.code == "RESOLUTION_ERROR" and e.value.status == 422
     assert e.value.details["problems"]
     assert admitted_runs(lab, pid) == []
+
+
+@pytest.mark.parametrize("command", ["run_component", "plan_trial"])
+@pytest.mark.parametrize("text", ["1e-400", "-1e-400", "1e-324", "9007199254740993.0"])
+def test_gateway_does_not_normalize_a_number_the_double_cannot_denote_and_the_lab_refuses_it(lab, command, text):
+    """F2b end to end: ``"1e-400"`` must not silently become 0.0 (a zero timeout). The adapter leaves the string, the
+    lab refuses it, nothing is admitted, and the value is not claimed as normalized anywhere."""
+    pid, ref = setup(lab)
+    client = ShimClient(lab, lab.admin)
+    config = {"argv": ARGV, "seed": "11", "timeout_seconds": text}
+    with pytest.raises(ToolFailure) as e:
+        call_tool(client, command, {"project": pid, "command_key": "k-uf", "component_ref": ref,
+                                    "environment": "lab", "config": config})
+    assert e.value.code == "RESOLUTION_ERROR" and e.value.status == 422
+    # seed was normalized (so the lab is not told about it); only the unconvertible number is refused, as a string
+    assert e.value.details["problems"] == ["config.timeout_seconds: expected number, got str"]
+    assert admitted_runs(lab, pid) == []
+    assert config["timeout_seconds"] == text  # the caller's arguments were not touched
+    with lab.ledger.transaction() as tx:  # a refused command leaves no receipt (and so no normalization record)
+        assert tx._one("SELECT receipt FROM commands WHERE project_id=:p AND command_key=:k", p=pid, k="k-uf") is None
+
+
+def test_gateway_underflow_refusal_is_reported_without_a_normalization_record_while_a_neighbour_is_normalized(lab):
+    pid, ref = setup(lab)
+    seen = {}
+
+    class Spy(ShimClient):
+        def command(self, name, payload=None, **kw):
+            seen.update(payload=payload, kw=kw)
+            return super().command(name, payload, **kw)
+
+    with pytest.raises(ToolFailure):
+        call_tool(Spy(lab, lab.admin), "run_component", {
+            "project": pid, "command_key": "k-uf2", "component_ref": ref, "environment": "lab",
+            "config": {"seed": "11", "timeout_seconds": "1e-400"}})
+    assert seen["payload"]["config"] == {"seed": 11, "timeout_seconds": "1e-400"}
+    assert [c["path"] for c in seen["kw"]["normalized_arguments"]] == ["config.seed"]  # not config.timeout_seconds
+
+
+@pytest.mark.parametrize("text, value", [("0.1", 0.1), ("1e-3", 0.001), ("5e-324", 5e-324)])
+def test_gateway_admits_a_number_the_double_denotes_exactly_and_the_lock_holds_that_double(lab, text, value):
+    pid, ref = setup(lab)
+    receipt = call_tool(ShimClient(lab, lab.admin), "run_component", {
+        "project": pid, "command_key": "k-ex", "component_ref": ref, "environment": "lab",
+        "config": {"timeout_seconds": text}})
+    assert receipt["status"] == "committed"
+    assert receipt["normalized_arguments"] == [{"path": "config.timeout_seconds", "rule": "numeric-string",
+                                                "expected": "number", "original": text, "normalized": value}]
+    job = lab.q(lab.admin, "get_job", {"job_id": receipt["result"]["job_id"], "include_lock": True}, project=pid)
+    assert f'"timeout_seconds": {value!r}' in json.dumps(job["lock"])
 
 
 def test_gateway_with_a_partly_ambiguous_config_normalizes_only_the_unambiguous_part(lab):
@@ -234,6 +420,38 @@ def test_gateway_without_changes_sends_a_plain_command(lab):
         "config": copy.deepcopy(NORMALIZED)})
     assert receipt["status"] == "committed" and "normalized_arguments" not in receipt
     assert "normalized_arguments" not in stored_receipt(lab, pid, lab.admin, "k-plain")
+
+
+def test_gateway_retries_report_each_calls_own_normalization_and_the_admissions_separately(lab):
+    pid, ref = setup(lab)
+    client = ShimClient(lab, lab.admin)
+
+    def go(config):
+        return call_tool(client, "run_component", {"project": pid, "command_key": "k-gwr", "component_ref": ref,
+                                                   "environment": "lab", "config": copy.deepcopy(config)})
+    first = go(MANGLED)  # normalized in three places
+    assert first["normalized_arguments"] == RECORD and "admission_normalized_arguments" not in first
+    native = go(NORMALIZED)  # the same admission retried with correctly typed arguments
+    assert native["replayed"] is True and native["result"] == first["result"]
+    assert "normalized_arguments" not in native and native["admission_normalized_arguments"] == RECORD
+    partly = go({"argv": ARGV, "seed": "11", "timeout_seconds": 180})  # only config.seed needs normalizing
+    assert partly["replayed"] is True
+    assert [c["path"] for c in partly["normalized_arguments"]] == ["config.seed"]
+    assert partly["admission_normalized_arguments"] == RECORD
+    assert stored_receipt(lab, pid, lab.admin, "k-gwr")["normalized_arguments"] == RECORD  # unchanged by any of it
+    assert len(admitted_runs(lab, pid)) == 1
+
+
+def test_gateway_native_first_call_then_a_normalized_retry(lab):
+    pid, ref = setup(lab)
+    client = ShimClient(lab, lab.admin)
+    base = {"project": pid, "command_key": "k-gwn", "component_ref": ref, "environment": "lab"}
+    first = call_tool(client, "run_component", {**base, "config": copy.deepcopy(NORMALIZED)})
+    assert "normalized_arguments" not in first
+    retry = call_tool(client, "run_component", {**base, "config": copy.deepcopy(MANGLED)})
+    assert retry["replayed"] is True and retry["normalized_arguments"] == RECORD
+    assert "admission_normalized_arguments" not in retry
+    assert "normalized_arguments" not in stored_receipt(lab, pid, lab.admin, "k-gwn")
 
 
 # -- the real HTTP API and the real LabClient ---------------------------------------------------------------------------
@@ -257,6 +475,31 @@ def test_http_api_records_normalized_arguments_in_the_receipt(lab):
     plain.pop("normalized_arguments")
     r = c.post("/v1/commands/run_component", json=plain, headers=h)
     assert r.status_code == 200 and "normalized_arguments" not in r.json()
+
+
+def test_http_api_replays_return_this_requests_record_and_the_admissions_separately(lab):
+    pid, ref = setup(lab)
+    c = TestClient(create_app(lab.svc))
+    h = {"authorization": f"Bearer {lab.tokens['admin']}"}
+    body = {"project_id": pid, "command_key": "k-http-r", "payload": {
+        "component_ref": ref, "environment": "lab", "config": copy.deepcopy(NORMALIZED)},
+        "normalized_arguments": RECORD}
+    first = c.post("/v1/commands/run_component", json=body, headers=h).json()
+    assert first["normalized_arguments"] == RECORD and "admission_normalized_arguments" not in first
+    plain = {k: v for k, v in body.items() if k != "normalized_arguments"}
+    r = c.post("/v1/commands/run_component", json=plain, headers=h)
+    assert r.status_code == 200 and r.json()["replayed"] is True
+    assert "normalized_arguments" not in r.json() and r.json()["admission_normalized_arguments"] == RECORD
+    other = c.post("/v1/commands/run_component", json={**body, "normalized_arguments": OTHER_RECORD}, headers=h).json()
+    assert other["normalized_arguments"] == OTHER_RECORD and other["admission_normalized_arguments"] == RECORD
+    assert other["result"] == first["result"]
+    assert stored_receipt(lab, pid, lab.admin, "k-http-r")["normalized_arguments"] == RECORD
+    # and the other way round: a native first call, a normalized retry
+    native = {**plain, "command_key": "k-http-r2"}
+    assert "normalized_arguments" not in c.post("/v1/commands/run_component", json=native, headers=h).json()
+    retry = c.post("/v1/commands/run_component", json={**native, "normalized_arguments": RECORD}, headers=h).json()
+    assert retry["replayed"] is True and retry["normalized_arguments"] == RECORD
+    assert "admission_normalized_arguments" not in retry
 
 
 def test_http_api_does_not_relax_validation_for_a_request_that_claims_normalization(lab):

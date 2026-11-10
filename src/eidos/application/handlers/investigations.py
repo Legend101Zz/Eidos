@@ -299,6 +299,10 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
     """Persist a proposed decision. Exactly one decision is accepted per (turn, slot); a late or
     stale proposal is kept as an unapplied record with no authority to execute tools."""
     turn = _turn(ctx, p["turn_id"], lock=True)
+    # Lock order (F2b): the turn row, then the investigation row. stop/pause/resume lock only the investigation row
+    # and complete_turn takes the same order, so the status and revision checks below are atomic with respect to a
+    # stop: a stop either commits first (and this decision is refused) or waits until it is accepted.
+    inv = ctx.tx.require("investigation", turn["investigation_id"], lock=True)
     slot = int(p.get("slot", 0))
     existing = ctx.tx.accepted_decision(turn["id"], slot)
     did = f"dec_{uuid.uuid4().hex[:16]}"
@@ -310,7 +314,6 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
                                                                "usage": usage})
         return {"accepted": False, "decision_id": existing["id"], "reason": "slot-already-accepted",
                 "calls": existing["body"]["calls"], "control": existing["body"].get("control")}
-    inv = ctx.tx.require("investigation", turn["investigation_id"])
     if turn["status"] != "open":
         ctx.tx.insert_decision(did, turn["id"], slot, False, {"proposal": p.get("proposal"), "reason": "turn-closed"})
         return {"accepted": False, "decision_id": did, "reason": "turn-closed"}
@@ -490,7 +493,9 @@ def _open_by_ref(ctx: Ctx, scope: str, prefix: str) -> dict[tuple[str, str], flo
 def reserve_model_budget(ctx: Ctx, p: dict) -> dict:
     """Reserve one decision's maximum model envelope before its requests are sent. Raises
     BUDGET_EXHAUSTED (no model call) when the investigation's remaining budget cannot cover it."""
-    turn = _turn(ctx, p["turn_id"])
+    # The turn row lock serializes every read-then-settle of this turn's model reservations (reserve_model_budget,
+    # record_model_usage, complete_turn): two transactions never both see the same reservation open (F2b).
+    turn = _turn(ctx, p["turn_id"], lock=True)
     scope = inv_scope(turn["investigation_id"])
     budgets = ctx.tx.budgets(scope)
     ref = f"model:{p['turn_id']}:{p.get('slot')}:{p.get('attempt')}"
@@ -511,7 +516,8 @@ def reserve_model_budget(ctx: Ctx, p: dict) -> dict:
 
 
 def release_turn_model_reservations(ctx: Ctx, turn: dict) -> dict:
-    """Release model reservations of a turn that were never settled (e.g. the activity died)."""
+    """Release model reservations of a turn that were never settled (e.g. the activity died). The caller holds the
+    turn row lock (complete_turn), which serializes this with record_model_usage and reserve_model_budget."""
     scope = inv_scope(turn["investigation_id"])
     released: dict[str, float] = {}
     # Release under each reservation's own ref (G7 re-check): a release booked under a separate ref
@@ -526,10 +532,17 @@ def release_turn_model_reservations(ctx: Ctx, turn: dict) -> dict:
 @command("record_model_usage", "turn")
 def record_model_usage(ctx: Ctx, p: dict) -> dict:
     """Record model usage that is not attached to an accepted decision (failed/timeout calls).
-    A timeout after possible charge is recorded as possible usage with its request ID."""
-    turn = _turn(ctx, p["turn_id"])
-    _charge_model_usage(ctx, turn["investigation_id"], p.get("usage") or {},
-                        ref=p.get("reservation_ref") or f"usage:{p['turn_id']}", reserved=p.get("reserved"))
+    A timeout after possible charge is recorded as possible usage with its request ID.
+
+    The turn row is locked before the reservation is read (F2b): a concurrent complete_turn, a retry's
+    reserve_model_budget or another settlement of the same reservation waits, then sees it settled, so it is
+    released once."""
+    turn = _turn(ctx, p["turn_id"], lock=True)
+    ref = p.get("reservation_ref") or f"usage:{p['turn_id']}"
+    if p.get("reserved") and not str(ref).startswith(f"model:{turn['id']}:"):
+        # Only this turn's reservations are serialized by its lock; settling another turn's would bypass it.
+        raise Invalid("reservation_ref must be a model reservation of this turn", details={"reservation_ref": ref})
+    _charge_model_usage(ctx, turn["investigation_id"], p.get("usage") or {}, ref=ref, reserved=p.get("reserved"))
     ctx.event("model.usage", p["turn_id"], {"usage": p.get("usage")}, investigation_id=turn["investigation_id"])
     return {"recorded": True}
 

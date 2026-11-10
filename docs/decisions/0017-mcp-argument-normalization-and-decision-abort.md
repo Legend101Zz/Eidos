@@ -162,3 +162,59 @@ With the abort removed (the activity passes no signal), the stop and deadline te
 **Reversal.** If Temporal's Python SDK delivers activity cancellation into a running synchronous activity reliably,
 the watcher's cancellation check could rely on it. The status and deadline triggers, and the lab-side refusals, would
 stay.
+
+## Addendum: review R2 (concurrency, exactness, replay)
+
+An independent review of the first implementation found five gaps. Three were concurrency gaps in code paths that
+predate this ADR; this ADR's guarantees depended on them.
+
+1. **Stop and decision acceptance were not serialized.** `accept_decision` locked the turn row but read the
+   investigation without a lock. A stop that committed after that read, but before the decision committed, left a
+   decision accepted on a stopped investigation. The same window existed before this ADR: there, the stop's revision
+   bump (`stale-revision`) was the only stop check at acceptance, and it was read without a lock too. **Fix:**
+   `accept_decision` locks the turn row, then the investigation row, before any check. That is the same order as
+   `complete_turn`. `stop`, `pause` and `resume` lock only the investigation row, so no cycle is possible. Either the
+   stop commits first and the decision is refused (`investigation-stopped`), or the stop waits until the acceptance
+   has committed.
+2. **A cancellation after the provider response was missed.** The watcher only ran while `runtime.decide` ran, not
+   while usage was recorded, the response uploaded and the decision accepted. Before this ADR the decide activity
+   never observed cancellation at all. **Fix:**
+   - The watcher now runs until `accept_decision` returns.
+   - Before the upload, and again just before acceptance, the activity checks `activity.is_cancelled()` directly. The
+     watcher stops at its first reason, which may be the deadline.
+   - A cancelled activity raises `DECISION_ABORTED`, and a stop or pause returns its no-effect reason.
+
+   Some window remains, because Temporal delivers cancellation to a synchronous activity only through heartbeats. The
+   durable boundary covers it: the cancelled `TurnWorkflow` closes the turn (`complete_turn`, `cancelled`), and
+   `accept_decision` refuses a closed turn under the same turn row lock. Suppose the acceptance commits first. The
+   cancelled workflow never executes the decision. `execute_decision` also refuses to run the calls of a decision
+   whose turn is no longer open.
+3. **A reservation could be released twice.** `record_model_usage` read a reservation's open amount without a lock.
+   A concurrent `complete_turn`, a retry's `reserve_model_budget`, or a second settlement could each read the same
+   open amount, and each subtracted it. The second subtraction freed budget held by another reservation. This
+   predates this ADR. **Fix:** every read-then-settle of a turn's model reservations holds that turn's row lock:
+   - `reserve_model_budget` and `record_model_usage` now take the lock;
+   - `complete_turn` and `accept_decision` already held it.
+
+   `record_model_usage` refuses a `reserved` settlement whose `reservation_ref` belongs to another turn, because that
+   turn's lock would not cover it.
+4. **Numeric normalization could change the value.** For a `number` field, `"1e-400"` became `0.0` and
+   `"9007199254740993.0"` became `9007199254740992.0`. **Fix:** a non-integer literal is converted only if the
+   double denotes exactly the supplied decimal value, as it is serialized through the command path (its shortest
+   round-trip decimal, `repr`): `Decimal(repr(float(s))) == Decimal(s)`. `"0.1"` and `"1e-3"` are still converted.
+   Underflow, precision loss and literals with more significant digits than a double holds are passed through unchanged, and
+   the lab refuses them as before. Integer literals still become exact integers.
+5. **Replayed normalization was not recorded.** A replay returned the stored receipt of the call that committed. That
+   receipt carried that call's `normalized_arguments`, or none. **Fix:** the returned receipt's `normalized_arguments` always
+   describes the current invocation. On a replay, the committing call's record is returned separately as
+   `admission_normalized_arguments`. The stored receipt is not changed, because a replay writes nothing. Each
+   invocation with normalized arguments is also logged (`command arguments normalized`, with `replayed`).
+
+**Tests.**
+- `tests/integration/test_turn_concurrency.py` covers findings 1 and 3. Each test holds one command's transaction
+  open on PostgreSQL and runs the other concurrently. The second command must wait, then see the first command's
+  effect. Without the investigation lock, the stop-first test fails. Without the turn lock in `record_model_usage`
+  and `reserve_model_budget`, the four overlap tests fail, and the other holder's budget is freed.
+- `tests/unit/test_decide_cancel_through_accept.py` covers finding 2.
+- `tests/unit/test_mcp_normalize.py`, `tests/mcp/` and `tests/integration/test_mcp_normalized_receipts.py` cover
+  findings 4 and 5.

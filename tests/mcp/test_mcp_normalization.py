@@ -104,6 +104,41 @@ async def test_ambiguous_shape_is_a_lab_matter_not_an_adapter_rewrite_over_a_ses
     assert lab.command_extras == [{}] and "normalized_arguments" not in body(r)
 
 
+@sessioned
+async def test_an_underflowing_number_in_a_config_is_sent_as_received_and_not_recorded_over_a_session(client, lab):
+    """F2b: ``"1e-400"`` would silently become 0.0; the adapter leaves it for the lab to refuse and records nothing."""
+    lab.queries["describe_component"] = release()
+    cfg = {"argv": ARGV, "seed": 11, "timeout_seconds": "1e-400"}
+    r = await client.call_tool("run_component", run_args(config=copy.deepcopy(cfg)))
+    assert not r.is_error
+    assert commands(lab)[0][2]["config"] == cfg and type(commands(lab)[0][2]["config"]["timeout_seconds"]) is str
+    assert lab.command_extras == [{}] and "normalized_arguments" not in body(r)
+    assert len(describes(lab)) == 1  # the schema was consulted (the config holds numbers) and said nothing to change
+
+
+@pytest.mark.parametrize("text", ["1e-400", "-1e-400", "9007199254740993.0"])
+def test_an_unconvertible_number_does_not_hide_or_block_a_convertible_neighbour(lab, text):
+    lab.queries["describe_component"] = release()
+    call(lab, "run_component", run_args(config={"seed": "11", "timeout_seconds": text}))
+    assert commands(lab)[0][2]["config"] == {"seed": 11, "timeout_seconds": text}
+    assert lab.command_extras == [{"normalized_arguments": [
+        {"path": "config.seed", "rule": "numeric-string", "expected": "integer", "original": "11",
+         "normalized": 11}]}]  # the refused value is not listed
+
+
+@pytest.mark.parametrize("text, expected", [("0.1", 0.1), ("1e-3", 0.001), ("5e-324", 5e-324), ("-0.0", -0.0),
+                                            ("9007199254740992.0", 9007199254740992.0),
+                                            ("9007199254740993", 9007199254740993)])
+def test_an_exactly_representable_number_is_normalized_and_recorded(lab, text, expected):
+    lab.queries["describe_component"] = release()
+    call(lab, "run_component", run_args(config={"timeout_seconds": text}))
+    sent = commands(lab)[0][2]["config"]["timeout_seconds"]
+    assert sent == expected and type(sent) is type(expected)
+    assert lab.command_extras[0]["normalized_arguments"] == [
+        {"path": "config.timeout_seconds", "rule": "numeric-string", "expected": "number", "original": text,
+         "normalized": expected}]
+
+
 # -- run_component, plan_trial, plan_branch: every tool that takes a component config --------------------------------
 
 @pytest.mark.parametrize("tool, extra", [("run_component", {}), ("plan_trial", {}),
@@ -172,6 +207,10 @@ def test_a_query_without_changes_has_no_normalized_arguments_key(lab):
     {"timeout_seconds": "NaN"}, {"timeout_seconds": "Infinity"}, {"timeout_seconds": "1e400"},
     {"timeout_seconds": "0x10"}, {"timeout_seconds": "1_000"}, {"seed": ""}, {"seed": "١٢"},
     {"seed": True}, {"seed": None},
+    # F2b: a number literal the double cannot denote exactly is not converted (the lab then refuses the string)
+    {"timeout_seconds": "1e-400"}, {"timeout_seconds": "-1e-400"}, {"timeout_seconds": "1e-324"},
+    {"timeout_seconds": "9007199254740993.0"}, {"timeout_seconds": "1.00000000000000001"},
+    {"timeout_seconds": "0.1000000000000000055511151231257827"},
 ])
 def test_ambiguous_config_is_sent_to_the_lab_exactly_as_received(lab, cfg):
     lab.queries["describe_component"] = release()
@@ -334,24 +373,49 @@ def test_the_lookup_is_not_made_for_a_tool_without_a_config_parameter(lab):
 
 # -- retries and replays -------------------------------------------------------------------------------------------
 
-def test_retry_with_the_same_key_replays_the_same_receipt_with_its_record(lab):
+def test_retry_with_the_same_key_replays_the_same_admission_and_reports_both_records(lab):
     lab.queries["describe_component"] = release()
     args = run_args(config=copy.deepcopy(MANGLED))
     a = call(lab, "run_component", copy.deepcopy(args))
     b = call(lab, "run_component", copy.deepcopy(args))
     assert a["replayed"] is False and b["replayed"] is True
     assert lab.executed == 1  # the same mangled arguments normalize to the same payload, so the key replays
-    assert a["normalized_arguments"] == b["normalized_arguments"] == MANGLED_RECORD
+    assert a["normalized_arguments"] == b["normalized_arguments"] == MANGLED_RECORD  # the retry's own record
+    assert b["admission_normalized_arguments"] == MANGLED_RECORD  # and the committing call's
+    assert "admission_normalized_arguments" not in a and b["result"] == a["result"]
 
 
 def test_the_record_is_not_part_of_the_idempotency_payload(lab):
-    """A retry whose arguments arrive already correct still replays the original admission."""
+    """A retry whose arguments arrive already correct still replays the original admission; its own receipt has no
+    ``normalized_arguments`` (nothing was normalized in THIS call) but names the admission's as such."""
     lab.queries["describe_component"] = release()
     a = call(lab, "run_component", run_args(config=copy.deepcopy(MANGLED)))
     b = call(lab, "run_component", run_args(config=copy.deepcopy(NORMALIZED)))
     assert b["replayed"] is True and lab.executed == 1
     assert b["result"] == a["result"]
     assert lab.command_extras[1] == {}  # the second call had nothing to record
+    assert "normalized_arguments" not in b and b["admission_normalized_arguments"] == MANGLED_RECORD
+    assert a["normalized_arguments"] == MANGLED_RECORD  # the first call's receipt is unaffected
+
+
+def test_a_native_first_call_then_a_normalized_retry_reports_only_the_retrys_record(lab):
+    lab.queries["describe_component"] = release()
+    a = call(lab, "run_component", run_args(config=copy.deepcopy(NORMALIZED)))
+    b = call(lab, "run_component", run_args(config=copy.deepcopy(MANGLED)))
+    assert "normalized_arguments" not in a and b["replayed"] is True and lab.executed == 1
+    assert b["normalized_arguments"] == MANGLED_RECORD and "admission_normalized_arguments" not in b
+
+
+def test_two_differently_normalized_calls_report_their_own_records(lab):
+    lab.queries["describe_component"] = release()
+    a = call(lab, "run_component", run_args(config=copy.deepcopy(MANGLED), seed=7))
+    retry_cfg = {"argv": ARGV, "seed": "11", "timeout_seconds": 180}  # only config.seed needs normalizing
+    b = call(lab, "run_component", run_args(config=retry_cfg, seed=7))
+    assert b["replayed"] is True and lab.executed == 1
+    assert [c["path"] for c in b["normalized_arguments"]] == ["config.seed"]
+    assert [c["path"] for c in b["admission_normalized_arguments"]] == [
+        "config.argv", "config.seed", "config.timeout_seconds"]
+    assert a["normalized_arguments"] == b["admission_normalized_arguments"]
 
 
 # -- tool descriptions and the HTTP client -------------------------------------------------------------------------

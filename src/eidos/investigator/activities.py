@@ -105,6 +105,24 @@ def _watching(abort: DecisionAbort, check: Callable[[], str | None], every: floa
         stop.set()
 
 
+def _activity_cancelled() -> bool:
+    """Whether Temporal has cancelled the running activity (False outside an activity context, as in unit tests)."""
+    try:
+        return bool(activity.is_cancelled())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _abort_reason(abort: DecisionAbort) -> str | None:
+    """Why a decision whose response has arrived must not be proposed: a Temporal cancellation (checked directly,
+    since the watcher stops at its first reason, which may be the deadline) or a stop/pause the watcher saw. The
+    deadline alone does not stop a decision that has its response: the lab checks the attempt's deadline itself."""
+    if _activity_cancelled():
+        abort.trigger("activity-cancelled")
+        return "activity-cancelled"
+    return abort.reason if abort.reason not in (None, "decision-deadline") else None
+
+
 def _hb(fn):
     @functools.wraps(fn)
     def wrapper(self, a):
@@ -256,49 +274,59 @@ class InvestigatorActivities:
                               turn_so_far=self._turn_so_far(p, turn), limits=turn["spec"]["limits"], settings=cfg,
                               read_tools=self._read_tools(p), view=view, abort=abort)
         attempt = activity.info().attempt
-        try:
-            with _watching(abort, lambda: self._not_active(p, a["investigation_id"]),
-                           float(cfg.get("abort_poll_seconds", ABORT_WATCH_SECONDS))):
-                res = runtime.decide(req)
-        except DecisionAborted as exc:
-            # Stopped, paused or cancelled: nothing is proposed. Usage is what the responses reported; uncertain when a
-            # request was abandoned in flight (its bill is unknown), and the reservation is settled against it.
-            usage = {**exc.possible_usage, "uncertain": bool(exc.in_flight or exc.possible_usage.get("uncertain"))}
-            self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": usage, "reserved": reserved,
-                            "reservation_ref": reservation_ref}, project=p,
-                            key=f"usage-abort:{a['turn_id']}:{a['slot']}:{attempt}")
-            if exc.reason == "activity-cancelled":
-                raise ApplicationError(str(exc), type="DECISION_ABORTED", non_retryable=True) from exc
-            return {"accepted": False, "reason": exc.reason, "n_calls": 0}
-        except ModelCallFailed as exc:
-            self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": {**exc.possible_usage, "uncertain": True,
-                            "error": str(exc)[:500]}, "reserved": reserved,
-                            "reservation_ref": reservation_ref}, project=p,
-                            key=f"usage-fail:{a['turn_id']}:{a['slot']}:{attempt}")
-            raise ApplicationError(str(exc), type="MODEL_CALL_FAILED", non_retryable=not exc.retryable) from exc
-        # Spend is the first durable write: a crash before acceptance must not lose billed requests.
-        self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": res.usage, "reserved": reserved,
-                                                      "reservation_ref": reservation_ref},
-                        project=p, key=f"usage:{a['turn_id']}:{a['slot']}:{attempt}")
-        if abort.reason not in (None, "decision-deadline"):
-            # Stopped, paused or cancelled after the last response arrived: its decision is never proposed (ADR 0017).
-            if abort.reason == "activity-cancelled":
+
+        def aborted() -> dict:
+            if abort.reason == "activity-cancelled" or _activity_cancelled():
                 raise ApplicationError("decision aborted: activity-cancelled", type="DECISION_ABORTED",
                                        non_retryable=True)
             return {"accepted": False, "reason": abort.reason, "n_calls": 0}
-        resp = self.inv.upload(p, data=json.dumps(res.raw_response, default=str, sort_keys=True).encode(),
-                               media_type="application/json", schema="model-response/1", role="context",
-                               name=f"response-{a['turn_id']}-{a['slot']}-{attempt}",
-                               key=f"resp:{a['turn_id']}:{a['slot']}:{attempt}")
-        try:
-            r = self.wf.command("accept_decision", {"turn_id": a["turn_id"], "slot": a["slot"], "proposal": res.proposal,
-                                "usage": res.usage, "usage_recorded": True, "model_settings": res.model_settings,
-                                "prompt_revision": res.prompt_revision,
-                                "bounded_outcome": ((res.proposal or {}).get("control") or {}).get("bounded_outcome"),
-                                "response_artifact_id": resp["result"]["artifact_id"], "attempt": attempt},
-                                project=p, key=f"accept:{a['turn_id']}:{a['slot']}:{attempt}")["result"]
-        except LabError as exc:
-            raise _app_error(exc) from exc
+
+        # F2b: cancellation and the investigation status are monitored until the decision is accepted, not only while
+        # the provider request runs: a stop, pause or Temporal cancellation that arrives after the last response (while
+        # usage is recorded or the response uploaded) still prevents acceptance. The lab enforces the stop at the
+        # durable boundary itself (accept_decision locks the investigation row); a cancellation is durable once the
+        # cancelled TurnWorkflow closes the turn, which accept_decision refuses under the turn row lock.
+        with _watching(abort, lambda: self._not_active(p, a["investigation_id"]),
+                       float(cfg.get("abort_poll_seconds", ABORT_WATCH_SECONDS))):
+            try:
+                res = runtime.decide(req)
+            except DecisionAborted as exc:
+                # Stopped, paused or cancelled: nothing is proposed. Usage is what the responses reported; uncertain
+                # when a request was abandoned in flight (its bill is unknown); the reservation is settled against it.
+                usage = {**exc.possible_usage, "uncertain": bool(exc.in_flight or exc.possible_usage.get("uncertain"))}
+                self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": usage, "reserved": reserved,
+                                "reservation_ref": reservation_ref}, project=p,
+                                key=f"usage-abort:{a['turn_id']}:{a['slot']}:{attempt}")
+                if exc.reason == "activity-cancelled":
+                    raise ApplicationError(str(exc), type="DECISION_ABORTED", non_retryable=True) from exc
+                return {"accepted": False, "reason": exc.reason, "n_calls": 0}
+            except ModelCallFailed as exc:
+                self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": {**exc.possible_usage,
+                                "uncertain": True, "error": str(exc)[:500]}, "reserved": reserved,
+                                "reservation_ref": reservation_ref}, project=p,
+                                key=f"usage-fail:{a['turn_id']}:{a['slot']}:{attempt}")
+                raise ApplicationError(str(exc), type="MODEL_CALL_FAILED", non_retryable=not exc.retryable) from exc
+            # Spend is the first durable write: a crash before acceptance must not lose billed requests.
+            self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": res.usage, "reserved": reserved,
+                                                   "reservation_ref": reservation_ref},
+                            project=p, key=f"usage:{a['turn_id']}:{a['slot']}:{attempt}")
+            if _abort_reason(abort):  # stopped, paused or cancelled after the last response: never proposed (ADR 0017)
+                return aborted()
+            resp = self.inv.upload(p, data=json.dumps(res.raw_response, default=str, sort_keys=True).encode(),
+                                   media_type="application/json", schema="model-response/1", role="context",
+                                   name=f"response-{a['turn_id']}-{a['slot']}-{attempt}",
+                                   key=f"resp:{a['turn_id']}:{a['slot']}:{attempt}")
+            if _abort_reason(abort):  # last check before the durable acceptance boundary
+                return aborted()
+            try:
+                r = self.wf.command("accept_decision", {"turn_id": a["turn_id"], "slot": a["slot"],
+                                    "proposal": res.proposal, "usage": res.usage, "usage_recorded": True,
+                                    "model_settings": res.model_settings, "prompt_revision": res.prompt_revision,
+                                    "bounded_outcome": ((res.proposal or {}).get("control") or {}).get("bounded_outcome"),
+                                    "response_artifact_id": resp["result"]["artifact_id"], "attempt": attempt},
+                                    project=p, key=f"accept:{a['turn_id']}:{a['slot']}:{attempt}")["result"]
+            except LabError as exc:
+                raise _app_error(exc) from exc
         return bounded({"accepted": r["accepted"], "decision_id": r["decision_id"], "n_calls": len(r.get("calls") or []),
                         "control": r.get("control"), "reason": r.get("reason")})
 
@@ -325,6 +353,10 @@ class InvestigatorActivities:
         p = a["project_id"]
         turn = self.wf.query("get_turn", {"turn_id": a["turn_id"]}, project=p)
         dec = next(d for d in turn["decisions"] if d["id"] == a["decision_id"] and d["accepted"])
+        if turn["status"] != "open":
+            # F2b: a decision accepted just before its turn was closed (the TurnWorkflow was cancelled while the decide
+            # activity was accepting it) is never executed: the turn's closing is the durable cancellation.
+            return {"summary": [], "skipped": f"turn-{turn['status']}"}
         receipts = []
         for call in dec["body"]["calls"]:
             receipts.append(self._execute_call(p, a["investigation_id"], turn["id"], dec["id"], call))

@@ -27,6 +27,18 @@ cap and 6/8 at 16384 tokens / 120 s), `tool` 6/8 (was 4/8); `docs/release/eviden
 - `accept_decision` refuses (records unapplied) a decision when the investigation is not active, when a later attempt
   of the same slot has started (`superseded-attempt`), or when the attempt began more than the turn deadline ago
   (`decision-deadline-passed`; `reserve_model_budget` records each attempt's start).
+- Review R2 fixes (ADR 0017 addendum):
+  - `accept_decision` locks the investigation row (after the turn row, the same order as `complete_turn`), so a
+    concurrent stop is never missed.
+  - The decide activity watches for a stop or a Temporal cancellation until the decision is accepted, not only during
+    the provider request. `execute_decision` never runs a decision whose turn is closed.
+  - Reading and settling a turn's model reservations is serialized by the turn row lock (`reserve_model_budget`,
+    `record_model_usage`), so a reservation is released once. A settlement naming another turn's reservation is
+    refused.
+  - A numeric string is normalized only if the converted value is exactly the supplied decimal: `"1e-400"` and
+    `"9007199254740993.0"` are passed through to the lab and refused.
+  - A replayed command's receipt reports this invocation's `normalized_arguments`, and the committing call's as
+    `admission_normalized_arguments`.
 
 ### Output and time limits
 - `scripts/qualify/live_provider_check.py --max-output-tokens N` (default 4096, unchanged); recorded in the receipt's

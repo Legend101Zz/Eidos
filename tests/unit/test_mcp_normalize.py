@@ -8,6 +8,10 @@ from __future__ import annotations
 
 import copy
 import json
+import math
+import random
+import struct
+from decimal import Decimal
 
 import pytest
 
@@ -142,6 +146,174 @@ def test_normalize_arguments_applies_the_tool_schema_and_the_config_schema():
     # without a config schema only the tool's own schema applies: config is an unconstrained object
     out2, changes2 = normalize_arguments(args, tool_schema)
     assert out2["config"] == MANGLED and [c["path"] for c in changes2] == ["seed"]
+
+
+# -- F2b: a non-integer numeric string becomes a float only if the double, as serialized, denotes that decimal ------
+
+NUMBER = {"type": "number"}
+
+
+def bits(x: float) -> bytes:
+    """The exact IEEE-754 pattern: tells -0.0 from 0.0 and every last digit of a double."""
+    return struct.pack("<d", x)
+
+
+@pytest.mark.parametrize("text", ["1e-400", "-1e-400", "1e-324"])
+def test_underflow_to_zero_is_left_untouched(text):
+    assert float(text) == 0.0  # the premise: float() would silently turn this into (signed) zero
+    untouched(text, NUMBER, "timeout_seconds")
+
+
+def test_underflow_in_a_nested_config_path_is_left_untouched_and_the_rest_is_normalized():
+    schema = {"type": "object", "properties": {"stages": {"type": "array", "items": {"type": "object", "properties": {
+        "lr": {"type": "number"}, "decay": {"type": "number"}, "steps": {"type": "integer"}}}},
+        "eps": {"type": "array", "items": {"type": "number"}}}}
+    cfg = {"stages": [{"lr": "1e-400", "decay": "0.5", "steps": "10"}, {"lr": "-1e-400", "decay": "1e-324"}],
+           "eps": ["1e-324", "0.25", "1e-400"]}
+    out, changes = normalize(cfg, schema, "config")
+    assert out == {"stages": [{"lr": "1e-400", "decay": 0.5, "steps": 10}, {"lr": "-1e-400", "decay": "1e-324"}],
+                   "eps": ["1e-324", 0.25, "1e-400"]}
+    assert {c["path"] for c in changes} == {"config.stages[0].decay", "config.stages[0].steps", "config.eps[1]"}
+    assert cfg["stages"][0]["lr"] == "1e-400"  # the input is not modified
+    # what stays a string is exactly what the lab then refuses, field by field
+    assert validate_config(out, schema) == [
+        "config.stages[0].lr: expected number, got str", "config.stages[1].lr: expected number, got str",
+        "config.stages[1].decay: expected number, got str", "config.eps[0]: expected number, got str",
+        "config.eps[2]: expected number, got str"]
+
+
+def test_underflow_in_a_tool_config_goes_through_normalize_arguments_untouched():
+    tool_schema = BY_NAME["run_component"].input_schema()
+    args = {"project": "p", "command_key": "k", "component_ref": "x@1.0.0",
+            "config": {"timeout_seconds": "1e-400", "seed": "11"}}
+    out, changes = normalize_arguments(args, tool_schema, CONFIG_SCHEMA)
+    assert out["config"] == {"timeout_seconds": "1e-400", "seed": 11}
+    assert [c["path"] for c in changes] == ["config.seed"]  # nothing is recorded for the value that stayed a string
+    assert validate_config(out["config"], CONFIG_SCHEMA) == ["config.timeout_seconds: expected number, got str"]
+
+
+@pytest.mark.parametrize("text", [
+    "9007199254740993.0",                                   # 2**53 + 1: the nearest double is ...992.0
+    "9007199254740993e0",
+    "0.1000000000000000055511151231257827",                 # more digits than the double 0.1 prints
+    "0.10000000000000000555111512312578270211815834045410156250",  # the double 0.1's exact value, as a decimal
+    "1.00000000000000001",                                  # rounds to 1.0
+    "1.7976931348623158e308",                               # above the largest repr, still rounds to the maximum
+    "4.9e-324",                                             # rounds to the smallest subnormal, whose repr is 5e-324
+])
+def test_precision_loss_is_left_untouched(text):
+    f = float(text)
+    assert math.isfinite(f) and Decimal(repr(f)) != Decimal(text)  # the premise: the double would not denote this
+    untouched(text, NUMBER, "x")
+
+
+@pytest.mark.parametrize("text", ["1e400", "-1e400", "1.8e308", "-1.7976931348623159e308"])
+def test_overflow_is_left_untouched(text):
+    untouched(text, NUMBER, "x")
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("0.1", 0.1), ("0.5", 0.5), ("1e-3", 0.001), ("1E5", 100000.0), ("-0.0", -0.0), ("2.5e-308", 2.5e-308),
+    ("9007199254740992.0", 9007199254740992.0), ("1.7976931348623157e308", 1.7976931348623157e308),
+    ("5e-324", 5e-324), ("5E-324", 5e-324),                 # the smallest subnormal: repr(5e-324) == "5e-324"
+    ("2.2250738585072014e-308", 2.2250738585072014e-308),   # the smallest normal double
+    ("0.30000000000000004", 0.30000000000000004), ("1e22", 1e22), ("1e23", 1e23), ("1.5e300", 1.5e300),
+    ("100.0", 100.0), ("1.00", 1.0), ("0e0", 0.0), ("0.0", 0.0), ("-0.0e5", -0.0),
+])
+def test_a_literal_the_double_denotes_exactly_is_still_converted(text, expected):
+    out, changes = normalize(text, NUMBER, "x")
+    assert type(out) is float and bits(out) == bits(expected)
+    assert changes == [{"path": "x", "rule": "numeric-string", "expected": "number", "original": text,
+                        "normalized": out}]
+    assert Decimal(repr(out)) == Decimal(text) and Decimal(json.dumps(out)) == Decimal(text)
+
+
+def test_the_smallest_subnormal_is_kept_and_is_not_confused_with_underflow():
+    assert repr(5e-324) == "5e-324"
+    out, _ = normalize("5e-324", NUMBER)
+    assert out == 5e-324 and out > 0.0
+    untouched("2e-324", NUMBER)  # below half of it: that one does underflow to 0.0
+
+
+def test_negative_zero_keeps_its_sign():
+    out, _ = normalize("-0.0", NUMBER)
+    assert math.copysign(1.0, out) == -1.0
+    out, _ = normalize("0.0", NUMBER)
+    assert math.copysign(1.0, out) == 1.0
+
+
+@pytest.mark.parametrize("text", ["9007199254740993", "-9007199254740993", "9007199254740995",
+                                  "18014398509481985", "123456789012345678901234567890"])
+@pytest.mark.parametrize("want", ["integer", "number"])
+def test_integer_literals_beyond_two_to_the_53_stay_exact_ints_for_both_types(text, want):
+    out, changes = normalize(text, {"type": want}, "n")
+    assert type(out) is int and out == int(text)
+    assert changes == [{"path": "n", "rule": "numeric-string", "expected": want, "original": text,
+                        "normalized": int(text)}]
+
+
+def test_the_2_to_the_53_plus_one_integer_is_not_rounded_but_its_decimal_form_is_refused():
+    assert normalize("9007199254740993", NUMBER)[0] == 9007199254740993
+    assert int(float("9007199254740993")) == 9007199254740992  # what a float conversion would have lost
+    assert normalize("9007199254740993.0", NUMBER)[1] == []
+
+
+def test_a_long_fractional_literal_over_the_length_bound_is_left_alone():
+    untouched("0." + "1" * 70, NUMBER, "x")
+
+
+DOUBLES = random.Random(20261111)
+
+
+def random_doubles(n):
+    """Random doubles over the whole range: random bit patterns, plus uniform and log-uniform draws, plus edges."""
+    xs = [0.0, -0.0, 0.1, 0.2, 0.3, 1.0, -1.0, 1 / 3, 5e-324, -5e-324, 2.2250738585072014e-308, 1.7976931348623157e308,
+          -1.7976931348623157e308, 2.0**53, 2.0**53 + 2, 1e22, 1e23, 1e-5, 123456.789]
+    while len(xs) < n:
+        pick = DOUBLES.randrange(3)
+        if pick == 0:
+            x = struct.unpack("<d", DOUBLES.getrandbits(64).to_bytes(8, "little"))[0]
+        elif pick == 1:
+            x = DOUBLES.uniform(-1e6, 1e6)
+        else:
+            x = DOUBLES.choice((-1, 1)) * 10 ** DOUBLES.uniform(-320, 308)
+        if math.isfinite(x):
+            xs.append(x)
+    return xs
+
+
+def test_the_repr_of_any_finite_double_normalizes_to_exactly_that_double():
+    xs = random_doubles(3000)
+    assert len({bits(x) for x in xs}) > 2500 and any(abs(x) < 1e-300 for x in xs) and any(abs(x) > 1e300 for x in xs)
+    for x in xs:
+        out, changes = normalize(repr(x), NUMBER, "x")
+        assert type(out) is float and bits(out) == bits(x), repr(x)
+        assert len(changes) == 1 and changes[0]["rule"] == "numeric-string" and changes[0]["normalized"] is out
+        # the same through JSON (the command path): the serialized double reads back to the same double
+        assert bits(json.loads(json.dumps(out))) == bits(x), repr(x)
+
+
+def test_random_decimal_strings_are_either_converted_exactly_or_left_untouched():
+    rng = random.Random(7)
+    converted = untouched_count = 0
+    for _ in range(3000):
+        whole = rng.choice(["0", str(rng.randint(1, 10 ** rng.randint(1, 12)))])  # canonical: no leading zero
+        frac = "".join(rng.choice("0123456789") for _ in range(rng.randint(1, 20)))
+        text = ("-" if rng.random() < 0.3 else "") + whole + "." + frac
+        if rng.random() < 0.5:
+            text += f"e{rng.randint(-340, 340)}"
+        out, changes = normalize(text, NUMBER, "x")
+        if changes:
+            converted += 1
+            assert type(out) is float and math.isfinite(out)
+            assert Decimal(repr(out)) == Decimal(text), text  # never a value other than the one supplied
+            assert Decimal(json.dumps(out)) == Decimal(text), text
+        else:
+            untouched_count += 1
+            assert out == text, text
+            f = float(text)
+            assert not math.isfinite(f) or Decimal(repr(f)) != Decimal(text), text  # and refusing was warranted
+    assert converted > 100 and untouched_count > 100  # both outcomes were exercised
 
 
 # -- negatives: ambiguous shapes stay untouched ----------------------------------------------------------------

@@ -7,7 +7,10 @@ exactly two shapes, and only where a schema the adapter holds says what the valu
 
 * ``item-wrapper``: an object with the single key ``item`` whose value is an array, where the schema says ``array``.
 * ``numeric-string``: a string in canonical JSON number syntax, where the schema says ``integer`` (an integer literal
-  only: ``"11"``, ``"-3"``) or ``number`` (any finite JSON number literal: ``"0.5"``, ``"1e-3"``).
+  only: ``"11"``, ``"-3"``) or ``number`` (a finite JSON number literal: ``"0.5"``, ``"1e-3"``) whose value is kept
+  exactly: integer literals become exact integers; any other literal is converted only if the resulting double, as
+  serialized (its shortest round-trip decimal), denotes the same decimal value, so ``"1e-400"`` (underflow) and
+  ``"9007199254740993.0"`` (precision loss) are left untouched.
 
 Anything else is left untouched for the lab to refuse: a one-element ``{"item": "x"}``, a wrapper with other keys,
 ``" 11"``, ``"011"``, ``"+1"``, ``"1.0"`` for an integer, ``"NaN"``, booleans, and every value whose schema is absent,
@@ -20,6 +23,7 @@ from __future__ import annotations
 
 import math
 import re
+from decimal import Decimal
 from typing import Any
 
 _INTEGER = re.compile(r"-?(?:0|[1-9][0-9]*)")
@@ -39,7 +43,13 @@ def _number(s: str, want: str) -> int | float | None:
     if _INTEGER.fullmatch(s):
         return int(s)
     v = float(s)
-    return v if math.isfinite(v) else None
+    # F2b: only a conversion that keeps the supplied decimal value is made. The float travels the command path as
+    # JSON, i.e. as its shortest round-trip decimal (repr), so that decimal must equal the string's exactly:
+    # "0.1" and "1e-3" pass; "1e-400" (underflows to 0.0) and "9007199254740993.0" (rounds to ...992.0) or any
+    # literal with more significant digits than a double holds are left untouched for the lab to refuse.
+    if not math.isfinite(v) or Decimal(repr(v)) != Decimal(s):
+        return None
+    return v
 
 
 def _join(path: str, key: str) -> str:
