@@ -1,0 +1,56 @@
+{
+  "investigation": "inv_562bf48161db",
+  "deadline_utc": "2026-11-10T20:17:11.733184+00:00",
+  "late_usage": [
+    {
+      "seq": 350,
+      "project_id": "pilot-a4-004a5d2f371a42d3",
+      "investigation_id": "inv_562bf48161db",
+      "type": "model.usage",
+      "subject": "turn_inv_562bf48161db_6",
+      "body": {
+        "usage": {
+          "calls": 1,
+          "model": "openai-compatible:MiniMax-M3.1-Flash",
+          "provider": "openai-compatible",
+          "per_request": [
+            {
+              "model": "MiniMax-M3.1-Flash",
+              "input_tokens": 9743,
+              "finish_reason": "stop",
+              "output_tokens": 9026
+            }
+          ],
+          "request_ids": [
+            "0742aeaf0a1791f881b6503f4025e10f"
+          ],
+          "input_tokens": 9743,
+          "output_tokens": 9026,
+          "served_models": [
+            "MiniMax-M3.1-Flash"
+          ],
+          "structured_output": {
+            "mode": "json",
+            "valid": true,
+            "errors": [],
+            "reasks": 0,
+            "repairs": [
+              "args-object",
+              "scope-object"
+            ],
+            "json_mode": true
+          }
+        }
+      },
+      "command_id": 551,
+      "created_at": "2026-11-11 01:47:31.202895+05:30"
+    }
+  ],
+  "final_accounting": {
+    "input": 149533,
+    "cache_read": 150109,
+    "cache_write": 0,
+    "output": 77016,
+    "total": 376658
+  }
+}

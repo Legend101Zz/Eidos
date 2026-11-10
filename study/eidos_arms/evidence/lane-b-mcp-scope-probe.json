@@ -1,0 +1,5 @@
+{
+  "allowed_is_error": false,
+  "other_existing_project_is_error": true,
+  "other_project_error_code": "NOT_FOUND"
+}

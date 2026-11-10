@@ -1,0 +1,188 @@
+{
+  "generated_at": "2026-11-10T20:35:53.839332+00:00",
+  "python": "/Volumes/Mrigesh SSD/eidos-v1/venvs/pilot-1b-110/bin/python",
+  "eidos_lab": "1.1.0",
+  "runs": [
+    {
+      "directory": "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/runs-workers/lane-b-arm3-smoke-01",
+      "arm": 3,
+      "status": "incident",
+      "incident_reason": "EPERM: operation not permitted, open '/tmp/claude-501'",
+      "tokens": {
+        "input": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 0,
+        "total": 0
+      },
+      "model_ids_seen": [],
+      "wall_s": 2.982
+    },
+    {
+      "directory": "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/runs-workers/lane-b-arm3-smoke-02",
+      "arm": 3,
+      "status": "crash",
+      "incident_reason": null,
+      "tokens": {
+        "input": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 0,
+        "total": 0
+      },
+      "model_ids_seen": [],
+      "wall_s": 241.205
+    },
+    {
+      "directory": "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/runs-workers/lane-b-arm3-smoke-03",
+      "arm": 3,
+      "status": "crash",
+      "incident_reason": null,
+      "tokens": {
+        "input": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 0,
+        "total": 0
+      },
+      "model_ids_seen": [],
+      "wall_s": 147.906
+    },
+    {
+      "directory": "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/runs-workers/lane-b-arm3-smoke-04",
+      "arm": 3,
+      "status": "incident",
+      "incident_reason": "Prototype omitted partial stream events: observed usage is 0 but actual provider spend is unknown; model ran and timed out without a final usage result",
+      "tokens": {
+        "input": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 0,
+        "total": 0
+      },
+      "model_ids_seen": [
+        "MiniMax-M3.1-Flash"
+      ],
+      "wall_s": 302.74
+    },
+    {
+      "directory": "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/runs-workers/lane-b-arm3-smoke-05",
+      "arm": 3,
+      "status": "incident",
+      "incident_reason": "Prototype omitted partial stream events: observed usage is 0 but actual provider spend is unknown; model ran and timed out without a final usage result",
+      "tokens": {
+        "input": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 0,
+        "total": 0
+      },
+      "model_ids_seen": [
+        "MiniMax-M3.1-Flash"
+      ],
+      "wall_s": 302.764
+    },
+    {
+      "directory": "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/runs-workers/lane-b-arm3-smoke-06",
+      "arm": 3,
+      "status": "invalid_output",
+      "incident_reason": "Artifact audit: candidate.code_path out/project.py resolves under out/out/ and is missing; unmodified model answer retained",
+      "tokens": {
+        "input": 60738,
+        "cache_read": 1216512,
+        "cache_write": 0,
+        "output": 24614,
+        "total": 1301864
+      },
+      "model_ids_seen": [
+        "MiniMax-M3.1-Flash"
+      ],
+      "wall_s": 188.681
+    },
+    {
+      "directory": "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/runs-workers/lane-b-arm3-smoke-07",
+      "arm": 3,
+      "status": "timeout",
+      "incident_reason": null,
+      "tokens": {
+        "input": 36740,
+        "cache_read": 902272,
+        "cache_write": 0,
+        "output": 16414,
+        "total": 955426
+      },
+      "model_ids_seen": [
+        "MiniMax-M3.1-Flash"
+      ],
+      "wall_s": 302.698
+    },
+    {
+      "directory": "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/runs-workers/lane-b-arm3-smoke-08",
+      "arm": 3,
+      "status": "ok",
+      "incident_reason": null,
+      "tokens": {
+        "input": 51080,
+        "cache_read": 908278,
+        "cache_write": 0,
+        "output": 16140,
+        "total": 975498
+      },
+      "model_ids_seen": [
+        "MiniMax-M3.1-Flash"
+      ],
+      "wall_s": 142.443
+    },
+    {
+      "directory": "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/runs-workers/lane-b-arm4-smoke-01",
+      "arm": 4,
+      "status": "ok",
+      "incident_reason": null,
+      "tokens": {
+        "input": 57342,
+        "cache_read": 102565,
+        "cache_write": 0,
+        "output": 25562,
+        "total": 185469
+      },
+      "model_ids_seen": [
+        "MiniMax-M3.1-Flash"
+      ],
+      "wall_s": 143.708
+    },
+    {
+      "directory": "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/runs-workers/lane-b-arm4-smoke-02",
+      "arm": 4,
+      "status": "incident",
+      "incident_reason": "Pre-bridge 1.1.0 deadline enforcement failure: in-flight provider call continued after stop; final ledger adds 18,769 tokens at 01:47:31 IST after the worker returned at 01:47:12 IST",
+      "tokens": {
+        "input": 149533,
+        "cache_read": 150109,
+        "cache_write": 0,
+        "output": 77016,
+        "total": 376658
+      },
+      "model_ids_seen": [
+        "MiniMax-M3.1-Flash"
+      ],
+      "wall_s": 622.976
+    },
+    {
+      "directory": "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/runs-workers/lane-b-arm4-smoke-03",
+      "arm": 4,
+      "status": "ok",
+      "incident_reason": null,
+      "tokens": {
+        "input": 107116,
+        "cache_read": 95220,
+        "cache_write": 0,
+        "output": 74901,
+        "total": 277237
+      },
+      "model_ids_seen": [
+        "MiniMax-M3.1-Flash"
+      ],
+      "wall_s": 510.646
+    }
+  ]
+}
