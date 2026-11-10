@@ -414,6 +414,8 @@ def _charge_model_usage(ctx: Ctx, inv_id: str, usage: dict, *, ref: str, reserve
     reserved = reserved or {}
     uncertain = bool(usage.get("uncertain"))
     detail = {k: usage.get(k) for k in ("provider", "model", "request_ids", "calls")}
+    if usage.get("reasoning_tokens") is not None:  # already inside output_tokens (ADR 0016); on the ledger too
+        detail["reasoning_tokens"] = usage["reasoning_tokens"]
     tokens = float(usage.get("input_tokens", 0) or 0) + float(usage.get("output_tokens", 0) or 0)
     usd = float(usage.get("usd") or 0)
     still_open = _open_by_ref(ctx, scope, ref) if reserved else {}

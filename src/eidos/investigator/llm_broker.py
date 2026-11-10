@@ -38,6 +38,19 @@ class ProviderResult:
     input_tokens: int
     output_tokens: int
     request_id: str | None = None
+    reasoning_tokens: int | None = None  # as reported (OpenAI-compatible completion_tokens_details); None if absent
+
+
+def openai_usage(u: dict) -> tuple[int, int, int | None]:
+    """(input, charged output, reasoning) from an OpenAI-compatible ``usage`` object. Reasoning tokens are part of
+    ``completion_tokens``; a provider reporting more reasoning than completion tokens counts them separately, and
+    they are then added to the charged output (ADR 0016). Never dropped: the reported value is returned."""
+    inp, out = int(u.get("prompt_tokens") or 0), int(u.get("completion_tokens") or 0)
+    r = (u.get("completion_tokens_details") or {}).get("reasoning_tokens")
+    reasoning = int(r) if isinstance(r, int) and not isinstance(r, bool) else None
+    if reasoning is not None and reasoning > out:
+        out += reasoning
+    return inp, out, reasoning
 
 
 class ProviderRejected(Exception):
@@ -107,9 +120,9 @@ class OpenAICompatibleProvider:
         if r.status_code != 200:
             raise ProviderRejected(f"provider status {r.status_code}")
         data = r.json()
-        u = data.get("usage") or {}
+        inp, out, reasoning = openai_usage(data.get("usage") or {})
         text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
-        return ProviderResult(text, int(u.get("prompt_tokens", 0)), int(u.get("completion_tokens", 0)), data.get("id"))
+        return ProviderResult(text, inp, out, data.get("id"), reasoning)
 
     def __repr__(self) -> str:
         return f"OpenAICompatibleProvider({self.base_url!r})"
@@ -203,11 +216,11 @@ class LlmBroker:
             return self._err(504, "OUTCOME_UNKNOWN", f"the provider did not confirm the request ({exc}); its "
                              "possible cost was charged as uncertain", call_id=cid)
         digest = "sha256:" + hashlib.sha256(out.text.encode()).hexdigest()
-        st = self._settle(project, {**settle, "status": "ok", "usage": {"input_tokens": out.input_tokens,
-                                    "output_tokens": out.output_tokens}, "provider_request_id": out.request_id,
+        usage = {"input_tokens": out.input_tokens, "output_tokens": out.output_tokens,
+                 **({"reasoning_tokens": out.reasoning_tokens} if out.reasoning_tokens is not None else {})}
+        st = self._settle(project, {**settle, "status": "ok", "usage": usage, "provider_request_id": out.request_id,
                                     "response_digest": digest})
-        return 200, {"call_id": cid, "model": model, "text": out.text,
-                     "usage": {"input_tokens": out.input_tokens, "output_tokens": out.output_tokens},
+        return 200, {"call_id": cid, "model": model, "text": out.text, "usage": usage,
                      "usd": (st or {}).get("charged_usd")}
 
     def _settle(self, project: str, payload: dict) -> dict | None:

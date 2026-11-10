@@ -205,14 +205,17 @@ def _settle(ctx: Ctx, call, *, status: str, usage: dict, request_id: str | None,
     uncertain = status == "uncertain"
     if uncertain:  # the request may have been charged: the reserved maximum is possible usage
         tokens, usd = float(body["reserved_tokens"]), float(body["reserved_usd"])
-        inp, out = None, None
+        inp, out, reasoning = None, None, None
     else:
         inp = int(usage.get("input_tokens") or 0)
         out = int(usage.get("output_tokens") or 0)
+        r = usage.get("reasoning_tokens")  # already inside output_tokens (llm_broker.openai_usage); recorded
+        reasoning = int(r) if isinstance(r, int) and not isinstance(r, bool) else None
         tokens = float(inp + out)
         usd = _usd(g.body.get("price_per_mtok") or {}, body["model"], inp, out)
+    rusage = {"reasoning_tokens": reasoning} if reasoning is not None else {}
     scope = body.get("budget_scope")
-    detail = {"provider": "llm-broker", "model": body["model"], "request_ids": [request_id] if request_id else [],
+    detail = {**rusage, "provider": "llm-broker", "model": body["model"], "request_ids": [request_id] if request_id else [],
               "grant": g.id, "call": call.id, "job": body["job_id"]}
     if scope:
         for dim, actual in (("model_tokens", tokens), ("model_usd", usd)):
@@ -221,9 +224,9 @@ def _settle(ctx: Ctx, call, *, status: str, usage: dict, request_id: str | None,
                 ctx.tx.settle(scope, dim, reserved=held, actual=actual, ref=f"llm:{g.id}:{call.id}",
                               uncertain=uncertain, detail=detail)
     body.update({"charged_tokens": tokens, "charged_usd": usd, "uncertain": uncertain,
-                 "usage": {"input_tokens": inp, "output_tokens": out}, "provider_request_id": request_id,
+                 "usage": {"input_tokens": inp, "output_tokens": out, **rusage}, "provider_request_id": request_id,
                  "response_digest": response_digest, "error": error, "settled_by": reason,
-                 "result": {"usage": {"input_tokens": inp, "output_tokens": out}, "usd": usd}})
+                 "result": {"usage": {"input_tokens": inp, "output_tokens": out, **rusage}, "usd": usd}})
     ctx.tx.put_record("llm_call", call.id, ctx.project_id, body, created_by=ctx.principal.id, status=status,
                       parent_id=g.id)
     ctx.event("llm.call", call.id, {"grant": g.id, "job_id": body["job_id"], "model": body["model"], "status": status,
