@@ -30,7 +30,7 @@ def digest(path):
 
 
 def dispatch(arm, run_dir):
-    """Always use installed 1.1.0, regardless of lane A controller's interpreter."""
+    """Always use the recorded fixed wheel build, regardless of lane A controller's interpreter."""
     run_dir = run_dir.resolve()
     r = subprocess.run([lab.python(), '-m', 'study.eidos_arms.worker', '--arm', str(arm),
                         '--run-dir', str(run_dir)], cwd=ROOT, env=lab.environment(), stdin=subprocess.DEVNULL)
@@ -41,15 +41,9 @@ def dispatch(arm, run_dir):
 
 
 def prompt(arm, run_dir):
-    base = ROOT / 'study/prompts/task.md'
-    # Production must read the merged lane A prompt; smoke can explicitly supply a non-study prompt.
-    if os.environ.get('EIDOS_STUDY_SMOKE_PROMPT'):
-        base = Path(os.environ['EIDOS_STUDY_SMOKE_PROMPT'])
-    text = base.read_text()
-    paragraph = (ROOT / f'study/prompts/tools_arm{arm}.md').read_text().strip()
-    if '{{TOOLS_PARAGRAPH}}' not in text:
-        raise ValueError('base prompt must contain {{TOOLS_PARAGRAPH}}')
-    return text.replace('{{TOOLS_PARAGRAPH}}', paragraph)
+    from study.common import read_json, render_prompt
+    return render_prompt(arm, read_json(run_dir / 'arm.json')['card'],
+                         base=os.environ.get('EIDOS_STUDY_SMOKE_PROMPT'))
 
 
 def envelope(meta):
@@ -66,7 +60,15 @@ def prepare(c, run_dir, arm):
     project = f'pilot-a{arm}-{uuid.uuid4().hex[:16]}'
     c.command('create_project', {'project_id': project, 'budgets': {
         'compute_seconds': 100000000, 'trials': 1000000}}, key='create:' + project)
+    c.command('update_profile_policy', {'policy': {'llm_broker': {'enabled': False},
+              'auto_freeze_approved_templates': True}}, project=project, key='policy:' + project)
+    policy = c.query('get_profile', {}, project=project)['body']['policy']
+    if policy.get('llm_broker', {}).get('enabled') is not False:
+        raise RuntimeError('study project must have policy.llm_broker explicitly disabled')
+    write_json(run_dir / 'lab_policy.json', {'project': project, 'policy': policy})
     imported = import_bundle(c, project, run_dir / 'task', python=os.environ['EIDOS_RESEARCH_PYTHON'])
+    from .charters import commit
+    imported.update(commit(c, project, imported['task_id'], run_dir))
     for directory in builtin_component_dirs():
         if directory.name in ('eidos.project.command', 'eidos.task.score-classification'):
             r = install_component(c, project, directory, 'default', True)

@@ -57,7 +57,7 @@ def run(run_dir, meta):
         wall, token_cap = envelope(meta)
         investigator['turn_deadline_seconds'] = wall
         # Everything in this context comes from the packaged task and common task prompt.
-        # Source is embedded because 1.1.0 JSON output mode has no functional read tools.
+        # Keep source embedded equally; ADR 0016 also enables JSON-mode read requests.
         files = {p.relative_to(run_dir / 'task').as_posix(): p.read_text()
                  for p in sorted((run_dir / 'task').rglob('*'))
                  if p.is_file() and p.suffix in ('.py', '.md', '.json', '.lock', '.txt')}
@@ -158,6 +158,8 @@ def run(run_dir, meta):
                 'selection_reason': reason, 'investigation_wall_s': round(time.monotonic() - begin, 3),
                 'provider_endpoint': bridge_receipt['upstream'], 'provider_outer_kill': True,
                 'usage_uncertain': uncertain,
+                'evidence_plan_count': len(records['evidence_plan']),
+                'assessment_count': len(assessments),
                 'investigator_config_sha': digest(Path(__file__).parent / 'investigator.json')}
     finally:
         if bridge is not None and bridge.poll() is None:

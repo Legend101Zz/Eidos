@@ -24,6 +24,9 @@ def main():
                   tokens={k: 0 for k in ('input', 'cache_read', 'cache_write', 'output', 'total')},
                   model_ids_seen=[], agent_claim='', transcript='transcript.jsonl')
     try:
+        from . import lab
+        record.update(eidos_commit_sha=lab.build_record()['eidos_commit_sha'],
+                      eidos_build=lab.build_record(), llm_broker_enabled=False)
         if a.arm == 4:
             from .arm4 import run
         else:
@@ -37,6 +40,10 @@ def main():
         (a.run_dir / 'transcript.jsonl').touch(exist_ok=True)
         ended = utc()
         wall = (datetime.fromisoformat(ended) - datetime.fromisoformat(record['started_at'])).total_seconds()
+        if (a.run_dir / 'lab_policy.json').exists():
+            record['llm_broker_policy'] = json.loads((a.run_dir / 'lab_policy.json').read_text())
+        if (a.run_dir / 'charter.json').exists():
+            record['charter'] = json.loads((a.run_dir / 'charter.json').read_text())
         record.update(ended_at=ended, wall_s=round(wall, 3), adapter_wall_s=round(time.monotonic() - t0, 3))
         write_json(a.run_dir / 'run_record.json', record)
     print(json.dumps(record))

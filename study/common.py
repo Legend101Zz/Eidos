@@ -104,11 +104,21 @@ def sandbox_command(run_dir, command, *, network=True, readonly=()):
     ]
 
 
-def render_prompt(arm):
+def render_prompt(arm, card, *, base=None):
+    """All four arms use the same card table and substitution, including smoke overrides."""
     paragraph = (STUDY / f"prompts/tools_arm{arm}.md").read_text().strip()
     if "PLACEHOLDER" in paragraph:
         raise NotImplementedError(f"arm {arm} tools paragraph not implemented")
-    return (STUDY / "prompts/task.md").read_text().replace("{{TOOLS_PARAGRAPH}}", paragraph)
+    text = Path(base or STUDY / "prompts/task.md").read_text()
+    if "{{TOOLS_PARAGRAPH}}" not in text:
+        raise ValueError("base prompt must contain {{TOOLS_PARAGRAPH}}")
+    cards = read_json(STUDY / "cards.json")
+    if card not in cards and not base and card != "TOY-REGRESSION":
+        raise ValueError(f"unknown study card: {card}")
+    if card in cards and "{{PRACTICAL_BAR}}" not in text:
+        raise ValueError("study prompt must contain {{PRACTICAL_BAR}}")
+    return text.replace("{{TOOLS_PARAGRAPH}}", paragraph).replace(
+        "{{PRACTICAL_BAR}}", cards.get(card, {}).get("practical_bar", ""))
 
 
 def dev_command(script, *args, **kwargs):

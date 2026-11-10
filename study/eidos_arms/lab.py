@@ -18,7 +18,7 @@ from pathlib import Path
 
 SSD = Path('/Volumes/Mrigesh SSD/eidos-v1')
 DEFAULT_HOME = SSD / 'pilot-1/lab/shared'
-DEFAULT_PYTHON = SSD / 'venvs/pilot-1b-110/bin/python'
+DEFAULT_PYTHON = SSD / 'venvs/pilot-1-lab/bin/python'
 
 
 def home():
@@ -27,6 +27,14 @@ def home():
 
 def python():
     return str(Path(os.environ.get('EIDOS_STUDY_PYTHON', DEFAULT_PYTHON)).absolute())
+
+
+def build_record():
+    path = Path(python()).parent.parent / 'pilot-build.json'
+    record = json.loads(path.read_text())
+    if not record.get('eidos_commit_sha') or record.get('python') != python():
+        raise RuntimeError('missing or mismatched fixed-build provenance')
+    return record
 
 
 def environment():
@@ -63,6 +71,7 @@ def guard_disk():
 
 def start():
     guard_disk()
+    build_record()
     home().mkdir(parents=True, exist_ok=True)
     with (home() / '.controller.lock').open('w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)

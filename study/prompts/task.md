@@ -3,6 +3,8 @@ the supplied project and the answer interface in `task/answer_schema.py`.
 Use only the supplied training and validation data for exploration and selection.
 The evaluator owns test data and performs independent confirmation after you finish.
 
+{{PRACTICAL_BAR}}
+
 Your tools: {{TOOLS_PARAGRAPH}}
 
 Your envelope is 30 minutes of wall time and 8,000,000 total processed model tokens
