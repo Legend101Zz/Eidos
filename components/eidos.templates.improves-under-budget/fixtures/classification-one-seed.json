@@ -1,0 +1,52 @@
+{
+ "name": "classification-one-seed",
+ "author_test": true,
+ "inputs": {
+  "request": {
+   "json": {
+    "claim": {
+     "kind": "improves",
+     "statement": "the candidate recipe raises held-out accuracy",
+     "scope": {
+      "task": "toy-3class"
+     }
+    },
+    "success_rule_id": "practical-accuracy-gain",
+    "assessor": {
+     "ref": "eidos.assessors.paired-ci@1.1.0"
+    },
+    "required_isolation": {
+     "profile": "dev:same-user",
+     "controls": [],
+     "waiver": "development lab: same-user isolation"
+    },
+    "classification": {
+     "labels": "art_labels",
+     "predictions": {
+      "baseline": {
+       "11": "art_b11"
+      },
+      "candidate": {
+       "11": "art_c11"
+      }
+     }
+    }
+   }
+  }
+ },
+ "config": {},
+ "expect": {
+  "status": "succeeded",
+  "receipt": {
+   "arms": [
+    "baseline",
+    "candidate"
+   ],
+   "seeds": [
+    11
+   ],
+   "jobs_planned": 2,
+   "open_obligations": []
+  }
+ }
+}

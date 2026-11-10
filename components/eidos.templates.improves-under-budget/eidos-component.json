@@ -1,6 +1,6 @@
 {
   "id": "eidos.templates.improves-under-budget",
-  "release": "1.1.0",
+  "release": "1.2.0",
   "implements": "evidence-plan/1",
   "kind": "planning",
   "entry": "improves_template.expand:run",
@@ -31,7 +31,10 @@
     "fixtures/branch-from-parent.json",
     "fixtures/rejects-threshold.json",
     "fixtures/wrong-claim-kind.json",
-    "fixtures/missing-seeds.json"
+    "fixtures/missing-seeds.json",
+    "fixtures/classification-one-seed.json",
+    "fixtures/classification-three-seeds.json",
+    "fixtures/classification-unpaired-seeds.json"
   ],
   "receipt": [
     "arms",
@@ -45,5 +48,6 @@
   },
   "python": ">=3.9",
   "dependencies": [],
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "summary": "Planning template for 'improves' claims under a frozen charter rule. Two paths: (1) train/evaluate pipelines per seed (eidos.pytorch.*); (2) 'classification': from two training jobs' existing held-out predictions to an assessor verdict on ordinary (multiclass) accuracy. Request {claim, success_rule_id, assessor: {ref: 'eidos.assessors.paired-ci@1.1.0'}, required_isolation, classification: {labels: <artifact id>, predictions: {baseline: {<seed>: <artifact id>}, candidate: {<seed>: <artifact id>}}}} with a charter metric whose identity is classification-report/1:accuracy; it plans one eidos.task.paired-classification-report job per arm and seed. Never sets a success bar."
 }

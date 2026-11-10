@@ -25,6 +25,8 @@ FORBIDDEN_KEYS = (
 )
 TRAIN = "eidos.pytorch.train"
 EVALUATE = "eidos.pytorch.evaluate"
+REPORT = "eidos.task.paired-classification-report@1.0.0"
+ROLES = ("baseline", "candidate")
 
 
 def find_forbidden(obj: Any, path: str = "") -> list[str]:
@@ -99,6 +101,114 @@ def _arm_runs(
     return runs
 
 
+def _seed_key(seed: Any) -> str:
+    if isinstance(seed, bool) or not isinstance(seed, (int, str)) or str(seed).strip() == "":
+        raise ContractError(f"classification.predictions: seed {seed!r} must be an integer or a non-empty string")
+    return str(seed).strip()
+
+
+def _classification_arms(request: dict[str, Any]):
+    """Ordinary accuracy from existing held-out predictions (ADR 0018).
+
+    ``classification = {labels: <artifact id>, predictions: {baseline: {seed: <artifact id>},
+    candidate: {seed: <artifact id>}}, classes?, id_field?}``. Every training seed must have predictions
+    in both arms: each seed is one cluster and the assessor pairs examples within it. Each arm gets one
+    paired-classification-report job per seed, run on the same three artifacts with its own role.
+    """
+    spec = request["classification"]
+    if not isinstance(spec, dict):
+        raise ContractError("request.classification must be an object")
+    labels = spec.get("labels")
+    if not isinstance(labels, str) or not labels:
+        raise ContractError("classification.labels must be the labels artifact id")
+    preds = spec.get("predictions") or {}
+    per_role: dict[str, dict[str, str]] = {}
+    for role in ROLES:
+        by_seed = preds.get(role)
+        if not isinstance(by_seed, dict) or not by_seed:
+            raise ContractError(
+                f"classification.predictions.{role} must map each training seed to a predictions artifact id"
+            )
+        per_role[role] = {}
+        for seed, art in by_seed.items():
+            if not isinstance(art, str) or not art:
+                raise ContractError(f"classification.predictions.{role}[{seed!r}] must be an artifact id")
+            per_role[role][_seed_key(seed)] = art
+    if set(per_role["baseline"]) != set(per_role["candidate"]):
+        raise ContractError(
+            "classification.predictions: baseline seeds "
+            f"{sorted(per_role['baseline'])} != candidate seeds {sorted(per_role['candidate'])}; "
+            "paired seed clusters need the same training seeds in both arms"
+        )
+    seeds = sorted(per_role["baseline"], key=lambda s: (not s.isdigit(), len(s), s))
+    extra = {k: spec[k] for k in ("classes", "id_field") if k in spec}
+    arms = []
+    for role in ROLES:
+        runs = []
+        for seed in seeds:
+            runs.append({
+                "seed": int(seed) if seed.isdigit() else seed,
+                "cluster": seed,
+                "jobs": [{
+                    "id": f"{role}.s{seed}.report",
+                    "component": REPORT,
+                    "inputs": {"baseline": per_role["baseline"][seed], "candidate": per_role["candidate"][seed],
+                               "labels": labels},
+                    "config": {"role": role, "cluster": seed, **extra},
+                }],
+            })
+        recipe = request.get(role) or {}
+        arms.append({"id": role, "role": role,
+                     "description": recipe.get("description", f"{role} recipe (existing held-out predictions)"),
+                     "runs": runs})
+    return arms, [int(s) if s.isdigit() else s for s in seeds], labels
+
+
+def _classification_draft(request: dict[str, Any], claim: dict[str, Any], obligations: list[str]):
+    arms, seeds, labels = _classification_arms(request)
+    several = len(seeds) > 1
+    alternatives = list(request.get("alternatives_unresolved") or [
+        "gain explained by extra computation rather than the candidate's mechanism",
+        "gain specific to the evaluation population",
+    ])
+    if not several:
+        alternatives.append("gain specific to these trained models: one training seed per arm, so training-seed "
+                            "variance is not estimated")
+    draft: dict[str, Any] = {
+        "success_rule_id": request["success_rule_id"],
+        "assessor": request.get("assessor"),
+        "arms": arms,
+        "analysis_unit": "example",
+        # Several training seeds: examples are clustered by seed so the interval reflects seed variance.
+        # One seed: there is no seed variance to estimate; examples are the independent units (disclosed).
+        "cluster_by": "seed" if several else None,
+        "seed_policy": {
+            "kind": "independent-training-seeds",
+            "seeds": seeds,
+            "shared_across_arms": True,
+            "note": ("each seed is one trained model per arm; examples within a seed are clustered" if several
+                     else "one trained model per arm; the interval reflects held-out example sampling only"),
+        },
+        "splits": {"evaluation": {"labels": labels, "population": "held-out examples"}, "tuning": None},
+        "tuning": request.get("tuning", {}),
+        "required_isolation": request.get("required_isolation"),
+        "resource_reservation": {"matched_budget": request.get("budget") or {}, "arms": len(arms),
+                                 "seeds": len(seeds)},
+        "obligations": obligations,
+        "alternatives_unresolved": alternatives,
+        "disclosures": {
+            "claim_statement": claim.get("statement"),
+            "evidence_path": "existing held-out predictions -> eidos.task.paired-classification-report -> "
+                             "eidos.assessors.paired-ci (metric accuracy)",
+            "predictions_predate_plan": "the predictions were produced before this plan was frozen; the plan pins "
+                                        "their artifacts, and the charter rule was fixed before them",
+            "seed_variance": "clustered by training seed" if several else "not estimated (one seed per arm)",
+            "template": "eidos.templates.improves-under-budget",
+        },
+    }
+    return draft, seeds
+
+
 def run(inputs, config, *, reader, writer, context):
     request = reader.json(inputs["request"])
     if not isinstance(request, dict):
@@ -113,6 +223,22 @@ def run(inputs, config, *, reader, writer, context):
         raise ContractError("this template applies only to claims of kind 'improves'")
     if not request.get("success_rule_id"):
         raise ContractError("request.success_rule_id (a rule in the pinned charter) is required")
+    if "classification" in request:
+        obligations = [] if request.get("required_isolation") else ["required_isolation"]
+        if not request.get("assessor"):
+            obligations.append("assessor")
+        draft, seeds = _classification_draft(request, claim, obligations)
+        leaks = find_forbidden(draft)
+        if leaks:
+            raise ContractError(f"internal error: draft contains forbidden keys {leaks}")
+        writer.stage_json("draft", draft, schema="evidence-plan/1")
+        return {
+            "arms": [a["id"] for a in draft["arms"]],
+            "seeds": seeds,
+            "jobs_planned": sum(len(r["jobs"]) for a in draft["arms"] for r in a["runs"]),
+            "open_obligations": obligations,
+            "metrics": {"arms": len(draft["arms"]), "seeds": len(seeds)},
+        }
     seeds = _seeds(request)
     evaluation = dict(request.get("evaluation") or {})
     baseline = dict(request.get("baseline") or {})

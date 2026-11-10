@@ -57,6 +57,20 @@ Measured (one run per configuration, 2026-11-10, five decision scenarios of eigh
 reasoning), and one named a tool that does not exist (`catalog_query`), which the lab refused. One run per
 configuration: a one-scenario difference is within run-to-run variation.
 
+## Assessable metrics (built-in assessor)
+
+`eidos.assessors.paired-ci` decides a charter rule (`paired-difference-ci` or `threshold`) from per-unit rows.
+Supported metric identities, by release:
+
+| Metric identity | Rows | Since | Notes |
+|---|---|---|---|
+| `paired-report/1:both-correct-rate`, `paired-report/1:reference-accuracy` | reference/variant pair rows (`pair_id, cluster, reference_logit, variant_logit, reference_label, variant_label`), binary labels | 1.0.0 | Paired across arms by `(cluster, pair_id)`; units present in only one arm are not used. |
+| `classification-report/1:accuracy` | `eidos.task.paired-classification-report` rows (`example_id, cluster, role, label, prediction`), any number of classes | 1.1.0 (Unreleased; ADR 0018) | Ordinary held-out accuracy. Both arms must cover exactly the same examples (refused otherwise). Several training seeds need `cluster_by: "seed"` (cluster-robust over seeds); one seed per arm is assessed with examples as independent units, and the conclusion is then about those trained models. |
+
+The supported path from two training jobs with held-out predictions to a verdict is the `classification` request of
+`eidos.templates.improves-under-budget@1.2.0` (its method card, and ADR 0018). Retraining inside the plan on that
+path is not supported yet. Qualification of 1.1.0 is by the author's control suite only, as for 1.0.0.
+
 ## Isolation: what Seatbelt does and does not do
 
 Profiles are sets of probed controls, recorded in an isolation receipt for each attempt. Only **hostile-code profiles** satisfy a plan that requires sealed execution (`required_isolation.sealed: true`, or a named hostile-code profile). In v1 that is **`linux:bwrap-sealed`** only.

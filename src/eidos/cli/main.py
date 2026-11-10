@@ -111,6 +111,7 @@ def project_create(project: str, budget: list[str] = typer.Option([], help="dime
 
 
 LAB_ENV_COMPONENTS = ("eidos.assessors.paired-ci", "eidos.qualification-runner", "eidos.templates.improves-under-budget",
+                      "eidos.task.paired-classification-report",
                       "lab.pairs.by_group")
 
 

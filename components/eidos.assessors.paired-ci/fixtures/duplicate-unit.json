@@ -56,7 +56,7 @@
       "ref": "eidos.templates.improves-under-budget@1.0.0"
      },
      "assessor": {
-      "ref": "eidos.assessors.paired-ci@1.0.0"
+      "ref": "eidos.assessors.paired-ci@1.1.0"
      },
      "arms": [
       {

@@ -18,7 +18,7 @@ RUNNER = ("eidos.qualification-runner", "qualification_runner.run:run")
 def qualify(lab_run, target_dir, suite=SUITE):
     res = lab_run(
         *RUNNER,
-        config={"suite": suite, "target": {"ref": "eidos.assessors.paired-ci@1.0.0"}},
+        config={"suite": suite, "target": {"ref": "eidos.assessors.paired-ci@1.1.0"}},
         ports={"target.source/1": {"path": str(target_dir)}},
     )
     assert res.ok, res.manifest.error
@@ -35,7 +35,7 @@ def test_suite_has_planted_null_and_stochastic_controls():
 
 def test_assessor_passes_its_own_controls(lab_run):
     res, results = qualify(lab_run, ASSESSOR)
-    assert res.receipt["invalid_runs"] == 0 and res.receipt["metrics"]["runs"] == 5 + 80
+    assert res.receipt["invalid_runs"] == 0 and res.receipt["metrics"]["runs"] == 8 + 80  # 8 literal (3 for accuracy, ADR 0018)
     gate = evaluate_qualification(SUITE, results)
     assert gate["status"] == "passed", gate
     by = {c["control"]: c for c in gate["per_control"]}
@@ -43,6 +43,9 @@ def test_assessor_passes_its_own_controls(lab_run):
     assert by["null-stochastic-no-effect"]["interval"][1] <= SUITE["acceptance"]["max_false_positive"]
     assert results["null-single-cluster-inconclusive"][0]["outcome"] == "inconclusive"
     assert results["null-guardrail-violated"][0]["outcome"] == "protocol-failed"
+    assert results["accuracy-planted-gain"][0]["outcome"] == "protocol-passed"
+    assert results["accuracy-null-identical-arms"][0]["outcome"] == "protocol-failed"
+    assert results["accuracy-null-small-noisy-inconclusive"][0]["outcome"] == "inconclusive"
 
 
 def test_runs_are_repeatable_and_stochastic_repetitions_differ(lab_run):

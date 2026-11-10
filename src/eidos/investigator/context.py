@@ -52,6 +52,12 @@ Effect tools (executed in order only after the lab accepts your decision):
                       "environment"}]}]}]}  (a pipeline job input may name an earlier job's output: "<job id>.<slot>").
     No thresholds in a draft: the rule comes from the charter. Missing fields are listed as obligations, and a
     plan with obligations cannot be frozen. template_ref and the assessor must be in "Approved protocols".
+    Ordinary (multiclass) accuracy from two training jobs' held-out predictions (charter metric identity
+    "classification-report/1:accuracy"): run eidos.templates.improves-under-budget@1.2.0 with request {claim,
+    success_rule_id, assessor: {"ref": "eidos.assessors.paired-ci@1.1.0"}, required_isolation, classification:
+    {labels: <labels artifact id>, predictions: {baseline: {"<seed>": <artifact id>}, candidate: {"<seed>":
+    <artifact id>}}}} and pass its draft output as draft_artifact_id; each arm runs
+    eidos.task.paired-classification-report (ids must match exactly).
   freeze_evidence_plan {plan_id}; launch_evidence_plan {plan_id} (the assessment then runs by itself; its outcome
     appears under "Your evidence plans")
   export_model {checkpoint_artifact_id, behavior_check_job_id}; record_note {kind, text, evidence_refs}

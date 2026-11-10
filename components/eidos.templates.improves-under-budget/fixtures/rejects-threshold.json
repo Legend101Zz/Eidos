@@ -13,7 +13,7 @@
         },
         "success_rule_id": "early-repair",
         "assessor": {
-          "ref": "eidos.assessors.paired-ci@1.0.0"
+          "ref": "eidos.assessors.paired-ci@1.1.0"
         },
         "seeds": {
           "count": 3,
