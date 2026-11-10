@@ -1,0 +1,16 @@
+{
+  "runtime": "pydantic-ai",
+  "model": "openai-compatible:MiniMax-M3.1-Flash",
+  "max_turns": 10000,
+  "max_calls_per_turn": 32,
+  "max_model_calls_per_turn": 32,
+  "turn_deadline_seconds": 1800,
+  "settings": {
+    "base_url": "https://api.minimax.io/v1",
+    "output_mode": "json",
+    "max_output_tokens": 16384,
+    "request_timeout": 300,
+    "max_requests_per_decision": 8,
+    "max_tokens_per_decision": 262144
+  }
+}
