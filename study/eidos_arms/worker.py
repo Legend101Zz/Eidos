@@ -1,9 +1,10 @@
 """Installed-interpreter entry point used by the controller's two dispatcher hooks."""
 import argparse
 import json
-from pathlib import Path
 import time
 import traceback
+from datetime import datetime
+from pathlib import Path
 
 from .common import utc, write_json
 
@@ -34,7 +35,9 @@ def main():
         record.update(status='incident', incident_reason=f'{type(exc).__name__}: {exc}')
     finally:
         (a.run_dir / 'transcript.jsonl').touch(exist_ok=True)
-        record.update(ended_at=utc(), wall_s=round(time.monotonic() - t0, 3))
+        ended = utc()
+        wall = (datetime.fromisoformat(ended) - datetime.fromisoformat(record['started_at'])).total_seconds()
+        record.update(ended_at=ended, wall_s=round(wall, 3), adapter_wall_s=round(time.monotonic() - t0, 3))
         write_json(a.run_dir / 'run_record.json', record)
     print(json.dumps(record))
     return 0 if record['status'] == 'ok' else 1

@@ -4,10 +4,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from pathlib import Path
 import secrets
 import shutil
 import subprocess
+from pathlib import Path
 
 from . import lab
 from .common import ROOT, envelope, prepare, prompt, write_json
@@ -20,14 +20,15 @@ def lane_a():
     if override:
         import study
         study.__path__.append(str(Path(override) / 'study'))
-    from study.common import agent_env, sandbox_command
     from study import run_arm
+    from study.common import agent_env, sandbox_command
     return agent_env, sandbox_command, run_arm
 
 
 def run(run_dir, meta):
-    from .arm4 import validate
     from eidos.application.scopes import ROLE_SCOPES
+
+    from .arm4 import validate
     agent_env, sandbox_command, stream_module = lane_a()
     lab.start()
     c = lab.client()
@@ -84,11 +85,13 @@ def run(run_dir, meta):
         original_tracker = stream_module.UsageTracker
         stream_module.UsageTracker = extend_tracker(original_tracker)
         try:
-            rec = stream_module.run_stream(run_dir, sandbox, env, wall_s=wall, token_limit=token_cap)
+            # Lane A stops on > threshold; use cap-1 so reaching the exact cap stops too.
+            rec = stream_module.run_stream(run_dir, sandbox, env, wall_s=wall, token_limit=token_cap - 1)
         finally:
             stream_module.UsageTracker = original_tracker
         env.pop('ANTHROPIC_API_KEY', None)
         env.pop('EIDOS_TOKEN', None)
+        rec['agent_wall_s'] = rec['wall_s']
         if rec['status'] == 'ok':
             try:
                 validate(run_dir / 'out/answer.json')
@@ -99,6 +102,7 @@ def run(run_dir, meta):
         if rec['model_ids_seen'] and not rec['tokens']['total']:
             rec.update(status='incident', incident_reason='Provider/Claude supplied no usage receipts; '
                        'zero is observed usage, not evidence of zero spend; token envelope could not be verified')
+        rec['usage_uncertain'] = rec['status'] in ('timeout', 'token_budget', 'crash', 'incident')
         rec['project'] = project
         return rec
     finally:

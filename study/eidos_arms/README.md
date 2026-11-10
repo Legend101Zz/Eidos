@@ -75,9 +75,14 @@ answer abstains. No new job is started after a wall timeout.
 The submission contains immutable source, model, visible-validation predictions,
 dependency lock, training/selection receipts and an `eidos-answer/0.2` answer.
 Visible-validation predictions are labeled; the evaluator supplies inference inputs
-separately. The answer conservatively makes no positive scientific claim. Original
-investigator conclusions and full assessor bodies appear in `agent_claim`, and in
-the selection receipt. Exporting never executes model-authored code on the host.
+separately. The investigator supplies scientific answer fields in its concluding
+`control.scope.answer`; measurements can cite actual job IDs, which the adapter
+exports as evidence receipts. Missing scientific metadata produces an inconclusive
+answer with no positive claim. Original investigator conclusions and full assessor
+bodies appear in `agent_claim`, and in the selection receipt. Exporting never
+executes model-authored code on the host. The reproduction command replays the
+selected job's exact source, argv and staged inputs; its lock records actual
+registered package versions and preserves the original task lock separately.
 Both arms validate schema, relative artifact paths, existence and SHA-256 values.
 
 Arm 4's `transcript.jsonl` exports ledger events, full turns, persisted model

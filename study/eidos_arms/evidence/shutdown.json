@@ -1,0 +1,18 @@
+{
+  "owned_service_pids_still_running": [],
+  "listeners_after_stop": {
+    "28765": false,
+    "25544": false,
+    "28766": false,
+    "27633": false,
+    "27634": false,
+    "27635": false,
+    "27636": false,
+    "27637": false,
+    "27638": false,
+    "27639": false,
+    "27640": false,
+    "27641": false
+  },
+  "lab_phase": "stopped"
+}

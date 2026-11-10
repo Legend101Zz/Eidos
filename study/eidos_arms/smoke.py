@@ -8,14 +8,13 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
+from pathlib import Path
 
-from .common import ROOT, write_json
 from . import lab
+from .common import ROOT, write_json
 
 PROJECT = '''import argparse, json
 from pathlib import Path
@@ -74,6 +73,11 @@ model and validation predictions through MCP artifact content paths, and write o
 eidos-answer/0.2 from task/answer_schema.py. Use status inconclusive, claim_type no_positive_claim,
 and report that predictions are visible-validation only. No test data or independent confirmation
 is available. Keep all files under this run directory; never print credentials.
+For this operational smoke, make the native list_components call once, then prefer mcp_http.py for
+run_component with a JSON argument file so nested arrays and numeric types remain exact. Use the
+registered task project unchanged; no source upload is needed for this baseline. One successful
+baseline training job is enough. Its receipt already reports visible-validation accuracy; no extra
+scoring, inference, fresh-seed training, source authoring or evidence-plan job is required here.
 Every candidate/evidence/cost path in out/answer.json is relative to out/, so if you write
 out/project.py the code_path is "project.py" (not "out/project.py"). Recompute every referenced
 file's SHA-256, verify every path exists relative to out/, and run the structural validator before

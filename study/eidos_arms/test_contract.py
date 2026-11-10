@@ -1,10 +1,10 @@
 """Focused accounting, selection and incident regression checks; no model calls."""
 import json
-from pathlib import Path
-import tempfile
 import socket
+import tempfile
 import time
 import unittest
+from pathlib import Path
 
 from .arm4 import select_job
 from .common import classify, usage
@@ -150,6 +150,49 @@ class ArtifactReferences(unittest.TestCase):
             path.write_text(json.dumps(answer))
             with self.assertRaisesRegex(ValueError, 'hash mismatch'):
                 validate(path)
+
+
+class ScientificAnswer(unittest.TestCase):
+    def test_model_scientific_fields_survive_receipt_and_artifact_conversion(self):
+        from .arm4 import export_answer, validate
+        job = {'id': 'job_train', 'lock': {'inputs': {}, 'environment': {'installed': {'torch': '2.15.0'}},
+               'config': {'argv': ['python', 'project.py', 'train', '--steps', '17'], 'seed': 41}},
+               'outputs': [{'slot': 'source_snapshot', 'artifact_id': 'source'},
+                           {'slot': 'model', 'role': 'model-export', 'artifact_id': 'model'},
+                           {'slot': 'validation_predictions', 'artifact_id': 'pred'}]}
+
+        class Client:
+            def query(self, name, params, project):
+                return job if params['job_id'] == 'job_train' else {'id': 'job_score', 'status': 'succeeded'}
+
+            def download(self, project, aid, target):
+                if aid == 'source':
+                    Path(target).write_text(json.dumps({'files': {'project.py': 'print("fixture")\n'}}))
+                else:
+                    Path(target).write_bytes(b'fixture')
+
+        metadata = {'status': 'improvement_claimed', 'claim_type': 'recipe_improvement',
+            'claim': 'Investigator authored claim, kept verbatim.', 'scope': 'Visible-validation scope only',
+            'measurements': [{'metric': 'accuracy', 'direction': 'higher_is_better', 'split': 'validation',
+                'denominator': 10, 'units': 'fraction', 'baseline': .5, 'candidate': .7,
+                'uncertainty_method': 'Investigator reports no independent confirmation', 'evidence_receipt': 'job_score'}],
+            'alternative_explanations': ['selection'], 'confidence': .6, 'confidence_outcome': 'declared scoped effect'}
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / 'task').mkdir()
+            (root / 'task/requirements.lock').write_text('torch==2.7.0\n')
+            export_answer(Client(), 'p', 'inv', root, {'card': 'synthetic'}, 'job_train', 'lock',
+                          'verbatim conclusion', [], {'input': 3, 'cache_read': 7, 'cache_write': 0, 'output': 2},
+                          [{'calls': 1}], answer_metadata=metadata)
+            path = root / 'out/answer.json'
+            self.assertTrue(validate(path))
+            answer = json.loads(path.read_text())
+            self.assertEqual(answer['status'], 'improvement_claimed')
+            self.assertEqual(answer['claim'], metadata['claim'])
+            self.assertEqual(answer['claim_type'], 'recipe_improvement')
+            self.assertEqual(answer['measurements'][0]['evidence_receipt'], 'evidence/job_score.json')
+            self.assertEqual(answer['cost']['model_input_tokens'], 10)
+            self.assertEqual(json.loads((root / 'out/reproduction.json').read_text())['argv'], job['lock']['config']['argv'])
 
 
 if __name__ == '__main__':

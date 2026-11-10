@@ -1,12 +1,12 @@
 """Controller-safe dispatch and receipt/answer utilities for the installed lab worker."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from pathlib import Path
 import subprocess
+from datetime import UTC, datetime
+from pathlib import Path
 
 from . import lab
 
@@ -22,7 +22,7 @@ def write_json(path, value):
 
 
 def utc():
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def digest(path):
@@ -59,9 +59,10 @@ def envelope(meta):
 
 def prepare(c, run_dir, arm):
     """One new project per invocation; immutable task bundle is the only scientific input."""
-    from eidos.tasks.bundle import import_bundle
-    from eidos.cli.main import install_component, builtin_component_dirs
     import uuid
+
+    from eidos.cli.main import builtin_component_dirs, install_component
+    from eidos.tasks.bundle import import_bundle
     project = f'pilot-a{arm}-{uuid.uuid4().hex[:16]}'
     c.command('create_project', {'project_id': project, 'budgets': {
         'compute_seconds': 100000000, 'trials': 1000000}}, key='create:' + project)
@@ -83,8 +84,9 @@ def ledger(c, project, inv, path):
         def emit(kind, body):
             f.write(json.dumps({'type': kind, 'data': body}, default=str) + '\n')
         while True:
-            page = c.query('list_events', {'investigation_id': inv, 'cursor': cursor,
-                           'horizon': horizon, 'limit': 500}, project=project)
+            # The project belongs to this run only. Include setup and any explicitly
+            # attributed project-budgeted baseline fallback, not just investigation events.
+            page = c.query('list_events', {'cursor': cursor, 'horizon': horizon, 'limit': 500}, project=project)
             horizon = page['horizon']
             for event in page['events']:
                 events.append(event)
@@ -111,7 +113,7 @@ def ledger(c, project, inv, path):
             records[kind] = c.query('list_records', {'kind': kind, 'summary': False, 'limit': 1000}, project=project)
             for row in records[kind]:
                 emit(kind, row)
-        for job in shown['jobs']:
+        for job in c.query('list_jobs', {}, project=project):
             emit('job', c.query('get_job', {'job_id': job['id']}, project=project))
     return shown, events, records
 

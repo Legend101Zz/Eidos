@@ -1,0 +1,35 @@
+{
+  "arm": 4,
+  "card": "SYNTHETIC_LINEAR_SMOKE",
+  "run_index": 0,
+  "block_id": "non-study-smoke",
+  "started_at": "2026-11-10T20:33:19.076720+00:00",
+  "incident_reason": null,
+  "billed_usd": null,
+  "tokens": {
+    "input": 0,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 0,
+    "total": 0
+  },
+  "model_ids_seen": [],
+  "agent_claim": {
+    "investigator": "",
+    "assessor": []
+  },
+  "transcript": "transcript.jsonl",
+  "status": "timeout",
+  "project": "pilot-a4-3001bc90eca04544",
+  "investigation_id": "inv_c9691e14f3fc",
+  "selected_job": null,
+  "selection_reason": "no exportable locked candidate or reproduced baseline",
+  "investigation_wall_s": 10.147,
+  "provider_endpoint": "https://api.minimax.io/v1",
+  "provider_outer_kill": true,
+  "usage_uncertain": true,
+  "investigator_config_sha": "aacc14a0fa2419d347a1e58c31e765d37ac3b9c941834ab80ae0fe74e2aaaaea",
+  "ended_at": "2026-11-10T20:33:29.227213+00:00",
+  "wall_s": 10.15,
+  "adapter_wall_s": 12.709
+}

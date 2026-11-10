@@ -3,14 +3,42 @@ from __future__ import annotations
 
 import base64
 import json
-import os
-from pathlib import Path
 import shutil
 import threading
 import time
+from pathlib import Path
 
 from . import lab
 from .common import ROOT, classify, digest, envelope, ledger, prepare, prompt, usage, utc, write_json
+
+REPRODUCE = '''"""Replay the selected job's exact source, staged inputs and training argv."""
+import argparse, json, os, shutil, subprocess, sys
+from pathlib import Path
+p=argparse.ArgumentParser()
+p.add_argument('--out', default='reproduced')
+a=p.parse_args()
+root=Path(__file__).resolve().parent
+out=Path(a.out).resolve()
+work=out/'work'
+result=out/'outputs'
+work.mkdir(parents=True,exist_ok=False)
+result.mkdir()
+shutil.copytree(root/'candidate'/'source',work,dirs_exist_ok=True)
+recipe=json.loads((root/'reproduction.json').read_text())
+for item in recipe['inputs']:
+    dest=work/item['staged_name']
+    dest.parent.mkdir(parents=True,exist_ok=True)
+    shutil.copyfile(root/item['path'],dest)
+argv=[x.replace('{work}',str(work)).replace('{out}',str(result)).replace('{seed}',str(recipe['seed']))
+      for x in recipe['argv']]
+if argv[0]=='python' or Path(argv[0]).name.startswith('python'):
+    argv[0]=sys.executable
+env=dict(os.environ,OMP_NUM_THREADS='1',MKL_NUM_THREADS='1')
+for key in list(env):
+    if key.endswith('_API_KEY') or key in ('EIDOS_TOKEN','ANTHROPIC_AUTH_TOKEN','PYTHONPATH'):
+        env.pop(key,None)
+raise SystemExit(subprocess.run(argv,cwd=work,env=env,timeout=recipe['timeout_seconds']).returncode)
+'''
 
 
 def stop_investigation(c, project, inv):
@@ -35,6 +63,7 @@ def run(run_dir, meta):
                  if p.is_file() and p.suffix in ('.py', '.md', '.json', '.lock', '.txt')}
         question = prompt(4, run_dir) + '\n\nPackaged task files:\n' + json.dumps(files, ensure_ascii=False)
         begin = time.monotonic()
+        began_at = utc()
         deadline_utc = time.time() + wall
         from .provider_bridge import start as start_bridge
         bridge, bridge_receipt = start_bridge(run_dir, investigator['settings']['base_url'],
@@ -85,7 +114,8 @@ def run(run_dir, meta):
             stop_investigation(c, project, inv)
         shown, events, records = ledger(c, project, inv, run_dir / 'transcript.jsonl')
         tokens, models, billed, receipts = usage(events, run_dir / 'transcript.jsonl')
-        uncertain = any(r.get('uncertain') for r in receipts)
+        uncertain = any(r.get('uncertain') for r in receipts) or (
+            expired.is_set() and any(t['status'] == 'open' for t in shown['turns']))
         write_json(run_dir / 'usage_receipts.json', {
             'receipts': receipts, 'tokens': tokens, 'model_ids_seen': models,
             'cache_note': 'Cache breakdown recovered from persisted model responses; input excludes those '
@@ -101,18 +131,28 @@ def run(run_dir, meta):
             write_json(run_dir / 'baseline_fallback.json', {'job_id': selected, 'reason': reason})
         conclusion = (shown.get('body') or {}).get('conclusion') or {}
         claim = conclusion.get('summary') or ''
+        conclusion_scope = conclusion.get('scope') or {}
+        answer_metadata = conclusion_scope.get('answer') if isinstance(conclusion_scope, dict) else None
         assessments = [r['body'] for r in records['assessment']]
         agent_claim = {'investigator': claim, 'assessor': assessments}
-        export_answer(c, project, inv, run_dir, meta, selected, reason, claim, assessments, tokens, receipts)
+        export_error = None
+        try:
+            export_answer(c, project, inv, run_dir, meta, selected, reason, claim, assessments, tokens, receipts,
+                          usage_uncertain=uncertain, answer_metadata=answer_metadata)
+        except (ValueError, TypeError) as exc:
+            export_error = str(exc)
         # Refresh after fallback so the transcript and job receipts include the delivered baseline.
         ledger(c, project, inv, run_dir / 'transcript.jsonl')
         try:
+            if export_error:
+                raise ValueError(export_error)
             valid = validate(run_dir / 'out/answer.json')
         except (ValueError, OSError) as exc:
             valid = False
             write_json(run_dir / 'validation_error.json', {'error': str(exc)})
         status, incident = classify(observed or shown, receipts, models, expired.is_set(), valid)
         return {'status': status, 'incident_reason': incident, 'tokens': tokens, 'billed_usd': billed,
+                'started_at': began_at,
                 'model_ids_seen': models, 'agent_claim': agent_claim, 'transcript': 'transcript.jsonl',
                 'project': project, 'investigation_id': inv, 'selected_job': selected,
                 'selection_reason': reason, 'investigation_wall_s': round(time.monotonic() - begin, 3),
@@ -123,6 +163,9 @@ def run(run_dir, meta):
         if bridge is not None and bridge.poll() is None:
             bridge.kill()
             bridge.wait(timeout=10)
+        if bridge is not None:
+            write_json(run_dir / 'provider_bridge_exit.json', {'pid': bridge.pid, 'returncode': bridge.returncode,
+                       'deadline_reached': bridge.returncode == 124})
         if inv:
             try:
                 stop_investigation(c, project, inv)
@@ -190,10 +233,18 @@ def baseline(c, project, inv, imported, remaining):
     return None
 
 
-def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessments, tokens, receipts):
+def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessments, tokens, receipts,
+                  usage_uncertain=False, answer_metadata=None):
     out = run_dir / 'out'
     out.mkdir(exist_ok=True)
     candidate, evidence = None, []
+    if answer_metadata is None:
+        answer_metadata = {}
+    if not isinstance(answer_metadata, dict):
+        raise ValueError('conclusion scope.answer must be an object')
+    for field in ('measurements', 'exposures', 'deviations'):
+        if field in answer_metadata and not isinstance(answer_metadata[field], list):
+            raise ValueError('conclusion answer.' + field + ' must be an array')
     write_json(out / 'selection_receipt.json', {'job_id': jid, 'reason': reason,
                'investigator_conclusion': claim, 'assessments': assessments})
     if jid:
@@ -201,6 +252,8 @@ def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessment
         write_json(out / 'training_receipt.json', job)
         cdir = out / 'candidate'
         cdir.mkdir(exist_ok=True)
+        source_dir = cdir / 'source'
+        source_dir.mkdir(exist_ok=True)
         src = (job['lock']['inputs'].get('source') or {}).get('artifact_id')
         if not src:
             src = next(o['artifact_id'] for o in job['outputs'] if o['slot'] == 'source_snapshot')
@@ -209,8 +262,8 @@ def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessment
         files = json.loads(bundle_path.read_text())['files']
         bundle_path.unlink()
         for rel, data in files.items():
-            dest = (cdir / rel).resolve()
-            if cdir.resolve() not in dest.parents or dest.is_symlink():
+            dest = (source_dir / rel).resolve()
+            if source_dir.resolve() not in dest.parents or dest.is_symlink():
                 raise ValueError('source bundle path escapes candidate directory')
             dest.parent.mkdir(parents=True, exist_ok=True)
             if isinstance(data, dict):
@@ -221,41 +274,113 @@ def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessment
         pred = next(o['artifact_id'] for o in job['outputs'] if o['slot'] == 'validation_predictions')
         c.download(project, model, cdir / 'model.pt')
         c.download(project, pred, cdir / 'validation_predictions.npz')
-        shutil.copyfile(run_dir / 'task/requirements.lock', out / 'requirements.lock')
-        candidate = {'code_path': 'candidate/project.py', 'code_sha256': digest(cdir / 'project.py'),
+        shutil.copyfile(run_dir / 'task/requirements.lock', out / 'task-requirements.lock')
+        installed = job['lock']['environment'].get('installed') or {}
+        if installed:
+            (out / 'requirements.lock').write_text(''.join(f'{name}=={version}\n'
+                                                  for name, version in sorted(installed.items())))
+        else:
+            shutil.copyfile(run_dir / 'task/requirements.lock', out / 'requirements.lock')
+        recipe = {'argv': job['lock']['config']['argv'],
+                  'seed': job['lock']['config'].get('seed', job['lock'].get('seed') or 0),
+                  'timeout_seconds': job['lock']['config'].get('timeout_seconds', 600), 'inputs': []}
+        inputs_dir = out / 'reproduction_inputs'
+        inputs_dir.mkdir(exist_ok=True)
+        parent_checkpoint = None
+        extensions = {'application/x-npz': '.npz', 'application/json': '.json', 'text/csv': '.csv',
+                      'text/plain': '.txt'}
+        for port, binding in job['lock']['inputs'].items():
+            if port == 'source':
+                continue
+            name = (job['lock']['config'].get('files') or {}).get(port)
+            if not name:
+                suffix = '.pt' if binding.get('schema') == 'model-file/1' else extensions.get(binding.get('media_type'), '')
+                name = port + suffix
+            # Match the project's staging rule without permitting an export path escape.
+            if Path(name).name != name or name in ('', '.', '..') or '/' in port or '\\' in port:
+                raise ValueError('unsafe reproduction input name')
+            target = inputs_dir / (port + Path(name).suffix)
+            c.download(project, binding['artifact_id'], target)
+            if binding.get('schema') == 'model-file/1' and parent_checkpoint is None:
+                parent_checkpoint = target.relative_to(out).as_posix()
+            recipe['inputs'].append({'path': target.relative_to(out).as_posix(),
+                                    'staged_name': name, 'sha256': digest(target)})
+        write_json(out / 'reproduction.json', recipe)
+        (out / 'reproduce.py').write_text(REPRODUCE)
+        candidate = {'code_path': 'candidate/source/project.py', 'code_sha256': digest(source_dir / 'project.py'),
             'model_path': 'candidate/model.pt', 'model_sha256': digest(cdir / 'model.pt'),
             'predictions_path': 'candidate/validation_predictions.npz',
             'predictions_sha256': digest(cdir / 'validation_predictions.npz'),
             'environment_lock': 'requirements.lock', 'environment_lock_sha256': digest(out / 'requirements.lock'),
-            'reproduce_command': ['python', 'candidate/project.py', 'train', '--inputs', '../task',
-                                  '--out', 'reproduced', '--seed', str(job['lock']['config'].get('seed', 11))],
-            'parent_checkpoint': None, 'restore_class': 'fresh_initialization'}
+            'reproduce_command': ['python', 'reproduce.py', '--out', 'reproduced'],
+            'parent_checkpoint': parent_checkpoint,
+            'restore_class': 'checkpoint_continuation' if parent_checkpoint else 'fresh_initialization'}
     for name, role in [('selection_receipt.json', 'candidate-selection'), ('training_receipt.json', 'training')]:
         if (out / name).exists():
             evidence.append({'path': name, 'sha256': digest(out / name), 'role': role,
                 'supports': 'Ledger provenance and conservative candidate selection',
                 'limitations': 'Visible validation only; independent evaluator confirmation remains outstanding'})
+    for name in ('reproduction.json', 'reproduce.py'):
+        if (out / name).exists():
+            evidence.append({'path': name, 'sha256': digest(out / name), 'role': 'reproduction',
+                'supports': 'Exact selected-job argv, source snapshot and staged input replay',
+                'limitations': 'Requires the recorded Python environment; one training seed'})
     cost = {k: None for k in ('elapsed_seconds', 'cpu_core_seconds', 'gpu_device_seconds', 'gpu_type',
                              'model_reasoning_tokens', 'billed_usd')}
-    cost.update(model_input_tokens=tokens['input'], model_output_tokens=tokens['output'],
+    cost.update(model_input_tokens=tokens['input'] + tokens['cache_read'] + tokens['cache_write'],
+                model_output_tokens=tokens['output'],
                 model_calls=sum(r.get('calls', 0) for r in receipts), receipt_paths=['usage_receipts.json'])
+    if usage_uncertain:
+        for field in ('model_input_tokens', 'model_output_tokens', 'model_calls'):
+            cost[field] = None
     cost['unknown_fields'] = [k for k, v in cost.items() if v is None]
-    write_json(out / 'usage_receipts.json', {'receipts': receipts, 'tokens': tokens})
+    write_json(out / 'usage_receipts.json', {'receipts': receipts, 'tokens': tokens,
+               'usage_uncertain': usage_uncertain})
+    measurements = []
+    for measurement in answer_metadata.get('measurements', []):
+        if not isinstance(measurement, dict):
+            raise ValueError('conclusion measurements must contain objects')
+        m = dict(measurement)
+        reference = m.get('evidence_receipt', '')
+        if isinstance(reference, str) and reference.startswith('job_'):
+            try:
+                record = c.query('get_job', {'job_id': reference}, project=project)
+            except Exception as exc:
+                if getattr(exc, 'status', None) == 404:
+                    raise ValueError('measurement cites an unknown job: ' + reference) from exc
+                raise
+            filename = 'evidence/' + reference + '.json'
+            write_json(out / filename, record)
+            m['evidence_receipt'] = filename
+            if not any(e['path'] == filename for e in evidence):
+                evidence.append({'path': filename, 'sha256': digest(out / filename),
+                    'role': 'investigator-cited-job', 'supports': 'Ledger receipt cited by investigator measurement',
+                    'limitations': 'Investigator interpretation; confirmation and selection roles remain as recorded'})
+        measurements.append(m)
+    status = answer_metadata.get('status', 'inconclusive' if candidate else 'abstained')
+    if candidate is None:
+        status = 'abstained'
+    abstention = answer_metadata.get('abstention', {
+        'abstained': status == 'abstained', 'reason': reason if status == 'abstained' else None,
+        'unresolved': ['Independent confirmation on evaluator inputs and fresh training seeds'],
+        'next_discriminating_test': 'Run the exported recipe with fresh seeds in the independent evaluator'})
     answer = {'schema_version': 'eidos-answer/0.2', 'task_id': meta['card'], 'run_id': run_dir.name,
-        'status': 'inconclusive' if candidate else 'abstained', 'claim_type': 'no_positive_claim',
-        'claim': claim or 'No investigator conclusion was produced. ' + reason,
-        'scope': 'Packaged task; visible validation; assessor conclusions preserved in selection_receipt.json.',
-        'candidate': candidate, 'measurements': [], 'evidence': evidence,
-        'alternative_explanations': ['Training-seed variation', 'Selection on visible validation data'],
-        'abstention': {'abstained': candidate is None, 'reason': reason if candidate is None else None,
-            'unresolved': ['Independent confirmation on evaluator inputs and fresh training seeds'],
-            'next_discriminating_test': 'Run the exported recipe with fresh seeds in the independent evaluator'},
-        'cost': cost, 'exposures': ['Packaged task only'],
+        'status': status, 'claim_type': answer_metadata.get('claim_type', 'no_positive_claim'),
+        'claim': answer_metadata.get('claim') or claim or 'No investigator conclusion was produced. ' + reason,
+        'scope': answer_metadata.get('scope', 'Packaged task; visible validation; assessor conclusions preserved in selection_receipt.json.'),
+        'candidate': None if status == 'abstained' else candidate, 'measurements': measurements, 'evidence': evidence,
+        'alternative_explanations': answer_metadata.get('alternative_explanations', ['Training-seed variation', 'Selection on visible validation data']),
+        'abstention': abstention,
+        'cost': cost, 'exposures': ['Packaged task only', *answer_metadata.get('exposures', [])],
         'deviations': ['Predictions are visible-validation predictions; evaluator supplies inference inputs separately',
+                       'requirements.lock records actual registered packages; original supplied lock retained as task-requirements.lock',
                        'macOS Seatbelt uses the same OS identity; memory limits are best effort',
                        'Eidos 1.1.0 has per-turn deadlines; total wall deadline enforced by stop/cancel watchdog '
-                       'and a per-run provider forwarding process that exits at the deadline'],
-        'confidence': None}
+                       'and a per-run provider forwarding process that exits at the deadline',
+                       *answer_metadata.get('deviations', [])],
+        'confidence': answer_metadata.get('confidence')}
+    if answer['confidence'] is not None:
+        answer['confidence_outcome'] = answer_metadata.get('confidence_outcome')
     write_json(out / 'answer.json', answer)
 
 
