@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import os
 import subprocess
 from datetime import UTC, datetime
@@ -167,15 +168,39 @@ def usage(events, transcript=None):
     return tokens, sorted(models), (sum(usd) if receipts and len(usd) == len(receipts) else None), receipts
 
 
+INCIDENT_RE = re.compile(
+    r"\b429\b|(?:http|status|error|code)[\s\"':=_-]{0,12}5\d\d\b|"
+    r"\b5\d\d\s+(?:internal|server|error)|internal server error|service unavailable|bad gateway|gateway timeout|"
+    r"rate[ _-]?limit|overloaded|quota|insufficient.{0,20}(?:credit|balance)|"
+    r"(?:credit|balance).{0,20}(?:insufficient|exhausted)|usage limit|out of credits|capacity exceeded",
+    re.I,
+)
+
+
+def _provider_incident(receipt, timed_out=False):
+    """True only for provider 429/5xx/quota-type failures (same text rule as arms 1-3) or a local bridge
+    connection failure before the deadline; never for token counts or a plain request timeout."""
+    failed = receipt.get('failed_request') or {}
+    code = failed.get('status_code')
+    if isinstance(code, int) and (code == 429 or code >= 500):
+        return True
+    message = ' '.join(str(x) for x in (receipt.get('error'), failed.get('error')) if x)
+    if INCIDENT_RE.search(message):
+        return True
+    return (not timed_out) and 'connection' in message.lower() and 'timeout' not in message.lower()
+
+
 def classify(shown, receipts, models, timed_out=False, answer_valid=True):
     failures = [r for r in receipts if r.get('failed_request') or r.get('error')]
     text = json.dumps(failures)
     if len(models) > 1:
         return 'incident', 'model id changed: ' + ', '.join(models)
     import re
-    if failures and (re.search(r'\b(?:429|5\d\d)\b', text) or any(
-            x in text.lower() for x in ('quota', 'rate limit', 'insufficient credit')) or (
-            not timed_out and any(x in text.lower() for x in ('connection', 'timeout')))):
+    # Addendum 2: classify only error strings and HTTP status codes with the same rule as arms 1-3
+    # (study/run_arm.py incident_text). The old search over the whole failure JSON matched token
+    # counts such as "output_tokens": 541 as a 5xx status. A request timeout without a provider
+    # status is the system's own behaviour, not an incident.
+    if failures and any(_provider_incident(r, timed_out) for r in failures):
         return 'incident', 'provider/infrastructure failure: ' + text[:1800]
     if timed_out:
         return 'timeout', None
