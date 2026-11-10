@@ -494,3 +494,23 @@ async def test_wait_after_failed_calls_is_not_a_park(env):
         assert fake.turns == 3 and all(c["stop_reason"] == "invalid-proposals" for c in fake.completed), fake.completed
         assert "needs operator input" in (await h.query("state"))["status"]
         await h.terminate()
+
+
+async def test_revoked_slot_decision_moves_the_turn_to_its_next_slot(env):
+    """F2c: a decide attempt that finds its slot's decision revoked (accepted by an earlier, failed attempt of the same
+    activity) returns ``attempt-revoked``; the turn executes nothing for that slot and decides its next slot afresh."""
+    fake = FakeInvestigator()
+
+    @activity.defn(name="decide")
+    async def decide(a: dict) -> dict:
+        if a["slot"] == 0:
+            return {"accepted": False, "decision_id": "late", "reason": "attempt-revoked", "n_calls": 0}
+        return {"accepted": True, "decision_id": f"d{a['slot']}", "n_calls": 1, "control": {"action": "wait_for_jobs"}}
+
+    acts = [decide if getattr(f, "__name__", "") == "decide" else f for f in fake.acts()]
+    async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
+            Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=acts):
+        r = await env.client.execute_workflow(TurnWorkflow.run, {"investigation_id": "i", "project_id": "p", "index": 1},
+                                              id=f"turn-{uuid.uuid4().hex[:6]}", task_queue=WORKFLOW_QUEUE)
+    assert fake.executed == ["d1"]  # never the revoked decision
+    assert r["stop_reason"] == "waiting" and fake.completed[0]["stop_reason"] == "waiting"

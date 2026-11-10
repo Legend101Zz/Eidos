@@ -54,6 +54,7 @@ class World:
         self.accept_result: dict = dict(ACCEPTED)
         self.turn: dict = make_turn()
         self.effect_result: dict = {"job_id": "job_1"}
+        self.begin_result: dict = {"epoch": 1}  # F2c: begin_decision's answer (epoch, or a decision / revocation)
 
     def count(self, name: str) -> int:
         return self.log.count(name)
@@ -76,6 +77,8 @@ class FakeWorkflowClient:
     def command(self, name: str, payload: dict | None = None, *, project: str | None = None, key: str | None = None,
                 **_: Any) -> dict:
         self.w.record(name, payload, key)
+        if name == "begin_decision":
+            return {"result": self.w.begin_result}
         if name == "reserve_model_budget":
             return {"result": {"reserved": True, "reservation_ref": "res_1"}}
         if name == "accept_decision":
@@ -189,14 +192,14 @@ def assert_aborted_by_cancellation(acts: InvestigatorActivities) -> ApplicationE
 # -- 5. control: nothing wrong -> accepted exactly once ----------------------------------------------------------------
 def test_control_no_cancellation_sends_accept_once_and_returns_its_result(world, rt, acts):
     out = acts.decide(dict(ARGS))
-    assert world.log == ["reserve_model_budget", "record_model_usage", "upload", "accept_decision"]
+    assert world.log == ["begin_decision", "reserve_model_budget", "record_model_usage", "upload", "accept_decision"]
     assert world.count("accept_decision") == 1
     assert out == {"accepted": True, "decision_id": "dec_1", "n_calls": 1, "control": {"action": "wait_for_jobs"},
                    "reason": None}
     accept = world.payloads["accept_decision"][0]
     assert accept["proposal"] == PROPOSAL and accept["usage"] == USAGE and accept["usage_recorded"] is True
     assert accept["response_artifact_id"] == "art_resp" and accept["attempt"] == 1
-    assert world.keys["accept_decision"] == [f"accept:{TURN}:{SLOT}:1"]
+    assert world.keys["accept_decision"] == [f"accept:{TURN}:{SLOT}:1:1"]
     assert rt.req is not None and rt.req.abort.reason is None
 
 
@@ -235,8 +238,8 @@ def test_cancellation_during_usage_recording_aborts_before_the_upload_and_accept
     assert world.count("accept_decision") == 0
     assert world.count("record_model_usage") == 1  # the billed response is still charged, once
     assert world.payloads["record_model_usage"][0]["usage"] == USAGE
-    assert world.keys["record_model_usage"] == [f"usage:{TURN}:{SLOT}:1"]
-    assert world.log == ["reserve_model_budget", "record_model_usage"]  # the first check stops before the upload
+    assert world.keys["record_model_usage"] == [f"usage:{TURN}:{SLOT}:1:1"]
+    assert world.log == ["begin_decision", "reserve_model_budget", "record_model_usage"]  # the first check stops before the upload
 
 
 # -- 2. cancellation flips during the response upload ------------------------------------------------------------------
@@ -245,7 +248,7 @@ def test_cancellation_during_the_response_upload_aborts_before_accept(world, rt,
     assert_aborted_by_cancellation(acts)
     assert world.count("accept_decision") == 0
     assert world.count("record_model_usage") == 1 and world.count("upload") == 1
-    assert world.log == ["reserve_model_budget", "record_model_usage", "upload"]
+    assert world.log == ["begin_decision", "reserve_model_budget", "record_model_usage", "upload"]
 
 
 def test_cancellation_that_arrives_before_the_first_response_check_is_not_lost_either(world, rt, acts):
@@ -258,9 +261,9 @@ def test_cancellation_that_arrives_before_the_first_response_check_is_not_lost_e
 def test_cancellation_during_the_provider_call_records_usage_and_raises(world, rt, acts):
     rt.raises = DecisionAborted("activity-cancelled", in_flight=True, possible_usage={"calls": 1})
     assert_aborted_by_cancellation(acts)
-    assert world.log == ["reserve_model_budget", "record_model_usage"]
+    assert world.log == ["begin_decision", "reserve_model_budget", "record_model_usage"]
     assert world.payloads["record_model_usage"][0]["usage"] == {"calls": 1, "uncertain": True}
-    assert world.keys["record_model_usage"] == [f"usage-abort:{TURN}:{SLOT}:1"]
+    assert world.keys["record_model_usage"] == [f"usage-abort:{TURN}:{SLOT}:1:1"]
 
 
 # -- 3. the deadline fired first, then the cancellation ---------------------------------------------------------------
@@ -317,7 +320,7 @@ def test_stop_or_pause_seen_by_the_watcher_after_the_response_is_not_proposed(wo
     assert out == {"accepted": False, "reason": f"investigation-{status}", "n_calls": 0}
     assert world.count("accept_decision") == 0
     assert world.count("record_model_usage") == 1 and world.count("upload") == 1
-    assert world.log == ["reserve_model_budget", "record_model_usage", "upload"]
+    assert world.log == ["begin_decision", "reserve_model_budget", "record_model_usage", "upload"]
 
 
 def test_stop_during_a_slow_upload_is_seen_even_when_the_poll_interval_is_short(world, rt, acts):

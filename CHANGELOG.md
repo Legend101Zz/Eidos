@@ -39,6 +39,17 @@ cap and 6/8 at 16384 tokens / 120 s), `tool` 6/8 (was 4/8); `docs/release/eviden
     `"9007199254740993.0"` are passed through to the lab and refused.
   - A replayed command's receipt reports this invocation's `normalized_arguments`, and the committing call's as
     `admission_normalized_arguments`.
+- Review R3 fixes (ADR 0017 addendum):
+  - Each decide attempt begins with `begin_decision`, which bumps the slot's epoch under the turn lock.
+    `reserve_model_budget` and `accept_decision` from an earlier attempt are refused (`superseded-attempt`).
+  - A decision that an earlier attempt of the same activity execution got accepted is revoked by the retry: it was
+    never delivered to the workflow. A revoked decision is never recovered or executed, and the turn moves to its
+    next slot (`attempt-revoked`). Decisions accepted by another run of the turn are still recovered.
+  - A request abandoned in flight is charged as uncertain usage at its admitted worst case (`in_flight_estimate`),
+    never as zero. Usage from completed responses stays certain.
+  - `complete_turn` and a retry settle a still-open model reservation as provisional uncertain usage
+    (`uncertain_model_reservations`) instead of releasing it as zero. A late settlement reverses that provisional
+    charge (`correction` entry) and books its own usage, so nothing is charged twice.
 
 ### Output and time limits
 - `scripts/qualify/live_provider_check.py --max-output-tokens N` (default 4096, unchanged); recorded in the receipt's

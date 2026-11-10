@@ -247,6 +247,10 @@ class TurnWorkflow:
                             stop = "invalid-proposals"  # waits like other wait reasons; no hot loop
                             break
                         continue  # the next slot sees why the proposal was refused
+                    if d.get("reason") == "attempt-revoked":
+                        # F2c: the slot's decision came from a failed attempt and was revoked, never executed; the next
+                        # slot decides afresh. Older histories never carry this reason.
+                        continue
                     # A decision aborted because the investigation stopped or paused ends the turn as cancelled
                     # (ADR 0017); older histories never carry these reasons.
                     stop = {"stale-revision": "stale-revision", "budget-exhausted": "budget-exhausted",

@@ -218,3 +218,62 @@ predate this ADR; this ADR's guarantees depended on them.
 - `tests/unit/test_decide_cancel_through_accept.py` covers finding 2.
 - `tests/unit/test_mcp_normalize.py`, `tests/mcp/` and `tests/integration/test_mcp_normalized_receipts.py` cover
   findings 4 and 5.
+
+## Addendum: review R3 (cancellation through acceptance, uncertain usage)
+
+1. **A cancelled attempt's acceptance could still be executed.** Temporal can cancel or time out a decide attempt
+   after its last cancellation check, while its `accept_decision` request is in progress. The lab cannot see that, so
+   the acceptance may commit. The retry then found the accepted decision and recovered it, and the workflow executed
+   its calls. **Fix:** the attempt is invalidated durably at the acceptance boundary, in two parts.
+   - Every decide attempt first calls the new `begin_decision` command. Under the turn row lock it bumps an epoch in
+     the slot's `decision_attempt` record. `reserve_model_budget` and `accept_decision` carry the epoch and run under
+     the same lock. A request from an earlier attempt that arrives later is refused as `superseded-attempt`.
+   - An acceptance can commit before the retry begins. So `begin_decision` revokes a decision that was accepted by an
+     earlier attempt of the **same activity execution** (same workflow run and activity id). Temporal retries only an
+     attempt it has failed, so that attempt's result never reached the workflow, and the decision was never executed.
+     Decisions are append-only (`accepted` is written once, one accepted decision per slot), so the revocation is a
+     `decision_revocation` record plus a `decision.revoked` event. A revoked decision is never recovered and never
+     executed: `get_turn` marks it `revoked`, `execute_decision` skips it, and it is left out of `turn_so_far`. The
+     attempt returns `attempt-revoked` without a model request, and the TurnWorkflow moves to its next slot.
+   - What still holds: a decision accepted by **another run** of the turn (a turn resumed after its workflow was
+     terminated) is recovered as before, because that run may have executed it. A decision with recorded receipts
+     is never revoked.
+   - The cost: if a worker dies after an acceptance committed, the retry no longer recovers that decision. It spends
+     the slot instead. Such a decision cannot be told apart from one accepted after Temporal gave up on its attempt.
+   - The per-attempt command keys now include the epoch, so a resumed run's attempt 1 never replays an earlier
+     run's attempt 1.
+2. **An abandoned request was charged as zero.** If no response had completed, the aborted decision's reported
+   usage was zero, and the settlement released the whole reservation. **Fix:** the runtime reports the abandoned
+   request's admitted worst case as `in_flight_estimate`: its input estimate plus the output cap it was sent with,
+   priced when a price is configured. The lab settles the known usage of completed responses as `usage`, and the
+   estimate as uncertain `possible-usage`. With no per-request estimate, the rest of the reservation is charged
+   instead. Known responses are no longer marked uncertain just because a later request was abandoned.
+3. **Closing a turn released an in-flight reservation as zero.** `complete_turn`, or a retry's
+   `reserve_model_budget`, released a still-open reservation without charging anything. If the cancelled activity
+   then died, no usage was ever recorded. **Fix:** both now settle each open model reservation as provisional
+   `possible-usage` of the whole open amount. The token envelope keeps a decision inside its reservation, so this is
+   the conservative bound. `complete_turn` reports the amount as `uncertain_model_reservations`.
+   - A later settlement of the same `reservation_ref` first reverses the outstanding provisional amount with a
+     `correction` entry (used and uncertain are decremented), then books what it reports. A late settlement therefore
+     never double-charges.
+   - Reconciliation only touches open reservations, and the reversal only touches outstanding provisional amounts,
+     so both are idempotent. Both run under the turn row lock.
+   - The trade-off: until a late settlement arrives, a dead attempt costs its whole decision envelope against the
+     budget. That envelope is the most it can have used.
+
+**Tests.**
+- Finding 1: `tests/integration/test_cancel_through_acceptance.py`, run against PostgreSQL:
+  - The reviewer's sequence through the decide activity: the acceptance commits, then the cancellation is raised in
+    the activity thread. The retry gets `attempt-revoked` and sends only `begin_decision`. The revoked decision is
+    never executed (no job, no receipts), and the next slot decides afresh.
+  - The reverse interleaving through the activity.
+  - Both commit orders with held concurrent transactions.
+  - A stale-epoch reservation is refused, a decision from another run is recovered, an executed decision is never
+    revoked, and a control case.
+  - Removing any one of the following makes at least one test fail: the revocation, the epoch check, the
+    `execute_decision` guard, or the activity's handling of `revoked`.
+  - `tests/integration/test_workflows.py::test_revoked_slot_decision_moves_the_turn_to_its_next_slot` covers the
+    workflow side.
+- Findings 2 and 3: `tests/integration/test_uncertain_model_usage.py` checks exact ledger amounts.
+  `tests/integration/test_decision_abort_slow_provider.py` now asserts the abandoned request's uncertain amount.
+  `tests/integration/test_turn_recovery.py` was updated for provisional reconciliation.

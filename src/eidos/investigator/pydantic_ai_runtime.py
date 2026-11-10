@@ -233,6 +233,16 @@ async def _abortable(request: Any, abort: DecisionAbort, abandoned: dict[str, An
     return task.result()
 
 
+def in_flight_estimate(abandoned: dict[str, Any], price: dict[str, float] | None) -> dict[str, Any]:
+    """A conservative bill for a request abandoned in flight (F2c): the worst case it was admitted with, its input
+    estimate plus the output cap it was sent with, priced like reported usage. The provider may bill any part of it."""
+    inp, out = int(abandoned.get("input_estimate") or 0), int(abandoned.get("output_cap") or 0)
+    est: dict[str, Any] = {"input_tokens": inp, "output_tokens": out, "basis": "admitted-worst-case"}
+    if price:
+        est["usd"] = (inp * price["input"] + out * price["output"]) / 1e6
+    return est
+
+
 def _guarded(model: Any, envelope: TokenEnvelope, abort: DecisionAbort | None = None) -> Any:
     """``model`` with ``envelope`` checked before, and charged after, every request; with ``abort``, no request starts
     once it is set and an in-flight request is abandoned when it is set (ADR 0017)."""
@@ -400,6 +410,8 @@ class PydanticAIRuntime:
                             **({"abandoned_request": exc.abandoned} if exc.abandoned else {})}
         if exc.in_flight:
             usage["uncertain"] = True
+            if exc.abandoned:  # F2c: settled as uncertain usage at this conservative estimate, never as zero
+                usage["in_flight_estimate"] = in_flight_estimate(exc.abandoned, self.config.get("price_per_mtok"))
         if exc.reason != "decision-deadline":
             raise DecisionAborted(exc.reason, in_flight=exc.in_flight, abandoned=exc.abandoned,
                                   possible_usage=usage) from exc

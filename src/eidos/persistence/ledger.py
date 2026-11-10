@@ -430,6 +430,15 @@ class LedgerTx:
         if reserved - actual > 0:
             self._entry(scope, dimension, "release", reserved - actual, ref, {})
 
+    def reverse_possible_usage(self, scope: str, dimension: str, amount: float, ref: str,
+                               detail: dict | None = None) -> None:
+        """Take back ``amount`` of uncertain usage charged under ``ref`` (F2c: a provisional possible-usage charge is
+        replaced by what a late settlement reports). Booked as a ``correction`` entry of ``-amount``; it neither
+        reopens nor releases a reservation."""
+        self.c.execute(text("UPDATE budgets SET used = used - :a, uncertain = GREATEST(uncertain - :a, 0)"
+                            " WHERE scope_id=:s AND dimension=:d"), {"s": scope, "d": dimension, "a": amount})
+        self._entry(scope, dimension, "correction", -amount, ref, detail or {})
+
     def record_usage(self, scope: str, dimension: str, amount: float, ref: str, *, uncertain: bool = False,
                      detail: dict | None = None) -> None:
         self.settle(scope, dimension, reserved=0, actual=amount, ref=ref, uncertain=uncertain, detail=detail)

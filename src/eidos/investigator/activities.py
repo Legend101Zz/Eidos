@@ -123,6 +123,13 @@ def _abort_reason(abort: DecisionAbort) -> str | None:
     return abort.reason if abort.reason not in (None, "decision-deadline") else None
 
 
+def _attempt_identity() -> tuple[int, str]:
+    """This decide attempt's number and its activity execution (workflow run and activity id): attempts of one
+    execution are Temporal retries of each other (F2c)."""
+    info = activity.info()
+    return int(info.attempt), f"{getattr(info, 'workflow_run_id', '')}/{getattr(info, 'activity_id', '')}"
+
+
 def _hb(fn):
     @functools.wraps(fn)
     def wrapper(self, a):
@@ -217,6 +224,8 @@ class InvestigatorActivities:
     def _turn_so_far(self, p: str, turn: dict) -> list[dict]:
         out = []
         for d in turn["decisions"]:
+            if d.get("revoked"):  # never executed (F2c): not part of what this turn did
+                continue
             if not d["accepted"]:
                 if (d["body"] or {}).get("reason") == "invalid":  # feedback: why the last proposal was refused
                     out.append({"slot": d["slot"], "rejected": True, "error": d["body"].get("error")})
@@ -234,11 +243,25 @@ class InvestigatorActivities:
     def decide(self, a: dict) -> dict:
         started = time.monotonic()  # the activity's start-to-close timeout counts from about here
         p = a["project_id"]
+        attempt, execution = _attempt_identity()
+        # F2c: begin this attempt first. The lab bumps the slot's epoch under the turn lock, so an earlier attempt's
+        # request still in flight (reserve, accept) is refused from now on, and it revokes a decision an earlier
+        # attempt of this same activity got accepted: that attempt failed (Temporal retried it), so its decision
+        # never reached the workflow and may have been accepted after Temporal gave up on it.
+        try:
+            b = self.wf.command("begin_decision", {"turn_id": a["turn_id"], "slot": a["slot"], "attempt": attempt,
+                                "execution": execution}, project=p,
+                                key=f"begin-dec:{a['turn_id']}:{a['slot']}:{execution}:{attempt}")["result"]
+        except LabError as exc:
+            raise _app_error(exc) from exc
+        if b.get("decision"):  # accepted by another run of this turn (a resumed turn): never regenerate it
+            d = b["decision"]
+            return {"accepted": True, "decision_id": d["id"], "n_calls": len(d["calls"]), "control": d.get("control"),
+                    "reason": "recovered"}
+        if b.get("revoked"):  # the slot's decision was revoked: it yields nothing, the turn goes on to its next slot
+            return {"accepted": False, "decision_id": b["revoked"], "reason": "attempt-revoked", "n_calls": 0}
+        epoch = b["epoch"]
         turn = self.wf.query("get_turn", {"turn_id": a["turn_id"]}, project=p)
-        existing = next((d for d in turn["decisions"] if d["accepted"] and d["slot"] == a["slot"]), None)
-        if existing:  # a previous attempt's decision was accepted; never regenerate it
-            return {"accepted": True, "decision_id": existing["id"], "n_calls": len(existing["body"]["calls"]),
-                    "control": existing["body"].get("control"), "reason": "recovered"}
         ctxrec = turn["context"]
         with tempfile.NamedTemporaryFile() as tmp:
             self.inv.download(p, ctxrec["context_artifact_id"], tmp.name)
@@ -262,8 +285,8 @@ class InvestigatorActivities:
             estimate["model_usd"] = decision_usd_envelope(est_tokens, price, cfg)
         try:
             rr = self.wf.command("reserve_model_budget", {"turn_id": a["turn_id"], "slot": a["slot"],
-                                 "attempt": activity.info().attempt, "estimate": estimate}, project=p,
-                                 key=f"reserve:{a['turn_id']}:{a['slot']}:{activity.info().attempt}")["result"]
+                                 "attempt": attempt, "epoch": epoch, "estimate": estimate}, project=p,
+                                 key=f"reserve:{a['turn_id']}:{a['slot']}:{attempt}:{epoch}")["result"]
             reserved, reservation_ref = rr["reserved"], rr.get("reservation_ref")
         except LabError as exc:
             if exc.code == "BUDGET_EXHAUSTED":
@@ -273,7 +296,6 @@ class InvestigatorActivities:
         req = DecisionRequest(turn_id=a["turn_id"], slot=a["slot"], context=context_text,
                               turn_so_far=self._turn_so_far(p, turn), limits=turn["spec"]["limits"], settings=cfg,
                               read_tools=self._read_tools(p), view=view, abort=abort)
-        attempt = activity.info().attempt
 
         def aborted() -> dict:
             if abort.reason == "activity-cancelled" or _activity_cancelled():
@@ -296,7 +318,7 @@ class InvestigatorActivities:
                 usage = {**exc.possible_usage, "uncertain": bool(exc.in_flight or exc.possible_usage.get("uncertain"))}
                 self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": usage, "reserved": reserved,
                                 "reservation_ref": reservation_ref}, project=p,
-                                key=f"usage-abort:{a['turn_id']}:{a['slot']}:{attempt}")
+                                key=f"usage-abort:{a['turn_id']}:{a['slot']}:{attempt}:{epoch}")
                 if exc.reason == "activity-cancelled":
                     raise ApplicationError(str(exc), type="DECISION_ABORTED", non_retryable=True) from exc
                 return {"accepted": False, "reason": exc.reason, "n_calls": 0}
@@ -304,18 +326,18 @@ class InvestigatorActivities:
                 self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": {**exc.possible_usage,
                                 "uncertain": True, "error": str(exc)[:500]}, "reserved": reserved,
                                 "reservation_ref": reservation_ref}, project=p,
-                                key=f"usage-fail:{a['turn_id']}:{a['slot']}:{attempt}")
+                                key=f"usage-fail:{a['turn_id']}:{a['slot']}:{attempt}:{epoch}")
                 raise ApplicationError(str(exc), type="MODEL_CALL_FAILED", non_retryable=not exc.retryable) from exc
             # Spend is the first durable write: a crash before acceptance must not lose billed requests.
             self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": res.usage, "reserved": reserved,
                                                    "reservation_ref": reservation_ref},
-                            project=p, key=f"usage:{a['turn_id']}:{a['slot']}:{attempt}")
+                            project=p, key=f"usage:{a['turn_id']}:{a['slot']}:{attempt}:{epoch}")
             if _abort_reason(abort):  # stopped, paused or cancelled after the last response: never proposed (ADR 0017)
                 return aborted()
             resp = self.inv.upload(p, data=json.dumps(res.raw_response, default=str, sort_keys=True).encode(),
                                    media_type="application/json", schema="model-response/1", role="context",
                                    name=f"response-{a['turn_id']}-{a['slot']}-{attempt}",
-                                   key=f"resp:{a['turn_id']}:{a['slot']}:{attempt}")
+                                   key=f"resp:{a['turn_id']}:{a['slot']}:{attempt}:{epoch}")
             if _abort_reason(abort):  # last check before the durable acceptance boundary
                 return aborted()
             try:
@@ -323,8 +345,9 @@ class InvestigatorActivities:
                                     "proposal": res.proposal, "usage": res.usage, "usage_recorded": True,
                                     "model_settings": res.model_settings, "prompt_revision": res.prompt_revision,
                                     "bounded_outcome": ((res.proposal or {}).get("control") or {}).get("bounded_outcome"),
-                                    "response_artifact_id": resp["result"]["artifact_id"], "attempt": attempt},
-                                    project=p, key=f"accept:{a['turn_id']}:{a['slot']}:{attempt}")["result"]
+                                    "response_artifact_id": resp["result"]["artifact_id"], "attempt": attempt,
+                                    "epoch": epoch, "execution": execution},
+                                    project=p, key=f"accept:{a['turn_id']}:{a['slot']}:{attempt}:{epoch}")["result"]
             except LabError as exc:
                 raise _app_error(exc) from exc
         return bounded({"accepted": r["accepted"], "decision_id": r["decision_id"], "n_calls": len(r.get("calls") or []),
@@ -353,6 +376,8 @@ class InvestigatorActivities:
         p = a["project_id"]
         turn = self.wf.query("get_turn", {"turn_id": a["turn_id"]}, project=p)
         dec = next(d for d in turn["decisions"] if d["id"] == a["decision_id"] and d["accepted"])
+        if dec.get("revoked"):  # F2c: a revoked decision (its attempt failed) is never executed
+            return {"summary": [], "skipped": "decision-revoked"}
         if turn["status"] != "open":
             # F2b: a decision accepted just before its turn was closed (the TurnWorkflow was cancelled while the decide
             # activity was accepting it) is never executed: the turn's closing is the durable cancellation.

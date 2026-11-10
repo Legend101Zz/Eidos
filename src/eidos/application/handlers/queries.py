@@ -260,8 +260,11 @@ def get_turn(ctx: Ctx, p: dict) -> dict:
     if not turn or turn["project_id"] != ctx.project_id:
         raise NotFound("turn not found")
     ctxrec = ctx.tx.get_record("turn_context", turn["id"])
-    return {**_jsonable(turn), "context": ctxrec.body if ctxrec else None,
-            "decisions": [_jsonable(d) for d in ctx.tx.decisions(turn["id"])]}
+    decisions = [_jsonable(d) for d in ctx.tx.decisions(turn["id"])]
+    for d in decisions:  # F2c: an accepted decision whose attempt failed is revoked: never recovered or executed
+        if d["accepted"] and ctx.tx.get_record("decision_revocation", d["id"]) is not None:
+            d["revoked"] = True
+    return {**_jsonable(turn), "context": ctxrec.body if ctxrec else None, "decisions": decisions}
 
 
 @query("get_claim")

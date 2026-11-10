@@ -294,6 +294,56 @@ def record_turn_context(ctx: Ctx, p: dict) -> dict:
     return {"turn_id": p["turn_id"], "revision": rec.revision}
 
 
+@command("begin_decision", "turn")
+def begin_decision(ctx: Ctx, p: dict) -> dict:
+    """Start one attempt of a decision slot (F2c, ADR 0017): every decide activity attempt calls this first.
+
+    Under the turn row lock it bumps the slot's attempt epoch, so a request of any earlier attempt that is still in
+    flight (``reserve_model_budget``, ``accept_decision``) is refused from now on: that is where a cancelled or timed-out
+    attempt is invalidated durably, at the acceptance boundary.
+
+    An accepted decision already in the slot is returned for recovery, except one accepted by an earlier attempt of the
+    SAME activity execution (``execution``: workflow run and activity id). Its result never reached the workflow, since
+    Temporal retries only an attempt it failed (cancelled, timed out, or lost with its worker), so it has never been
+    executed; its acceptance may have committed after Temporal gave up on it. It is revoked (a decision is never
+    updated: a ``decision_revocation`` record), never recovered or executed, and the slot yields no decision
+    (``revoked``). A decision accepted by another execution (a resumed turn after its workflow was terminated) is
+    recovered as before: that run may have executed it; so is one with recorded receipts (it has run)."""
+    turn = _turn(ctx, p["turn_id"], lock=True)
+    slot = int(p.get("slot") or 0)
+    execution, attempt = str(p.get("execution") or ""), int(p.get("attempt") or 0)
+    rid = f"{turn['id']}:{slot}"
+    rec = ctx.tx.get_record("decision_attempt", rid, lock=True)
+    epoch = int((rec.body if rec else {}).get("epoch") or 0) + 1
+    ctx.tx.put_record("decision_attempt", rid, ctx.project_id,
+                      {"turn_id": turn["id"], "slot": slot, "attempt": attempt, "execution": execution, "epoch": epoch,
+                       "started_at": time.time()}, created_by=ctx.principal.id, status="started")
+    out: dict = {"turn_id": turn["id"], "slot": slot, "epoch": epoch}
+    existing = ctx.tx.accepted_decision(turn["id"], slot)
+    if existing is None:
+        return out
+    if decision_revoked(ctx, existing["id"]):
+        return {**out, "revoked": existing["id"]}
+    origin = (existing["body"] or {}).get("attempt") or {}
+    executed = ctx.tx.get_record("decision_receipts", existing["id"]) is not None  # never revoke what has run
+    if execution and origin.get("execution") == execution and int(origin.get("attempt") or 0) < attempt \
+            and not executed:
+        ctx.tx.put_record("decision_revocation", existing["id"], ctx.project_id,
+                          {"turn_id": turn["id"], "slot": slot, "reason": "attempt-failed",
+                           "accepted_by": origin, "revoked_by": {"execution": execution, "attempt": attempt}},
+                          created_by=ctx.principal.id, status="revoked", parent_id=turn["id"])
+        ctx.event("decision.revoked", existing["id"], {"turn_id": turn["id"], "slot": slot, "reason": "attempt-failed"},
+                  investigation_id=turn["investigation_id"])
+        return {**out, "revoked": existing["id"]}
+    return {**out, "decision": {"id": existing["id"], "calls": existing["body"]["calls"],
+                                "control": existing["body"].get("control")}}
+
+
+def decision_revoked(ctx: Ctx, decision_id: str) -> bool:
+    """Whether an accepted decision was revoked (F2c): it is never recovered or executed."""
+    return ctx.tx.get_record("decision_revocation", decision_id) is not None
+
+
 @command("accept_decision", "turn")
 def accept_decision(ctx: Ctx, p: dict) -> dict:
     """Persist a proposed decision. Exactly one decision is accepted per (turn, slot); a late or
@@ -312,12 +362,14 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
     if existing:
         ctx.tx.insert_decision(did, turn["id"], slot, False, {"proposal": p.get("proposal"), "reason": "slot-taken",
                                                                "usage": usage})
+        if decision_revoked(ctx, existing["id"]):  # a revoked decision is never handed out for execution (F2c)
+            return {"accepted": False, "decision_id": did, "reason": "slot-revoked"}
         return {"accepted": False, "decision_id": existing["id"], "reason": "slot-already-accepted",
                 "calls": existing["body"]["calls"], "control": existing["body"].get("control")}
     if turn["status"] != "open":
         ctx.tx.insert_decision(did, turn["id"], slot, False, {"proposal": p.get("proposal"), "reason": "turn-closed"})
         return {"accepted": False, "decision_id": did, "reason": "turn-closed"}
-    late = _late_decision(ctx, turn, inv, slot, p.get("attempt"))
+    late = _late_decision(ctx, turn, inv, slot, p.get("attempt"), p.get("epoch"))
     if late:  # ADR 0017: a decision from a stopped investigation or a cancelled request is never applied
         ctx.tx.insert_decision(did, turn["id"], slot, False, {"proposal": p.get("proposal"), "reason": late})
         ctx.event("decision.unapplied", did, {"reason": late}, investigation_id=inv.id)
@@ -344,48 +396,56 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
     calls = turn_rules.keyed_calls(ctx.project_id, turn["id"], did, decision["calls"])
     body = {**decision, "calls": calls, "model": p.get("model_settings") or {}, "usage": usage,
             "response_artifact_id": p.get("response_artifact_id"), "prompt_revision": p.get("prompt_revision")}
+    if p.get("epoch") is not None:  # which attempt accepted it: begin_decision revokes it if that attempt failed (F2c)
+        body["attempt"] = {"execution": str(p.get("execution") or ""), "attempt": int(p.get("attempt") or 0),
+                           "epoch": int(p["epoch"])}
     ctx.tx.insert_decision(did, turn["id"], slot, True, body)
     ctx.event("decision.accepted", did, {"turn_id": turn["id"], "slot": slot, "calls": [c["tool"] for c in calls],
                                          "control": decision["control"]}, investigation_id=inv.id)
     return {"accepted": True, "decision_id": did, "calls": calls, "control": decision["control"]}
 
 
-def _late_decision(ctx: Ctx, turn: dict, inv, slot: int, attempt: int | None) -> str | None:
+def _late_decision(ctx: Ctx, turn: dict, inv, slot: int, attempt: int | None, epoch: int | None = None) -> str | None:
     """Why a proposed decision may no longer be applied (ADR 0017), or None:
 
     * ``investigation-<status>``: the investigation is no longer active (stopped, paused, concluded);
-    * ``superseded-attempt``: a later attempt of the same decision slot has started, so this one was cancelled or
-      timed out (Temporal retried it) and its request only finished late;
-    * ``decision-deadline-passed``: the attempt began (``reserve_model_budget``, lab clock) more than the turn
-      deadline ago, the decide activity's own timeout, so Temporal has already given up on it.
+    * ``superseded-attempt``: a later attempt of the same decision slot has started (``begin_decision`` bumped the
+      slot's epoch), so this one was cancelled or timed out and its request only finished late;
+    * ``decision-deadline-passed``: the attempt began (lab clock) more than the turn deadline ago, the decide
+      activity's own timeout, so Temporal has already given up on it.
 
-    The attempt checks apply to callers that report their attempt (the decide activity); others are checked as
-    before."""
+    Callers that carry the epoch from ``begin_decision`` (the decide activity, F2c) are checked against it; callers
+    that report only their attempt number keep the earlier attempt-number check; others are checked as before. The
+    caller holds the turn row lock, which ``begin_decision`` also takes, so the check and the epoch bump are ordered."""
     if inv.status != "active":
         return f"investigation-{inv.status}"
-    if attempt is None:
+    if attempt is None and epoch is None:
         return None
     rec = ctx.tx.get_record("decision_attempt", f"{turn['id']}:{slot}")
     if rec is None:
-        return None
-    if int(attempt) < int(rec.body.get("attempt", 0)):
+        return "superseded-attempt" if epoch is not None else None
+    if epoch is not None:
+        if int(epoch) != int(rec.body.get("epoch") or 0):
+            return "superseded-attempt"
+    elif int(attempt or 0) < int(rec.body.get("attempt", 0)):
         return "superseded-attempt"
+    current = epoch is not None or int(attempt or 0) == int(rec.body.get("attempt", 0))
     deadline = float((turn["spec"].get("limits") or {}).get("deadline_seconds") or 0)
-    if int(attempt) == int(rec.body.get("attempt", 0)) and deadline \
-            and time.time() > float(rec.body.get("started_at", 0)) + deadline:
+    if current and deadline and time.time() > float(rec.body.get("started_at", 0)) + deadline:
         return "decision-deadline-passed"
     return None
 
 
 def _note_attempt(ctx: Ctx, turn: dict, slot: int, attempt: int) -> None:
-    """Record that ``attempt`` of a decision slot has started (lab clock), unless a later one already has."""
+    """Record that ``attempt`` of a decision slot has started (lab clock), unless a later one already has (callers
+    that do not use ``begin_decision``)."""
     rid = f"{turn['id']}:{slot}"
     rec = ctx.tx.get_record("decision_attempt", rid, lock=True)
     if rec is not None and int(rec.body.get("attempt", 0)) >= attempt:
         return
     ctx.tx.put_record("decision_attempt", rid, ctx.project_id,
-                      {"turn_id": turn["id"], "slot": slot, "attempt": attempt, "started_at": time.time()},
-                      created_by=ctx.principal.id, status="started")
+                      {**(rec.body if rec else {}), "turn_id": turn["id"], "slot": slot, "attempt": attempt,
+                       "started_at": time.time()}, created_by=ctx.principal.id, status="started")
 
 
 def _check_something_to_wait_for(ctx: Ctx, inv, decision: dict) -> None:
@@ -456,7 +516,14 @@ def _check_component_contracts(ctx: Ctx, calls: list[dict]) -> None:
 
 def _charge_model_usage(ctx: Ctx, inv_id: str, usage: dict, *, ref: str, reserved: dict | None = None) -> None:
     """Settle actual model usage against any per-decision reservation. Usage entries are written
-    even for dimensions without a budget row, so unbudgeted spend is still on the ledger."""
+    even for dimensions without a budget row, so unbudgeted spend is still on the ledger.
+
+    F2c: the tokens and dollars ``usage`` reports are those of completed responses (certain unless ``uncertain``).
+    A request abandoned in flight (``aborted.in_flight``) may still be billed: its conservative estimate
+    (``in_flight_estimate``: the request's admitted input estimate plus output cap, priced) is charged as uncertain
+    ``possible-usage``, never as zero; without one, the rest of the reservation is. If the reservation was already
+    reconciled as provisional uncertain usage (the turn closed or a retry began first), that provisional charge is
+    reversed and replaced by what is reported here, so a late settlement never charges twice."""
     scope = inv_scope(inv_id)
     reserved = reserved or {}
     uncertain = bool(usage.get("uncertain"))
@@ -467,12 +534,72 @@ def _charge_model_usage(ctx: Ctx, inv_id: str, usage: dict, *, ref: str, reserve
         detail["reasoning_tokens"] = usage["reasoning_tokens"]
     tokens = float(usage.get("input_tokens", 0) or 0) + float(usage.get("output_tokens", 0) or 0)
     usd = float(usage.get("usd") or 0)
+    in_flight = bool((usage.get("aborted") or {}).get("in_flight"))
+    est = usage.get("in_flight_estimate")
+    estimate: dict[str, float | None] = {"model_tokens": None, "model_usd": None}
+    if isinstance(est, dict):
+        estimate["model_tokens"] = float(est.get("input_tokens") or 0) + float(est.get("output_tokens") or 0)
+        estimate["model_usd"] = float(est["usd"]) if est.get("usd") is not None else None
     still_open = _open_by_ref(ctx, scope, ref) if reserved else {}
+    provisional = _provisional_by_ref(ctx, scope, ref)
+    # Completed responses reported their usage: with a request abandoned in flight, the uncertainty is that request's.
+    known_uncertain = uncertain and not in_flight
     for dim, actual in (("model_tokens", tokens), ("model_usd", usd)):
+        back = provisional.get(dim, 0.0)
+        if back:
+            ctx.tx.reverse_possible_usage(scope, dim, back, ref, detail={"reverses": "provisional",
+                                                                         "replaced_by": "settlement"})
         # Never release more than is still open under this ref (a retry may already have released it).
         held = min(float(reserved.get(dim, 0)), still_open.get((dim, ref), 0.0))
-        if actual or held:
-            ctx.tx.settle(scope, dim, reserved=held, actual=actual, ref=ref, uncertain=uncertain, detail=detail)
+        if not in_flight:
+            if actual or held:
+                ctx.tx.settle(scope, dim, reserved=held, actual=actual, ref=ref, uncertain=known_uncertain,
+                              detail=detail)
+            continue
+        on_known = min(held, actual)
+        if actual:
+            ctx.tx.settle(scope, dim, reserved=on_known, actual=actual, ref=ref, uncertain=known_uncertain,
+                          detail=detail)
+        rest = held - on_known
+        guess = estimate[dim]
+        if guess is None:  # no per-request estimate: all this ref still held (reserved or provisional) may be billed
+            guess = max(held + back - actual, 0.0)
+        if guess or rest:
+            ctx.tx.settle(scope, dim, reserved=rest, actual=guess, ref=ref, uncertain=True,
+                          detail={**detail, "in_flight_estimate": True})
+
+
+def _provisional_by_ref(ctx: Ctx, scope: str, ref: str) -> dict[str, float]:
+    """Per dimension, provisional uncertain usage still charged under exactly ``ref`` (reconciled reservations not yet
+    replaced by a settlement)."""
+    acc: dict[str, float] = {}
+    for e in ctx.tx.budget_entries(scope):
+        if e["ref"] != ref:
+            continue
+        if e["kind"] == "possible-usage" and (e.get("detail") or {}).get("provisional"):
+            acc[e["dimension"]] = acc.get(e["dimension"], 0.0) + float(e["amount"])
+        elif e["kind"] == "correction" and (e.get("detail") or {}).get("reverses") == "provisional":
+            acc[e["dimension"]] = acc.get(e["dimension"], 0.0) + float(e["amount"])  # negative
+    return {k: v for k, v in acc.items() if v > 1e-12}
+
+
+def reconcile_open_model_reservations(ctx: Ctx, scope: str, prefix: str, *, by: str,
+                                      keep: str | None = None) -> dict[str, float]:
+    """Settle every model reservation still open under ``prefix`` (except ``keep``) as provisional uncertain usage,
+    per dimension the whole open amount (F2c). An open reservation means its decide attempt neither settled nor
+    failed cleanly: it was cancelled, timed out or died, possibly with a request at the provider, whose bill is
+    unknown. The whole open amount is the conservative bound (the token envelope keeps a decision inside its
+    reservation). Settled refs are no longer open, so this is idempotent; a late settlement of the same ref reverses
+    the provisional charge and books what it reports instead (``_charge_model_usage``). The caller holds the turn
+    row lock, which every settlement of the turn's reservations takes."""
+    charged: dict[str, float] = {}
+    for (dim, ref), left in sorted(_open_by_ref(ctx, scope, prefix).items()):
+        if ref == keep:
+            continue
+        ctx.tx.settle(scope, dim, reserved=left, actual=left, ref=ref, uncertain=True,
+                      detail={"provisional": True, "reconciled_by": by})
+        charged[dim] = charged.get(dim, 0.0) + left
+    return charged
 
 
 def _open_by_ref(ctx: Ctx, scope: str, prefix: str) -> dict[tuple[str, str], float]:
@@ -499,13 +626,16 @@ def reserve_model_budget(ctx: Ctx, p: dict) -> dict:
     scope = inv_scope(turn["investigation_id"])
     budgets = ctx.tx.budgets(scope)
     ref = f"model:{p['turn_id']}:{p.get('slot')}:{p.get('attempt')}"
-    # Only one attempt of a decision slot runs at a time: a reservation left by an earlier attempt of
-    # this slot belongs to a dead activity. Release it so the retry does not collide with it (a late
-    # settlement from that attempt is capped at what is still open, so nothing is released twice).
-    for (dim, old_ref), left in _open_by_ref(ctx, scope, f"model:{p['turn_id']}:{p.get('slot')}:").items():
-        if old_ref != ref:
-            ctx.tx.settle(scope, dim, reserved=left, actual=0, ref=old_ref, detail={"released_by": ref})
-    if p.get("attempt") is not None:  # earlier attempts of this slot can no longer get a decision accepted
+    if p.get("epoch") is not None:  # F2c: a superseded attempt (a later one began) reserves nothing
+        rec = ctx.tx.get_record("decision_attempt", f"{turn['id']}:{int(p.get('slot') or 0)}")
+        if rec is None or int(rec.body.get("epoch") or 0) != int(p["epoch"]):
+            raise Invalid("superseded decision attempt: a later attempt of this decision slot has begun",
+                          details={"reason": "superseded-attempt", "epoch": p["epoch"]})
+    # Only one attempt of a decision slot runs at a time: a reservation left open by an earlier attempt of this slot
+    # belongs to an attempt that was cancelled, timed out or died, possibly with a request in flight. It is settled as
+    # provisional uncertain usage (F2c), not released as zero; a late settlement from that attempt replaces it.
+    reconcile_open_model_reservations(ctx, scope, f"model:{p['turn_id']}:{p.get('slot')}:", by=ref, keep=ref)
+    if p.get("attempt") is not None and p.get("epoch") is None:  # callers without begin_decision
         _note_attempt(ctx, turn, int(p.get("slot") or 0), int(p["attempt"]))
     out = {}
     for dim, amount in (p.get("estimate") or {}).items():
@@ -516,17 +646,12 @@ def reserve_model_budget(ctx: Ctx, p: dict) -> dict:
 
 
 def release_turn_model_reservations(ctx: Ctx, turn: dict) -> dict:
-    """Release model reservations of a turn that were never settled (e.g. the activity died). The caller holds the
-    turn row lock (complete_turn), which serializes this with record_model_usage and reserve_model_budget."""
-    scope = inv_scope(turn["investigation_id"])
-    released: dict[str, float] = {}
-    # Release under each reservation's own ref (G7 re-check): a release booked under a separate ref
-    # left the original ref looking open, so a late settlement from a zombie attempt released the
-    # same amount again and freed budget held by other reservations.
-    for (dim, ref), left in sorted(_open_by_ref(ctx, scope, f"model:{turn['id']}:").items()):
-        ctx.tx.settle(scope, dim, reserved=left, actual=0, ref=ref, detail={"released_by": "complete_turn"})
-        released[dim] = released.get(dim, 0.0) + left
-    return released
+    """Reconcile model reservations of a closing turn that were never settled (its decide attempt was cancelled,
+    timed out or died): each is charged as provisional uncertain usage, not released as zero (F2c). The caller
+    holds the turn row lock (complete_turn), which serializes this with record_model_usage and reserve_model_budget.
+    Charged under each reservation's own ref (G7 re-check), so a late settlement finds and replaces it."""
+    return reconcile_open_model_reservations(ctx, inv_scope(turn["investigation_id"]), f"model:{turn['id']}:",
+                                             by="complete_turn")
 
 
 @command("record_model_usage", "turn")
@@ -558,7 +683,7 @@ def complete_turn(ctx: Ctx, p: dict) -> dict:
     status = "cancelled" if reason == "cancelled" else ("failed" if reason == "error" else "completed")
     result = {"stop_reason": reason, "summary": str(p.get("summary", ""))[:4000], "receipts": p.get("receipts", []),
               "unfinished_handles": p.get("unfinished_handles", []), "control": p.get("control")}
-    result["released_model_reservations"] = release_turn_model_reservations(ctx, turn)
+    result["uncertain_model_reservations"] = release_turn_model_reservations(ctx, turn)
     ctx.tx.update_turn(turn["id"], status=status, result=result)
     inv_id = turn["investigation_id"]
     budgets = ctx.tx.budgets(inv_scope(inv_id))
@@ -620,6 +745,8 @@ def record_decision_receipts(ctx: Ctx, p: dict) -> dict:
         _turn(ctx, dec["turn_id"])
     if not dec or not dec["accepted"]:
         raise Invalid("receipts can only be recorded for an accepted decision")
+    if decision_revoked(ctx, dec["id"]):  # F2c: a revoked decision is never executed
+        raise Invalid("receipts cannot be recorded for a revoked decision")
     rec = ctx.tx.put_record("decision_receipts", dec["id"], ctx.project_id,
                             {"turn_id": dec["turn_id"], "receipts": p.get("receipts", [])},
                             created_by=ctx.principal.id, status="recorded")

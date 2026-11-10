@@ -20,6 +20,7 @@ import pytest
 from temporalio.testing import ActivityEnvironment
 
 from eidos.investigator.activities import InvestigatorActivities
+from eidos.investigator.runtime import output_cap
 
 pytestmark = [pytest.mark.pg]
 
@@ -145,6 +146,27 @@ def _decisions(lab, pid, turn_id):
     return lab.q(lab.admin, "get_turn", {"turn_id": turn_id}, project=pid)["decisions"]
 
 
+RESERVED = 120_000  # max_tokens_per_decision of ``_setup``: what the decide activity reserves
+
+
+def _assert_charged_at_the_abandoned_requests_worst_case(budget, entries, usage, turn_id) -> int:
+    """F2c: the abandoned request is charged at what it was admitted with (input estimate + output cap), as possible
+    usage, never as zero; the rest of the reservation is released. Exact amounts; returns the worst case."""
+    abandoned = usage["aborted"]["abandoned_request"]
+    assert abandoned["input_estimate"] > 0
+    assert abandoned["output_cap"] == output_cap({})  # ``_setup`` configures no max_output_tokens: the default cap
+    worst = abandoned["input_estimate"] + abandoned["output_cap"]
+    assert 0 < worst < RESERVED
+    # The usage carries the same estimate (no price is configured, so no dollars); the lab charged exactly that.
+    assert usage["in_flight_estimate"] == {"input_tokens": abandoned["input_estimate"],
+                                           "output_tokens": abandoned["output_cap"], "basis": "admitted-worst-case"}
+    ref = f"model:{turn_id}:0:1"
+    assert [(e["kind"], float(e["amount"])) for e in entries if e["ref"] == ref] == [
+        ("reserve", RESERVED), ("possible-usage", worst), ("release", RESERVED - worst)]
+    assert budget == {"limit_amount": 1e6, "reserved": 0, "used": worst, "uncertain": worst}
+    return worst
+
+
 def test_stop_abandons_the_in_flight_request_and_applies_nothing(lab, provider):
     slow = provider(delay=30)
     pid, inv, acts, base = _setup(lab, slow.url)
@@ -171,6 +193,12 @@ def test_stop_abandons_the_in_flight_request_and_applies_nothing(lab, provider):
     kinds = {(e["kind"], e["ref"]) for e in entries}
     ref = f"model:{base['turn_id']}:0:1"
     assert ("reserve", ref) in kinds and ("possible-usage", ref) in kinds and ("release", ref) in kinds
+    # ... and the amounts: the possible usage is the abandoned request's admitted worst case, not zero, and it is all
+    # the budget's uncertain total.
+    worst = _assert_charged_at_the_abandoned_requests_worst_case(budget, entries, usage, base["turn_id"])
+    [possible] = [e for e in entries if e["kind"] == "possible-usage"]
+    assert float(possible["amount"]) == worst > 0 and possible["detail"]["in_flight_estimate"] is True
+    assert budget["uncertain"] == worst
     assert _decisions(lab, pid, base["turn_id"]) == []  # nothing proposed, nothing accepted
 
 
@@ -193,8 +221,11 @@ def test_decision_deadline_abandons_the_in_flight_request(lab, provider):
     assert usage["uncertain"] is True and usage["aborted"] == {
         "reason": "decision-deadline", "in_flight": True, "abandoned_request": usage["aborted"]["abandoned_request"]}
     assert "decision deadline" in usage["limit_reached"]
-    budget, _ = _model_tokens(lab, pid, inv)
+    budget, entries = _model_tokens(lab, pid, inv)
     assert budget["reserved"] == 0, budget
+    # The abandoned request is charged at its admitted worst case (possible usage), the rest of the reservation released.
+    worst = _assert_charged_at_the_abandoned_requests_worst_case(budget, entries, usage, base["turn_id"])
+    assert budget["uncertain"] == worst > 0
 
 
 def test_a_response_that_arrives_in_time_is_still_accepted(lab, provider):
@@ -225,6 +256,10 @@ def test_stop_after_the_response_arrived_discards_the_decision(lab, provider):
     assert decisions and not any(d["accepted"] for d in decisions)
     [usage] = _usage_events(lab, pid, inv)
     assert usage["calls"] == 1 and not usage.get("uncertain")  # a completed response's usage is known
+    budget, entries = _model_tokens(lab, pid, inv)  # certain usage (100 in + 20 out), nothing uncertain, rest released
+    assert [(e["kind"], float(e["amount"])) for e in entries] == [("reserve", RESERVED), ("usage", 120),
+                                                                  ("release", RESERVED - 120)]
+    assert budget == {"limit_amount": 1e6, "reserved": 0, "used": 120, "uncertain": 0}
 
 
 def _turn_with_attempts(lab, deadline_seconds: int = 600):

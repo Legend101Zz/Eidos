@@ -276,6 +276,8 @@ def _turns_section(rd: _Reader, inv: dict) -> str:
             tokens = (usage.get("input_tokens") or 0) + (usage.get("output_tokens") or 0)
             status = _badge("accepted", "ok") if d.get("accepted") else _badge(
                 "unapplied: " + str(b.get("reason") or "?"), "warn")
+            if d.get("accepted") and d.get("revoked"):  # F2c: accepted by a failed attempt, never executed
+                status = _badge("revoked: attempt failed", "warn")
             fixture = " " + _badge("fixture provider", "warn") if usage.get("fixture") else ""
             rows.append([esc(d.get("slot")), status + fixture, esc(b.get("rationale") or ""), esc(calls),
                          esc(tokens), esc(b.get("prompt_revision") or "")])

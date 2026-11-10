@@ -50,7 +50,7 @@ def load_recorded_turn(client: Any, project: str, turn_id: str) -> dict[str, Any
     leaked = [e for e in source.get("events", []) if int(e["seq"]) > int(turn["horizon"])]
     if leaked:
         raise ValueError(f"source manifest contains {len(leaked)} events after the horizon")
-    accepted = [d for d in turn["decisions"] if d["accepted"]]
+    accepted = [d for d in turn["decisions"] if d["accepted"] and not d.get("revoked")]  # revoked: never run (F2c)
     return {"turn": turn, "source": source, "recorded_decisions": accepted}
 
 
