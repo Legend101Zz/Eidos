@@ -216,3 +216,27 @@ def test_write_report_returns_single_file(tmp_path):
 def test_whole_project_report_when_no_investigation():
     page = render_report(ReadOnlyFake(), "proj", None)
     assert "Investigation <code>inv1</code>" in page
+
+
+def test_needs_input_mark_and_turn_failure_are_shown_escaped():
+    """ADR 0019: a failed turn's failure and the investigation's needs-input mark (with its code) are visible."""
+
+    class Failed(ReadOnlyFake):
+        def q_get_investigation(self, p):
+            inv = super().q_get_investigation(p)
+            inv["needs_input"] = {"code": "turn-failed", "since": "2026-11-11T04:07:13+00:00",
+                                  "reason": "turn failed (non-retryable error): MODEL_CALL_FAILED " + XSS,
+                                  "details": {"retryable": False}}
+            return inv
+
+        def q_get_turn(self, p):
+            turn = super().q_get_turn(p)
+            turn["result"] = {"stop_reason": "error", "failure": {
+                "error_type": "MODEL_CALL_FAILED", "retryable": False, "message": "401 " + IMG}}
+            return turn
+
+    page = render_report(Failed(), "proj", "inv1")
+    assert "Needs operator input</b> (turn-failed, since 2026-11-11T04:07:13+00:00)" in page
+    assert "failed: MODEL_CALL_FAILED (not retryable): 401" in page
+    assert "<script" not in page.lower() and "<img" not in page.lower()
+    assert "Needs operator input" not in render_report(ReadOnlyFake(), "proj", "inv1")

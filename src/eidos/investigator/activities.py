@@ -141,8 +141,20 @@ def bounded(result: dict) -> dict:
         check_payload(result, limit=WORKFLOW_PAYLOAD_LIMIT)
         return result
     except Exception:
-        return {k: result[k] for k in ("accepted", "decision_id", "n_calls", "control", "reason") if k in result} | {
-            "truncated": True}
+        # The reduced result must itself be small: a long ``reason`` or ``control`` used to be kept whole, so an
+        # oversized result still exceeded Temporal's payload limit and failed the activity (ADR 0019 made such failed
+        # turns visible; before, they looked like waits).
+        out = {k: result[k] for k in ("accepted", "decision_id", "n_calls") if k in result}
+        if isinstance(result.get("reason"), str):
+            out["reason"] = result["reason"][:300]
+        control = result.get("control")
+        if isinstance(control, dict):
+            try:
+                check_payload(control, limit=WORKFLOW_PAYLOAD_LIMIT // 4)
+                out["control"] = control
+            except Exception:  # noqa: BLE001 - keep only what the workflow branches on
+                out["control"] = {k: str(control[k])[:300] for k in ("action", "summary") if control.get(k)}
+        return out | {"truncated": True}
 
 
 def decision_usd_envelope(est_tokens: float, price: dict, cfg: dict) -> float:
@@ -433,14 +445,23 @@ class InvestigatorActivities:
     @activity.defn(name="mark_needs_input")
     def mark_needs_input(self, a: dict) -> dict:
         return self.wf.command("mark_needs_input", {"investigation_id": a["investigation_id"], "reason": a.get("reason"),
-                               "refused_turns": a.get("refused_turns", 0)}, project=a["project_id"],
+                               "refused_turns": a.get("refused_turns", 0),
+                               **{k: a[k] for k in ("code", "details") if a.get(k)}}, project=a["project_id"],
                                key=f"needs-input:{a['investigation_id']}:{a.get('turn_counter')}:"
                                    f"{activity.info().workflow_run_id}")["result"]
+
+    @activity.defn(name="record_turn_retry")
+    def record_turn_retry(self, a: dict) -> dict:
+        """ADR 0019: a bounded automatic retry after a retryable turn failure is on the ledger before its backoff."""
+        return self.wf.command("record_turn_retry", {k: a.get(k) for k in (
+            "investigation_id", "failed_turn_id", "attempt", "max_attempts", "delay_seconds", "failure")},
+            project=a["project_id"], key=f"turn-retry:{a['investigation_id']}:{a.get('turn_counter')}")["result"]
 
     @activity.defn(name="complete_turn")
     @_hb
     def complete_turn(self, a: dict) -> dict:
         r = self.wf.command("complete_turn", {"turn_id": a["turn_id"], "stop_reason": a["stop_reason"],
-                            "control": a.get("control"), "receipts": a.get("receipts", [])},
+                            "control": a.get("control"), "receipts": a.get("receipts", []),
+                            **({"failure": a["failure"]} if a.get("failure") else {})},
                             project=a["project_id"], key=f"complete:{a['turn_id']}")
         return {"status": r["result"].get("status")}

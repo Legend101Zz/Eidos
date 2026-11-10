@@ -257,6 +257,14 @@ def _charter_section(rd: _Reader, inv: dict) -> str:
     return "".join(parts)
 
 
+def _needs_input_note(mark: Any) -> str:
+    """The operator-attention mark of an investigation (ADR 0019 codes), or nothing."""
+    if not isinstance(mark, dict):
+        return ""
+    return (f'<p class="gap"><b>Needs operator input</b> ({esc(mark.get("code") or "unspecified")}, since '
+            f'{esc(mark.get("since"))}): {esc(mark.get("reason"))}</p>')
+
+
 def _turns_section(rd: _Reader, inv: dict) -> str:
     out = []
     for t in inv.get("turns") or []:
@@ -265,6 +273,11 @@ def _turns_section(rd: _Reader, inv: dict) -> str:
         head = (f"<h3 id=\"{_slug(t['id'])}\">Turn {esc(t.get('seq'))} {_badge(t.get('status'))} "
                 f"stop reason: <b>{esc(t.get('stop_reason') or res.get('stop_reason') or '—')}</b></h3>"
                 f'<p class="mute">horizon {esc(t.get("horizon"))}</p>')
+        failure = res.get("failure") or {}
+        if failure:  # ADR 0019: why the turn failed
+            head += (f'<p class="gap">failed: {esc(failure.get("error_type"))} '
+                     f'({"retryable" if failure.get("retryable") else "not retryable"}): '
+                     f'{esc(failure.get("message"))}</p>')
         if not full:
             out.append(head + '<p class="gap">turn detail unavailable</p>')
             continue
@@ -457,6 +470,7 @@ def _investigation_block(rd: _Reader, inv_id: str) -> tuple[str, dict[str, Any]]
                     if inv_cfg.get("runtime") == "fixture" else "")
     sections = [
         f'<h2 id="{_slug(inv_id)}">Investigation <code>{esc(inv_id)}</code> {_badge(inv.get("status"))}</h2>',
+        _needs_input_note(inv.get("needs_input")),
         f"<p><b>Question:</b> {esc(body.get('question'))}</p>",
         f"<p>Revision {esc(inv.get('revision'))} (head {esc(inv.get('head_revision'))}), created by "
         f"{esc(inv.get('created_by'))} at {esc(inv.get('created_at'))}; investigator {esc(runtime)}{fixture_note}; "

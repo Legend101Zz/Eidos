@@ -40,6 +40,35 @@ cap and 6/8 at 16384 tokens / 120 s), `tool` 6/8 (was 4/8); `docs/release/eviden
   - A replayed command's receipt reports this invocation's `normalized_arguments`, and the committing call's as
     `admission_normalized_arguments`.
 
+### Post-pilot robustness: failed turns and runaway reasoning (ADR 0019)
+- **A failed turn no longer stalls the investigation.** Before, a turn that ended `error` was treated as a wait. The
+  coordinator polled for ledger news for up to 6 h, with nothing scheduled and no `needs_input` (pilot D12-r3: active
+  from 04:07 until the study's deadline stopped it at 04:15).
+  - The turn now records why it failed: `failure` with `error_type`, `retryable`, `retry_state` and `message`, on
+    the turn result and the `turn.completed` event.
+  - A retryable failure gets at most 2 automatic retry turns. Each one is recorded first as
+    `investigation.turn_retry_scheduled` and starts after a durable backoff of 60 s × 2^(n−1). Retry turns reserve
+    the turns and model budgets like any turn.
+  - A non-retryable failure (e.g. provider authentication, unsupported model), or a third consecutive failure,
+    marks the investigation `needs_input` at once.
+  - `needs_input` now has a machine-readable `code` (`turn-failed`, `refused-proposals`, `coordinator-stopped`) and
+    bounded `details`, shown by `get_investigation` (CLI, API, MCP) and in project status.
+  - A failed `TurnWorkflow` follows the same policy. Before, the coordinator returned `failed` after three in a
+    row.
+  - Recorded workflow histories replay (`workflow.patched("failed-turn-policy-v1")`).
+- **Runaway reasoning.** A response that reaches the output cap with no answer (`finish_reason: length`, only
+  reasoning) is no longer a retryable provider failure. Before, Temporal re-ran the whole decision three times,
+  reads included.
+  - The decision re-asks once, in every output mode: concise instruction, decision only (no read request), the same
+    output cap. With the opt-in `runaway_reasoning_effort` setting it also sends the OpenAI-compatible
+    `reasoning_effort` field.
+  - A second runaway ends the decision in the explicit no-effect outcome `reasoning-runaway`.
+  - Every runaway request counts against `max_requests_per_decision`, the token envelope and the usage receipt
+    (`per_request`, `structured_output.runaway`, `runaway_reasks`). The default cap is unchanged.
+- `bounded()` (the decide/execute activity result guard) now truncates `reason` and `control`. Before, an oversized
+  result kept them whole and still went over Temporal's payload limit, so every turn of the coordinator stress test
+  had failed unnoticed.
+
 ### Output and time limits
 - `scripts/qualify/live_provider_check.py --max-output-tokens N` (default 4096, unchanged); recorded in the receipt's
   `caps`. The receipt also totals `total_reasoning_tokens`.

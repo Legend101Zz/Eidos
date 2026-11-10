@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
+from typing import Any
 
 from eidos.application.service import Ctx, command
 from eidos.domain import charter as charter_rules
@@ -209,19 +211,51 @@ def _clear_needs_input(ctx: Ctx, inv, status: str, action: str) -> None:
                   "was": inv.labels["needs_input"]}, investigation_id=inv.id)
 
 
+NEEDS_INPUT_CODES = ("refused-proposals", "coordinator-stopped", "turn-failed")
+NEEDS_INPUT_DETAILS_BYTES = 2000
+
+
+def _bounded_details(details: Any) -> dict:
+    """Machine-readable details of a needs-input mark or a turn failure: a JSON object of bounded size."""
+    if not isinstance(details, dict):
+        return {}
+    if len(json.dumps(details, default=str)) <= NEEDS_INPUT_DETAILS_BYTES:
+        return details
+    return {"truncated": True, "preview": json.dumps(details, default=str)[:NEEDS_INPUT_DETAILS_BYTES]}
+
+
 @command("mark_needs_input", "turn")
 def mark_needs_input(ctx: Ctx, p: dict) -> dict:
-    """The coordinator surfaces an investigation that keeps producing refused proposals: durable and visible
-    (investigation label, event) until an operator steers, resumes or stops it."""
+    """The coordinator surfaces an investigation it will not continue on its own: durable and visible (investigation
+    label, event) until an operator steers, resumes or stops it. ``code`` says why, for clients and operators
+    (``NEEDS_INPUT_CODES``: refused proposals after bounded retries, the coordinator stopped on a limit, or a turn
+    failed with a non-retryable error or after its bounded automatic retries, ADR 0019); ``details`` is a bounded
+    JSON object (for a failed turn: the turn, the error type and message, retryable, attempts)."""
     inv = ctx.tx.require("investigation", p["investigation_id"], lock=True)
     if (inv.labels or {}).get("needs_input"):
         return {"investigation_id": inv.id, "needs_input": inv.labels["needs_input"], "already": True}
+    code = p.get("code") or ("refused-proposals" if int(p.get("refused_turns", 0) or 0) else "coordinator-stopped")
+    if code not in NEEDS_INPUT_CODES:
+        raise Invalid(f"code must be one of {NEEDS_INPUT_CODES}")
     from datetime import UTC, datetime
-    mark = {"since": datetime.now(UTC).isoformat(), "reason": str(p.get("reason", ""))[:300],
-            "refused_turns": int(p.get("refused_turns", 0))}
+    mark = {"since": datetime.now(UTC).isoformat(), "code": code, "reason": str(p.get("reason", ""))[:300],
+            "refused_turns": int(p.get("refused_turns", 0)), "details": _bounded_details(p.get("details"))}
     ctx.tx.set_status("investigation", inv.id, inv.status, labels={"needs_input": mark})
     ctx.event("investigation.needs_input", inv.id, mark, investigation_id=inv.id)
     return {"investigation_id": inv.id, "needs_input": mark, "already": False}
+
+
+@command("record_turn_retry", "turn")
+def record_turn_retry(ctx: Ctx, p: dict) -> dict:
+    """The coordinator schedules a bounded automatic retry after a turn failed with a retryable error (ADR 0019):
+    recorded before the backoff starts, so the wait is never silent (event ``investigation.turn_retry_scheduled``).
+    The retried turn is an ordinary turn: it reserves the turns budget and its decisions reserve model budget."""
+    inv = ctx.tx.require("investigation", p["investigation_id"])
+    body = {"failed_turn_id": p.get("failed_turn_id"), "attempt": int(p.get("attempt", 0)),
+            "max_attempts": int(p.get("max_attempts", 0)), "delay_seconds": float(p.get("delay_seconds", 0)),
+            "failure": _bounded_details(p.get("failure"))}
+    ctx.event("investigation.turn_retry_scheduled", inv.id, body, investigation_id=inv.id)
+    return {"investigation_id": inv.id, **body}
 
 
 @command("resume_investigation", "control")
@@ -558,6 +592,9 @@ def complete_turn(ctx: Ctx, p: dict) -> dict:
     status = "cancelled" if reason == "cancelled" else ("failed" if reason == "error" else "completed")
     result = {"stop_reason": reason, "summary": str(p.get("summary", ""))[:4000], "receipts": p.get("receipts", []),
               "unfinished_handles": p.get("unfinished_handles", []), "control": p.get("control")}
+    failure = _bounded_details(p.get("failure")) if reason == "error" else {}
+    if failure:  # why the turn failed (ADR 0019): on the turn and on its turn.completed event
+        result["failure"] = failure
     result["released_model_reservations"] = release_turn_model_reservations(ctx, turn)
     ctx.tx.update_turn(turn["id"], status=status, result=result)
     inv_id = turn["investigation_id"]
@@ -572,7 +609,8 @@ def complete_turn(ctx: Ctx, p: dict) -> dict:
                               "scope": control.get("scope"), "action": control["action"]}
         ctx.tx.put_record("investigation", inv_id, ctx.project_id, body, created_by=ctx.principal.id,
                           status="concluded")
-    ctx.event("turn.completed", turn["id"], {"stop_reason": reason, "status": status}, investigation_id=inv_id)
+    ctx.event("turn.completed", turn["id"], {"stop_reason": reason, "status": status,
+                                             **({"failure": failure} if failure else {})}, investigation_id=inv_id)
     return {"turn_id": turn["id"], "status": status}
 
 
