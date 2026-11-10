@@ -41,6 +41,19 @@ raise SystemExit(subprocess.run(argv,cwd=work,env=env,timeout=recipe['timeout_se
 '''
 
 
+def grader_reproduce_command(argv):
+    """The selected job's own training argv, in the evaluator's common form: python <code_path> train ...
+
+    Every arm's answer must name candidate.code_path train with --inputs/--out/--seed (study/grade_block.py).
+    The recorded job ran `python project.py train --inputs {work} ...` in a staged copy of the same source,
+    so only the path and the inputs placeholder are rewritten; reproduce.py remains as extra evidence.
+    """
+    if len(argv) >= 3 and argv[1] == 'project.py' and argv[2] == 'train':
+        rest = [{'{work}': '{inputs}'}.get(x, x) for x in argv[3:]]
+        return ['python', 'candidate/source/project.py', 'train', *rest]
+    return ['python', 'reproduce.py', '--out', 'reproduced']
+
+
 def stop_investigation(c, project, inv):
     return c.command('stop_investigation', {'investigation_id': inv, 'running_job_policy': 'cancel'},
                      project=project, key='study-outer-stop:' + inv)
@@ -314,7 +327,7 @@ def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessment
             'predictions_path': 'candidate/validation_predictions.npz',
             'predictions_sha256': digest(cdir / 'validation_predictions.npz'),
             'environment_lock': 'requirements.lock', 'environment_lock_sha256': digest(out / 'requirements.lock'),
-            'reproduce_command': ['python', 'reproduce.py', '--out', 'reproduced'],
+            'reproduce_command': grader_reproduce_command(recipe['argv']),
             'parent_checkpoint': parent_checkpoint,
             'restore_class': 'checkpoint_continuation' if parent_checkpoint else 'fresh_initialization'}
     for name, role in [('selection_receipt.json', 'candidate-selection'), ('training_receipt.json', 'training')]:
