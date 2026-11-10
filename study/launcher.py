@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import random
 import shutil
 import subprocess
@@ -95,6 +96,9 @@ def prepare(row, run_dir):
             model=MODEL,
             envelope=ENVELOPE,
             charter_sha=hashlib.sha256(charter.read_bytes()).hexdigest(),
+            charter_amendment_commit=os.environ["EIDOS_PILOT_CHARTER_COMMIT"],
+            charter_amendment_sha256=hashlib.sha256(
+                (ROOT / "docs/experiments/pilot-1/CHARTER.md").read_bytes()).hexdigest(),
         ),
     )
 
