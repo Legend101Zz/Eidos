@@ -22,6 +22,7 @@ def run(run_dir, meta):
     lab.start()
     c = lab.client()
     inv = None
+    bridge = None
     try:
         project, imported = prepare(c, run_dir, 4)
         investigator = json.loads((Path(__file__).parent / 'investigator.json').read_text())
@@ -35,6 +36,10 @@ def run(run_dir, meta):
         question = prompt(4, run_dir) + '\n\nPackaged task files:\n' + json.dumps(files, ensure_ascii=False)
         begin = time.monotonic()
         deadline_utc = time.time() + wall
+        from .provider_bridge import start as start_bridge
+        bridge, bridge_receipt = start_bridge(run_dir, investigator['settings']['base_url'],
+                                              deadline_utc, investigator['settings']['request_timeout'])
+        investigator['settings']['base_url'] = bridge_receipt['base_url']
         r = c.command('start_investigation', {
             'question': question, 'charter_id': imported['charter_id'], 'environment': 'default',
             'inputs': imported['artifacts'], 'task': imported['task'], 'investigator': investigator,
@@ -80,11 +85,13 @@ def run(run_dir, meta):
             stop_investigation(c, project, inv)
         shown, events, records = ledger(c, project, inv, run_dir / 'transcript.jsonl')
         tokens, models, billed, receipts = usage(events, run_dir / 'transcript.jsonl')
+        uncertain = any(r.get('uncertain') for r in receipts)
         write_json(run_dir / 'usage_receipts.json', {
             'receipts': receipts, 'tokens': tokens, 'model_ids_seen': models,
             'cache_note': 'Cache breakdown recovered from persisted model responses; input excludes those '
                           'cached tokens. Failed requests without raw responses have unknown cache breakdown.',
             'deadline_stop_errors': stop_error,
+            'uncertain_usage': uncertain,
         })
         selected, reason = select_job(c, project, shown, records)
         if selected is None and not expired.is_set() and time.monotonic() - begin < wall - 15:
@@ -99,13 +106,23 @@ def run(run_dir, meta):
         export_answer(c, project, inv, run_dir, meta, selected, reason, claim, assessments, tokens, receipts)
         # Refresh after fallback so the transcript and job receipts include the delivered baseline.
         ledger(c, project, inv, run_dir / 'transcript.jsonl')
-        valid = validate(run_dir / 'out/answer.json')
+        try:
+            valid = validate(run_dir / 'out/answer.json')
+        except (ValueError, OSError) as exc:
+            valid = False
+            write_json(run_dir / 'validation_error.json', {'error': str(exc)})
         status, incident = classify(observed or shown, receipts, models, expired.is_set(), valid)
         return {'status': status, 'incident_reason': incident, 'tokens': tokens, 'billed_usd': billed,
                 'model_ids_seen': models, 'agent_claim': agent_claim, 'transcript': 'transcript.jsonl',
                 'project': project, 'investigation_id': inv, 'selected_job': selected,
-                'selection_reason': reason, 'investigation_wall_s': round(time.monotonic() - begin, 3)}
+                'selection_reason': reason, 'investigation_wall_s': round(time.monotonic() - begin, 3),
+                'provider_endpoint': bridge_receipt['upstream'], 'provider_outer_kill': True,
+                'usage_uncertain': uncertain,
+                'investigator_config_sha': digest(Path(__file__).parent / 'investigator.json')}
     finally:
+        if bridge is not None and bridge.poll() is None:
+            bridge.kill()
+            bridge.wait(timeout=10)
         if inv:
             try:
                 stop_investigation(c, project, inv)
@@ -137,7 +154,7 @@ def select_job(c, project, shown, records):
     plans = {p['id']: p for p in records['evidence_plan']}
     for assessment in records['assessment']:
         b = assessment['body']
-        if b.get('outcome') not in ('supported', 'confirmed', 'pass', 'passed'):
+        if b.get('outcome') != 'protocol-passed' or b.get('conformance') != 'conformant' or b.get('health') != 'intact':
             continue
         plan = (plans.get(b.get('plan_id')) or {}).get('body') or {}
         for arm in plan.get('arms', []):
@@ -236,7 +253,8 @@ def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessment
         'cost': cost, 'exposures': ['Packaged task only'],
         'deviations': ['Predictions are visible-validation predictions; evaluator supplies inference inputs separately',
                        'macOS Seatbelt uses the same OS identity; memory limits are best effort',
-                       'Eidos 1.1.0 has per-turn deadlines; total wall deadline enforced by controller stop/cancel watchdog'],
+                       'Eidos 1.1.0 has per-turn deadlines; total wall deadline enforced by stop/cancel watchdog '
+                       'and a per-run provider forwarding process that exits at the deadline'],
         'confidence': None}
     write_json(out / 'answer.json', answer)
 
@@ -247,4 +265,26 @@ def validate(path):
     spec = importlib.util.spec_from_file_location('pilot_answer_validator', validator)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.validate(json.loads(path.read_text()))
+    answer = json.loads(path.read_text())
+    module.validate(answer)
+    out = path.parent.resolve()
+
+    def artifact(rel, expected=None):
+        target = (out / rel).resolve()
+        if out not in target.parents or not target.is_file():
+            raise ValueError(f'answer artifact is missing or escapes out/: {rel}')
+        if expected is not None and digest(target) != expected:
+            raise ValueError(f'answer artifact hash mismatch: {rel}')
+
+    candidate = answer.get('candidate')
+    if candidate:
+        for name in ('code', 'model', 'predictions'):
+            artifact(candidate[name + '_path'], candidate[name + '_sha256'])
+        artifact(candidate['environment_lock'], candidate['environment_lock_sha256'])
+        if candidate.get('parent_checkpoint'):
+            artifact(candidate['parent_checkpoint'])
+    for evidence in answer['evidence']:
+        artifact(evidence['path'], evidence['sha256'])
+    for receipt in answer['cost']['receipt_paths']:
+        artifact(receipt)
+    return True

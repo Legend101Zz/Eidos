@@ -167,7 +167,8 @@ def classify(shown, receipts, models, timed_out=False, answer_valid=True):
         return 'incident', 'model id changed: ' + ', '.join(models)
     import re
     if failures and (re.search(r'\b(?:429|5\d\d)\b', text) or any(
-            x in text.lower() for x in ('quota', 'rate limit', 'connection', 'timeout', 'insufficient credit'))):
+            x in text.lower() for x in ('quota', 'rate limit', 'insufficient credit')) or (
+            not timed_out and any(x in text.lower() for x in ('connection', 'timeout')))):
         return 'incident', 'provider/infrastructure failure: ' + text[:1800]
     if timed_out:
         return 'timeout', None

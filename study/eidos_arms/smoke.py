@@ -74,6 +74,11 @@ model and validation predictions through MCP artifact content paths, and write o
 eidos-answer/0.2 from task/answer_schema.py. Use status inconclusive, claim_type no_positive_claim,
 and report that predictions are visible-validation only. No test data or independent confirmation
 is available. Keep all files under this run directory; never print credentials.
+Every candidate/evidence/cost path in out/answer.json is relative to out/, so if you write
+out/project.py the code_path is "project.py" (not "out/project.py"). Recompute every referenced
+file's SHA-256, verify every path exists relative to out/, and run the structural validator before
+concluding. reproduce_command is an argv array such as ["python","project.py","train","--inputs",
+"../task","--out","reproduced","--seed","11"], not a list of shell-command strings.
 '''
 
 

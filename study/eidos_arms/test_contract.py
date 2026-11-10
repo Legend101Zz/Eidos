@@ -2,6 +2,8 @@
 import json
 from pathlib import Path
 import tempfile
+import socket
+import time
 import unittest
 
 from .arm4 import select_job
@@ -59,6 +61,16 @@ class Selection(unittest.TestCase):
         self.records['note'][0]['body']['text'] = '{"job_id":"missing"}'
         self.assertEqual(select_job(self.client, 'p', self.shown, self.records)[0], 'baseline')
 
+    def test_confirmation_uses_real_eidos_outcome_and_health(self):
+        self.records['assessment'] = [{'id': 'assessment1', 'body': {'plan_id': 'plan1',
+            'outcome': 'protocol-passed', 'conformance': 'conformant', 'health': 'intact'}}]
+        self.records['evidence_plan'] = [{'id': 'plan1', 'body': {
+            'arms': [{'id': 'candidate-arm', 'role': 'candidate'}],
+            'launch': {'jobs': {'candidate-arm': ['search']}}}}]
+        self.assertEqual(select_job(self.client, 'p', self.shown, self.records)[0], 'search')
+        self.records['assessment'][0]['body']['health'] = 'affected'
+        self.assertEqual(select_job(self.client, 'p', self.shown, self.records)[0], 'baseline')
+
 
 class ClaudeStreaming(unittest.TestCase):
     def test_partial_usage_survives_timeout_and_does_not_double_count_final(self):
@@ -80,6 +92,64 @@ class ClaudeStreaming(unittest.TestCase):
             'cache_read_input_tokens': 197, 'output_tokens': 10}, 'result': 'OK'})
         self.assertEqual(tracker.tokens['total'], 216)
         self.assertEqual(tracker.claim, 'OK')
+
+
+class ProviderWall(unittest.TestCase):
+    def test_deadline_exits_and_closes_a_blocked_request(self):
+        from .provider_bridge import start
+        with tempfile.TemporaryDirectory() as d:
+            process, state = start(Path(d), 'https://example.invalid/v1', time.time() + 1.5, 300)
+            try:
+                from urllib.parse import urlparse
+                port = urlparse(state['base_url']).port
+                with socket.create_connection(('127.0.0.1', port), timeout=4) as conn:
+                    # Leave the request body incomplete: no upstream request can occur.
+                    conn.sendall(b'POST /v1/chat/completions HTTP/1.0\r\nAuthorization: Bearer fixture\r\n'
+                                 b'Content-Length: 999\r\n\r\n')
+                    self.assertEqual(conn.recv(1), b'')
+                self.assertEqual(process.wait(timeout=3), 124)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+
+
+class ArtifactReferences(unittest.TestCase):
+    def test_paths_and_digests_are_checked_relative_to_answer_directory(self):
+        from .arm4 import validate
+        from .common import digest
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / 'out'
+            out.mkdir()
+            candidate = {'parent_checkpoint': None, 'restore_class': 'fresh_initialization',
+                         'reproduce_command': ['python', 'project.py', 'train']}
+            for field, filename in [('code', 'project.py'), ('model', 'model.pt'), ('predictions', 'validation.npz')]:
+                (out / filename).write_bytes(b'fixture')
+                candidate[field + '_path'] = filename
+                candidate[field + '_sha256'] = digest(out / filename)
+            (out / 'requirements.lock').write_text('fixture==1\n')
+            candidate.update(environment_lock='requirements.lock',
+                             environment_lock_sha256=digest(out / 'requirements.lock'))
+            cost = {k: None for k in ('elapsed_seconds', 'cpu_core_seconds', 'gpu_device_seconds', 'gpu_type',
+                'model_input_tokens', 'model_output_tokens', 'model_reasoning_tokens', 'model_calls', 'billed_usd')}
+            cost.update(unknown_fields=list(cost), receipt_paths=[])
+            answer = {'schema_version': 'eidos-answer/0.2', 'task_id': 'fixture', 'run_id': 'fixture',
+                'status': 'inconclusive', 'claim_type': 'no_positive_claim', 'claim': 'fixture', 'scope': 'fixture',
+                'candidate': candidate, 'measurements': [], 'evidence': [], 'alternative_explanations': [],
+                'abstention': {'abstained': False, 'reason': None, 'unresolved': [], 'next_discriminating_test': None},
+                'cost': cost, 'exposures': [], 'deviations': [], 'confidence': None}
+            path = out / 'answer.json'
+            path.write_text(json.dumps(answer))
+            self.assertTrue(validate(path))
+            candidate['code_path'] = 'out/project.py'
+            path.write_text(json.dumps(answer))
+            with self.assertRaisesRegex(ValueError, 'missing or escapes'):
+                validate(path)
+            candidate['code_path'] = 'project.py'
+            candidate['code_sha256'] = '0' * 64
+            path.write_text(json.dumps(answer))
+            with self.assertRaisesRegex(ValueError, 'hash mismatch'):
+                validate(path)
 
 
 if __name__ == '__main__':
