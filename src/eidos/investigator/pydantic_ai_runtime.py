@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from eidos.investigator.runtime import DecisionRequest, DecisionResult, ModelCallFailed
+from eidos.investigator import structured_output as so
+from eidos.investigator.runtime import DecisionRequest, DecisionResult, ModelCallFailed, output_cap
 
 PROMPT_REVISION = "investigator-prompt/1"
 SYSTEM = (
@@ -119,19 +121,143 @@ def classify_failure(exc: BaseException) -> bool:
     return True
 
 
+def _reasoning_tokens(response: Any) -> int | None:
+    """Reasoning tokens a provider reported for one response (OpenAI-compatible
+    ``completion_tokens_details.reasoning_tokens``, which Pydantic AI keeps in ``usage.details``); None if absent."""
+    v = (getattr(response.usage, "details", None) or {}).get("reasoning_tokens")
+    return int(v) if isinstance(v, int) and not isinstance(v, bool) else None
+
+
+def _charged(response: Any, reasoning_billing: str) -> tuple[int, int, int | None, bool]:
+    """(input, charged output, reported reasoning, reasoning added to output) of one response; see
+    ``usage_from_messages``."""
+    r_in, r_out, r_reason = response.usage.input_tokens or 0, response.usage.output_tokens or 0, \
+        _reasoning_tokens(response)
+    added = r_reason is not None and (reasoning_billing == "separate" or r_reason > r_out)
+    return r_in, r_out + (r_reason if added and r_reason else 0), r_reason, added
+
+
+class EnvelopeRefused(Exception):
+    """A model request was not started: its worst case does not fit what is left of the decision's token envelope."""
+
+
+# Chat-template tokens per message part (role markers, separators, tool-call framing) that are not in the part's own
+# bytes: a generous allowance, so the input estimate stays an upper bound.
+PART_OVERHEAD_TOKENS = 32
+
+
+def _nbytes(x: Any) -> int:
+    return len(json.dumps(x, default=str, ensure_ascii=False).encode())
+
+
+class TokenEnvelope:
+    """Per-decision admission (ADR 0016): a model request is started only if the tokens already charged plus its worst
+    case, ``input estimate + output cap``, fit the decision's token envelope (``max_tokens_per_decision``, which the
+    decide activity reserves). Every request of the decision passes here, in every output mode.
+
+    Input estimate. After a response whose input the provider reported: that request's input plus its charged output
+    (the text sent back is part of it) plus the bytes of every message part added since, with
+    ``PART_OVERHEAD_TOKENS`` per part. Otherwise (the first request, or no reported input): the bytes of the whole
+    request: messages, instructions, tool definitions and settings (the response schema). One token per byte is the
+    lab's conservative rule (the LLM broker reserves the same way): no tokenizer produces more tokens than bytes in
+    practice.
+
+    The output cap bounds every billed output token when reasoning is counted inside the output (``included``, the
+    OpenAI-compatible contract). A provider configured as ``separate`` may bill reasoning beyond the cap; that request
+    is then charged in full and no further request starts once the envelope is spent."""
+
+    def __init__(self, limit: int, cap: int, reasoning_billing: str = "included"):
+        self.limit, self.cap, self.reasoning_billing = limit, cap, reasoning_billing
+        self.spent = 0
+        self.last: tuple[int, int] | None = None  # (input, charged output) of the last response with reported input
+        self.admitted: list[dict[str, int]] = []
+
+    def estimate(self, messages: list, settings: Any, params: Any) -> int:
+        from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
+        last = max((i for i, m in enumerate(messages) if isinstance(m, ModelResponse)), default=-1)
+        if self.last is not None and last >= 0:
+            new = messages[last + 1:]
+            parts = sum(len(getattr(m, "parts", ())) for m in new)
+            return self.last[0] + self.last[1] + len(ModelMessagesTypeAdapter.dump_json(new)) \
+                + PART_OVERHEAD_TOKENS * parts
+        tools = [{"name": t.name, "description": t.description, "parameters": t.parameters_json_schema}
+                 for t in [*getattr(params, "function_tools", []), *getattr(params, "output_tools", [])]]
+        parts = sum(len(getattr(m, "parts", ())) for m in messages) + len(tools)
+        return len(ModelMessagesTypeAdapter.dump_json(messages)) + _nbytes(tools) + _nbytes(settings or {}) \
+            + PART_OVERHEAD_TOKENS * parts
+
+    def admit(self, messages: list, settings: Any, params: Any) -> None:
+        est = self.estimate(messages, settings, params)
+        if self.spent + est + self.cap > self.limit:
+            raise EnvelopeRefused(f"the next request may use {est} input + {self.cap} output tokens; the decision's "
+                                  f"token envelope has {max(self.limit - self.spent, 0)} of {self.limit} left")
+        self.admitted.append({"input_estimate": est, "output_cap": self.cap, "spent_before": self.spent})
+
+    def record(self, response: Any) -> None:
+        r_in, r_out, _, _ = _charged(response, self.reasoning_billing)
+        self.spent += r_in + r_out
+        self.last = (r_in, r_out) if r_in > 0 else None
+
+
+def _guarded(model: Any, envelope: TokenEnvelope) -> Any:
+    """``model`` with ``envelope`` checked before, and charged after, every request."""
+    from pydantic_ai.models.wrapper import WrapperModel
+
+    class EnvelopeModel(WrapperModel):
+        async def request(self, messages, model_settings, model_request_parameters):
+            envelope.admit(messages, model_settings, model_request_parameters)
+            response = await super().request(messages, model_settings, model_request_parameters)
+            envelope.record(response)
+            return response
+    return EnvelopeModel(model)
+
+
 def usage_from_messages(messages: list, provider: str, model: str | None,
-                        price: dict[str, float] | None = None) -> dict[str, Any]:
+                        price: dict[str, float] | None = None, reasoning_billing: str = "included") -> dict[str, Any]:
+    """Usage of every model response in ``messages``; the basis of usage receipts and budget settlement.
+
+    Reasoning tokens are recorded per request and in total whenever the provider reports them, never dropped.
+    OpenAI-compatible APIs count them inside ``completion_tokens`` (``reasoning_billing="included"``, the default),
+    so ``output_tokens`` already charges them. A response reporting more reasoning tokens than output tokens proves
+    the provider counts them separately: they are then added to that request's charged output, and recorded as
+    added. ``reasoning_billing="separate"`` declares a provider that always reports them separately."""
     from pydantic_ai.messages import ModelResponse
     responses = [m for m in messages if isinstance(m, ModelResponse)]
-    return {"provider": provider, "model": model,
-            "input_tokens": sum(r.usage.input_tokens or 0 for r in responses),
-            "output_tokens": sum(r.usage.output_tokens or 0 for r in responses),
-            "calls": len(responses), "request_ids": [r.provider_response_id for r in responses if r.provider_response_id],
-            "served_models": sorted({r.model_name for r in responses if r.model_name}),
-            "per_request": [{"model": r.model_name, "input_tokens": r.usage.input_tokens,
-                             "output_tokens": r.usage.output_tokens, "finish_reason": r.finish_reason} for r in responses],
-            **({"usd": (sum(r.usage.input_tokens or 0 for r in responses) * price["input"]
-                        + sum(r.usage.output_tokens or 0 for r in responses) * price["output"]) / 1e6} if price else {})}
+    per_request, inp, out, reasoning, reported, added = [], 0, 0, 0, False, False
+    for r in responses:
+        r_in, r_out, r_reason, r_added = _charged(r, reasoning_billing)
+        entry: dict[str, Any] = {"model": r.model_name, "input_tokens": r.usage.input_tokens,
+                                 "output_tokens": r.usage.output_tokens, "finish_reason": r.finish_reason}
+        if r_reason is not None:
+            reported = True
+            reasoning += r_reason
+            entry["reasoning_tokens"] = r_reason
+            if r_added:
+                added = True
+                entry["reasoning_added_to_output"] = True
+        inp, out = inp + r_in, out + r_out
+        per_request.append(entry)
+    usage: dict[str, Any] = {
+        "provider": provider, "model": model, "input_tokens": inp, "output_tokens": out, "calls": len(responses),
+        "request_ids": [r.provider_response_id for r in responses if r.provider_response_id],
+        "served_models": sorted({r.model_name for r in responses if r.model_name}), "per_request": per_request,
+        "reasoning_tokens": reasoning if reported else None,
+        "reasoning_accounting": ("added-to-output" if added else "included-in-output") if reported else "not-reported"}
+    if price:
+        usage["usd"] = (inp * price["input"] + out * price["output"]) / 1e6
+    return usage
+
+
+def _read(tools: dict[str, Any], name: str, *a: Any) -> Any:
+    """Run one read tool: a read failure is information for the model, never a crash of the decision."""
+    try:
+        out = tools[name](*a)
+    except Exception as exc:  # noqa: BLE001
+        return {"available": False, "error": str(exc)[:300],
+                "note": "No further evidence is available for this request; decide with what you have."}
+    if isinstance(out, dict) and out.get("available") is False:
+        out = {**out, "note": "No further evidence is available for this request; do not re-query it."}
+    return _bounded(out)
 
 
 def _bounded(x: Any, limit: int = 8000) -> Any:
@@ -171,6 +297,11 @@ class PydanticAIRuntime:
 
     def __init__(self, config: dict[str, Any]):
         self.config = config
+        self.envelope: TokenEnvelope | None = None  # set per decision; every request of the decision passes it
+
+    def _model(self) -> Any:
+        model = build_model(self.config)
+        return _guarded(model, self.envelope) if self.envelope is not None else model
 
     def _agent(self, req: DecisionRequest, *, with_tools: bool = True, output_type: Any = None,
                instructions: str | None = None):
@@ -178,14 +309,7 @@ class PydanticAIRuntime:
         tools = req.read_tools
 
         def call(name: str, *a: Any) -> Any:
-            try:
-                out = tools[name](*a)
-            except Exception as exc:  # a read failure is information, never a crash of the decision
-                return {"available": False, "error": str(exc)[:300],
-                        "note": "No further evidence is available for this request; decide with what you have."}
-            if isinstance(out, dict) and out.get("available") is False:
-                out = {**out, "note": "No further evidence is available for this request; do not re-query it."}
-            return _bounded(out)
+            return _read(tools, name, *a)
 
         def inspect_evidence(artifact_id: str, max_bytes: int = 8192) -> Any:
             """Bounded preview of an artifact's content (text/JSON/CSV)."""
@@ -203,7 +327,7 @@ class PydanticAIRuntime:
             """Status, receipts and outputs of one job."""
             return call("get_job", job_id)
 
-        return Agent(build_model(self.config), output_type=output_type or Decision, instructions=instructions or SYSTEM,
+        return Agent(self._model(), output_type=output_type or Decision, instructions=instructions or SYSTEM,
                      retries=int(self.config.get("output_retries", 1)),
                      tools=[inspect_evidence, search_components, describe_component, get_job]
                      if (tools and with_tools) else [])
@@ -212,117 +336,183 @@ class PydanticAIRuntime:
         mode = self.config.get("output_mode", "tool")
         if mode not in OUTPUT_MODES:
             raise ModelCallFailed(f"unknown output_mode {mode!r} (one of {OUTPUT_MODES})", retryable=False)
+        self.envelope = TokenEnvelope(int(self.config.get("max_tokens_per_decision", 120_000)), output_cap(self.config),
+                                      self._billing())
         if mode != "tool":
             return self._decide_text(req, mode)
         return self._decide_tool(req)
 
-    # -- text output with bounded repair (ADR 0014) --------------------------------------------------------
-    def _json_mode_settings(self) -> dict[str, Any] | None:
+    # -- text output with bounded repair (ADR 0014) and an Eidos-owned read loop (ADR 0016) -----------------------
+    def _json_mode_settings(self, reads: list[str] | tuple[str, ...] = ()) -> dict[str, Any] | None:
         """Constrained decoding where the endpoint supports it: OpenAI-compatible ``response_format``
-        (Ollama maps it onto its ``format``). Anthropic has no JSON mode: the repair path alone applies."""
-        if self._provider() in ("openai", "openai-compatible"):
-            return {"response_format": {"type": "json_schema", "json_schema": {
-                "name": "eidos_decision", "strict": False, "schema": LENIENT_DECISION_SCHEMA}}}
-        return None
+        (Ollama maps it onto its ``format``). Anthropic has no JSON mode: the repair path alone applies.
+        With read tools available the schema also admits the read-request shape (``read``)."""
+        if self._provider() not in ("openai", "openai-compatible"):
+            return None
+        schema = LENIENT_DECISION_SCHEMA
+        if reads:
+            schema = {**schema, "properties": {**schema["properties"], "read": {
+                "type": "array", "maxItems": so.MAX_READS_PER_REQUEST,
+                "items": {"type": "object", "required": ["tool", "args"], "properties": {
+                    "tool": {"type": "string", "enum": list(reads)}, "args": {"type": "object"}}}}}}
+        return {"response_format": {"type": "json_schema", "json_schema": {
+            "name": "eidos_decision", "strict": False, "schema": schema}}}
 
     def _decide_text(self, req: DecisionRequest, mode: str) -> DecisionResult:
+        """One model request at a time, each counted against ``max_requests_per_decision`` and the decision's
+        token envelope. A reply is a decision, a read request (executed here, results sent back) or malformed
+        (at most one schema-guided re-ask). Native tool calls are not offered in these modes: constrained decoding
+        and native tool calls conflict on OpenAI-compatible endpoints (G4 1.1.1: MiniMax-M3.1-Flash in JSON mode
+        never called a tool and put the read tool into its effect calls instead)."""
         from pydantic import ValidationError
         from pydantic_ai import capture_run_messages
         from pydantic_ai.exceptions import UsageLimitExceeded
+        from pydantic_ai.messages import ModelResponse
         from pydantic_ai.usage import UsageLimits
 
-        from eidos.investigator import structured_output as so
         max_requests = int(self.config.get("max_requests_per_decision", 8))
+        max_tokens = int(self.config.get("max_tokens_per_decision", 120_000))
         model = self.config.get("model")
-        settings: dict[str, Any] = {}
-        if self.config.get("max_output_tokens"):
-            settings["max_tokens"] = int(self.config["max_output_tokens"])
-        extra = self._json_mode_settings() if mode == "json" else None
+        reads_allowed = [t for t in so.READ_TOOLS if t in (req.read_tools or {})]
+        settings: dict[str, Any] = {"max_tokens": output_cap(self.config)}  # the cap the envelope admits with
+        extra = self._json_mode_settings(reads_allowed) if mode == "json" else None
         if extra:
             settings["extra_body"] = extra
         report: dict[str, Any] = {"mode": mode, "json_mode": bool(extra), "repairs": [], "reasks": 0,
-                                  "errors": [], "valid": False}
-        instructions = SYSTEM + "\n\n" + so.JSON_SHAPE
-        tools_agent = self._agent(req, output_type=str, instructions=instructions)
-        prompt = (req.context + "\n\n## This turn so far\n" + json.dumps(req.turn_so_far, default=str)[:20000]
-                  + f"\n\n## Decision budget\nYou may make at most {max_requests} model requests for this decision, "
-                  "including read-tool round trips and one possible correction of a malformed reply.\n\n" + so.JSON_SHAPE)
-        # One request is held back for the schema-guided re-ask when the budget allows it.
-        reask_budget = 1 if max_requests > 1 else 0
-        limits = UsageLimits(request_limit=max(1, max_requests - reask_budget),
-                             total_tokens_limit=int(self.config.get("max_tokens_per_decision", 120_000)))
+                                  "errors": [], "valid": False, "read_requests": 0, "reads": []}
+        shape = so.JSON_SHAPE + ("\n\n" + so.read_shape(reads_allowed) if reads_allowed else "")
+        instructions = SYSTEM + "\n\n" + shape
+        agent = self._agent(req, with_tools=False, output_type=str, instructions=instructions)
+        message = (req.context + "\n\n## This turn so far\n" + json.dumps(req.turn_so_far, default=str)[:20000]
+                   + f"\n\n## Decision budget\nYou may make at most {max_requests} model requests for this decision, "
+                   "including read requests and one possible correction of a malformed reply.\n\n" + shape)
 
-        def parse(text: str) -> dict[str, Any]:
+        def parse(text: str) -> tuple[list[Any] | None, dict[str, Any] | None]:
             obj, repairs = so.extract_json(text)
-            obj, shape = so.normalize(obj)
-            report["repairs"] += repairs + shape
-            return to_proposal(Decision.model_validate(obj))
+            reads, obj, read_repairs = so.split_read_request(obj, reads_allowed)
+            report["repairs"] += repairs + read_repairs
+            if reads is not None:
+                return reads, None
+            obj, shape_repairs = so.normalize(obj)
+            report["repairs"] += shape_repairs
+            proposal = to_proposal(Decision.model_validate(obj))
+            misuse = so.read_tools_in_calls(proposal["calls"], reads_allowed)
+            if misuse:  # never accepted as effects: refused here (one re-ask) and by the lab's validator
+                raise so.StructuredOutputError(misuse)
+            return None, proposal
 
-        all_messages: list = []
-        with capture_run_messages() as messages:
-            try:
-                result = tools_agent.run_sync(prompt, usage_limits=limits, model_settings=settings or None)
-                all_messages = list(result.all_messages())
-                text = result.output
-            except UsageLimitExceeded as exc:
-                all_messages = list(messages)
-                return self._bounded(all_messages, model, max_requests, str(exc), "request-budget-exhausted", report)
-            except ModelCallFailed:
-                raise
-            except Exception as exc:  # provider/transport failure: report everything that may have billed
-                usage = usage_from_messages(list(messages), self._provider(), model, self.config.get("price_per_mtok"))
-                usage["failed_request"] = {"error": type(exc).__name__, "status_code": getattr(exc, "status_code", None)}
-                usage["structured_output"] = report
-                raise ModelCallFailed(f"{type(exc).__name__}: {exc}"[:500], retryable=classify_failure(exc),
-                                      possible_usage=usage) from exc
-        try:
-            proposal = parse(text)
-            report["valid"] = True
-        except (so.StructuredOutputError, ValidationError, ValueError) as exc:
-            msg = so.validation_message(exc)
-            report["errors"].append(msg)
-            spent = usage_from_messages(all_messages, self._provider(), model)
-            left = int(self.config.get("max_tokens_per_decision", 120_000)) - spent["input_tokens"] - spent["output_tokens"]
-            if not reask_budget or left <= 0:  # the re-ask stays inside the decision's token reservation
-                return self._bounded(all_messages, model, max_requests, msg, "structured-output-invalid", report)
-            report["reasks"] += 1
-            fix_agent = self._agent(req, with_tools=False, output_type=str, instructions=instructions)
-            with capture_run_messages() as fix_messages:
+        # The decide activity is cancelled at the turn deadline (``limits.deadline_seconds``) and then retried, so a
+        # follow-up request that could outlive it is not started: a bounded outcome instead of a lost, re-billed
+        # attempt. Reasoning models make long requests (G4 1.1.1: up to minutes per request).
+        deadline = float((req.limits or {}).get("deadline_seconds") or 0)
+        request_timeout = float(self.config.get("request_timeout", 120))
+        started = time.monotonic()
+        history: list = []
+        reask_pending = False  # counted only once the re-ask request is actually made
+        while True:
+            used = sum(1 for m in history if isinstance(m, ModelResponse))
+            if used and deadline and time.monotonic() - started + request_timeout > deadline:
+                return self._bounded(history, model, max_requests, f"a further request (timeout {request_timeout:g}s)"
+                                     f" could outlive the decision deadline ({deadline:g}s)", "decision-deadline",
+                                     report)
+            # The envelope (``TokenEnvelope``) admits the request only if its worst case fits what is left; the
+            # usage limit is the same envelope checked after the response.
+            left = max(max_tokens - sum(self._tokens(history)), 1)
+            reask_now, reask_pending = reask_pending, False
+            if reask_now:
+                report["reasks"] += 1
+            with capture_run_messages() as captured:
                 try:
-                    fixed = fix_agent.run_sync(
-                        "Your reply could not be used as a decision: " + msg + "\nReply with ONLY the corrected JSON "
-                        "object in the required shape, nothing else.", message_history=_close_tool_calls(all_messages),
-                        usage_limits=UsageLimits(request_limit=1, total_tokens_limit=left),
-                        model_settings=settings or None)
-                    all_messages += list(fixed.new_messages())
-                    proposal = parse(fixed.output)
-                    report["valid"] = True
-                except (so.StructuredOutputError, ValidationError, ValueError) as exc2:
-                    report["errors"].append(so.validation_message(exc2))
-                    all_messages += [m for m in fix_messages if m not in all_messages]
-                    return self._bounded(all_messages, model, max_requests, report["errors"][-1],
-                                         "structured-output-invalid", report)
-                except UsageLimitExceeded as exc2:
-                    all_messages += [m for m in fix_messages if m not in all_messages]
-                    return self._bounded(all_messages, model, max_requests, str(exc2), "request-budget-exhausted",
+                    run = agent.run_sync(message, message_history=history or None,
+                                         usage_limits=UsageLimits(request_limit=1, total_tokens_limit=left),
+                                         model_settings=settings or None)
+                except EnvelopeRefused as exc:  # not started: nothing billed, a re-ask that was not sent is not counted
+                    report["reasks"] -= int(reask_now)
+                    outcome = "structured-output-invalid" if report["errors"] and not report["valid"] \
+                        else "request-budget-exhausted"
+                    return self._bounded(history, model, max_requests, f"decision token envelope: {exc}", outcome,
                                          report)
-                except Exception as exc2:  # noqa: BLE001
-                    usage = usage_from_messages(all_messages + list(fix_messages), self._provider(), model,
-                                                self.config.get("price_per_mtok"))
-                    usage["failed_request"] = {"error": type(exc2).__name__}
+                except UsageLimitExceeded as exc:
+                    history += [m for m in captured if m not in history]
+                    return self._bounded(history, model, max_requests, str(exc), "request-budget-exhausted", report)
+                except ModelCallFailed:
+                    raise
+                except Exception as exc:  # provider/transport failure: report everything that may have billed
+                    usage = self._usage(history + [m for m in captured if m not in history])
+                    usage["failed_request"] = {"error": type(exc).__name__,
+                                               "status_code": getattr(exc, "status_code", None)}
+                    report["repairs"] = sorted(set(report["repairs"]))
                     usage["structured_output"] = report
-                    raise ModelCallFailed(f"{type(exc2).__name__}: {exc2}"[:500], retryable=classify_failure(exc2),
-                                          possible_usage=usage) from exc2
+                    raise ModelCallFailed(f"{type(exc).__name__}: {exc}"[:500], retryable=classify_failure(exc),
+                                          possible_usage=usage) from exc
+            history = list(run.all_messages())
+            used = sum(1 for m in history if isinstance(m, ModelResponse))
+            try:
+                reads, proposal = parse(run.output)
+            except (so.StructuredOutputError, ValidationError, ValueError) as exc:
+                msg = so.validation_message(exc)
+                report["errors"].append(msg)
+                if report["reasks"] >= 1 or used >= max_requests:  # at most one schema-guided re-ask
+                    return self._bounded(history, model, max_requests, msg, "structured-output-invalid", report)
+                reask_pending = True
+                message = ("Your reply could not be used: " + msg + "\nReply with ONLY the corrected JSON object in "
+                           "the required shape, nothing else.")
+                continue
+            if proposal is not None:
+                report["valid"] = True
+                break
+            report["read_requests"] += 1
+            assert reads is not None
+            if used >= max_requests:  # no request left to decide with the results: nothing is executed
+                report["reads"] += [{"request": used, "tool": r.get("tool") if isinstance(r, dict) else None,
+                                     "executed": False} for r in reads]
+                return self._bounded(history, model, max_requests, f"read request in the last of {max_requests} "
+                                     "requests", "request-budget-exhausted", report)
+            results = []
+            for i, entry in enumerate(reads):
+                rec: dict[str, Any] = {"request": used, "tool": entry.get("tool") if isinstance(entry, dict) else None}
+                if i >= so.MAX_READS_PER_REQUEST:
+                    out: Any = {"error": f"not executed: at most {so.MAX_READS_PER_REQUEST} reads per request"}
+                    rec["executed"] = False
+                else:
+                    try:
+                        tool, args = so.check_read(entry, reads_allowed)
+                    except ValueError as exc:
+                        out, rec["executed"] = {"error": str(exc)[:300]}, False
+                    else:
+                        out = _read(req.read_tools, tool, *args.values())
+                        rec.update({"args": args, "executed": True,
+                                    "available": not (isinstance(out, dict) and out.get("available") is False)})
+                report["reads"].append(rec)
+                results.append({"tool": rec["tool"], "args": rec.get("args"), "result": out})
+            remaining = max_requests - used
+            note = ("This is your last request for this decision: reply with your decision now; a read request will "
+                    "not be executed." if remaining == 1 else
+                    f"You have {remaining} model requests left for this decision, including your decision.")
+            message = "## Read results\n" + json.dumps(results, default=str) + "\n\n" + note
         report["repairs"] = sorted(set(report["repairs"]))
-        usage = usage_from_messages(all_messages, self._provider(), model, self.config.get("price_per_mtok"))
-        usage["structured_output"] = report  # repairs and re-asks are never silent: usage, receipts, settings
-        raw = json.loads(_messages_json(all_messages))
-        return DecisionResult(proposal, usage, raw, self._settings(usage, max_requests), PROMPT_REVISION)
+        usage = self._usage(history)
+        usage["structured_output"] = report  # repairs, re-asks and reads are never silent: usage, receipts, settings
+        assert proposal is not None
+        return DecisionResult(proposal, usage, json.loads(_messages_json(history)), self._settings(usage, max_requests),
+                              PROMPT_REVISION)
+
+    def _usage(self, messages: list) -> dict[str, Any]:
+        return usage_from_messages(messages, self._provider(), self.config.get("model"),
+                                   self.config.get("price_per_mtok"),
+                                   reasoning_billing=self._billing())
+
+    def _billing(self) -> str:
+        return str(self.config.get("reasoning_tokens_billing", "included"))
+
+    def _tokens(self, messages: list) -> tuple[int, int]:
+        u = self._usage(messages)
+        return int(u["input_tokens"]), int(u["output_tokens"])
 
     def _bounded(self, messages: list, model: Any, max_requests: int, reason: str, outcome: str,
                  report: dict) -> DecisionResult:
         """No usable decision within the bounds: an explicit no-effect decision; every billed request reported."""
-        usage = usage_from_messages(messages, self._provider(), model, self.config.get("price_per_mtok"))
+        usage = self._usage(messages)
         usage["limit_reached"] = str(reason)[:300]
         report["repairs"] = sorted(set(report["repairs"]))
         usage["structured_output"] = report
@@ -340,16 +530,21 @@ class PydanticAIRuntime:
         prompt = (req.context + "\n\n## This turn so far\n" + json.dumps(req.turn_so_far, default=str)[:20000]
                   + f"\n\n## Decision budget\nYou may make at most {max_requests} model requests for this decision, "
                   "including read-tool round trips. Reserve the last one for your final decision.")
-        settings = {}
-        if self.config.get("max_output_tokens"):
-            settings["max_tokens"] = int(self.config["max_output_tokens"])  # temperature deliberately unset
-        model = self.config.get("model")
+        settings = {"max_tokens": output_cap(self.config)}  # the cap the envelope admits with; temperature unset
         tool_budget = max(1, max_requests - 1)  # the last request is reserved for a tool-free decision
         limits = UsageLimits(request_limit=tool_budget if req.read_tools else max_requests,
                              total_tokens_limit=int(self.config.get("max_tokens_per_decision", 120_000)))
         with capture_run_messages() as messages:
             try:
                 result = agent.run_sync(prompt, usage_limits=limits, model_settings=settings or None)
+            except EnvelopeRefused as exc:  # the next request was not started: its worst case does not fit
+                usage = self._usage(messages)
+                usage["limit_reached"] = f"decision token envelope: {exc}"[:300]
+                proposal = {"rationale": "decision token envelope spent before a final decision; no effects proposed",
+                            "calls": [], "control": {"action": "wait_for_jobs", "summary": "token envelope spent",
+                                                     "bounded_outcome": "request-budget-exhausted"}}
+                return DecisionResult(proposal, usage, json.loads(_messages_json(messages)),
+                                      self._settings(usage, max_requests), PROMPT_REVISION)
             except UsageLimitExceeded as exc:
                 if req.read_tools and max_requests > 1:
                     # Read-tool loop hit its share: one final request WITHOUT tools over the same history,
@@ -365,7 +560,7 @@ class PydanticAIRuntime:
                                 # exactly the one reserved request: the per-decision cap is a hard cap
                                 usage_limits=UsageLimits(request_limit=max(1, max_requests - tool_budget)),
                                 model_settings=settings or None)
-                            usage = usage_from_messages(first + [m for m in result.new_messages()], self._provider(), model, self.config.get("price_per_mtok"))
+                            usage = self._usage(first + [m for m in result.new_messages()])
                             usage["tool_budget_exhausted"] = True
                             raw = json.loads(_messages_json(first + list(result.new_messages())))
                             return DecisionResult(to_proposal(result.output), usage, raw,
@@ -374,7 +569,7 @@ class PydanticAIRuntime:
                             messages.extend(m for m in final_messages if m not in messages)
                 # A bounded outcome, not a lost failure: every billed request is reported and the
                 # slot ends with an explicit no-effect decision the next turn can see.
-                usage = usage_from_messages(messages, self._provider(), model, self.config.get("price_per_mtok"))
+                usage = self._usage(messages)
                 usage["limit_reached"] = str(exc)[:300]
                 proposal = {"rationale": f"decision request budget ({max_requests}) exhausted before a final "
                                          "decision; no effects proposed", "calls": [],
@@ -385,19 +580,19 @@ class PydanticAIRuntime:
             except ModelCallFailed:
                 raise
             except Exception as exc:  # provider/transport failure: report everything that may have billed
-                usage = usage_from_messages(messages, self._provider(), model, self.config.get("price_per_mtok"))
+                usage = self._usage(messages)
                 usage["failed_request"] = {"error": type(exc).__name__,
                                            "status_code": getattr(exc, "status_code", None)}
                 raise ModelCallFailed(f"{type(exc).__name__}: {exc}"[:500], retryable=classify_failure(exc),
                                       possible_usage=usage) from exc
-        usage = usage_from_messages(result.all_messages(), self._provider(), model, self.config.get("price_per_mtok"))
+        usage = self._usage(result.all_messages())
         raw = json.loads(result.all_messages_json())
         return DecisionResult(to_proposal(result.output), usage, raw, self._settings(usage, max_requests),
                               PROMPT_REVISION)
 
     def _settings(self, usage: dict, max_requests: int) -> dict[str, Any]:
         return {"runtime": "pydantic-ai", "model": self.config.get("model"), "served_models": usage.get("served_models"),
-                "max_output_tokens": self.config.get("max_output_tokens"), "temperature": "provider default",
+                "max_output_tokens": output_cap(self.config), "temperature": "provider default",
                 "max_requests_per_decision": max_requests, "output_retries": int(self.config.get("output_retries", 1)),
                 "transport_retries": 0, "args_encoding": "json-string",
                 "output_mode": self.config.get("output_mode", "tool"),

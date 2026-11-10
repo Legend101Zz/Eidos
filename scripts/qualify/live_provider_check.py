@@ -3,8 +3,8 @@
 
 Runs WITHOUT PostgreSQL, Temporal or lab services: it drives ``PydanticAIRuntime.decide`` directly
 on contexts packed by ``context-policy/1`` and checks the results with the same validator the
-command service uses. Hard caps: at most 24 model requests in total, at most 4096 output tokens
-per request, temperature not set. The API key is read only from ANTHROPIC_API_KEY and is never
+command service uses. Hard caps: at most 24 model requests in total, at most --max-output-tokens output tokens
+per request (default 4096; reasoning models need more, see docs/release/SUPPORTED.md), temperature not set. The API key is read only from ANTHROPIC_API_KEY and is never
 printed. Output: one JSON receipt on stdout.
 
 Install (from a checkout, in a small venv):
@@ -15,6 +15,10 @@ Run:
 OpenAI-compatible endpoint (same scenarios; the key, if the endpoint needs one, only from --api-key-env):
     PYTHONPATH=src:packages/eidos-wire/src python scripts/qualify/live_provider_check.py \
         --model openai-compatible:qwen2.5:3b-instruct --base-url http://127.0.0.1:11535/v1 > receipt.json
+Reasoning model (reasoning tokens count against the output cap; the receipt records them per request):
+    PYTHONPATH=src:packages/eidos-wire/src python scripts/qualify/live_provider_check.py \
+        --model openai-compatible:MiniMax-M3.1-Flash --base-url https://api.minimax.io/v1 --api-key-env MINIMAX_KEY \
+        --output-mode json --max-output-tokens 16384 --request-timeout 300 > receipt.json
 """
 
 from __future__ import annotations
@@ -109,7 +113,13 @@ def main() -> int:
                          "repair plus the endpoint's JSON mode")
     ap.add_argument("--request-timeout", type=float, default=120.0,
                     help="seconds per model request (a local model on a laptop may need several minutes)")
+    ap.add_argument("--max-output-tokens", type=int, default=MAX_OUTPUT_TOKENS,
+                    help="output-token cap per model request (default 4096); a reasoning model's reasoning tokens "
+                         "count against it, so reasoning models need a larger cap")
     args = ap.parse_args()
+    if args.max_output_tokens < 1:
+        print(json.dumps({"error": "--max-output-tokens must be positive; nothing was called"}))
+        return 2
     provider = args.model.partition(":")[0]
     key_env = args.api_key_env or ("ANTHROPIC_API_KEY" if provider == "anthropic" else "OPENAI_API_KEY")
     if provider == "anthropic" and not os.environ.get(key_env):
@@ -127,7 +137,7 @@ def main() -> int:
     spent = {"requests": 0}
     receipt = {"check": "eidos-live-provider/1", "model_requested": args.model, "base_url": args.base_url,
                "output_mode": args.output_mode, "caps": {
-        "max_total_requests": MAX_TOTAL_REQUESTS, "max_output_tokens": MAX_OUTPUT_TOKENS, "temperature": "unset"},
+        "max_total_requests": MAX_TOTAL_REQUESTS, "max_output_tokens": args.max_output_tokens, "temperature": "unset"},
         "request_timeout_seconds": args.request_timeout, "started_at": time.time(), "scenarios": []}
     m = build_model({"model": args.model, **endpoint})
     receipt["transport_retries_disabled"] = getattr(getattr(m, "client", None), "max_retries", None) == 0
@@ -136,7 +146,7 @@ def main() -> int:
         if spent["requests"] + budget_needed > MAX_TOTAL_REQUESTS:
             receipt["scenarios"].append({"name": name, "skipped": "request cap would be exceeded"})
             return
-        cfg = {"model": args.model, "max_output_tokens": MAX_OUTPUT_TOKENS, "output_retries": 1,
+        cfg = {"model": args.model, "max_output_tokens": args.max_output_tokens, "output_retries": 1,
                "max_requests_per_decision": budget_needed, "request_timeout": args.request_timeout, **endpoint,
                "output_mode": args.output_mode, **cfg_extra}
         packed = pack(view, _catalog(catalog_n))
@@ -196,6 +206,8 @@ def main() -> int:
         "bounded-or-decision")
     run("unknown-model-id", {"model": f"{provider}:eidos-no-such-model"}, _view(), 6, None, 1, "model-call-failed:false")
     receipt["total_requests_counted"] = spent["requests"]
+    reasoning = [(s.get("usage") or s.get("possible_usage") or {}).get("reasoning_tokens") for s in receipt["scenarios"]]
+    receipt["total_reasoning_tokens"] = sum(r for r in reasoning if r) if any(r is not None for r in reasoning) else None
     receipt["finished_at"] = time.time()
     receipt["summary"] = {"scenarios": len(receipt["scenarios"]),
                           "passed": sum(1 for s in receipt["scenarios"] if s.get("pass")),

@@ -27,6 +27,17 @@ DECISION_SCHEMA = {
 }
 
 
+# Every model request of a decision carries an output cap: the configured ``max_output_tokens``, else this default
+# (the live check's default). The runtime sends it and admits a request only if its input estimate plus this cap fits
+# what is left of the decision's token envelope; the decide activity prices the same cap (ADR 0016).
+DEFAULT_MAX_OUTPUT_TOKENS = 4096
+
+
+def output_cap(settings: dict[str, Any]) -> int:
+    """The output cap of each model request (``max_output_tokens`` or the default)."""
+    return int(settings.get("max_output_tokens") or DEFAULT_MAX_OUTPUT_TOKENS)
+
+
 @dataclass
 class DecisionRequest:
     turn_id: str
