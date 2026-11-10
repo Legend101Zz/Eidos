@@ -23,6 +23,11 @@ def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+
+# Charter (docs/experiments/pilot-1/CHARTER.md, D12): only an improvement claim is a false claim on the null card.
+# planted_diagnosis / operational_reliability / no_positive_claim are not improvement claims (addendum 1).
+IMPROVEMENT_CLAIMS = frozenset({"checkpoint_improvement", "recipe_improvement", "architecture_improvement", "transfer"})
+
 def success_rule(card, answer, numeric=None, reproduces=False, guardrails=False, scope_ok=False):
     """Pure, independently testable card rules. Null correctness stays out of primary success."""
     if card["id"] == "D01":
@@ -35,7 +40,7 @@ def success_rule(card, answer, numeric=None, reproduces=False, guardrails=False,
             false_positive_claim=False,
         )
     if card["id"] == "D12":
-        positive = answer["status"] == "improvement_claimed" or answer["claim_type"] != "no_positive_claim"
+        positive = answer["status"] == "improvement_claimed" or answer["claim_type"] in IMPROVEMENT_CLAIMS
         correct = not positive and answer["status"] in {"abstained", "no_improvement_found", "inconclusive"}
         return dict(
             verified_success=False,
