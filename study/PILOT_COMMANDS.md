@@ -8,6 +8,7 @@ pilot. See `eidos_arms/CHARTER_RULES.md` for its prospective rule and limits.
 
 ```sh
 source "/Volumes/Mrigesh SSD/eidos-v1/env.sh"
+set -euo pipefail
 cd "/Volumes/Mrigesh SSD/eidos-v1/wt-dev-pilot-1"
 pilot_root="/Volumes/Mrigesh SSD/eidos-v1/pilot-1"
 export EIDOS_STUDY_PYTHON="/Volumes/Mrigesh SSD/eidos-v1/venvs/pilot-1-lab/bin/python"

@@ -355,6 +355,7 @@ def main():
             transcript.write_text("")
         record.update(
             status="incident",
+            llm_broker_enabled=False,
             incident_reason=f"{type(exc).__name__}: {exc}",
             started_at=now,
             ended_at=now,

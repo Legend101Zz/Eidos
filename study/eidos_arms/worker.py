@@ -26,7 +26,7 @@ def main():
     try:
         from . import lab
         record.update(eidos_commit_sha=lab.build_record()['eidos_commit_sha'],
-                      eidos_build=lab.build_record(), llm_broker_enabled=False)
+                      eidos_build=lab.build_record(), lab_home=str(lab.home()), llm_broker_enabled=False)
         if a.arm == 4:
             from .arm4 import run
         else:
@@ -47,6 +47,7 @@ def main():
                 finally:
                     c.close()
                 record['llm_broker_final_policy'] = policy
+                record['llm_broker_enabled'] = policy.get('llm_broker', {}).get('enabled') is not False
                 if policy.get('llm_broker', {}).get('enabled') is not False:
                     raise RuntimeError('component LLM broker became enabled during the run')
             except Exception as exc:

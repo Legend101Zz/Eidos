@@ -1,3 +1,160 @@
+# W1c final integration verification — 11 November 2026
+
+All commands sourced `/Volumes/Mrigesh SSD/eidos-v1/env.sh`. All real model tasks
+were `SYNTHETIC_LINEAR_SMOKE`, using MiniMax-M3.1-Flash only; D01/D02/D12 were
+not given to a model. No `src/eidos`, `research/public` or `docs/design` file was
+modified. The exact controller commands are in [PILOT_COMMANDS.md](PILOT_COMMANDS.md).
+Machine-readable receipts: [W1c summary](eidos_arms/evidence/w1c-integration-summary.json).
+Raw receipts/logs: `/Volumes/Mrigesh SSD/eidos-v1/pilot-1/w1c-checks/` and
+`pilot-1/w1c-*.log`.
+
+## Fixed build and charter
+
+`bash study/eidos_arms/build_lab.sh` executed the requested
+`uv build --all-packages -o "/Volumes/Mrigesh SSD/eidos-v1/dist-pilot-1"`, created
+`/Volumes/Mrigesh SSD/eidos-v1/venvs/pilot-1-lab`, and installed four new wheels.
+The build source commit is `ba79b9144b594093fe18df57b1a9dfdc2042cba1` (contains
+ADR 0016). Subsequent commits change study integration only; the Eidos build inputs
+are identical. Installed versions: lab 1.1.0, wire 1.1.0, worker SDK 1.2.0,
+PyTorch package 1.1.0. Wheel hashes are in the summary and venv's `pilot-build.json`.
+The direct installation audit printed:
+
+```text
+Fixed build verified: 88 Eidos Python source files match installed wheel; lab_python matches new venv.
+```
+
+D02/D12 receive a prospective 95% paired-difference-CI rule with minimum effect
+.02, ordinary accuracy encoded through `paired-report/1:reference-accuracy`.
+D01 remains operational/exploration-only. See [CHARTER_RULES.md](eidos_arms/CHARTER_RULES.md)
+for the exact rule, paired-row format and held-out/fresh-initialization gaps.
+The live smokes carry this rule; neither launched an evidence plan or independent
+assessor. Each project did execute and pass both protocol qualification gates
+(author controls, not independent scientific qualification).
+
+Both study project policies explicitly disable the component LLM broker. Initial
+policies and post-run profile audits confirm `enabled=false`; every job lock was
+checked and had no component LLM grant. The internal investigator's ordinary model
+calls are separately metered under the common study envelope.
+
+## Executed commands and actual outputs
+
+```sh
+bash study/dry_run.sh "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/w1c-checks/dry-run"
+```
+
+```text
+Planned 9 randomized paired blocks, 36 assignments.
+BLOCK D02-r1: ok
+GRADE D02-r1 arm 1: valid success=False
+GRADE D02-r1 arm 2: valid success=False
+GRADE D02-r1 arm 3: valid success=False
+GRADE D02-r1 arm 4: valid success=False
+Draft analysis written; no confirmatory claim implied.
+Wrote descriptive tables and 2 PNGs to /Volumes/Mrigesh SSD/eidos-v1/pilot-1/w1c-checks/dry-run/analysis
+CHECK: 4 valid baseline candidates, zero improvement successes, 2 plots
+DRY RUN PASSED: baseline candidates graded; no model calls.
+```
+
+All four stubs render their own card prompt through the shared function. Their
+recorded execution intervals overlap for 3.895652 seconds. The launcher creates all
+four processes before waiting. Real arm 3/4 execution also overlapped for
+112.784488 seconds in separate UUID projects on `pilot-1/lab/fixed` (the arm-3
+attempt in that overlap later timed out; it remains a timeout). Startup locking
+does not serialize model work.
+
+```sh
+"$EIDOS_RESEARCH_PYTHON" -m unittest discover -s study/tests -v
+"/Volumes/Mrigesh SSD/eidos-v1/venvs/pilot-1-lab/bin/python" -m unittest study.eidos_arms.test_contract -v
+uvx ruff check study/eidos_arms study/tests/test_prompts.py
+git diff --check
+```
+
+`study` suite:
+
+```text
+Ran 19 tests in 0.528s
+
+OK
+GRADE control arm 1: incident success=False
+```
+
+`contract` suite:
+
+```text
+Ran 10 tests in 1.557s
+
+OK
+```
+
+The `GRADE control ... incident` line is the deliberate grader-infrastructure
+failure test. Ruff printed `All checks passed!`; `git diff --check` printed nothing.
+Prompt parity tests cover all four arms and all three cards; the new contract test
+uses the installed lab's real plan compiler and verifies threshold overrides fail.
+
+```sh
+"/Volumes/Mrigesh SSD/eidos-v1/venvs/pilot-1-lab/bin/python" -m study.eidos_arms.smoke --arm 4 --run-dir "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/w1c-checks/arm4-fixed" --wall-s 660
+"/Volumes/Mrigesh SSD/eidos-v1/venvs/pilot-1-lab/bin/python" -m study.eidos_arms.smoke --arm 3 --run-dir "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/w1c-checks/arm3-fixed-retry" --wall-s 275
+```
+
+The real commands emitted full JSON run records. The post-run artifact/provenance
+verification printed this summary of those records:
+
+```text
+ARM 3: status=ok; wall_s=135.787; adapter_wall_s=146.757; tokens=546362; artifacts=valid; broker=off
+ARM 4: status=ok; wall_s=113.384; adapter_wall_s=122.266; tokens=101935; artifacts=valid; broker=off
+```
+
+Adapter wall includes project preparation/export and remains below 5/12 minutes.
+Arm 4 accepted two schema-valid decisions; one preceding malformed proposal was
+rejected and corrected, preserved in the ledger. It completed a training job,
+locked `job_2e7ecc1f2edc42f4`, and exported an artifact-valid answer. It reports
+58/60 visible-validation accuracy (0.9666667), operational reproduction only.
+There are nine successful project jobs: eight setup/validation/qualification jobs
+and the investigator's one training job. Evidence plans: **0**; assessments: **0**.
+Its JSON settings stayed `max_output_tokens=16384`, `request_timeout=300`;
+packaged text remained embedded in the question and read requests were available.
+Arm 3 completed the MCP training/artifact path and its own valid answer.
+Observed billing is unknown (`null`) for both; the token receipts are not invoices.
+
+The final setup review tightened the lab qualification environment's project root
+from the checkout to the packaged task (the training environment already used the
+task). A model-free rerun of both real qualification gates printed:
+
+```text
+TASK-ROOT CHECK: both environments use packaged task; 2 protocol qualifications passed; model_calls=0
+```
+
+No additional model calls were needed for that administrative root change.
+
+## Retained failures and shutdown
+
+The first two attempts, `arm3-smoke` and `arm4-smoke`, were stopped and disqualified
+when inspection found the pre-existing lab directory's config still pointed to
+`pilot-1b-110`. Their intended-build fields were incorrect for the running services;
+original receipts are preserved as `run_record.before-operator-audit.json`, alongside
+operator disqualification and corrected incident records. The actual old-wheel
+source SHA is unknown, so it is explicitly null. Observed tokens were 218,492
+(arm 3) and 13,953 (arm 4), with unknown final billing. These are not fixed-build
+successes. The new default home is `lab/fixed`; startup now rejects an interpreter
+mismatch instead of silently reusing the persisted interpreter.
+
+The first genuine fixed-build arm-3 attempt, `arm3-fixed`, timed out at 240.179 s
+(248.517 s including setup), with 1,111,578 observed tokens. Training/artifacts
+completed but no answer did. Its transcript showed it searching for an unnecessary
+lock API. Only the synthetic-smoke instructions were clarified: choosing/citing the
+successful job locks its selection; there is no `lock_job` command. The retry above
+completed. Study prompts changed only by the required practical-bar marker.
+
+Both lab homes were stopped. After the final model-free qualification check,
+shutdown again verified phase `stopped`, no recorded service PIDs alive and no
+listeners on API/MCP/PostgreSQL/Temporal ports. Internal free space remained above
+12 GiB. No lab, PostgreSQL or Temporal process started here was left running.
+
+GitHub submit/fetch commands are documented for the controller; no candidate was
+submitted and no study-card model run was launched by this integration ticket.
+
+---
+
 # Lane A verification — 11 November 2026
 
 All shell commands sourced `/Volumes/Mrigesh SSD/eidos-v1/env.sh`. Source changes

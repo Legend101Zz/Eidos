@@ -81,7 +81,11 @@ scoring, inference, fresh-seed training, source authoring or evidence-plan job i
 Every candidate/evidence/cost path in out/answer.json is relative to out/, so if you write
 out/project.py the code_path is "project.py" (not "out/project.py"). Recompute every referenced
 file's SHA-256, verify every path exists relative to out/, and run the structural validator before
-concluding. reproduce_command is an argv array such as ["python","project.py","train","--inputs",
+concluding. For arm 3, "lock" simply means choose this successful training job and cite its ID in your
+answer/evidence. There is no lock_job command to discover. After downloading the files, write
+answer.json immediately and validate it; do not keep querying the catalog. The get_run receipt
+has lock_digest at the top level, not lock.digest. Do not spend time investigating lock APIs.
+reproduce_command is an argv array such as ["python","project.py","train","--inputs",
 "../task","--out","reproduced","--seed","11"], not a list of shell-command strings.
 '''
 

@@ -1,3 +1,29 @@
+# W1c fixed-build smoke update
+
+The final merged integration smokes used the newly built `pilot-1-lab` environment,
+commit `ba79b9144b594093fe18df57b1a9dfdc2042cba1`, and a fresh `lab/fixed` home.
+Both used `SYNTHETIC_LINEAR_SMOKE`, MiniMax only, with prospective charter rules
+and the component broker explicitly off.
+
+| Arm | Run | Status | Agent wall s | Adapter wall s | Observed tokens |
+|---|---|---|---:|---:|---:|
+| 3 | `w1c-checks/arm3-fixed-retry` | ok | 135.787 | 146.757 | 546,362 |
+| 4 | `w1c-checks/arm4-fixed` | ok | 113.384 | 122.266 | 101,935 |
+
+Both answers pass artifact-aware validation. Arm 4 accepted two decisions, completed
+its training job and answered; one rejected proposal remains in its ledger. No live
+evidence plan or independent assessor ran. Both projects passed the real author
+qualification gates for assessor/template. Billing remains unknown. A final
+model-free qualification check verified the narrowed task-only environment roots.
+
+See [combined verification](../VERIFICATION.md) for exact commands, the retained
+two interpreter-mismatch incidents and arm-3 timeout, provenance checks, all tests
+and clean shutdown. The small [machine-readable summary](evidence/w1c-integration-summary.json)
+contains build hashes, rule bodies, usage and all retained attempt classifications.
+The lane-B-only receipts below are historical and used the older wheels.
+
+---
+
 # Lane B smoke receipts
 
 All tasks were `SYNTHETIC_LINEAR_SMOKE`: a generated 3-feature, 2-class task with

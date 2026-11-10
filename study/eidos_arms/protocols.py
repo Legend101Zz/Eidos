@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
 import time
 
 from . import lab
@@ -18,8 +19,11 @@ RUNNER = 'eidos.qualification-runner@1.0.0'
 
 
 def prepare(c, project, run_dir):
-    from eidos.cli.main import _register_lab_env, builtin_component_dirs, install_component
-    _register_lab_env(c, project)
+    from eidos.cli.main import builtin_component_dirs, install_component
+    c.command('register_environment', {'name': 'lab', 'python_executable': lab.python(),
+              'project_root': str(run_dir / 'task'), 'python_version': sys.version.split()[0],
+              'installed': {}, 'notes': 'Installed lab interpreter; only the packaged task is the project root'},
+              project=project, key='pilot-lab-env:' + project)
     dirs = {p.name: p for p in builtin_component_dirs(lab_env_only=True)}
     for name in ('eidos.assessors.paired-ci', 'eidos.templates.improves-under-budget', 'eidos.qualification-runner'):
         result = install_component(c, project, dirs[name], 'lab', True)
