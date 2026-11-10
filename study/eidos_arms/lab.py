@@ -16,9 +16,9 @@ import subprocess
 import time
 from pathlib import Path
 
-SSD = Path('/Volumes/Mrigesh SSD/eidos-v1')
-DEFAULT_HOME = SSD / 'pilot-1/lab/fixed'
-DEFAULT_PYTHON = SSD / 'venvs/pilot-1-lab/bin/python'
+ROOT = Path(os.environ.get('EIDOS_STUDY_ROOT', '/Volumes/Mrigesh SSD/eidos-v1'))
+DEFAULT_HOME = ROOT / 'pilot-1/lab/fixed'
+DEFAULT_PYTHON = ROOT / 'venvs/pilot-1-lab/bin/python'
 
 
 def home():
@@ -65,8 +65,8 @@ def client():
 def guard_disk():
     if shutil.disk_usage('/').free < 12 * 1024**3:
         raise RuntimeError('STOP: internal disk has less than 12 GiB free')
-    if SSD not in home().parents:
-        raise ValueError('study lab must be on the external SSD')
+    if ROOT not in home().parents:
+        raise ValueError('study lab must be under EIDOS_STUDY_ROOT')
 
 
 def start():
@@ -83,7 +83,7 @@ def start():
                     '--temporal-port', '27633']
             source = os.environ.get('EIDOS_STUDY_TEMPORAL_SOURCE')
             if not source:
-                existing = SSD / 'a8lab/services/temporal/bin'
+                existing = ROOT / 'a8lab/services/temporal/bin'
                 if (existing / 'temporal-server').exists():
                     source = str(existing)
             if source:

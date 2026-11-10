@@ -1,13 +1,13 @@
 #!/bin/bash
 set -euo pipefail
-source "/Volumes/Mrigesh SSD/eidos-v1/env.sh"
+source "${EIDOS_STUDY_ROOT:-/Volumes/Mrigesh SSD/eidos-v1}/env.sh"
 free_kib=$(df -k / | awk 'NR==2 {print $4}')
 if [ "$free_kib" -lt 12582912 ]; then
   echo "STOP: root filesystem has less than 12 GiB free" >&2
   exit 1
 fi
 study_dir=$(cd "$(dirname "$0")" && pwd)
-run_root=${1:-"/Volumes/Mrigesh SSD/eidos-v1/pilot-1/lane-a-dry-run"}
+run_root=${1:-"$EIDOS_STUDY_ROOT/pilot-1/lane-a-dry-run"}
 mkdir -p "$run_root"
 "$EIDOS_RESEARCH_PYTHON" "$study_dir/launcher.py" plan --seed 20261111 --out "$run_root/design.json"
 "$EIDOS_RESEARCH_PYTHON" "$study_dir/launcher.py" run --design "$run_root/design.json" --runs-root "$run_root/runs" --block D02-r1 --stub

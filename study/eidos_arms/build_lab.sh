@@ -1,14 +1,14 @@
 #!/bin/bash
 set -euo pipefail
-source "/Volumes/Mrigesh SSD/eidos-v1/env.sh"
+source "${EIDOS_STUDY_ROOT:-/Volumes/Mrigesh SSD/eidos-v1}/env.sh"
 free_kib=$(df -k / | awk 'NR==2 {print $4}')
 if [ "$free_kib" -lt 12582912 ]; then
   echo 'STOP: root filesystem has less than 12 GiB free' >&2
   exit 1
 fi
 cd "$(dirname "$0")/../.."
-wheel_dir="/Volumes/Mrigesh SSD/eidos-v1/dist-pilot-1"
-lab_venv="/Volumes/Mrigesh SSD/eidos-v1/venvs/pilot-1-lab"
+wheel_dir="$EIDOS_STUDY_ROOT/dist-pilot-1"
+lab_venv="$EIDOS_STUDY_ROOT/venvs/pilot-1-lab"
 if [ -e "$lab_venv" ]; then
   echo 'Refusing to replace an existing pilot lab venv' >&2
   exit 1
