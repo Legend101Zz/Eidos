@@ -34,11 +34,13 @@ limit (4096) exceeded before any response was generated`. Recommended `investiga
 | `request_timeout` | `300` (seconds) | the longest one-request decision took about 62 s in `json`, the four-request read decision 145 s, a two-request `tool` decision about 121 s; at 16384 tokens / 120 s one request timed out in 1.1.0 |
 | `turn_deadline_seconds` | `1200` (at least 2 × `request_timeout`) | the `decide` activity's timeout; the text-mode loop does not start a request that could outlive it (`bounded_outcome: decision-deadline`) |
 | `max_requests_per_decision` | `6` to `8` (default 8) | read rounds and the re-ask count against it; the measured read decision used 4 |
-| `max_tokens_per_decision` | `120000` (default) | the reservation prices `max_requests_per_decision × max_output_tokens` of it at the output rate, which at 8 × 16384 is all of it |
+| `max_tokens_per_decision` | `120000` (default) | the reservation prices `max_requests_per_decision × max_output_tokens` of it at the output rate, which at 8 × 16384 is all of it; a request starts only if tokens already charged + its input estimate + `max_output_tokens` fit in it |
 
 Usage receipts record reasoning tokens (`reasoning_tokens`, `reasoning_accounting`). They are counted inside the
 output tokens, as the OpenAI-compatible API reports them; set `reasoning_tokens_billing: "separate"` for a provider
-that counts them separately.
+that counts them separately, and the lab config `llm_broker_reasoning_billing` (for example
+`{"openai-compatible": "separate"}`) for the component LLM broker. Without `max_output_tokens` every request is capped
+at 4096 output tokens, which is too small for a reasoning model.
 
 Measured (one run per configuration, 2026-11-10, five decision scenarios of eight):
 

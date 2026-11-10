@@ -27,9 +27,29 @@ pilot gate) found three harness problems, not model-quality problems:
      inside the provider's `max_tokens`/`completion_tokens` (MiniMax stopped at exactly 4096 and 16384 output
      tokens), so this is the right cap; with 8 × 16384 = 131072 above the default 120000 envelope, every reserved
      token is priced at the output rate. The text-mode loop never makes more than `max_requests_per_decision`
-     requests, reads and re-ask included, so the bound holds there too. One limit of the bound is unchanged and
-     recorded: the token envelope (`max_tokens_per_decision`) is enforced after each response, so the last request
-     of a decision can overshoot it by that request's own tokens; settlement always charges the actual usage.
+     requests, reads and re-ask included, so the bound holds there too.
+   - **Request admission (review R1).** The token envelope (`max_tokens_per_decision`, reserved by the decide
+     activity) was enforced only after each response, so the last request of a decision could overshoot it by its
+     whole input and output. Now every model request of a decision, in every output mode (`TokenEnvelope` in
+     `pydantic_ai_runtime.py`, a wrapper around the provider model), is started only if
+     `tokens already charged + input estimate + output cap <= max_tokens_per_decision`; otherwise the decision ends
+     with an explicit no-effect decision (`request-budget-exhausted`, or `structured-output-invalid` after a refused
+     reply; `limit_reached` names the envelope) and the request is not sent. The input estimate is an upper bound:
+     after a response whose input the provider reported, that input plus the response's charged output plus the bytes
+     of every message part added since (32 tokens of template overhead per part); otherwise the bytes of the whole
+     request (messages, instructions, tool definitions, settings). One token per byte is the lab's rule, the one the
+     LLM broker reserves with. The output cap is `max_output_tokens`, or **4096 when none is configured**
+     (`runtime.DEFAULT_MAX_OUTPUT_TOKENS`, the live check's default); the runtime now always sends it as the request's
+     `max_tokens`, and the receipt's `max_output_tokens` records it. `decision_usd_envelope` prices the same cap
+     (`runtime.output_cap`), so the reservation and the admission rule use one number. Before, an uncapped
+     configuration sent no `max_tokens` and the reservation priced every token as output.
+   - **Limits of the admission rule.** It is exact for providers that count reasoning inside the output
+     (`reasoning_tokens_billing: "included"`, the OpenAI-compatible contract): the cap bounds every billed output
+     token. A provider configured as `"separate"` may bill reasoning beyond the cap; that request is charged in full
+     and no further request starts once the envelope is spent. Effect on the G4 1.1.1 receipts, replayed: every
+     `json` request had at least 82k tokens of headroom (unchanged outcome, so the live check was not re-run); in
+     `tool` mode the third request of `conformance-fresh` (59537 tokens charged, 40277 in the conversation) would
+     likely not be started now, so that scenario would end as a bounded no-decision instead of a decision.
    - **Deadline.** The `decide` activity is cancelled at the turn deadline and retried by Temporal. The text-mode
      loop now refuses to *start* a follow-up request that could outlive the deadline (elapsed + `request_timeout` >
      `deadline_seconds`) and ends with an explicit no-effect decision, `bounded_outcome: decision-deadline`.
@@ -39,7 +59,15 @@ pilot gate) found three harness problems, not model-quality problems:
    silent 0). A response reporting more reasoning than output tokens proves separate counting: the reasoning tokens
    are then added to that request's charged output (and USD). `investigator.settings.reasoning_tokens_billing:
    "separate"` declares a provider that always counts them separately. The ledger's usage detail carries
-   `reasoning_tokens`; the component LLM broker records them the same way (`llm_broker.openai_usage`).
+   `reasoning_tokens`. The component LLM broker has the same explicit contract (review R1: it used to infer it from
+   the relative counts, so a separately billed provider reporting 100 completion and 60 reasoning tokens was charged
+   100): lab config `llm_broker_reasoning_billing`, per provider (`{"openai-compatible": "separate"}`; keys
+   `openai-compatible` and `openai`, default `included`; an unknown key or value, or `anthropic`, which reports no
+   reasoning count, stops the broker from starting, logged). With `separate`, `llm_broker.openai_usage` adds the
+   reasoning count to the charged output; a count above the completion tokens is added under either setting, as in
+   the runtime. The call's usage carries `reasoning_tokens` and `reasoning_accounting`. As in the runtime, the
+   broker's reservation (input bytes + `max_tokens`) bounds a `separate` provider's reasoning only if its
+   `max_tokens` covers it; settlement charges the actual count, and the grant's later requests see it.
 3. **Read requests in the text modes.** In `repair` and `json` modes the runtime owns the loop, one model request
    at a time. A reply is one of:
    - a **decision** (validated exactly as before: extraction, normalisation, the typed `Decision` model, then the

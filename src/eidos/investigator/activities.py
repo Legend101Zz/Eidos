@@ -26,7 +26,7 @@ from temporalio.exceptions import ApplicationError
 from eidos.client import LabClient, LabError
 from eidos.domain.turns import EFFECT_TOOLS, WORKFLOW_PAYLOAD_LIMIT, check_payload
 from eidos.investigator.context import pack
-from eidos.investigator.runtime import DecisionRequest, ModelCallFailed, build_runtime
+from eidos.investigator.runtime import DecisionRequest, ModelCallFailed, build_runtime, output_cap
 from eidos_wire import command_key
 
 
@@ -74,14 +74,16 @@ def bounded(result: dict) -> dict:
 
 
 def decision_usd_envelope(est_tokens: float, price: dict, cfg: dict) -> float:
-    """Worst-case USD for one decision: at most max_requests_per_decision x max_output_tokens of the token
+    """Worst-case USD for one decision: at most max_requests_per_decision x the per-request output cap of the token
     envelope can be output; the rest is input. Pricing every token at the output rate (the old bound) reserved
-    about 3x too much and ended a real run with a third of its budget unused (G5 live run 2)."""
-    # Same defaults as the runtime (8 requests per decision); with no output cap every token may be output.
-    if cfg.get("max_output_tokens"):
-        out_cap = float(cfg.get("max_requests_per_decision", 8)) * float(cfg["max_output_tokens"])
-    else:
-        out_cap = est_tokens
+    about 3x too much and ended a real run with a third of its budget unused (G5 live run 2).
+
+    Consistent with the runtime's admission rule (ADR 0016): the runtime sends the same cap (``output_cap``: the
+    configured ``max_output_tokens`` or the default) with every request and starts a request only if its input
+    estimate plus that cap fits what is left of ``max_tokens_per_decision`` (``est_tokens`` here), so the decision's
+    tokens stay inside this reservation."""
+    # Same defaults as the runtime (8 requests per decision, output_cap).
+    out_cap = float(cfg.get("max_requests_per_decision", 8)) * float(output_cap(cfg))
     out_tokens = min(est_tokens, out_cap)
     in_price = float(price.get("input", max(price.values())))
     out_price = float(price.get("output", max(price.values())))
@@ -176,6 +178,8 @@ class InvestigatorActivities:
         runtime = build_runtime(cfg)
         # Reserve this decision's maximum envelope before any request (checked inside the turn,
         # not only between turns). Failure paths settle the reservation via record_model_usage.
+        # The runtime admits a model request only if its worst case (input estimate + output cap) fits what is left
+        # of the same max_tokens_per_decision, so the decision's tokens stay inside this reservation (ADR 0016).
         # A fixture runtime makes no model requests: reserve nothing unless an envelope is configured.
         default_env = 0 if cfg.get("runtime", "fixture") == "fixture" else 120_000
         est_tokens = float(cfg.get("max_tokens_per_decision", default_env))

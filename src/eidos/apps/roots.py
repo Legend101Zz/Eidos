@@ -109,13 +109,18 @@ def run_investigator_worker(cfg: LabConfig) -> None:
     if cfg.secret_path("svc-llm-broker.token").exists():
         from eidos.investigator.llm_broker import LlmBroker, providers_from_env, serve_unix
         env = dict(os.environ)
-        broker = LlmBroker(client(cfg, "svc-llm-broker", "llm-broker"),
-                           providers_from_env(env, cfg.extra.get("llm_broker_endpoints") or {}),
-                           secrets=tuple(v for k, v in env.items() if k.endswith("_API_KEY")))
         try:
-            serve_unix(broker, cfg.p("run", "llm-broker.sock"))
-        except OSError as exc:  # e.g. a socket path beyond the AF_UNIX limit: investigations still run, without a broker
+            providers = providers_from_env(env, cfg.extra.get("llm_broker_endpoints") or {},
+                                           cfg.extra.get("llm_broker_reasoning_billing") or {})
+        except ValueError as exc:  # a wrong accounting contract would mischarge: no broker, never a guessed contract
             logging.getLogger("eidos.llm_broker").error("LLM broker not started: %s", exc)
+        else:
+            broker = LlmBroker(client(cfg, "svc-llm-broker", "llm-broker"), providers,
+                               secrets=tuple(v for k, v in env.items() if k.endswith("_API_KEY")))
+            try:
+                serve_unix(broker, cfg.p("run", "llm-broker.sock"))
+            except OSError as exc:  # e.g. a socket path beyond the AF_UNIX limit: investigations still run, without a broker
+                logging.getLogger("eidos.llm_broker").error("LLM broker not started: %s", exc)
     _worker(cfg, INVESTIGATOR_QUEUE, activities=[acts.begin_turn, acts.build_context, acts.decide,
                                                  acts.execute_decision, acts.complete_turn, acts.check_news,
                                                  acts.mark_needs_input])

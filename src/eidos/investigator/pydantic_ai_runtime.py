@@ -17,7 +17,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from eidos.investigator import structured_output as so
-from eidos.investigator.runtime import DecisionRequest, DecisionResult, ModelCallFailed
+from eidos.investigator.runtime import DecisionRequest, DecisionResult, ModelCallFailed, output_cap
 
 PROMPT_REVISION = "investigator-prompt/1"
 SYSTEM = (
@@ -128,6 +128,90 @@ def _reasoning_tokens(response: Any) -> int | None:
     return int(v) if isinstance(v, int) and not isinstance(v, bool) else None
 
 
+def _charged(response: Any, reasoning_billing: str) -> tuple[int, int, int | None, bool]:
+    """(input, charged output, reported reasoning, reasoning added to output) of one response; see
+    ``usage_from_messages``."""
+    r_in, r_out, r_reason = response.usage.input_tokens or 0, response.usage.output_tokens or 0, \
+        _reasoning_tokens(response)
+    added = r_reason is not None and (reasoning_billing == "separate" or r_reason > r_out)
+    return r_in, r_out + (r_reason if added and r_reason else 0), r_reason, added
+
+
+class EnvelopeRefused(Exception):
+    """A model request was not started: its worst case does not fit what is left of the decision's token envelope."""
+
+
+# Chat-template tokens per message part (role markers, separators, tool-call framing) that are not in the part's own
+# bytes: a generous allowance, so the input estimate stays an upper bound.
+PART_OVERHEAD_TOKENS = 32
+
+
+def _nbytes(x: Any) -> int:
+    return len(json.dumps(x, default=str, ensure_ascii=False).encode())
+
+
+class TokenEnvelope:
+    """Per-decision admission (ADR 0016): a model request is started only if the tokens already charged plus its worst
+    case, ``input estimate + output cap``, fit the decision's token envelope (``max_tokens_per_decision``, which the
+    decide activity reserves). Every request of the decision passes here, in every output mode.
+
+    Input estimate. After a response whose input the provider reported: that request's input plus its charged output
+    (the text sent back is part of it) plus the bytes of every message part added since, with
+    ``PART_OVERHEAD_TOKENS`` per part. Otherwise (the first request, or no reported input): the bytes of the whole
+    request: messages, instructions, tool definitions and settings (the response schema). One token per byte is the
+    lab's conservative rule (the LLM broker reserves the same way): no tokenizer produces more tokens than bytes in
+    practice.
+
+    The output cap bounds every billed output token when reasoning is counted inside the output (``included``, the
+    OpenAI-compatible contract). A provider configured as ``separate`` may bill reasoning beyond the cap; that request
+    is then charged in full and no further request starts once the envelope is spent."""
+
+    def __init__(self, limit: int, cap: int, reasoning_billing: str = "included"):
+        self.limit, self.cap, self.reasoning_billing = limit, cap, reasoning_billing
+        self.spent = 0
+        self.last: tuple[int, int] | None = None  # (input, charged output) of the last response with reported input
+        self.admitted: list[dict[str, int]] = []
+
+    def estimate(self, messages: list, settings: Any, params: Any) -> int:
+        from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
+        last = max((i for i, m in enumerate(messages) if isinstance(m, ModelResponse)), default=-1)
+        if self.last is not None and last >= 0:
+            new = messages[last + 1:]
+            parts = sum(len(getattr(m, "parts", ())) for m in new)
+            return self.last[0] + self.last[1] + len(ModelMessagesTypeAdapter.dump_json(new)) \
+                + PART_OVERHEAD_TOKENS * parts
+        tools = [{"name": t.name, "description": t.description, "parameters": t.parameters_json_schema}
+                 for t in [*getattr(params, "function_tools", []), *getattr(params, "output_tools", [])]]
+        parts = sum(len(getattr(m, "parts", ())) for m in messages) + len(tools)
+        return len(ModelMessagesTypeAdapter.dump_json(messages)) + _nbytes(tools) + _nbytes(settings or {}) \
+            + PART_OVERHEAD_TOKENS * parts
+
+    def admit(self, messages: list, settings: Any, params: Any) -> None:
+        est = self.estimate(messages, settings, params)
+        if self.spent + est + self.cap > self.limit:
+            raise EnvelopeRefused(f"the next request may use {est} input + {self.cap} output tokens; the decision's "
+                                  f"token envelope has {max(self.limit - self.spent, 0)} of {self.limit} left")
+        self.admitted.append({"input_estimate": est, "output_cap": self.cap, "spent_before": self.spent})
+
+    def record(self, response: Any) -> None:
+        r_in, r_out, _, _ = _charged(response, self.reasoning_billing)
+        self.spent += r_in + r_out
+        self.last = (r_in, r_out) if r_in > 0 else None
+
+
+def _guarded(model: Any, envelope: TokenEnvelope) -> Any:
+    """``model`` with ``envelope`` checked before, and charged after, every request."""
+    from pydantic_ai.models.wrapper import WrapperModel
+
+    class EnvelopeModel(WrapperModel):
+        async def request(self, messages, model_settings, model_request_parameters):
+            envelope.admit(messages, model_settings, model_request_parameters)
+            response = await super().request(messages, model_settings, model_request_parameters)
+            envelope.record(response)
+            return response
+    return EnvelopeModel(model)
+
+
 def usage_from_messages(messages: list, provider: str, model: str | None,
                         price: dict[str, float] | None = None, reasoning_billing: str = "included") -> dict[str, Any]:
     """Usage of every model response in ``messages``; the basis of usage receipts and budget settlement.
@@ -141,15 +225,14 @@ def usage_from_messages(messages: list, provider: str, model: str | None,
     responses = [m for m in messages if isinstance(m, ModelResponse)]
     per_request, inp, out, reasoning, reported, added = [], 0, 0, 0, False, False
     for r in responses:
-        r_in, r_out, r_reason = r.usage.input_tokens or 0, r.usage.output_tokens or 0, _reasoning_tokens(r)
+        r_in, r_out, r_reason, r_added = _charged(r, reasoning_billing)
         entry: dict[str, Any] = {"model": r.model_name, "input_tokens": r.usage.input_tokens,
                                  "output_tokens": r.usage.output_tokens, "finish_reason": r.finish_reason}
         if r_reason is not None:
             reported = True
             reasoning += r_reason
             entry["reasoning_tokens"] = r_reason
-            if reasoning_billing == "separate" or r_reason > r_out:
-                r_out += r_reason
+            if r_added:
                 added = True
                 entry["reasoning_added_to_output"] = True
         inp, out = inp + r_in, out + r_out
@@ -214,6 +297,11 @@ class PydanticAIRuntime:
 
     def __init__(self, config: dict[str, Any]):
         self.config = config
+        self.envelope: TokenEnvelope | None = None  # set per decision; every request of the decision passes it
+
+    def _model(self) -> Any:
+        model = build_model(self.config)
+        return _guarded(model, self.envelope) if self.envelope is not None else model
 
     def _agent(self, req: DecisionRequest, *, with_tools: bool = True, output_type: Any = None,
                instructions: str | None = None):
@@ -239,7 +327,7 @@ class PydanticAIRuntime:
             """Status, receipts and outputs of one job."""
             return call("get_job", job_id)
 
-        return Agent(build_model(self.config), output_type=output_type or Decision, instructions=instructions or SYSTEM,
+        return Agent(self._model(), output_type=output_type or Decision, instructions=instructions or SYSTEM,
                      retries=int(self.config.get("output_retries", 1)),
                      tools=[inspect_evidence, search_components, describe_component, get_job]
                      if (tools and with_tools) else [])
@@ -248,6 +336,8 @@ class PydanticAIRuntime:
         mode = self.config.get("output_mode", "tool")
         if mode not in OUTPUT_MODES:
             raise ModelCallFailed(f"unknown output_mode {mode!r} (one of {OUTPUT_MODES})", retryable=False)
+        self.envelope = TokenEnvelope(int(self.config.get("max_tokens_per_decision", 120_000)), output_cap(self.config),
+                                      self._billing())
         if mode != "tool":
             return self._decide_text(req, mode)
         return self._decide_tool(req)
@@ -284,9 +374,7 @@ class PydanticAIRuntime:
         max_tokens = int(self.config.get("max_tokens_per_decision", 120_000))
         model = self.config.get("model")
         reads_allowed = [t for t in so.READ_TOOLS if t in (req.read_tools or {})]
-        settings: dict[str, Any] = {}
-        if self.config.get("max_output_tokens"):
-            settings["max_tokens"] = int(self.config["max_output_tokens"])
+        settings: dict[str, Any] = {"max_tokens": output_cap(self.config)}  # the cap the envelope admits with
         extra = self._json_mode_settings(reads_allowed) if mode == "json" else None
         if extra:
             settings["extra_body"] = extra
@@ -327,19 +415,23 @@ class PydanticAIRuntime:
                 return self._bounded(history, model, max_requests, f"a further request (timeout {request_timeout:g}s)"
                                      f" could outlive the decision deadline ({deadline:g}s)", "decision-deadline",
                                      report)
-            left = max_tokens - sum(self._tokens(history))
-            if used and left <= 0:  # the next request stays inside the decision's token reservation
-                outcome = "structured-output-invalid" if report["errors"] and not report["valid"] \
-                    else "request-budget-exhausted"
-                return self._bounded(history, model, max_requests, "decision token budget spent", outcome, report)
-            if reask_pending:
+            # The envelope (``TokenEnvelope``) admits the request only if its worst case fits what is left; the
+            # usage limit is the same envelope checked after the response.
+            left = max(max_tokens - sum(self._tokens(history)), 1)
+            reask_now, reask_pending = reask_pending, False
+            if reask_now:
                 report["reasks"] += 1
-                reask_pending = False
             with capture_run_messages() as captured:
                 try:
                     run = agent.run_sync(message, message_history=history or None,
                                          usage_limits=UsageLimits(request_limit=1, total_tokens_limit=left),
                                          model_settings=settings or None)
+                except EnvelopeRefused as exc:  # not started: nothing billed, a re-ask that was not sent is not counted
+                    report["reasks"] -= int(reask_now)
+                    outcome = "structured-output-invalid" if report["errors"] and not report["valid"] \
+                        else "request-budget-exhausted"
+                    return self._bounded(history, model, max_requests, f"decision token envelope: {exc}", outcome,
+                                         report)
                 except UsageLimitExceeded as exc:
                     history += [m for m in captured if m not in history]
                     return self._bounded(history, model, max_requests, str(exc), "request-budget-exhausted", report)
@@ -408,7 +500,10 @@ class PydanticAIRuntime:
     def _usage(self, messages: list) -> dict[str, Any]:
         return usage_from_messages(messages, self._provider(), self.config.get("model"),
                                    self.config.get("price_per_mtok"),
-                                   reasoning_billing=str(self.config.get("reasoning_tokens_billing", "included")))
+                                   reasoning_billing=self._billing())
+
+    def _billing(self) -> str:
+        return str(self.config.get("reasoning_tokens_billing", "included"))
 
     def _tokens(self, messages: list) -> tuple[int, int]:
         u = self._usage(messages)
@@ -435,15 +530,21 @@ class PydanticAIRuntime:
         prompt = (req.context + "\n\n## This turn so far\n" + json.dumps(req.turn_so_far, default=str)[:20000]
                   + f"\n\n## Decision budget\nYou may make at most {max_requests} model requests for this decision, "
                   "including read-tool round trips. Reserve the last one for your final decision.")
-        settings = {}
-        if self.config.get("max_output_tokens"):
-            settings["max_tokens"] = int(self.config["max_output_tokens"])  # temperature deliberately unset
+        settings = {"max_tokens": output_cap(self.config)}  # the cap the envelope admits with; temperature unset
         tool_budget = max(1, max_requests - 1)  # the last request is reserved for a tool-free decision
         limits = UsageLimits(request_limit=tool_budget if req.read_tools else max_requests,
                              total_tokens_limit=int(self.config.get("max_tokens_per_decision", 120_000)))
         with capture_run_messages() as messages:
             try:
                 result = agent.run_sync(prompt, usage_limits=limits, model_settings=settings or None)
+            except EnvelopeRefused as exc:  # the next request was not started: its worst case does not fit
+                usage = self._usage(messages)
+                usage["limit_reached"] = f"decision token envelope: {exc}"[:300]
+                proposal = {"rationale": "decision token envelope spent before a final decision; no effects proposed",
+                            "calls": [], "control": {"action": "wait_for_jobs", "summary": "token envelope spent",
+                                                     "bounded_outcome": "request-budget-exhausted"}}
+                return DecisionResult(proposal, usage, json.loads(_messages_json(messages)),
+                                      self._settings(usage, max_requests), PROMPT_REVISION)
             except UsageLimitExceeded as exc:
                 if req.read_tools and max_requests > 1:
                     # Read-tool loop hit its share: one final request WITHOUT tools over the same history,
@@ -491,7 +592,7 @@ class PydanticAIRuntime:
 
     def _settings(self, usage: dict, max_requests: int) -> dict[str, Any]:
         return {"runtime": "pydantic-ai", "model": self.config.get("model"), "served_models": usage.get("served_models"),
-                "max_output_tokens": self.config.get("max_output_tokens"), "temperature": "provider default",
+                "max_output_tokens": output_cap(self.config), "temperature": "provider default",
                 "max_requests_per_decision": max_requests, "output_retries": int(self.config.get("output_retries", 1)),
                 "transport_retries": 0, "args_encoding": "json-string",
                 "output_mode": self.config.get("output_mode", "tool"),

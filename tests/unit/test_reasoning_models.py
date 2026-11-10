@@ -16,6 +16,7 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
+from eidos.domain.errors import Invalid
 from eidos.domain.turns import validate_decision
 from eidos.investigator import llm_broker
 from eidos.investigator import pydantic_ai_runtime as par
@@ -185,8 +186,9 @@ def test_usd_envelope_prices_only_the_capped_share_at_output_with_the_default_ca
     assert expected < 120_000 * 15 / 1e6
 
 
-def test_usd_envelope_without_an_output_cap_prices_everything_at_output():
-    assert decision_usd_envelope(120_000, PRICE, {}) == pytest.approx(120_000 * 15 / 1e6)
+def test_usd_envelope_without_an_output_cap_prices_the_runtime_default_cap():
+    # the runtime sends DEFAULT_MAX_OUTPUT_TOKENS with every request when none is configured: the same bound
+    assert decision_usd_envelope(120_000, PRICE, {}) == decision_usd_envelope(120_000, PRICE, {"max_output_tokens": 4096})
 
 
 def test_usd_envelope_uses_the_configured_request_count():
@@ -287,18 +289,20 @@ def test_bounded_decisions_still_report_every_requests_reasoning():
     assert res.usage["reasoning_tokens"] == 21 and res.usage["calls"] == 3
 
 
-@pytest.mark.parametrize("reasoning, reasked", [(50, True), (5000, False)])
+@pytest.mark.parametrize("reasoning, reasked", [(50, True), (19_000, False)])
 def test_reasoning_added_to_output_counts_against_the_decision_token_budget(reasoning, reasked):
-    # 10 in + 100 out is far below 1000 tokens: the re-ask is allowed. 5000 reasoning tokens that the provider counts
-    # separately are charged output, so the decision's token budget is spent and no further request is started.
+    # 10 in + 100 out leaves room for the re-ask in a 20000-token envelope. 19000 reasoning tokens that the provider
+    # counts separately are charged output, so the re-ask's worst case no longer fits and it is not started.
     script = scripted(["not json", json.dumps(GOOD)], usages=[usage(10, 100, reasoning)])
-    res = runtime(script, max_requests_per_decision=3, max_tokens_per_decision=1000).decide(request())
+    res = runtime(script, max_requests_per_decision=3, max_tokens_per_decision=20_000,
+                  max_output_tokens=200).decide(request())
     assert len(script.seen) == (2 if reasked else 1)
     if reasked:
         assert res.usage["structured_output"]["valid"]
     else:
         assert res.proposal["control"]["bounded_outcome"] == "structured-output-invalid"
-        assert res.usage["output_tokens"] == 100 + 5000 and res.usage["calls"] == 1
+        assert res.usage["output_tokens"] == 100 + reasoning and res.usage["calls"] == 1
+        assert "token envelope" in res.usage["limit_reached"] and res.usage["structured_output"]["reasks"] == 0
 
 
 # -- openai_usage and the OpenAI-compatible provider -------------------------------------------------------------------
@@ -685,9 +689,14 @@ def test_recorded_minimax_reply_is_never_accepted_as_an_effect():
     res = runtime(script, "json").decide(request(read_tools([])))
     assert res.proposal["calls"] == [] and res.proposal["control"]["bounded_outcome"] == "structured-output-invalid"
     validate_decision(res.proposal, max_calls=4)
-    # the lab's own validator is the second line: a decision that names a read tool is not an executable decision
-    raw = so.extract_json(RECORDED_MINIMAX)[0]
-    assert so.read_tools_in_calls(raw["calls"], READ_NAMES) is not None
+    # the lab's own validator is the second line: the original reply, normalised exactly as the runtime does, is
+    # refused there too, independently of the runtime's own refusal (``read_tools_in_calls``)
+    obj, _ = so.normalize(so.extract_json(RECORDED_MINIMAX)[0])
+    original = par.to_proposal(par.Decision.model_validate(obj))
+    assert [c["tool"] for c in original["calls"]] == ["inspect_evidence"]
+    with pytest.raises(Invalid, match=r"call 0: unknown or non-effect tool 'inspect_evidence'"):
+        validate_decision(original, max_calls=4)
+    assert so.read_tools_in_calls(original["calls"], READ_NAMES) is not None
 
 
 # A read request as MiniMax-M3.1-Flash wrote it in JSON mode after the read shape was offered (G4 1.1.1): four reads in
@@ -756,3 +765,118 @@ def test_a_deadline_stop_still_counts_the_reasoning_of_the_requests_already_made
     res = runtime(script, request_timeout=1000).decide(request(read_tools([]), deadline_seconds=600))
     assert res.usage["calls"] == 1 and res.usage["reasoning_tokens"] == 600
     assert res.usage["reasoning_accounting"] == "added-to-output" and res.usage["output_tokens"] == 620
+
+
+# -- request admission inside the decision's token envelope (R1 finding 1) -------------------------------------------
+def _tool_read_then_decide(usages):
+    """Tool mode: the first response calls the read tool ``get_job``; later ones return the decision."""
+    seen: list = []
+
+    def fn(messages, info: AgentInfo):
+        seen.append(messages)
+        u = usages[min(len(seen) - 1, len(usages) - 1)]
+        if len(seen) == 1:
+            return ModelResponse(parts=[ToolCallPart("get_job", {"job_id": "j"})], usage=u)
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"rationale": "r", "calls": []})], usage=u)
+    return FunctionModel(fn), seen
+
+
+@pytest.mark.parametrize("mode", ["repair", "json"])
+def test_a_request_whose_worst_case_does_not_fit_the_remaining_envelope_is_not_started(mode):
+    # The reviewer's case: 100 tokens left, a 16384-token output cap. The read request is answered, but the follow-up
+    # request is not started: its input (>= the 119900 tokens already in the conversation) + 16384 cannot fit.
+    log: list = []
+    script = scripted([read_request(("get_job", {"job_id": "j"})), json.dumps(GOOD)], usages=[usage(19_900, 100_000)])
+    res = runtime(script, mode, max_output_tokens=16384, max_tokens_per_decision=120_000).decide(request(read_tools(log)))
+    assert len(script.seen) == 1 and res.usage["calls"] == 1
+    assert res.proposal["calls"] == [] and res.proposal["control"]["bounded_outcome"] == "request-budget-exhausted"
+    assert "token envelope" in res.usage["limit_reached"] and "16384 output" in res.usage["limit_reached"]
+    assert res.usage["input_tokens"] + res.usage["output_tokens"] <= 120_000
+    validate_decision(res.proposal, max_calls=4)
+
+
+def test_tool_mode_does_not_start_a_request_whose_worst_case_does_not_fit():
+    model, seen = _tool_read_then_decide([usage(19_900, 100_000), usage(10, 10)])
+    rt = PydanticAIRuntime({"_model_object": model, "model": "openai-compatible:fake", "output_mode": "tool",
+                            "max_output_tokens": 16384, "max_tokens_per_decision": 120_000})
+    res = rt.decide(request(read_tools([])))
+    assert len(seen) == 1 and res.usage["calls"] == 1  # neither the read follow-up nor a tool-free final request
+    assert res.proposal["calls"] == [] and res.proposal["control"]["bounded_outcome"] == "request-budget-exhausted"
+    assert "token envelope" in res.usage["limit_reached"]
+    assert res.usage["input_tokens"] + res.usage["output_tokens"] <= 120_000
+
+
+def test_tool_mode_follow_up_happens_when_its_worst_case_fits():
+    model, seen = _tool_read_then_decide([usage(1000, 500), usage(1600, 100)])
+    rt = PydanticAIRuntime({"_model_object": model, "model": "openai-compatible:fake", "output_mode": "tool",
+                            "max_output_tokens": 16384, "max_tokens_per_decision": 120_000})
+    res = rt.decide(request(read_tools([])))
+    assert len(seen) == 2 and "bounded_outcome" not in (res.proposal.get("control") or {})
+    first, second = rt.envelope.admitted
+    assert first["spent_before"] == 0 and second["spent_before"] == 1500
+    assert second["input_estimate"] >= 1000 + 500  # the last request's input and output are re-sent
+
+
+def test_the_first_request_is_not_started_when_its_bytes_and_the_cap_exceed_the_envelope():
+    script = scripted([json.dumps(GOOD)])
+    res = runtime(script, max_output_tokens=4096, max_tokens_per_decision=5000).decide(request())
+    assert script.seen == [] and res.usage["calls"] == 0
+    assert res.proposal["control"]["bounded_outcome"] == "request-budget-exhausted"
+    assert "4096 output" in res.usage["limit_reached"]
+
+
+def test_the_envelope_counts_separately_billed_reasoning_as_spent():
+    # 10 + 10000 tokens (9000 of them reasoning, inside the output) leave room for the re-ask in 25000; with "separate"
+    # billing the 9000 reasoning tokens are charged on top, and the re-ask's worst case no longer fits
+    for billing, reasked in (("included", True), ("separate", False)):
+        script = scripted(["not json", json.dumps(GOOD)], usages=[usage(10, 10_000, 9_000)])
+        runtime(script, max_output_tokens=200, max_tokens_per_decision=25_000,
+                reasoning_tokens_billing=billing).decide(request())
+        assert len(script.seen) == (2 if reasked else 1), billing
+
+
+def test_every_request_carries_the_output_cap_and_the_receipt_records_it():
+    script = scripted([read_request(("get_job", {"job_id": "j"})), json.dumps(GOOD)])
+    res = runtime(script).decide(request(read_tools([])))  # no max_output_tokens configured
+    assert [i.model_settings["max_tokens"] for i in script.infos] == [4096, 4096]
+    assert res.model_settings["max_output_tokens"] == 4096
+
+
+def test_the_input_estimate_uses_the_reported_usage_after_a_response_and_bytes_before():
+    from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequest, UserPromptPart
+    env = par.TokenEnvelope(limit=100_000, cap=1000)
+    first = [ModelRequest(parts=[UserPromptPart("x" * 3000)], instructions="i" * 500)]
+    assert env.estimate(first, None, None) >= 3500  # one token per byte of the whole request
+    env.admit(first, None, None)
+    env.record(ModelResponse(parts=[TextPart("y")], usage=usage(900, 300)))
+    assert env.spent == 1200
+    new = ModelRequest(parts=[UserPromptPart("z" * 100)])
+    est = env.estimate([*first, ModelResponse(parts=[TextPart("y")]), new], None, None)
+    assert est == 900 + 300 + len(ModelMessagesTypeAdapter.dump_json([new])) + par.PART_OVERHEAD_TOKENS
+    # a provider that reports no input: back to the bytes of the whole conversation
+    env.record(ModelResponse(parts=[TextPart("y")], usage=usage(0, 300)))
+    conv = [*first, ModelResponse(parts=[TextPart("y")]), new]
+    assert env.estimate(conv, None, None) >= len(ModelMessagesTypeAdapter.dump_json(conv))
+
+
+def test_admission_is_spent_plus_estimate_plus_cap_within_the_limit():
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+    msgs = [ModelRequest(parts=[UserPromptPart("q")])]
+    env = par.TokenEnvelope(limit=10_000, cap=1000)
+    est = env.estimate(msgs, None, None)
+    env.spent = 10_000 - 1000 - est
+    env.admit(msgs, None, None)  # exactly fits
+    env.spent += 1
+    with pytest.raises(par.EnvelopeRefused, match="1000 output"):
+        env.admit(msgs, None, None)
+
+
+@pytest.mark.parametrize("cfg", [{}, {"max_output_tokens": 16384}, {"max_output_tokens": 1000,
+                                                                     "max_requests_per_decision": 3}])
+def test_the_activity_envelope_prices_the_cap_the_runtime_sends(cfg):
+    from eidos.investigator.runtime import output_cap
+    rt = PydanticAIRuntime({"model": "openai-compatible:fake", **cfg})
+    assert rt._settings({}, 8)["max_output_tokens"] == output_cap(cfg)
+    n = cfg.get("max_requests_per_decision", 8)
+    out = min(120_000, n * output_cap(cfg))
+    assert decision_usd_envelope(120_000, PRICE, cfg) == pytest.approx(((120_000 - out) * 3.0 + out * 15.0) / 1e6)

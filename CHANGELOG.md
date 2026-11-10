@@ -17,12 +17,22 @@ cap and 6/8 at 16384 tokens / 120 s), `tool` 6/8 (was 4/8); `docs/release/eviden
   `decide` activity's timeout): explicit no-effect decision with `bounded_outcome: decision-deadline`.
 - Checked: the decision's worst-case USD reservation bounds output by `max_requests_per_decision × max_output_tokens`,
   which includes reasoning tokens (they count against the provider's `max_tokens`).
+- A model request is started only if its worst case fits what is left of the decision's token envelope
+  (`max_tokens_per_decision`): tokens already charged + input estimate + output cap, in every output mode. Otherwise
+  the decision ends with an explicit no-effect decision (`request-budget-exhausted`) and nothing is sent. Before, the
+  envelope was checked only after each response, so the last request could overshoot it.
+- Every request now carries an output cap: `max_output_tokens`, or 4096 when none is configured (before: no
+  `max_tokens` sent). The decision's USD reservation prices the same cap.
 
 ### Reasoning tokens in the accounting
 - Usage receipts record `reasoning_tokens` per request and in total, with `reasoning_accounting`
   (`included-in-output`, `added-to-output`, `not-reported`; never a silent 0). Reasoning tokens reported above a
   request's output tokens, or `investigator.settings.reasoning_tokens_billing: "separate"`, are added to the charged
   output and USD. The ledger's usage detail and the component LLM broker's call records carry them too.
+- The component LLM broker's reasoning accounting is an explicit per-provider setting, lab config
+  `llm_broker_reasoning_billing` (`{"openai-compatible": "separate"}`; default `included`), no longer inferred from
+  the relative counts; with `separate` the reasoning count is added to the charged output. An invalid setting stops
+  the broker from starting (logged).
 
 ### Read tools in the `json` and `repair` output modes
 - The runtime owns the loop: a reply is a decision, a read request (`{"rationale": ..., "read": [{"tool", "args"}]}`,

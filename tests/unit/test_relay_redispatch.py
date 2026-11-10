@@ -95,9 +95,14 @@ def test_malformed_authored_manifest_is_invalid_not_a_crash():
     assert manifest_from_bundle({"files": {"eidos-component.json": '{"id": "y"}'}}) == {"id": "y"}
 
 
-def test_envelope_without_an_output_cap_prices_everything_as_output():
+def test_envelope_without_an_output_cap_prices_the_runtime_default_cap_as_output():
     from eidos.investigator.activities import decision_usd_envelope
-    assert decision_usd_envelope(50_000, {"input": 2.0, "output": 10.0}, {}) == 50_000 * 10 / 1e6
+    from eidos.investigator.runtime import DEFAULT_MAX_OUTPUT_TOKENS
+    # the runtime sends its default cap with every request (ADR 0016): at most 8 x 4096 tokens can be output
+    out = 8 * DEFAULT_MAX_OUTPUT_TOKENS
+    usd = decision_usd_envelope(50_000, {"input": 2.0, "output": 10.0}, {})
+    assert abs(usd - ((50_000 - out) * 2 + out * 10) / 1e6) < 1e-12
+    assert decision_usd_envelope(20_000, {"input": 2.0, "output": 10.0}, {}) == 20_000 * 10 / 1e6
     # runtime default of 8 requests per decision when only the output cap is set
     usd = decision_usd_envelope(200_000, {"input": 2.0, "output": 10.0}, {"max_output_tokens": 1000})
     assert abs(usd - ((200_000 - 8000) * 2 + 8000 * 10) / 1e6) < 1e-12

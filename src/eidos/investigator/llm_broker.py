@@ -32,6 +32,15 @@ TOKEN_PREFIX = "eidos_llmg_"
 MAX_BODY = 1 << 20
 
 
+REASONING_BILLING = ("included", "separate")  # how a provider's reported output count relates to reasoning tokens
+
+
+def _check_billing(value: object, what: str = "reasoning_billing") -> str:
+    if value not in REASONING_BILLING:
+        raise ValueError(f"{what} must be one of {', '.join(REASONING_BILLING)}; got {value!r}")
+    return str(value)
+
+
 @dataclass
 class ProviderResult:
     text: str
@@ -39,18 +48,33 @@ class ProviderResult:
     output_tokens: int
     request_id: str | None = None
     reasoning_tokens: int | None = None  # as reported (OpenAI-compatible completion_tokens_details); None if absent
+    reasoning_accounting: str | None = None  # "added-to-output" | "included-in-output" | "not-reported"
 
 
-def openai_usage(u: dict) -> tuple[int, int, int | None]:
-    """(input, charged output, reasoning) from an OpenAI-compatible ``usage`` object. Reasoning tokens are part of
-    ``completion_tokens``; a provider reporting more reasoning than completion tokens counts them separately, and
-    they are then added to the charged output (ADR 0016). Never dropped: the reported value is returned."""
+def openai_usage_accounted(u: dict, reasoning_billing: str = "included") -> tuple[int, int, int | None, str]:
+    """``openai_usage`` plus the accounting label: ``added-to-output``, ``included-in-output`` or ``not-reported``."""
+    _check_billing(reasoning_billing)
     inp, out = int(u.get("prompt_tokens") or 0), int(u.get("completion_tokens") or 0)
     r = (u.get("completion_tokens_details") or {}).get("reasoning_tokens")
     reasoning = int(r) if isinstance(r, int) and not isinstance(r, bool) else None
-    if reasoning is not None and reasoning > out:
-        out += reasoning
-    return inp, out, reasoning
+    if reasoning is None:
+        return inp, out, None, "not-reported"
+    if reasoning_billing == "separate" or reasoning > out:
+        return inp, out + reasoning, reasoning, "added-to-output"
+    return inp, out, reasoning, "included-in-output"
+
+
+def openai_usage(u: dict, reasoning_billing: str = "included") -> tuple[int, int, int | None]:
+    """(input, charged output, reasoning) from an OpenAI-compatible ``usage`` object. The provider's accounting
+    contract is configured, not inferred: ``included`` (the OpenAI-compatible contract) means ``completion_tokens``
+    already counts reasoning tokens; ``separate`` means the provider reports them on top, so they are added to the
+    charged output (ADR 0016). Under ``included`` more reasoning than completion tokens contradicts the contract
+    and is charged as separate, never undercharged (as in the investigator runtime). The reported value is always
+    returned, never dropped."""
+    return openai_usage_accounted(u, reasoning_billing)[:3]
+
+
+OPENAI_COMPATIBLE = ("openai-compatible", "openai")  # provider names whose reasoning accounting is configurable
 
 
 class ProviderRejected(Exception):
@@ -102,8 +126,10 @@ class AnthropicProvider:
 class OpenAICompatibleProvider:
     """OpenAI-compatible chat completions (hosted or a local server such as Ollama)."""
 
-    def __init__(self, base_url: str, api_key: str | None = None, *, timeout: float = 300.0):
+    def __init__(self, base_url: str, api_key: str | None = None, *, timeout: float = 300.0,
+                 reasoning_billing: str = "included"):
         self.base_url, self._key, self.timeout = base_url.rstrip("/"), api_key, timeout
+        self.reasoning_billing = _check_billing(reasoning_billing)
 
     def complete(self, model: str, messages: list[dict], max_tokens: int) -> ProviderResult:
         import httpx
@@ -120,24 +146,43 @@ class OpenAICompatibleProvider:
         if r.status_code != 200:
             raise ProviderRejected(f"provider status {r.status_code}")
         data = r.json()
-        inp, out, reasoning = openai_usage(data.get("usage") or {})
+        inp, out, reasoning, accounting = openai_usage_accounted(data.get("usage") or {}, self.reasoning_billing)
         text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
-        return ProviderResult(text, inp, out, data.get("id"), reasoning)
+        return ProviderResult(text, inp, out, data.get("id"), reasoning, accounting)
 
     def __repr__(self) -> str:
-        return f"OpenAICompatibleProvider({self.base_url!r})"
+        return f"OpenAICompatibleProvider({self.base_url!r}, reasoning_billing={self.reasoning_billing!r})"
 
 
-def providers_from_env(environ: dict[str, str], endpoints: dict[str, str] | None = None) -> dict[str, Provider]:
-    """Provider adapters for the keys this process holds. Model ids are ``<provider>:<model>``."""
+def providers_from_env(environ: dict[str, str], endpoints: dict[str, str] | None = None,
+                       reasoning_billing: dict[str, str] | None = None) -> dict[str, Provider]:
+    """Provider adapters for the keys this process holds. Model ids are ``<provider>:<model>``.
+
+    ``reasoning_billing`` declares, per OpenAI-compatible provider name, whether its output count ``included`` the
+    reasoning tokens (the default) or reports them ``separate``. Anthropic is not accepted: its API reports no
+    reasoning count (``output_tokens`` includes thinking). A bad key or value is an error, never ignored."""
+    billing = reasoning_billing or {}
+    if not isinstance(billing, dict):
+        raise ValueError("reasoning_billing must map a provider name to included or separate")
+    for name, value in billing.items():
+        if name == "anthropic":
+            raise ValueError("reasoning_billing 'anthropic' is not accepted: Anthropic reports no reasoning count "
+                             "(its output_tokens already include thinking)")
+        if name not in OPENAI_COMPATIBLE:
+            raise ValueError(f"reasoning_billing has an unknown provider {name!r}; "
+                             f"expected one of {', '.join(OPENAI_COMPATIBLE)}")
+        _check_billing(value, f"reasoning_billing[{name!r}]")
     out: dict[str, Provider] = {}
     if environ.get("ANTHROPIC_API_KEY"):
         out["anthropic"] = AnthropicProvider(environ["ANTHROPIC_API_KEY"])
     eps = endpoints or {}
     if eps.get("openai-compatible"):
-        out["openai-compatible"] = OpenAICompatibleProvider(eps["openai-compatible"], environ.get("OPENAI_API_KEY"))
+        out["openai-compatible"] = OpenAICompatibleProvider(
+            eps["openai-compatible"], environ.get("OPENAI_API_KEY"),
+            reasoning_billing=billing.get("openai-compatible", "included"))
     if environ.get("OPENAI_API_KEY"):
-        out["openai"] = OpenAICompatibleProvider(eps.get("openai", "https://api.openai.com/v1"), environ["OPENAI_API_KEY"])
+        out["openai"] = OpenAICompatibleProvider(eps.get("openai", "https://api.openai.com/v1"), environ["OPENAI_API_KEY"],
+                                                 reasoning_billing=billing.get("openai", "included"))
     return out
 
 
@@ -216,8 +261,9 @@ class LlmBroker:
             return self._err(504, "OUTCOME_UNKNOWN", f"the provider did not confirm the request ({exc}); its "
                              "possible cost was charged as uncertain", call_id=cid)
         digest = "sha256:" + hashlib.sha256(out.text.encode()).hexdigest()
-        usage = {"input_tokens": out.input_tokens, "output_tokens": out.output_tokens,
-                 **({"reasoning_tokens": out.reasoning_tokens} if out.reasoning_tokens is not None else {})}
+        usage = {"input_tokens": out.input_tokens, "output_tokens": out.output_tokens,  # output: as charged
+                 **({"reasoning_tokens": out.reasoning_tokens} if out.reasoning_tokens is not None else {}),
+                 **({"reasoning_accounting": out.reasoning_accounting} if out.reasoning_accounting else {})}
         st = self._settle(project, {**settle, "status": "ok", "usage": usage, "provider_request_id": out.request_id,
                                     "response_digest": digest})
         return 200, {"call_id": cid, "model": model, "text": out.text, "usage": usage,
