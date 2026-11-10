@@ -8,11 +8,11 @@
     (subpath (param "NODE_PREFIX"))
     (literal "/")
     (subpath "/System") (subpath "/usr") (subpath "/bin") (subpath "/sbin")
-    (subpath "/opt/homebrew") (subpath "/Library/Apple")
-    (subpath "/private/etc") (subpath "/dev"))))
+    (subpath "/opt/homebrew") (subpath "/Library")
+    (subpath "/private/etc") (subpath "/private/var/db") (subpath "/dev"))))
 (deny file-write*
   (require-not (require-any (subpath (param "RUN_DIR")) (subpath "/dev"))))
-; Prevent reading other processes' environments or starting work via host services.
+; Prevent starting work outside the sandbox via host services.
 (deny process-info* (target others))
 (deny process-exec (literal "/bin/launchctl") (literal "/usr/bin/osascript") (literal "/usr/bin/open"))
 (deny mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd"))

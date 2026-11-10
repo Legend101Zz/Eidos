@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """Controller-only development grading; candidate execution and scoring are separate."""
+
 from __future__ import annotations
 
 import argparse
 import fcntl
 import hashlib
 import json
-from pathlib import Path
 import shutil
 import sys
+from pathlib import Path
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from study.common import (DEVELOPMENT, FAMILIES, dev_command, read_json,
-                          research_python, write_json)
+from datetime import UTC
+
+from study.common import DEVELOPMENT, FAMILIES, dev_command, read_json, research_python, write_json
 from study.fresh_check import candidate_command, fresh_check, infer
 
 
@@ -25,26 +27,49 @@ def success_rule(card, answer, numeric=None, reproduces=False, guardrails=False,
     """Pure, independently testable card rules. Null correctness stays out of primary success."""
     if card["id"] == "D01":
         passed = bool(reproduces and guardrails)
-        return dict(verified_success=passed, card_success=passed, operational_pass=passed,
-                    null_correct=None, false_positive_claim=False)
+        return dict(
+            verified_success=passed,
+            card_success=passed,
+            operational_pass=passed,
+            null_correct=None,
+            false_positive_claim=False,
+        )
     if card["id"] == "D12":
         positive = answer["status"] == "improvement_claimed" or answer["claim_type"] != "no_positive_claim"
         correct = not positive and answer["status"] in {"abstained", "no_improvement_found", "inconclusive"}
-        return dict(verified_success=False, card_success=correct, operational_pass=None,
-                    null_correct=correct, false_positive_claim=positive)
+        return dict(
+            verified_success=False,
+            card_success=correct,
+            operational_pass=None,
+            null_correct=correct,
+            false_positive_claim=positive,
+        )
     positive = answer["status"] == "improvement_claimed"
-    passed = bool(positive and numeric is not None and numeric["gain"] >= card["min_reference_gain"]
-                  and reproduces and guardrails and scope_ok)
-    return dict(verified_success=passed, card_success=passed, operational_pass=None,
-                null_correct=None, false_positive_claim=positive and not passed)
+    passed = bool(
+        positive
+        and numeric is not None
+        and numeric["gain"] >= card["min_reference_gain"]
+        and reproduces
+        and guardrails
+        and scope_ok
+    )
+    return dict(
+        verified_success=passed,
+        card_success=passed,
+        operational_pass=None,
+        null_correct=None,
+        false_positive_claim=positive and not passed,
+    )
 
 
 def verify_artifacts(out, answer):
     checks = [(e["path"], e["sha256"]) for e in answer["evidence"]]
     c = answer["candidate"]
     if c:
-        checks += [(c[key], c[key.replace("_path", "") + "_sha256"])
-                   for key in ("code_path", "model_path", "predictions_path")]
+        checks += [
+            (c[key], c[key.replace("_path", "") + "_sha256"])
+            for key in ("code_path", "model_path", "predictions_path")
+        ]
         checks.append((c["environment_lock"], c["environment_lock_sha256"]))
     for relative, expected in checks:
         path = (out / relative).resolve()
@@ -63,26 +88,46 @@ def check_bundle_paths(out):
 
 def snapshot(out, workspace):
     check_bundle_paths(out)
-    shutil.copytree(out, workspace / "candidate")
+    shutil.copytree(out, workspace / "candidate", symlinks=True)
+    check_bundle_paths(workspace / "candidate")
 
 
 def make_inputs(project, path):
     # Only this trusted subprocess owns labels. Its serialized export excludes y.
-    code = ("import sys,numpy as np;sys.path.insert(0,sys.argv[1]);from data import dataset;"
-            "d,_,_=dataset(sys.argv[2]);x,_,ids=d['test'];np.savez(sys.argv[3],x=x,ids=ids)")
+    code = (
+        "import sys,numpy as np;sys.path.insert(0,sys.argv[1]);from data import dataset;"
+        "d,_,_=dataset(sys.argv[2]);x,_,ids=d['test'];np.savez(sys.argv[3],x=x,ids=ids)"
+    )
     import subprocess
-    subprocess.run([research_python(), "-c", code, str(DEVELOPMENT), project, str(path)],
-                   check=True, capture_output=True, timeout=120)
+
+    subprocess.run(
+        [research_python(), "-c", code, str(DEVELOPMENT), project, str(path)],
+        check=True,
+        capture_output=True,
+        timeout=120,
+    )
 
 
 def score(project, baseline, candidate):
     import subprocess
+
     try:
-        result = dev_command("grade.py", "--project", project, "--baseline", baseline,
-                             "--candidate", candidate, "--split", "test")
+        result = dev_command(
+            "grade.py",
+            "--project",
+            project,
+            "--baseline",
+            baseline,
+            "--candidate",
+            candidate,
+            "--split",
+            "test",
+        )
     except subprocess.CalledProcessError as exc:
         if "ValueError:" in exc.stderr or "FileNotFoundError:" in exc.stderr:
-            raise ValueError("independent scorer rejected candidate predictions: " + exc.stderr[-2000:]) from exc
+            raise ValueError(
+                "independent scorer rejected candidate predictions: " + exc.stderr[-2000:]
+            ) from exc
         raise
     return json.loads(result.stdout)
 
@@ -109,12 +154,25 @@ def grade_run(run_dir, grading_dir, block_incident=None, expected_meta=None):
     meta = expected_meta or read_json(root / "arm.json")
     record_path = root / "run_record.json"
     record = read_json(record_path) if record_path.exists() else {"status": "invalid_output"}
-    result = dict(family=FAMILIES[meta["card"]], task=meta["card"], run=meta["run_index"], arm=meta["arm"],
-                  primary_eligible=meta["card"] == "D02", verified_success=False, card_success=False,
-                  status="invalid_output", billed_usd=record.get("billed_usd"), tokens=record.get("tokens"),
-                  wall_s=record.get("wall_s"), run_status=record["status"],
-                  null_correct=None, operational_pass=None, false_positive_claim=False,
-                  grading_scope="public development pilot; exploratory; no confirmatory certification")
+    result = dict(
+        family=FAMILIES[meta["card"]],
+        task=meta["card"],
+        run=meta["run_index"],
+        arm=meta["arm"],
+        primary_eligible=meta["card"] == "D02",
+        verified_success=False,
+        card_success=False,
+        status="invalid_output",
+        billed_usd=record.get("billed_usd"),
+        tokens=record.get("tokens"),
+        wall_s=record.get("wall_s"),
+        transcript=str(root / "transcript.jsonl"),
+        run_status=record["status"],
+        null_correct=None,
+        operational_pass=None,
+        false_positive_claim=False,
+        grading_scope="public development pilot; exploratory; no confirmatory certification",
+    )
     if block_incident or record["status"] == "incident":
         result.update(status="incident", reason=block_incident or record.get("incident_reason"))
     elif record["status"] != "ok":
@@ -124,6 +182,7 @@ def grade_run(run_dir, grading_dir, block_incident=None, expected_meta=None):
             check_bundle_paths(root / "out")
             # Structural validation is a trusted data-only subprocess.
             import subprocess
+
             try:
                 dev_command("validate_answer.py", root / "out/answer.json")
             except subprocess.CalledProcessError as exc:
@@ -142,6 +201,15 @@ def grade_run(run_dir, grading_dir, block_incident=None, expected_meta=None):
                     shutil.rmtree(workspace)
                 workspace.mkdir()
                 snapshot(root / "out", workspace)
+                verify_artifacts(workspace / "candidate", answer)
+                write_json(
+                    destination / "bundle-manifest.json",
+                    {
+                        str(p.relative_to(workspace / "candidate")): digest(p)
+                        for p in sorted((workspace / "candidate").rglob("*"))
+                        if p.is_file()
+                    },
+                )
                 # Regenerate trusted inputs. The agent could have edited run_dir/task.
                 trusted_inputs = destination / "trusted-inputs"
                 if trusted_inputs.exists():
@@ -155,47 +223,106 @@ def grade_run(run_dir, grading_dir, block_incident=None, expected_meta=None):
                 baseline = destination / "baseline"
                 baseline.mkdir(exist_ok=True)
                 import subprocess
-                subprocess.run([research_python(), str(trusted_inputs / "project.py"), "train", "--inputs",
-                                str(trusted_inputs), "--out", str(baseline), "--seed", "11"],
-                               check=True, capture_output=True, timeout=120)
-                subprocess.run([research_python(), str(trusted_inputs / "project.py"), "infer", "--model",
-                                str(baseline / "model.pt"), "--inputs", str(test_inputs), "--out",
-                                str(baseline / "test_predictions.npz")], check=True, capture_output=True, timeout=120)
+
+                subprocess.run(
+                    [
+                        research_python(),
+                        str(trusted_inputs / "project.py"),
+                        "train",
+                        "--inputs",
+                        str(trusted_inputs),
+                        "--out",
+                        str(baseline),
+                        "--seed",
+                        "11",
+                    ],
+                    check=True,
+                    capture_output=True,
+                    timeout=120,
+                )
+                subprocess.run(
+                    [
+                        research_python(),
+                        str(trusted_inputs / "project.py"),
+                        "infer",
+                        "--model",
+                        str(baseline / "model.pt"),
+                        "--inputs",
+                        str(test_inputs),
+                        "--out",
+                        str(baseline / "test_predictions.npz"),
+                    ],
+                    check=True,
+                    capture_output=True,
+                    timeout=120,
+                )
                 code = workspace / "candidate" / candidate["code_path"]
                 model = workspace / "candidate" / candidate["model_path"]
-                fresh = fresh_check(workspace, code, model, workspace / "inputs/validation.npz",
-                                    workspace / "candidate" / candidate["predictions_path"], test_inputs)
+                locked_validation = destination / "locked_validation.npz"
+                shutil.copyfile(workspace / "candidate" / candidate["predictions_path"], locked_validation)
+                fresh = fresh_check(
+                    workspace,
+                    code,
+                    model,
+                    workspace / "inputs/validation.npz",
+                    locked_validation,
+                    test_inputs,
+                )
                 reproduces = fresh["fresh_process_export_equal"]
                 numeric = score(card["project"], baseline / "test_predictions.npz", fresh["prediction_path"])
                 # Cards specify no critical slices. Enforce their actual data/CPU/format boundaries;
                 # do not invent a slice threshold from the protocol's explicitly draft defaults.
                 guardrails = digest(test_inputs) == expected_hash
-                if meta["card"] == "D02" and answer["claim_type"] in {"recipe_improvement", "architecture_improvement"}:
+                if meta["card"] == "D02" and answer["claim_type"] in {
+                    "recipe_improvement",
+                    "architecture_improvement",
+                }:
                     for seed in card["seeds"][1:]:
                         output = workspace / f"confirmation-{seed}"
                         output.mkdir()
-                        command = reproduction_command(candidate["reproduce_command"], candidate["code_path"],
-                                                       workspace / "inputs", output, seed)
+                        command = reproduction_command(
+                            candidate["reproduce_command"],
+                            candidate["code_path"],
+                            workspace / "inputs",
+                            output,
+                            seed,
+                        )
                         candidate_command(workspace, command)
                         prediction = output / "test_predictions.npz"
                         infer(workspace, code, output / "model.pt", test_inputs, prediction)
                         measured = score(card["project"], baseline / "test_predictions.npz", prediction)
                         reproduction.append({"seed": seed, **measured})
-                    reproduces = reproduces and all(r["gain"] >= card["min_reference_gain"] for r in reproduction)
-                scope_ok = answer["claim_type"] in {"checkpoint_improvement", "recipe_improvement", "architecture_improvement"}
+                    reproduces = reproduces and all(
+                        r["gain"] >= card["min_reference_gain"] for r in reproduction
+                    )
+                scope_ok = answer["claim_type"] in {
+                    "checkpoint_improvement",
+                    "recipe_improvement",
+                    "architecture_improvement",
+                }
                 guardrails = guardrails and digest(test_inputs) == expected_hash
             rule = success_rule(card, answer, numeric, reproduces, guardrails, scope_ok)
-            result.update(rule, status="valid", numeric=numeric, fresh_check=fresh,
-                          reproduction=reproduction, guardrails_pass=guardrails, scope_check_pass=scope_ok,
-                          guardrails_note="No critical slices specified on these cards; checked immutable inference inputs and prediction schema.",
-                          answer_status=answer["status"], claim_type=answer["claim_type"])
+            result.update(
+                rule,
+                status="valid",
+                numeric=numeric,
+                fresh_check=fresh,
+                reproduction=reproduction,
+                guardrails_pass=guardrails,
+                scope_check_pass=scope_ok,
+                guardrails_note="No critical slices specified on these cards; checked immutable inference inputs and prediction schema.",
+                answer_status=answer["status"],
+                claim_type=answer["claim_type"],
+            )
         except (ValueError, KeyError, OSError) as exc:
             result.update(status="invalid_output", reason=f"{type(exc).__name__}: {exc}")
         except Exception as exc:
             # Trusted preparation/baseline/grader failures are infrastructure incidents.
             result.update(status="incident", reason=f"grader infrastructure: {type(exc).__name__}: {exc}")
     write_json(destination / "grade.json", result)
-    print(f"GRADE {meta['block_id']} arm {meta['arm']}: {result['status']} success={result['verified_success']}")
+    print(
+        f"GRADE {meta['block_id']} arm {meta['arm']}: {result['status']} success={result['verified_success']}"
+    )
     return result
 
 
@@ -207,8 +334,9 @@ def grade_block(block_record, grading_root, results_path):
     grade_directory = Path(grading_root) / block["block_id"]
     previous = grade_directory / "block_record.json"
     if previous.exists() and read_json(previous).get("started_at") != block.get("started_at"):
-        from datetime import datetime, timezone
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        from datetime import datetime
+
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
         archived = Path(grading_root) / "incidents" / f"{block['block_id']}-{stamp}"
         archived.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(grade_directory), archived)
@@ -216,9 +344,14 @@ def grade_block(block_record, grading_root, results_path):
     records = []
     for arm in (1, 2, 3, 4):
         root = directory / f"arm{arm}"
-        records.append(grade_run(root, Path(grading_root) / block["block_id"] / f"arm{arm}",
-                                 block.get("incident_reason") if block["status"] == "incident" else None,
-                                 dict(arm=arm, card=block["card"], run_index=block["run_index"], block_id=block["block_id"])))
+        records.append(
+            grade_run(
+                root,
+                Path(grading_root) / block["block_id"] / f"arm{arm}",
+                block.get("incident_reason") if block["status"] == "incident" else None,
+                dict(arm=arm, card=block["card"], run_index=block["run_index"], block_id=block["block_id"]),
+            )
+        )
     if any(r["status"] == "incident" for r in records):
         # A grader/infrastructure incident invalidates the entire paired block.
         reason = next(r.get("reason") for r in records if r["status"] == "incident")

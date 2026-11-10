@@ -1,6 +1,8 @@
 """Tiny regression fixture used only for the single live runner smoke."""
+
 import argparse
 from pathlib import Path
+
 import numpy as np
 import torch
 
@@ -14,9 +16,9 @@ def train(inputs, out, seed):
     with np.load(Path(inputs) / "train.npz", allow_pickle=False) as data:
         x, y = torch.tensor(data["x"]), torch.tensor(data["y"])
     model = torch.nn.Linear(1, 1)
-    optimizer = torch.optim.SGD(model.parameters(), lr=.1)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
     for _ in range(100):
-        loss = ((model(x)[:, 0] - y)**2).mean()
+        loss = ((model(x)[:, 0] - y) ** 2).mean()
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()

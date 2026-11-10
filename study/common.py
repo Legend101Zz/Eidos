@@ -1,12 +1,12 @@
 """Shared paths, atomic records and the agent filesystem boundary."""
+
 from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
-import sys
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 STUDY = ROOT / "study"
@@ -42,33 +42,66 @@ def agent_env(run_dir):
         (root / name).mkdir(exist_ok=True)
     node = Path(shutil.which("node") or "/usr/bin/node").resolve()
     env = {k: os.environ[k] for k in ("LANG", "LC_ALL", "TERM", "USER") if k in os.environ}
-    env.update({
-        "HOME": str(root / ".home"), "TMPDIR": str(root / ".tmp"),
-        "CLAUDE_CODE_TMPDIR": str(root / ".tmp"),
-        "XDG_CACHE_HOME": str(root / ".cache"), "XDG_CONFIG_HOME": str(root / ".home"),
-        "CLAUDE_CONFIG_DIR": str(root / ".claude-cfg"),
-        "PATH": os.pathsep.join([str(Path(research_python()).parent), str(node.parent),
-                                 "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]),
-        "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1",
-        "VECLIB_MAXIMUM_THREADS": "1", "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
-        "ANTHROPIC_BASE_URL": "https://api.minimax.io/anthropic",
-        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-        "DISABLE_AUTOUPDATER": "1",
-    })
+    env.update(
+        {
+            "HOME": str(root / ".home"),
+            "TMPDIR": str(root / ".tmp"),
+            "CLAUDE_CODE_TMPDIR": str(root / ".tmp"),
+            "XDG_CACHE_HOME": str(root / ".cache"),
+            "XDG_CONFIG_HOME": str(root / ".home"),
+            "CLAUDE_CONFIG_DIR": str(root / ".claude-cfg"),
+            "PATH": os.pathsep.join(
+                [
+                    str(Path(research_python()).parent),
+                    str(node.parent),
+                    "/opt/homebrew/bin",
+                    "/usr/bin",
+                    "/bin",
+                    "/usr/sbin",
+                    "/sbin",
+                ]
+            ),
+            "OMP_NUM_THREADS": "1",
+            "MKL_NUM_THREADS": "1",
+            "OPENBLAS_NUM_THREADS": "1",
+            "VECLIB_MAXIMUM_THREADS": "1",
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "ANTHROPIC_BASE_URL": "https://api.minimax.io/anthropic",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            "DISABLE_AUTOUPDATER": "1",
+        }
+    )
     return env
 
 
-def sandbox_command(run_dir, command, *, network=True):
+def sandbox_command(run_dir, command, *, network=True, readonly=()):
     """Public helper for arms 1–3. Parameters avoid profile string interpolation."""
     python = research_python()
     prefix = subprocess.check_output([python, "-c", "import sys; print(sys.prefix)"], text=True).strip()
     node = Path(shutil.which("node") or "/usr/bin/node").resolve().parent.parent
-    profile = ["-f", str(STUDY / "sandbox/agent.sb")] if network else [
-        "-p", (STUDY / "sandbox/agent.sb").read_text() + "\n(deny network*)\n"]
-    return ["/usr/bin/sandbox-exec", *profile,
-            "-D", "RUN_DIR=" + str(Path(run_dir).resolve()),
-            "-D", "PYTHON_PREFIX=" + str(Path(prefix).resolve()),
-            "-D", "NODE_PREFIX=" + str(node), *map(str, command)]
+    extra = "" if network else "\n(deny network*)\n"
+    readonly_params = []
+    for index, path in enumerate(readonly):
+        extra += f'\n(deny file-write* (subpath (param "READONLY{index}")))\n'
+        readonly_params += ["-D", f"READONLY{index}=" + str(Path(path).resolve())]
+    profile = (
+        ["-p", (STUDY / "sandbox/agent.sb").read_text() + extra]
+        if extra
+        else ["-f", str(STUDY / "sandbox/agent.sb")]
+    )
+    return [
+        "/usr/bin/sandbox-exec",
+        *profile,
+        "-D",
+        "RUN_DIR=" + str(Path(run_dir).resolve()),
+        "-D",
+        "PYTHON_PREFIX=" + str(Path(prefix).resolve()),
+        "-D",
+        "NODE_PREFIX=" + str(node),
+        *readonly_params,
+        *map(str, command),
+    ]
 
 
 def render_prompt(arm):
@@ -79,5 +112,11 @@ def render_prompt(arm):
 
 
 def dev_command(script, *args, **kwargs):
-    return subprocess.run([research_python(), str(DEVELOPMENT / script), *map(str, args)],
-                          check=True, text=True, capture_output=True, timeout=120, **kwargs)
+    return subprocess.run(
+        [research_python(), str(DEVELOPMENT / script), *map(str, args)],
+        check=True,
+        text=True,
+        capture_output=True,
+        timeout=120,
+        **kwargs,
+    )

@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """Budgeted Claude runner and the shared four-arm dispatcher."""
+
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 import importlib
 import json
 import os
-from pathlib import Path
 import re
 import selectors
 import signal
 import subprocess
 import sys
 import time
+from datetime import UTC, datetime
+from pathlib import Path
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -34,22 +35,41 @@ class UsageTracker:
     counters for each ID, then reconcile with the final cumulative usage without
     adding it twice. All four token categories count toward the envelope.
     """
+
     def __init__(self):
         self.messages = {}
         self.summary = {}
         self.models = set()
         self.claim = ""
+        self.final_seen = False
+        self.stream_message_id = None
 
     @staticmethod
     def counters(usage):
-        return {key: max([int(usage.get(alias, 0) or 0) for alias in aliases])
-                for key, aliases in TOKEN_KEYS.items()}
+        return {
+            key: max([int(usage.get(alias, 0) or 0) for alias in aliases])
+            for key, aliases in TOKEN_KEYS.items()
+        }
 
     def observe(self, event):
+        if event.get("type") == "stream_event":
+            partial = event.get("event", {})
+            if partial.get("type") == "message_start":
+                message = partial.get("message", {})
+                self.stream_message_id = message.get("id")
+                self.observe({"type": "assistant", "message": message})
+            elif partial.get("type") == "message_delta" and self.stream_message_id:
+                counters = self.counters(partial.get("usage", {}))
+                old = self.messages.get(self.stream_message_id, dict.fromkeys(TOKEN_KEYS, 0))
+                self.messages[self.stream_message_id] = {
+                    k: max(old.get(k, 0), v) for k, v in counters.items()
+                }
+            return
         message = event.get("message", {})
         if not isinstance(message, dict):
             message = {}
-        for model in (message.get("model"), event.get("model")):
+        # init.model is the requested alias, not a provider-returned model id.
+        for model in (message.get("model"), event.get("model") if event.get("type") == "result" else None):
             if model:
                 self.models.add(model)
         if event.get("type") == "assistant" and isinstance(message.get("usage"), dict):
@@ -58,27 +78,35 @@ class UsageTracker:
             old = self.messages.get(key, {})
             self.messages[key] = {k: max(old.get(k, 0), v) for k, v in counters.items()}
         if event.get("type") == "result":
+            self.final_seen = True
             self.claim = event.get("result", "") or ""
             if isinstance(event.get("usage"), dict):
                 self.summary = self.counters(event["usage"])
             model_usage = event.get("modelUsage", {})
-            self.models.update(model_usage)
+            if not self.models:
+                self.models.update(model_usage)
             if model_usage and not self.summary:
                 self.summary = {k: sum(self.counters(v)[k] for v in model_usage.values()) for k in TOKEN_KEYS}
 
     @property
     def tokens(self):
-        counts = {k: max(sum(m[k] for m in self.messages.values()), self.summary.get(k, 0))
-                  for k in TOKEN_KEYS}
+        counts = {
+            k: max(sum(m[k] for m in self.messages.values()), self.summary.get(k, 0)) for k in TOKEN_KEYS
+        }
         return {**counts, "total": sum(counts.values())}
 
 
 def incident_text(text):
-    return bool(re.search(
-        r"\b429\b|(?:http|status|error|code)[\s\"':=_-]{0,12}5\d\d\b|"
-        r"\b5\d\d\s+(?:internal|server|error)|rate[ _-]?limit|overloaded|quota|insufficient.{0,20}(?:credit|balance)|"
-        r"(?:credit|balance).{0,20}(?:insufficient|exhausted)|usage limit|out of credits|capacity exceeded",
-        text, re.I))
+    return bool(
+        re.search(
+            r"\b429\b|(?:http|status|error|code)[\s\"':=_-]{0,12}5\d\d\b|"
+            r"\b5\d\d\s+(?:internal|server|error)|internal server error|service unavailable|bad gateway|gateway timeout|"
+            r"rate[ _-]?limit|overloaded|quota|insufficient.{0,20}(?:credit|balance)|"
+            r"(?:credit|balance).{0,20}(?:insufficient|exhausted)|usage limit|out of credits|capacity exceeded",
+            text,
+            re.I,
+        )
+    )
 
 
 def event_error(event):
@@ -93,7 +121,7 @@ def event_error(event):
 
 
 def utc_now():
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def stop_process_tree(process):
@@ -132,8 +160,15 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
     process = None
     with transcript.open("w") as log:
         try:
-            process = subprocess.Popen(command, cwd=root, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                       stderr=subprocess.PIPE, start_new_session=True)
+            process = subprocess.Popen(
+                command,
+                cwd=root,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
             selector = selectors.DefaultSelector()
             buffers = {}
             for stream, name in ((process.stdout, "stdout"), (process.stderr, "stderr")):
@@ -143,6 +178,10 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
             def consume(line, name):
                 nonlocal status, reason, error_seen
                 text = line.decode("utf-8", errors="replace")
+                for name_of_secret in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+                    secret = env.get(name_of_secret)
+                    if secret:
+                        text = text.replace(secret, "[REDACTED]")
                 if not text.strip():
                     return
                 if name == "stdout":
@@ -157,10 +196,14 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
                 log.write(json.dumps(event, ensure_ascii=False) + "\n")
                 log.flush()
                 usage.observe(event)
+                if status == "ok" and time.monotonic() - clock >= wall_s:
+                    status = "timeout"
+                if status == "ok" and usage.tokens["total"] > token_limit:
+                    status = "token_budget"
                 error = text if name == "stderr" else event_error(event)
                 if error:
                     error_seen = error_seen or name != "stderr"
-                    if incident_text(error):
+                    if status == "ok" and incident_text(error):
                         status, reason = "incident", error[:2000]
 
             while selector.get_map():
@@ -176,7 +219,7 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
                         buffers[key.data] += rest or b""
                         selector.unregister(key.fileobj)
                     break
-                for key, _ in selector.select(timeout=.2):
+                for key, _ in selector.select(timeout=0.2):
                     chunk = os.read(key.fd, 65536)
                     name = key.data
                     if not chunk:
@@ -194,7 +237,7 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
             stop_process_tree(process)
             if status == "ok" and usage.tokens["total"] > token_limit:
                 status = "token_budget"
-            if status == "ok" and (process.returncode != 0 or error_seen):
+            if status == "ok" and (process.returncode != 0 or error_seen or not usage.final_seen):
                 status = "crash"
         except Exception as exc:
             if process is not None and process.poll() is None:
@@ -207,10 +250,19 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
                     if stream is not None:
                         stream.close()
     record = {k: arm[k] for k in ("arm", "card", "run_index", "block_id")}
-    record.update(status=status, incident_reason=reason, started_at=started, ended_at=utc_now(),
-                  wall_s=time.monotonic() - clock, tokens=usage.tokens, billed_usd=None,
-                  model_ids_seen=sorted(usage.models), agent_claim=usage.claim,
-                  transcript=str(transcript), exit_code=process.returncode if process else None)
+    record.update(
+        status=status,
+        incident_reason=reason,
+        started_at=started,
+        ended_at=utc_now(),
+        wall_s=time.monotonic() - clock,
+        tokens=usage.tokens,
+        billed_usd=None,
+        model_ids_seen=sorted(usage.models),
+        agent_claim=usage.claim,
+        transcript=str(transcript),
+        exit_code=process.returncode if process else None,
+    )
     write_json(root / "run_record.json", record)
     return record
 
@@ -219,21 +271,53 @@ def run_claude(run_dir, arm, wall_s=None):
     root = Path(run_dir).resolve()
     metadata = read_json(root / "arm.json")
     if arm == 2:
-        from study.toolkit.build_toolkit import build_toolkit
         import shutil
+
+        from study.toolkit.build_toolkit import build_toolkit
+
         build_toolkit(root)
         shutil.copyfile(Path(__file__).parent / "METHOD.md", root / "METHOD.md")
     env = agent_env(root)
     # The key exists only in this local environment, handed directly to the child.
     env["ANTHROPIC_API_KEY"] = subprocess.check_output(
         ["security", "find-generic-password", "-a", os.environ["USER"], "-s", "minimax_api_key", "-w"],
-        text=True, stderr=subprocess.DEVNULL).strip()
-    command = ["claude", "--bare", "-p", render_prompt(arm), "--model", MODEL,
-               "--permission-mode", "bypassPermissions", "--output-format", "stream-json", "--verbose"]
+        text=True,
+        stderr=subprocess.DEVNULL,
+    ).strip()
+    command = [
+        "claude",
+        "--bare",
+        "-p",
+        render_prompt(arm),
+        "--model",
+        MODEL,
+        "--permission-mode",
+        "bypassPermissions",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--include-partial-messages",
+    ]
     limits = metadata.get("envelope", ENVELOPE)
-    return run_stream(root, sandbox_command(root, command), env,
-                      wall_s=min(wall_s or 1800, limits.get("wall_s", 1800)),
-                      token_limit=limits.get("tokens", 8_000_000))
+    record = run_stream(
+        root,
+        sandbox_command(root, command),
+        env,
+        wall_s=min(wall_s or 1800, limits.get("wall_s", 1800)),
+        token_limit=limits.get("tokens", 8_000_000),
+    )
+    if record["status"] == "ok":
+        from study.common import dev_command
+
+        answer = root / "out/answer.json"
+        try:
+            if not answer.resolve().is_relative_to(root / "out"):
+                raise ValueError("answer path escapes out/")
+            dev_command("validate_answer.py", answer)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            record["status"] = "invalid_output"
+            write_json(root / "run_record.json", record)
+    return record
 
 
 def dispatch(arm, run_dir, wall_s=None):
@@ -258,6 +342,8 @@ def main():
         parser.error("--wall-s must be between 1 and 1800")
     try:
         record = dispatch(args.arm, args.run_dir, args.wall_s)
+        if not isinstance(record, dict):
+            record = read_json(args.run_dir / "run_record.json")
     except Exception as exc:
         meta = read_json(args.run_dir / "arm.json")
         now = utc_now()
@@ -265,10 +351,18 @@ def main():
         transcript = args.run_dir / "transcript.jsonl"
         if not transcript.exists():
             transcript.write_text("")
-        record.update(status="incident", incident_reason=f"{type(exc).__name__}: {exc}",
-                      started_at=now, ended_at=now, wall_s=0,
-                      tokens={**dict.fromkeys(TOKEN_KEYS, 0), "total": 0}, billed_usd=None,
-                      model_ids_seen=[], agent_claim="", transcript=str(transcript))
+        record.update(
+            status="incident",
+            incident_reason=f"{type(exc).__name__}: {exc}",
+            started_at=now,
+            ended_at=now,
+            wall_s=0,
+            tokens={**dict.fromkeys(TOKEN_KEYS, 0), "total": 0},
+            billed_usd=None,
+            model_ids_seen=[],
+            agent_claim="",
+            transcript=str(transcript),
+        )
         write_json(args.run_dir / "run_record.json", record)
     print(json.dumps(record))
     return 0 if record["status"] == "ok" else 1
