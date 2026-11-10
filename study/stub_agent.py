@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from study.common import MODEL, dev_command, read_json, research_python, write_json
+from study.common import MODEL, dev_command, read_json, render_prompt, research_python, write_json
 from study.run_arm import utc_now
 
 
@@ -21,6 +21,7 @@ def digest(path):
 def stub(run_dir):
     root = Path(run_dir).resolve()
     meta = read_json(root / "arm.json")
+    (root / "prompt.md").write_text(render_prompt(meta["arm"], meta["card"]))
     start, clock = utc_now(), time.monotonic()
     out = root / "out"
     out.mkdir(exist_ok=True)
@@ -116,7 +117,12 @@ def stub(run_dir):
         agent_claim=answer["claim"],
         transcript=str(root / "transcript.jsonl"),
         stub=True,
+        llm_broker_enabled=False,
+        eidos_runtime_used=False,
     )
+    if meta["arm"] in (3, 4):
+        from study.eidos_arms.lab import build_record
+        record["eidos_commit_sha"] = build_record()["eidos_commit_sha"]
     write_json(root / "run_record.json", record)
     (root / "transcript.jsonl").write_text('{"type":"stub","model_calls":0}\n')
     print("STUB baseline candidate written and structurally valid")

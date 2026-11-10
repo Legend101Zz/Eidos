@@ -6,24 +6,25 @@ worker with the installed lab interpreter; the controller needs no Eidos Python 
 The merged `study/prompts/task.md` is read for every invocation and substitutes
 `{{TOOLS_PARAGRAPH}}` with the corresponding tools file. No study cards were run here.
 
-Installed environment: `/Volumes/Mrigesh SSD/eidos-v1/venvs/pilot-1b-110`, created from
-`dist-1.1.0` (`eidos-lab==1.1.0`, `eidos-pytorch==1.1.0`). `lab-rc` was inspected but
-is **1.0.0rc1**, so was not used. Python is 3.12.8. PostgreSQL is Homebrew 15.18;
-Temporal regular-server 1.32.2 binaries were copied from `a8lab/services/temporal/bin`
-and their operator-supplied provenance is recorded by `lab init`.
+Installed environment: `/Volumes/Mrigesh SSD/eidos-v1/venvs/pilot-1-lab`, built
+from this branch with `bash study/eidos_arms/build_lab.sh`. The installation's
+`pilot-build.json` pins the Eidos source commit, four wheel SHA-256 values and
+package versions. Every arm 3/4 record includes that build. The default lab home
+is `pilot-1/lab/fixed`; startup refuses a persisted `lab_python` mismatch.
+See [../PILOT_COMMANDS.md](../PILOT_COMMANDS.md) for controller commands and
+[CHARTER_RULES.md](CHARTER_RULES.md) for the exact prospective success rule.
 
 ```sh
 source "/Volumes/Mrigesh SSD/eidos-v1/env.sh"
-STUDY_PY="/Volumes/Mrigesh SSD/eidos-v1/venvs/pilot-1b-110/bin/python"
+STUDY_PY="/Volumes/Mrigesh SSD/eidos-v1/venvs/pilot-1-lab/bin/python"
 "$STUDY_PY" -m study.eidos_arms.lab start
-# After the controller combines the lanes:
 "$STUDY_PY" study/run_arm.py --arm 3 --run-dir /absolute/run/directory
 "$STUDY_PY" study/run_arm.py --arm 4 --run-dir /absolute/run/directory
 "$STUDY_PY" -m study.eidos_arms.lab stop
 ```
 
 One lab serves all runs, with a fresh project per invocation. The default home is
-`pilot-1/lab/shared`; ports are API 28765, PostgreSQL 25544, Temporal 27633–27641,
+`pilot-1/lab/fixed`; ports are API 28765, PostgreSQL 25544, Temporal 27633–27641,
 and loopback HTTP MCP 28766. Startup is serialized with a filesystem lock. Stop
 only after all arms finish. Overrides: `EIDOS_STUDY_HOME`, `EIDOS_STUDY_PYTHON`,
 `EIDOS_STUDY_MCP_PORT`, and `EIDOS_STUDY_TEMPORAL_SOURCE`. Model/runtime settings
@@ -49,7 +50,7 @@ assistant events, including on runs killed before a final Claude result.
 Arm 4 reuses installed `import_bundle` and the built-in project-command and
 classification-score components. Only text files from `run_dir/task` are embedded
 beside the common prompt; input arrays are lab artifacts. This also works with
-1.1.0 JSON mode's limited read-tool support. No references, grader data or test
+ADR 0016 JSON mode's read requests. No references, grader data or test
 inputs are supplied. Its model-token budget is 8,000,000; turns, trials and compute
 are deliberately generous. The run directory can lower limits for non-study smoke.
 

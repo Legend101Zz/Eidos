@@ -38,12 +38,23 @@ def main():
         record.update(status='incident', incident_reason=f'{type(exc).__name__}: {exc}')
     finally:
         (a.run_dir / 'transcript.jsonl').touch(exist_ok=True)
-        ended = utc()
-        wall = (datetime.fromisoformat(ended) - datetime.fromisoformat(record['started_at'])).total_seconds()
         if (a.run_dir / 'lab_policy.json').exists():
             record['llm_broker_policy'] = json.loads((a.run_dir / 'lab_policy.json').read_text())
+            try:
+                c = lab.client()
+                try:
+                    policy = c.query('get_profile', {}, project=record['llm_broker_policy']['project'])['body']['policy']
+                finally:
+                    c.close()
+                record['llm_broker_final_policy'] = policy
+                if policy.get('llm_broker', {}).get('enabled') is not False:
+                    raise RuntimeError('component LLM broker became enabled during the run')
+            except Exception as exc:
+                record.update(status='incident', incident_reason=f'final policy check: {exc}')
         if (a.run_dir / 'charter.json').exists():
             record['charter'] = json.loads((a.run_dir / 'charter.json').read_text())
+        ended = utc()
+        wall = (datetime.fromisoformat(ended) - datetime.fromisoformat(record['started_at'])).total_seconds()
         record.update(ended_at=ended, wall_s=round(wall, 3), adapter_wall_s=round(time.monotonic() - t0, 3))
         write_json(a.run_dir / 'run_record.json', record)
     print(json.dumps(record))

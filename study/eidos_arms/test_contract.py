@@ -195,5 +195,29 @@ class ScientificAnswer(unittest.TestCase):
             self.assertEqual(json.loads((root / 'out/reproduction.json').read_text())['argv'], job['lock']['config']['argv'])
 
 
+class ProspectiveCharter(unittest.TestCase):
+    def test_pinned_bar_and_overrides_use_actual_lab_rules(self):
+        from eidos.domain.charter import charter_digest, validate_charter
+        from eidos.domain.errors import ThresholdOverride
+        from eidos.domain.evidence import compile_plan
+
+        from .charters import METRIC, RULE_ID, charter
+        d02 = validate_charter(charter('D02'))
+        d12 = validate_charter(charter('D12'))
+        self.assertEqual(d02['success_rules'], d12['success_rules'])
+        self.assertEqual(d02['success_rules'][0]['min_effect'], .02)
+        self.assertEqual(d02['success_rules'][0]['metric'], METRIC)
+        self.assertTrue(validate_charter(charter('D01'))['exploration_only'])
+        args = dict(claim={'kind': 'improves', 'scope': {'task': 'synthetic'}},
+                    claim_ref={'id': 'c', 'revision': 1}, charter=d02,
+                    charter_ref={'id': 'charter:d02', 'revision': 1, 'digest': charter_digest(d02)},
+                    template_ref={'ref': 'template', 'digest': 'sha256:fixture'})
+        draft = {'success_rule_id': RULE_ID, 'arms': [{'id': r, 'role': r} for r in ('baseline', 'candidate')]}
+        compiled = compile_plan(draft=draft, **args)
+        self.assertEqual(compiled['success_rule']['min_effect'], .02)
+        with self.assertRaises(ThresholdOverride):
+            compile_plan(draft={**draft, 'min_effect': 0}, **args)
+
+
 if __name__ == '__main__':
     unittest.main()

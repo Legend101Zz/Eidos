@@ -74,6 +74,9 @@ def prepare(c, run_dir, arm):
             r = install_component(c, project, directory, 'default', True)
             if 'component_ref' not in r or r.get('validation') == 'failed':
                 raise RuntimeError(f'component installation failed: {r}')
+    if imported['task_id'] != 'D01':
+        from .protocols import prepare as prepare_protocols
+        prepare_protocols(c, project, run_dir)
     write_json(run_dir / 'lab_import.json', {'project': project, **imported})
     return project, imported
 

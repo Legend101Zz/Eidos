@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 SSD = Path('/Volumes/Mrigesh SSD/eidos-v1')
-DEFAULT_HOME = SSD / 'pilot-1/lab/shared'
+DEFAULT_HOME = SSD / 'pilot-1/lab/fixed'
 DEFAULT_PYTHON = SSD / 'venvs/pilot-1-lab/bin/python'
 
 
@@ -89,6 +89,9 @@ def start():
             if source:
                 args += ['--temporal-source', source]
             cli(*args, timeout=600)
+        config = json.loads((home() / 'config/lab.json').read_text())
+        if config.get('lab_python') != python():
+            raise RuntimeError('lab config uses a different interpreter; choose a fresh EIDOS_STUDY_HOME')
         try:
             c = client()
             c.health()

@@ -6,7 +6,7 @@ environment. This is development evidence, not a confirmatory study.
 ```sh
 source "/Volumes/Mrigesh SSD/eidos-v1/env.sh"
 pilot_root="/Volumes/Mrigesh SSD/eidos-v1/pilot-1"
-"$EIDOS_RESEARCH_PYTHON" study/launcher.py plan --seed 711 --out "$pilot_root/design.json"
+"$EIDOS_RESEARCH_PYTHON" study/launcher.py plan --seed 20261111 --out "$pilot_root/design.json"
 "$EIDOS_RESEARCH_PYTHON" study/launcher.py run --design "$pilot_root/design.json" --runs-root "$pilot_root/runs" --block 1
 ```
 
@@ -120,6 +120,10 @@ card**, with a 300-second ceiling. Its receipt is in
 `pilot-1/lane-a-checks/live-toy-system-paths/`. Do not rerun it just to repeat the
 offline checks; `study/live_smoke.py --run-dir FRESH_SSD_DIRECTORY` makes paid
 MiniMax calls. See `VERIFICATION.md` for the actual outputs and startup attempts.
+
+The pilot explicitly disables component LLM-broker grants in every arm.
+See `PILOT_COMMANDS.md` for the complete controller sequence and
+`eidos_arms/CHARTER_RULES.md` for the prospective Eidos rule.
 
 See `toolkit/COVERAGE.md` for every public component and the model-generator grant
 gap. The controller must supply equal grants or leave model-backed generation
