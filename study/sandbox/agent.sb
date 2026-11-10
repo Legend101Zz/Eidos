@@ -1,0 +1,18 @@
+(version 1)
+(allow default)
+; Network is required for the model provider. Filesystem data reads are allowlisted.
+(deny file-read-data file-read-xattr
+  (require-not (require-any
+    (subpath (param "RUN_DIR"))
+    (subpath (param "PYTHON_PREFIX"))
+    (subpath (param "NODE_PREFIX"))
+    (literal "/")
+    (subpath "/System") (subpath "/usr") (subpath "/bin") (subpath "/sbin")
+    (subpath "/opt/homebrew") (subpath "/Library/Apple")
+    (subpath "/private/etc") (subpath "/dev"))))
+(deny file-write*
+  (require-not (require-any (subpath (param "RUN_DIR")) (subpath "/dev"))))
+; Prevent reading other processes' environments or starting work via host services.
+(deny process-info* (target others))
+(deny process-exec (literal "/bin/launchctl") (literal "/usr/bin/osascript") (literal "/usr/bin/open"))
+(deny mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd"))
