@@ -428,6 +428,29 @@ def _se_of_clusters(resid_sums, n):
     return math.sqrt(g / (g - 1) * sum(s * s for s in resid_sums) / (n * n))
 
 
+def _two_way_ci_low(evidence, confidence=0.95):
+    """paired-ci@1.2.0's lower bound recomputed from a balanced seed x example evidence set (ADR 0018, F3b):
+    var(seed means)/S + var(example means over seeds)/N, t on Welch-Satterthwaite df."""
+    from statistics import mean, variance
+
+    from eidos.domain.stats import student_t_quantile
+
+    correct = {
+        (arm["role"], r["cluster"], r["example_id"]): float(r["label"] == r["prediction"])
+        for arm in evidence["arms"].values()
+        for r in arm["rows"]
+    }
+    seeds = sorted({c for _, c, _ in correct})
+    examples = sorted({e for _, _, e in correct})
+    d = {(c, e): correct[("candidate", c, e)] - correct[("baseline", c, e)] for c in seeds for e in examples}
+    est = mean(d.values())
+    v_seed = variance([mean(d[(c, e)] for e in examples) for c in seeds]) / len(seeds)
+    v_example = variance([mean(d[(c, e)] for c in seeds) for e in examples]) / len(examples)
+    var = v_seed + v_example
+    df = var**2 / (v_seed**2 / (len(seeds) - 1) + v_example**2 / (len(examples) - 1))
+    return est - student_t_quantile(0.5 + confidence / 2, df) * math.sqrt(var)
+
+
 PLANTED = {11: (100, 60, 78), 12: (100, 60, 80), 13: (100, 60, 82)}  # gains 0.18, 0.20, 0.22: mean 0.20
 
 
@@ -704,7 +727,7 @@ def test_paired_report_metrics_still_work():
     ]["evidence"]["json"]
     result = _evaluate(evidence)
     assert result["outcome"] == "protocol-passed"
-    assert result["effect"]["units"] == 36 and result["effect"]["independent_units"] == 3
+    assert result["effect"]["units"] == 600 and result["effect"]["independent_units"] == 3
     assert result["metric"] == "both_correct_rate"
     assert [(g["metric"], g["status"]) for g in result["guardrails"]] == [("reference_accuracy", "ok")]
     null = json.loads((COMPONENTS / "eidos.assessors.paired-ci" / "fixtures" / "null-effect.json").read_text())
@@ -730,16 +753,19 @@ def test_every_assessor_fixture_runs_to_its_expectation(lab_run):
 
 
 def test_assessor_run_reports_the_classification_evaluation(lab_run):
-    res = lab_run(*ASSESSOR, inputs={"evidence": _evidence(fixtures.accuracy_plan(), PLANTED)}, config={})
+    evidence = _evidence(fixtures.accuracy_plan(), PLANTED)
+    res = lab_run(*ASSESSOR, inputs={"evidence": evidence}, config={})
     assert res.ok, res.manifest.error
-    se = _se_of_clusters([-2, 0, 2], 300)
     assert res.receipt["outcome"] == "protocol-passed" and res.receipt["units"] == 300
     assert res.receipt["clusters"] == 3
     assert res.receipt["metrics"]["estimate"] == pytest.approx(0.2)
-    assert res.receipt["metrics"]["ci_low"] == pytest.approx(0.2 - Z95 * se, rel=1e-6)
+    # 1.2.0: the same 100 examples in every seed, so the interval is two-way (seed x example), not seed-only
+    assert res.receipt["metrics"]["ci_low"] == pytest.approx(_two_way_ci_low(evidence), rel=1e-9)
+    assert res.receipt["metrics"]["ci_low"] == pytest.approx(0.1190, abs=5e-4)
+    assert res.receipt["metrics"]["ci_low"] < 0.2 - Z95 * _se_of_clusters([-2, 0, 2], 300)  # 1.1.0's bound
     assert res.manifest.outputs[0].schema == "protocol-evaluation/1"
     evaluation = res.json("evaluation")
-    assert evaluation["assessor"] == "eidos.assessors.paired-ci@1.1.0"
+    assert evaluation["assessor"] == "eidos.assessors.paired-ci@1.2.0"
     assert evaluation["analysis_unit"] == "example" and evaluation["cluster_by"] == "seed"
     assert evaluation["clusters"] == ["11", "12", "13"]
     assert evaluation["units_by_role"] == {"baseline": 300, "candidate": 300}
@@ -804,10 +830,10 @@ def test_report_rows_feed_the_assessor_to_a_verdict(lab_run):
     assert arms == _evidence(fixtures.accuracy_plan(), PLANTED)["arms"]
     res = lab_run(*ASSESSOR, inputs={"evidence": {"plan": fixtures.accuracy_plan(), "arms": arms}}, config={})
     assert res.ok, res.manifest.error
-    se = _se_of_clusters([-2, 0, 2], 300)
     assert res.receipt["outcome"] == "protocol-passed" and res.receipt["units"] == 300
     assert res.receipt["metrics"]["estimate"] == pytest.approx(0.2)
-    assert res.receipt["metrics"]["ci_low"] == pytest.approx(0.2 - Z95 * se, rel=1e-6)
+    assert res.receipt["metrics"]["ci_low"] == pytest.approx(
+        _two_way_ci_low({"plan": fixtures.accuracy_plan(), "arms": arms}), rel=1e-9)
     assert res.receipt["metrics"]["ci_low"] >= 0.02
 
 
@@ -879,7 +905,7 @@ def _classification_request(seeds=("11",), **over):
             "scope": {"task": "multiclass classification"},
         },
         "success_rule_id": "practical-accuracy-gain",
-        "assessor": {"ref": "eidos.assessors.paired-ci@1.1.0"},
+        "assessor": {"ref": "eidos.assessors.paired-ci@1.2.0"},
         "classification": {
             "labels": "art-labels",
             "predictions": {
@@ -929,7 +955,7 @@ def test_one_seed_request_plans_one_report_job_per_arm(lab_run):
     )
     assert len(draft["alternatives_unresolved"]) == 3  # the two defaults plus the single-seed disclosure
     assert draft["obligations"] == []
-    assert draft["assessor"] == {"ref": "eidos.assessors.paired-ci@1.1.0"}
+    assert draft["assessor"] == {"ref": "eidos.assessors.paired-ci@1.2.0"}
     assert draft["splits"]["evaluation"] == {"labels": "art-labels", "population": "held-out examples"}
     assert res.receipt["jobs_planned"] == 2 and res.receipt["seeds"] == [11]
     assert res.receipt["open_obligations"] == []
@@ -1105,7 +1131,7 @@ def test_requests_without_classification_still_take_the_training_path(lab_run):
     req = {
         "claim": {"kind": "improves", "statement": "s", "scope": {"builder": "OrderedSwitchNet"}},
         "success_rule_id": "early-repair",
-        "assessor": {"ref": "eidos.assessors.paired-ci@1.1.0"},
+        "assessor": {"ref": "eidos.assessors.paired-ci@1.2.0"},
         "seeds": [1, 2],
         "evaluation": {"split": "test", "data_seed": 9, "pairs": 100},
         "baseline": {},

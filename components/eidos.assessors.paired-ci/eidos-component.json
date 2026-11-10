@@ -1,6 +1,6 @@
 {
   "id": "eidos.assessors.paired-ci",
-  "release": "1.1.0",
+  "release": "1.2.0",
   "implements": "protocol-assessment/1",
   "kind": "assessment",
   "entry": "paired_ci.assess:run",
@@ -75,5 +75,5 @@
   ],
   "license": "Apache-2.0",
   "control_suite": "controls/suite.json",
-  "summary": "Independent protocol assessor: cluster-robust paired difference under the frozen plan's charter rule. Metrics: paired-report/1 both-correct-rate and reference-accuracy (reference/variant pair rows), and classification-report/1:accuracy (ordinary multiclass accuracy from eidos.task.paired-classification-report rows; strict example-id match across arms)."
+  "summary": "Independent protocol assessor: paired difference under the frozen plan's charter rule, with a conservative two-way (training seed x held-out example) interval and a Student t critical value; one seed reduces to the plain paired t-interval over examples. Metrics: paired-report/1 both-correct-rate and reference-accuracy (reference/variant pair rows), and classification-report/1:accuracy (ordinary multiclass accuracy from eidos.task.paired-classification-report rows; strict example-id match across arms)."
 }

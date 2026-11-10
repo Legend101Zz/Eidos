@@ -25,7 +25,7 @@ For ordinary (including multiclass) accuracy under a charter metric with identit
 1. Run the baseline and candidate training jobs so that each writes held-out predictions
    (`[{"id", "prediction"}]` JSON, JSONL, CSV, or NPZ `ids`/`predictions`); register the labels as an
    artifact (`[{"id", "label"}]`, ...). Note each predictions artifact id (`get_job` -> `outputs`).
-2. Run this template with `{claim, success_rule_id, assessor: {ref: "eidos.assessors.paired-ci@1.1.0"},
+2. Run this template with `{claim, success_rule_id, assessor: {ref: "eidos.assessors.paired-ci@1.2.0"},
    required_isolation, classification: {labels: <artifact>, predictions: {baseline: {"11": <artifact>},
    candidate: {"11": <artifact>}}, classes?, id_field?}}`. Use one entry per training seed; both arms
    need the same seeds.
@@ -34,7 +34,9 @@ For ordinary (including multiclass) accuracy under a charter metric with identit
    (it fails closed on any id mismatch, duplicate or non-finite value) and the assessor reports
    `protocol-passed` only if the lower confidence bound of the accuracy gain is at least `min_effect`.
 
-With several seeds the plan has `cluster_by: "seed"`, so the interval reflects training-seed variance.
+With several seeds the plan has `cluster_by: "seed"`. All seeds are scored on the same held-out examples, so
+the assessor (`paired-ci@1.2.0`) uses an interval for training seed x example (ADR 0018 section 6), not one
+clustered by seed alone (1.0.0 and 1.1.0 did that and can pass an effect carried by a few shared examples).
 With one seed it has `cluster_by: null`: the interval reflects held-out example sampling only, which is
 disclosed and listed as an unresolved alternative. The predictions predate the frozen plan (disclosed);
 the charter rule must predate them. Retraining inside the plan with this path is not yet supported.

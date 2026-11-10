@@ -4,7 +4,7 @@
   "implements": "paired-classification-report/1",
   "kind": "artifact-op",
   "entry": "paired_report.report:run",
-  "summary": "Evidence adapter for ordinary (multiclass) accuracy rules: aligns baseline and candidate held-out predictions with labels by example id (fails closed on any mismatch, duplicate or non-finite value) and emits this arm's rows in slot 'predictions' for eidos.assessors.paired-ci@1.1.0 metric 'accuracy'. Use one job per arm and training seed (config.role, config.cluster); eidos.templates.improves-under-budget@1.2.0 'classification' requests plan this for you.",
+  "summary": "Evidence adapter for ordinary (multiclass) accuracy rules: aligns baseline and candidate held-out predictions with labels by example id (fails closed on any mismatch, duplicate or non-finite value) and emits this arm's rows in slot 'predictions' for eidos.assessors.paired-ci@1.2.0 metric 'accuracy'. Use one job per arm and training seed (config.role, config.cluster); eidos.templates.improves-under-budget@1.2.0 'classification' requests plan this for you.",
   "scientific_effects": [
     "observe"
   ],

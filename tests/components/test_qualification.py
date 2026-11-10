@@ -18,7 +18,7 @@ RUNNER = ("eidos.qualification-runner", "qualification_runner.run:run")
 def qualify(lab_run, target_dir, suite=SUITE):
     res = lab_run(
         *RUNNER,
-        config={"suite": suite, "target": {"ref": "eidos.assessors.paired-ci@1.1.0"}},
+        config={"suite": suite, "target": {"ref": "eidos.assessors.paired-ci@1.2.0"}},
         ports={"target.source/1": {"path": str(target_dir)}},
     )
     assert res.ok, res.manifest.error
@@ -61,11 +61,11 @@ def test_a_broken_assessor_fails_the_gate(lab_run, tmp_path):
     broken = tmp_path / "broken"
     shutil.copytree(ASSESSOR, broken, ignore=shutil.ignore_patterns("controls", "fixtures", "__pycache__"))
     src = (broken / "paired_ci" / "assess.py").read_text()
-    assert "result = evaluate_success_rule(plan, per_unit)" in src
+    assert "result = evaluate_success_rule(plan, per_unit, interval=INTERVAL_TWO_WAY)" in src
     (broken / "paired_ci" / "assess.py").write_text(
         src.replace(
-            "result = evaluate_success_rule(plan, per_unit)",
-            'result = dict(evaluate_success_rule(plan, per_unit), outcome="protocol-passed")',
+            "result = evaluate_success_rule(plan, per_unit, interval=INTERVAL_TWO_WAY)",
+            'result = dict(evaluate_success_rule(plan, per_unit, interval=INTERVAL_TWO_WAY), outcome="protocol-passed")',
         )
     )
     _, results = qualify(lab_run, broken)
@@ -81,8 +81,8 @@ def test_an_assessor_that_never_detects_fails_the_planted_controls(lab_run, tmp_
     src = (blind / "paired_ci" / "assess.py").read_text()
     (blind / "paired_ci" / "assess.py").write_text(
         src.replace(
-            "result = evaluate_success_rule(plan, per_unit)",
-            'result = dict(evaluate_success_rule(plan, per_unit), outcome="inconclusive")',
+            "result = evaluate_success_rule(plan, per_unit, interval=INTERVAL_TWO_WAY)",
+            'result = dict(evaluate_success_rule(plan, per_unit, interval=INTERVAL_TWO_WAY), outcome="inconclusive")',
         )
     )
     _, results = qualify(lab_run, blind)

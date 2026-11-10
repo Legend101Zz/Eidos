@@ -13,7 +13,7 @@
     },
     "success_rule_id": "practical-accuracy-gain",
     "assessor": {
-     "ref": "eidos.assessors.paired-ci@1.1.0"
+     "ref": "eidos.assessors.paired-ci@1.2.0"
     },
     "required_isolation": {
      "profile": "dev:same-user",

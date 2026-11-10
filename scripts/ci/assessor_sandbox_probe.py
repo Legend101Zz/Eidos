@@ -58,7 +58,7 @@ result = {"host_profile": detect_sealed_profile(), "failures": []}
 acts = AssessorActivities(FakeClient(bundle), None, None, sys.executable, credential_path=str(secret),
                           api_port=srv.getsockname()[1], lab_root=str(lab))
 try:
-    out = ActivityEnvironment().run(acts._run_assessor, "p", "eidos.assessors.paired-ci@1.1.0", ev.get("json", ev))
+    out = ActivityEnvironment().run(acts._run_assessor, "p", "eidos.assessors.paired-ci@1.2.0", ev.get("json", ev))
     iso = out.get("assessor_isolation") or {}
     result.update(outcome=out.get("outcome"), isolation=iso)
     if out.get("outcome") != "protocol-passed":

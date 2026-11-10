@@ -10,7 +10,7 @@ Everything runs through the real command service on PostgreSQL, the real `Attemp
   launched;
 * each arm runs `eidos.task.paired-classification-report@1.0.0` (it fails closed when the three inputs do not
   align) and the plan becomes `awaiting-assessment`;
-* `AssessorActivities.assess_plan` runs `eidos.assessors.paired-ci@1.1.0` (metric `accuracy`) on the arms'
+* `AssessorActivities.assess_plan` runs `eidos.assessors.paired-ci@1.2.0` (metric `accuracy`) on the arms'
   `predictions` outputs and submits the assessment.
 """
 
@@ -34,7 +34,7 @@ REPORT = "eidos.task.paired-classification-report"
 TEMPLATE = "eidos.templates.improves-under-budget"
 ASSESSOR = "eidos.assessors.paired-ci"
 TEMPLATE_REF = f"{TEMPLATE}@1.2.0"
-ASSESSOR_REF = f"{ASSESSOR}@1.1.0"
+ASSESSOR_REF = f"{ASSESSOR}@1.2.0"
 
 N_HELDOUT = 360
 DATA_SEED = 7

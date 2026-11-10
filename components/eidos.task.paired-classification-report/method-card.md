@@ -3,7 +3,7 @@
 **Question.** None by itself: it is the evidence adapter that lets an ordinary (including multiclass)
 accuracy rule be assessed. Given the baseline's held-out predictions, the candidate's held-out
 predictions and the labels, it checks that they describe exactly the same examples and emits one arm's
-paired rows for `eidos.assessors.paired-ci@1.1.0`, metric `accuracy` (`classification-report/1:accuracy`).
+paired rows for `eidos.assessors.paired-ci@1.2.0`, metric `accuracy` (`classification-report/1:accuracy`).
 
 **Inputs.** `baseline`, `candidate` (predictions) and `labels`: JSON records `[{"id", "prediction"}]` or
 columns `{"ids", "predictions"}` (labels: `label`/`labels`/`y`), JSONL, CSV, or NPZ `ids` + `predictions`

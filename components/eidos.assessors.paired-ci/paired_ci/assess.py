@@ -1,4 +1,5 @@
-"""Protocol assessor: cluster-robust paired comparison of two arms under the plan's charter rule.
+"""Protocol assessor: paired comparison of two arms under the plan's charter rule, with an interval that
+accounts for both training-seed and held-out-example variation (two-way, conservative; ADR 0018 F3b).
 
 Runs in the LAB environment (it imports the lab's own ``eidos.domain`` code). It does not choose any
 threshold: ``plan["success_rule"]`` is the rule materialised from the charter.
@@ -12,6 +13,11 @@ from typing import Any
 
 from eidos.domain.evidence import evaluate_success_rule
 from eidos_worker.errors import ContractError
+
+try:  # the lab's domain code must provide the two-way interval (ADR 0018, F3b); older labs fail closed
+    from eidos.domain.evidence import INTERVAL_TWO_WAY
+except ImportError:  # pragma: no cover - exercised only against an older lab
+    INTERVAL_TWO_WAY = None
 
 # metric identity (normalised) -> per-pair function of (reference_correct, variant_correct).
 # Rows: paired-report/1 (pair_id, cluster, reference/variant logits and binary labels).
@@ -28,7 +34,7 @@ EXAMPLE_METRICS = {
     "accuracy": lambda label, prediction: float(label == prediction),
 }
 FAMILIES = {"paired-report": UNIT_METRICS, "classification": EXAMPLE_METRICS}
-ASSESSOR_REF = "eidos.assessors.paired-ci@1.1.0"
+ASSESSOR_REF = "eidos.assessors.paired-ci@1.2.0"
 
 
 def normalise(metric: str) -> str:
@@ -208,7 +214,11 @@ def run(inputs, config, *, reader, writer, context):
         if key not in plan:
             raise ContractError(f"plan lacks {key!r}; it must be a compiled, frozen plan body")
     per_unit = per_unit_by_role(plan, evidence["arms"])
-    result = evaluate_success_rule(plan, per_unit)
+    if INTERVAL_TWO_WAY is None:
+        raise ContractError("this lab's domain code lacks the two-way (seed x example) interval; "
+                            "eidos.assessors.paired-ci@1.2.0 needs a lab with ADR 0018 (F3b)")
+    # Every seed scores the same held-out examples: the interval accounts for seed and example variation.
+    result = evaluate_success_rule(plan, per_unit, interval=INTERVAL_TWO_WAY)
     flagged: list[str] = []
     result = _finite(result, "", flagged)
     comparison = plan["success_rule"].get("comparison") or {}
@@ -226,6 +236,7 @@ def run(inputs, config, *, reader, writer, context):
             "candidate": comparison.get("candidate_arm_role", "candidate"),
         },
         "assessor": ASSESSOR_REF,
+        "interval": INTERVAL_TWO_WAY,
     }
     writer.stage_json("evaluation", evaluation, schema="protocol-evaluation/1")
     effect = result.get("effect") or {}

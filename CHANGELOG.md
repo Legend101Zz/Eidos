@@ -14,7 +14,22 @@ cap and 6/8 at 16384 tokens / 120 s), `tool` 6/8 (was 4/8); `docs/release/eviden
   CSV or NPZ), aligns them by example id and fails closed on any id mismatch, duplicate, or null, boolean,
   non-integral or non-finite value. Emits one arm's rows `{example_id, cluster, role, label, prediction}` in slot
   `predictions`; config `role` and `cluster` (the training seed).
-- **`eidos.assessors.paired-ci@1.1.0`: metric `accuracy`** (identity `classification-report/1:accuracy`, any number
+- **`eidos.assessors.paired-ci@1.2.0`: two-way (training seed x held-out example) interval** (ADR 0018 section 6,
+  review R4). Every seed is scored on the same held-out examples, so the seed-only interval of 1.0.0 and 1.1.0
+  omitted example variance: three seeds improving on the same 3 of 100 examples gave CI [0.03, 0.03] and passed
+  `min_effect` 0.02. 1.2.0 uses variance by seed plus variance by example (Cameron-Gelbach-Miller without subtracting
+  the intersection: conservative, never negative) with a Student t critical value on Welch-Satterthwaite degrees of
+  freedom, for the target and the guardrails and for both metric families; that example is now `inconclusive`
+  (CI [-0.0040, 0.0640]). One seed without `cluster_by`: the plain paired t-interval over examples; with
+  `cluster_by` one seed stays unbounded. The pre-existing path has the same flaw: 1.0.0 with `reference-accuracy`
+  on `main`'s train/evaluate template (shared `data_seed` pairs) passes the same example; its recorded results are
+  not changed (`evaluate_success_rule` keeps the original interval by default; new `interval=` argument), and
+  plans pinned to 1.0.0 with several seeds should be re-assessed with 1.2.0. The evaluation records `interval`;
+  the effect records `method`, `seeds`, `examples`, `variance_components`, `df`. New dependency-free Student t
+  quantile in `eidos.domain.stats`. Paired-report author controls were resized (not weakened) for the
+  conservative interval. Regression tests: `tests/unit/test_two_way_interval.py`; coverage simulation:
+  `scripts/research/two_way_interval_coverage.py` (two-way 0.945-0.993 vs seed-only 0.53-0.88 at nominal 0.95).
+- **`eidos.assessors.paired-ci@1.1.0`: metric `accuracy`** (superseded by 1.2.0 before release) (identity `classification-report/1:accuracy`, any number
   of classes). The assessor recomputes correctness from label and prediction; it refuses unmatched example ids
   between the arms, label disagreements, a row role that differs from its arm, rows from several seeds under a
   plan without `cluster_by`, and a rule whose guardrails need a different row family. An arm with a failed report

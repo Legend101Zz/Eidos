@@ -151,7 +151,7 @@ def test_sealed_job_runs_as_candidate_user_and_assessor_as_lab_identity(lab):
                                                 if p.is_file() and "__pycache__" not in p.parts}}))
         acts = AssessorActivities(_AssessorClient(bundle), None, None, sys.executable, credential_path=str(cred),
                                   api_port=srv.getsockname()[1], lab_root=str(lab_root))
-        ev = ActivityEnvironment().run(acts._run_assessor, pid, "eidos.assessors.paired-ci@1.1.0", evidence)
+        ev = ActivityEnvironment().run(acts._run_assessor, pid, "eidos.assessors.paired-ci@1.2.0", evidence)
         a_iso = ev["assessor_isolation"]
         assert ev["outcome"] == "protocol-passed", ev
         assert a_iso["profile"] == "linux:bwrap-sealed" and a_iso["identity"] == "lab"

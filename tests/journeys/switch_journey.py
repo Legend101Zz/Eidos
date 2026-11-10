@@ -33,7 +33,7 @@ from staging import stage_component  # noqa: E402
 ADAPTER = "eidos_adapter:ADAPTER"
 TRAIN, EVALUATE, EDIT = "eidos.pytorch.train@1.2.0", "eidos.pytorch.evaluate@1.0.0", "eidos.pytorch.weight-edit@1.0.0"
 BEHAVIOR, SCORER = "eidos.pytorch.behavior-check@1.0.0", "lab.pairs.by_group@1.0.0"
-ASSESSOR, TEMPLATE = "eidos.assessors.paired-ci@1.1.0", "eidos.templates.improves-under-budget@1.2.0"
+ASSESSOR, TEMPLATE = "eidos.assessors.paired-ci@1.2.0", "eidos.templates.improves-under-budget@1.2.0"
 RUNNER = "eidos.qualification-runner@1.0.0"
 EVAL_CFG = {"adapter": ADAPTER, "evaluation": {"split": "test", "data_seed": 76102, "pairs": 4000}}
 EDIT_CFG = {"edits": [{"entry": "readout.weight", "index": [0, -1], "op": "set", "value": 0.0}],

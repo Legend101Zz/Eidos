@@ -52,7 +52,7 @@ def test_assessor_runs_sandboxed_and_reports_realized_isolation(tmp_path):
     secret.write_text("token")
     acts = AssessorActivities(FakeClient(_bundle(tmp_path)), None, None, sys.executable,
                               credential_path=str(secret), api_port=1)
-    out = ActivityEnvironment().run(acts._run_assessor, "p", "eidos.assessors.paired-ci@1.1.0", _evidence())
+    out = ActivityEnvironment().run(acts._run_assessor, "p", "eidos.assessors.paired-ci@1.2.0", _evidence())
     iso = out["assessor_isolation"]
     assert out["outcome"] == "protocol-passed"
     assert iso["profile"] == detect_sealed_profile()

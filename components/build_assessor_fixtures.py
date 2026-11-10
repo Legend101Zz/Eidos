@@ -24,7 +24,7 @@ from eidos.domain.evidence import compile_plan  # noqa: E402
 from eidos.domain.qualification import validate_control_suite  # noqa: E402
 
 ASSESSOR = ROOT / "components" / "eidos.assessors.paired-ci"
-REF = "eidos.assessors.paired-ci@1.1.0"
+REF = "eidos.assessors.paired-ci@1.2.0"
 
 
 def plan_body():
@@ -150,12 +150,16 @@ def literal(plan, **params):
 def main():
     plan = plan_body()
     small = dict(clusters=3, pairs=12, cluster_sd=0.0)
-    planted = literal(plan, baseline_rate=0.2, candidate_rate=0.9, **small)
+    # 1.2.0's two-way (seed x example) interval with a t critical value on few seeds is more conservative than
+    # 1.1.0's seed-only normal interval: the positive controls are sized so that the planted gain and the
+    # reference-accuracy guardrail (margin 0.05) are both decidable (ADR 0018, F3b).
+    planted = literal(plan, baseline_rate=0.2, candidate_rate=0.9, clusters=3, pairs=200, cluster_sd=0.0)
     null = literal(plan, baseline_rate=0.3, candidate_rate=0.3, **small)
     null["arms"]["candidate"]["rows"] = json.loads(json.dumps(null["arms"]["baseline"]["rows"]))
-    dup = json.loads(json.dumps(planted))
+    refused = literal(plan, baseline_rate=0.2, candidate_rate=0.9, **small)  # refusals need no decidable effect
+    dup = json.loads(json.dumps(refused))
     dup["arms"]["candidate"]["rows"].append(dict(dup["arms"]["candidate"]["rows"][0]))
-    unknown = json.loads(json.dumps(planted))
+    unknown = json.loads(json.dumps(refused))
     unknown["arms"]["ghost"] = unknown["arms"].pop("candidate")
 
     def fx(name, evidence, expect):
@@ -174,7 +178,7 @@ def main():
     fx(
         "planted-effect",
         planted,
-        {"status": "succeeded", "receipt": {"outcome": "protocol-passed", "units": 36, "clusters": 3}},
+        {"status": "succeeded", "receipt": {"outcome": "protocol-passed", "units": 600, "clusters": 3}},
     )
     fx("null-effect", null, {"status": "succeeded", "receipt": {"outcome": "protocol-failed", "units": 36}})
     fx("duplicate-unit", dup, {"status": "failed", "error_category": "contract"})
@@ -205,7 +209,8 @@ def main():
     )
 
     big = dict(clusters=4, pairs=15, cluster_sd=0.02)
-    guard = dict(big, baseline_rate=0.2, candidate_rate=0.6, candidate_reference_rate=0.75)
+    guard = dict(clusters=6, pairs=60, cluster_sd=0.02, baseline_rate=0.2, candidate_rate=0.6,
+                 candidate_reference_rate=0.75)
     one_cluster = literal(plan, baseline_rate=0.2, candidate_rate=0.9, clusters=1, pairs=40, cluster_sd=0.0)
 
     def control(id_, type_, evidence, expected, **extra):
@@ -231,7 +236,7 @@ def main():
                         "plan": plan,
                         "$generate": {
                             "name": "paired-rows/1",
-                            "params": dict(seed=7, clusters=6, pairs=80, cluster_sd=0.03, **params),
+                            "params": dict(seed=7, clusters=8, pairs=120, cluster_sd=0.03, **params),
                         },
                     }
                 },
