@@ -33,7 +33,7 @@ def dispatch(arm, run_dir):
     """Always use installed 1.1.0, regardless of lane A controller's interpreter."""
     run_dir = run_dir.resolve()
     r = subprocess.run([lab.python(), '-m', 'study.eidos_arms.worker', '--arm', str(arm),
-                        '--run-dir', str(run_dir)], cwd=ROOT, env=lab.environment())
+                        '--run-dir', str(run_dir)], cwd=ROOT, env=lab.environment(), stdin=subprocess.DEVNULL)
     record = run_dir / 'run_record.json'
     if record.exists():
         return json.loads(record.read_text())
@@ -116,11 +116,11 @@ def ledger(c, project, inv, path):
     return shown, events, records
 
 
-def usage(events):
+def usage(events, transcript=None):
     """Use model.usage receipts once, including failed requests; never double-count decisions.
 
-    Eidos 1.1.0 input_tokens includes cached OpenAI input, but its aggregate receipt omits
-    the cache breakdown. Keep that limitation explicit in usage_receipts.json.
+    Eidos aggregate input_tokens includes cached OpenAI input. Recover its cache breakdown
+    from persisted model-response receipts; failures without a raw response remain uncertain.
     """
     tokens = dict(input=0, cache_read=0, cache_write=0, output=0, total=0)
     models, receipts, usd = set(), [], []
@@ -136,6 +136,27 @@ def usage(events):
         if u.get('usd') is not None:
             usd.append(u['usd'])
     tokens['total'] = tokens['input'] + tokens['output']
+    if transcript:
+        seen = set()
+        for line in Path(transcript).read_text().splitlines():
+            row = json.loads(line)
+            if row['type'] != 'model_response':
+                continue
+            for message in row['data']['response']:
+                if not isinstance(message, dict) or message.get('kind') != 'response':
+                    continue
+                ident = message.get('provider_response_id') or hashlib.sha256(
+                    json.dumps(message, sort_keys=True).encode()).hexdigest()
+                if ident in seen:
+                    continue
+                seen.add(ident)
+                u = message.get('usage') or {}
+                tokens['cache_read'] += int(u.get('cache_read_tokens') or 0)
+                tokens['cache_write'] += int(u.get('cache_write_tokens') or 0)
+        cached = tokens['cache_read'] + tokens['cache_write']
+        if cached > tokens['input']:
+            raise ValueError('raw cache counters exceed ledger input total')
+        tokens['input'] -= cached
     return tokens, sorted(models), (sum(usd) if receipts and len(usd) == len(receipts) else None), receipts
 
 
@@ -144,11 +165,14 @@ def classify(shown, receipts, models, timed_out=False, answer_valid=True):
     text = json.dumps(failures)
     if len(models) > 1:
         return 'incident', 'model id changed: ' + ', '.join(models)
-    if failures and any(x in text.lower() for x in ('429', '500', '502', '503', '504', 'quota', 'rate limit', 'connection', 'timeout')):
+    import re
+    if failures and (re.search(r'\b(?:429|5\d\d)\b', text) or any(
+            x in text.lower() for x in ('quota', 'rate limit', 'connection', 'timeout', 'insufficient credit'))):
         return 'incident', 'provider/infrastructure failure: ' + text[:1800]
     if timed_out:
         return 'timeout', None
-    if any(t.get('stop_reason') == 'budget-exhausted' for t in shown.get('turns', [])):
+    if any(t.get('stop_reason') == 'budget-exhausted' for t in shown.get('turns', [])) or (
+            'budget-exhausted' in str(shown.get('needs_input', ''))):
         return 'token_budget', None
     if failures or shown.get('needs_input') or any(t.get('stop_reason') == 'error' for t in shown.get('turns', [])):
         return 'crash', 'investigator failed or requires operator input: ' + text[:1800]

@@ -94,7 +94,10 @@ for name,n,start in [('train',160,0),('validation',60,1000)]:
     subprocess.run([os.environ['EIDOS_RESEARCH_PYTHON'], '-c', code, str(task)],
                    env=lab.environment(), check=True)
     (task / 'project.py').write_text(PROJECT)
-    (task / 'requirements.lock').write_text('numpy==2.2.6\ntorch==2.7.0\n')
+    versions = subprocess.check_output([os.environ['EIDOS_RESEARCH_PYTHON'], '-c',
+        'from importlib.metadata import version; print("numpy=="+version("numpy")); print("torch=="+version("torch"))'],
+        env=lab.environment(), text=True)
+    (task / 'requirements.lock').write_text(versions)
     shutil.copyfile(ROOT / 'research/public/development/validate_answer.py', task / 'answer_schema.py')
     (task / 'brief.md').write_text('Reproduce the tiny linear classifier baseline. This is an operational smoke; '
         'no model-improvement claim is required. Run python project.py train --inputs . --out ../baseline --seed 11. '
@@ -122,7 +125,7 @@ def main():
     env = lab.environment()
     env['EIDOS_STUDY_SMOKE_PROMPT'] = str(run_dir / 'smoke_prompt.md')
     return subprocess.run([lab.python(), '-m', 'study.eidos_arms.worker', '--arm', str(args.arm),
-                          '--run-dir', str(run_dir)], cwd=ROOT, env=env).returncode
+                          '--run-dir', str(run_dir)], cwd=ROOT, env=env, stdin=subprocess.DEVNULL).returncode
 
 
 if __name__ == '__main__':

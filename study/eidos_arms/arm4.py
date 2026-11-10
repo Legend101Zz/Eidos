@@ -63,10 +63,12 @@ def run(run_dir, meta):
 
         watcher = threading.Thread(target=watchdog, daemon=True)
         watcher.start()
+        observed = {}
         try:
             while not expired.is_set():
                 lab.guard_disk()
                 shown = c.query('get_investigation', {'investigation_id': inv}, project=project)
+                observed = shown
                 write_json(run_dir / 'investigation_latest.json', shown)
                 if shown['status'] != 'active' or shown.get('needs_input'):
                     break
@@ -77,11 +79,11 @@ def run(run_dir, meta):
             # A parked investigator must not resume after this run has returned.
             stop_investigation(c, project, inv)
         shown, events, records = ledger(c, project, inv, run_dir / 'transcript.jsonl')
-        tokens, models, billed, receipts = usage(events)
+        tokens, models, billed, receipts = usage(events, run_dir / 'transcript.jsonl')
         write_json(run_dir / 'usage_receipts.json', {
             'receipts': receipts, 'tokens': tokens, 'model_ids_seen': models,
-            'cache_note': '1.1.0 model.usage receipts include OpenAI cached input in input_tokens; '
-                          'cache_read/cache_write breakdown unavailable, reported as 0, not additional tokens.',
+            'cache_note': 'Cache breakdown recovered from persisted model responses; input excludes those '
+                          'cached tokens. Failed requests without raw responses have unknown cache breakdown.',
             'deadline_stop_errors': stop_error,
         })
         selected, reason = select_job(c, project, shown, records)
@@ -98,7 +100,7 @@ def run(run_dir, meta):
         # Refresh after fallback so the transcript and job receipts include the delivered baseline.
         ledger(c, project, inv, run_dir / 'transcript.jsonl')
         valid = validate(run_dir / 'out/answer.json')
-        status, incident = classify(shown, receipts, models, expired.is_set(), valid)
+        status, incident = classify(observed or shown, receipts, models, expired.is_set(), valid)
         return {'status': status, 'incident_reason': incident, 'tokens': tokens, 'billed_usd': billed,
                 'model_ids_seen': models, 'agent_claim': agent_claim, 'transcript': 'transcript.jsonl',
                 'project': project, 'investigation_id': inv, 'selected_job': selected,

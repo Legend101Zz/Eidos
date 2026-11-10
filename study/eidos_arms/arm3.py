@@ -21,13 +21,14 @@ def lane_a():
         import study
         study.__path__.append(str(Path(override) / 'study'))
     from study.common import agent_env, sandbox_command
-    from study.run_arm import run_stream
-    return agent_env, sandbox_command, run_stream
+    from study import run_arm
+    return agent_env, sandbox_command, run_arm
 
 
 def run(run_dir, meta):
     from .arm4 import validate
-    agent_env, sandbox_command, run_stream = lane_a()
+    from eidos.application.scopes import ROLE_SCOPES
+    agent_env, sandbox_command, stream_module = lane_a()
     lab.start()
     c = lab.client()
     principal = None
@@ -37,10 +38,13 @@ def run(run_dir, meta):
         if not method.exists() and os.environ.get('EIDOS_STUDY_LANE_A_ROOT'):
             method = Path(os.environ['EIDOS_STUDY_LANE_A_ROOT']) / 'study/METHOD.md'
         shutil.copyfile(method, run_dir / 'METHOD.md')
+        shutil.copyfile(Path(__file__).parent / 'mcp_http.py', run_dir / 'mcp_http.py')
         wall, token_cap = envelope(meta)
         token = secrets.token_urlsafe(48)
         principal = 'agent-' + project
-        c.command('create_principal', {'id': principal, 'kind': 'service', 'roles': ['researcher'],
+        # Arm 3 must not launch a second, unaccounted model agent inside the shared lab.
+        scopes = [s for s in ROLE_SCOPES['researcher'] if s != 'investigate']
+        c.command('create_principal', {'id': principal, 'kind': 'service', 'roles': [], 'extra_scopes': scopes,
                   'project_ids': [project], 'token_sha256': hashlib.sha256(token.encode()).hexdigest(),
                   'ttl_seconds': wall + 120}, key='principal:' + project)
         # Claude expands the environment reference; no token is written to this config.
@@ -57,6 +61,7 @@ def run(run_dir, meta):
         # Claude 2.1.318 uses /tmp/claude-$UID unless this explicit override is set.
         # TMPDIR alone does not prevent the Seatbelt-denied startup write.
         env['CLAUDE_CODE_TMPDIR'] = str(run_dir / '.tmp')
+        env['TZ'] = 'UTC'
         env['EIDOS_TOKEN'] = token
         env['EIDOS_API_URL'] = context['api_url']
         env['ANTHROPIC_API_KEY'] = subprocess.check_output(
@@ -65,9 +70,23 @@ def run(run_dir, meta):
         model = meta.get('model', 'MiniMax-M3.1-Flash').split(':')[-1]
         command = ['claude', '--bare', '-p', prompt(3, run_dir), '--model', model,
                    '--permission-mode', 'bypassPermissions', '--output-format', 'stream-json', '--verbose',
-                   '--mcp-config', str(run_dir / 'mcp.json'), '--strict-mcp-config']
-        rec = run_stream(run_dir, sandbox_command(run_dir, command), env,
-                         wall_s=wall, token_limit=token_cap)
+                   '--include-partial-messages', '--mcp-config', str(run_dir / 'mcp.json'), '--strict-mcp-config']
+        sandbox = sandbox_command(run_dir, command)
+        # Native Bun/ICU on macOS maps the system timezone database during startup.
+        # This is a system path; project/repo/home access rules remain lane A's.
+        profile = Path(sandbox[sandbox.index('-f') + 1]).read_text()
+        profile = profile.replace('(subpath "/private/etc")',
+                                  '(subpath "/private/etc") (subpath "/private/var/db/timezone")')
+        profile_path = run_dir / '.agent.sb'
+        profile_path.write_text(profile)
+        sandbox[sandbox.index('-f') + 1] = str(profile_path)
+        from .stream_usage import extend_tracker
+        original_tracker = stream_module.UsageTracker
+        stream_module.UsageTracker = extend_tracker(original_tracker)
+        try:
+            rec = stream_module.run_stream(run_dir, sandbox, env, wall_s=wall, token_limit=token_cap)
+        finally:
+            stream_module.UsageTracker = original_tracker
         env.pop('ANTHROPIC_API_KEY', None)
         env.pop('EIDOS_TOKEN', None)
         if rec['status'] == 'ok':
@@ -77,6 +96,9 @@ def run(run_dir, meta):
                 rec.update(status='invalid_output', incident_reason=f'answer validation: {exc}')
         if len(rec['model_ids_seen']) > 1:
             rec.update(status='incident', incident_reason='model id changed: ' + ', '.join(rec['model_ids_seen']))
+        if rec['model_ids_seen'] and not rec['tokens']['total']:
+            rec.update(status='incident', incident_reason='Provider/Claude supplied no usage receipts; '
+                       'zero is observed usage, not evidence of zero spend; token envelope could not be verified')
         rec['project'] = project
         return rec
     finally:
