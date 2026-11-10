@@ -53,6 +53,11 @@ pilot gate) found three harness problems, not model-quality problems:
    - **Deadline.** The `decide` activity is cancelled at the turn deadline and retried by Temporal. The text-mode
      loop now refuses to *start* a follow-up request that could outlive the deadline (elapsed + `request_timeout` >
      `deadline_seconds`) and ends with an explicit no-effect decision, `bounded_outcome: decision-deadline`.
+     **Addendum (ADR 0017).** The guard did not stop a request already in flight: neither the activity's timeout
+     nor `stop_investigation` interrupted it, and its usage reached the ledger late. Since ADR 0017 every request, in
+     every output mode, is abandoned (connection closed) at the decision deadline (turn deadline less 10%, at most
+     15 s) or when the investigation stops or pauses; its usage is recorded as uncertain and nothing from it is
+     applied.
 2. **Reasoning tokens.** `usage_from_messages` records `reasoning_tokens` per request and in total, and
    `reasoning_accounting`: `included-in-output` (the OpenAI-compatible contract: `completion_tokens` includes them, so
    `output_tokens` already charges them), `added-to-output`, or `not-reported` (the total is then `null`, never a

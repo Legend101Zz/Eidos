@@ -12,6 +12,7 @@ from urllib.parse import unquote
 import httpx
 
 from eidos.client import LabClient, LabError
+from eidos.mcp.normalize import normalize, normalize_arguments
 from eidos.mcp.tools import BY_NAME, Tool, build_call
 
 ClientFactory = Callable[[str], Any]  # token -> object with command/query/whoami/close
@@ -87,21 +88,61 @@ def call_tool(client: Any, name: str, args: dict[str, Any]) -> dict[str, Any]:
     tool = BY_NAME.get(name)
     if tool is None:
         raise ToolFailure("UNKNOWN_TOOL", f"no tool named {name!r}", "Call tools/list.")
+    # ADR 0017: undo the two unambiguous client/provider re-encodings, only where a schema says what the value
+    # must be; every change is recorded. The lab validates the result as strictly as any other call.
+    args, changes = normalize_arguments(args, tool.input_schema())
     validate_args(tool, args)
+    cfg, cfg_changes = _normalize_config(client, tool, args)
+    if cfg_changes:
+        args, changes = {**args, "config": cfg}, changes + cfg_changes
     payload, project, key, expected = build_call(tool, args)
     try:
         if tool.kind == "command":
-            return client.command(tool.target, payload, project=project, key=key, expected_revision=expected)
+            extra = {"normalized_arguments": changes} if changes else {}
+            return client.command(tool.target, payload, project=project, key=key, expected_revision=expected,
+                                  **extra)
         if name == "get_study_charter" and payload.pop("history", False):
-            return _wrap(client.query("record_history", {"kind": "charter", "id": payload["id"]}, project=project))
-        if tool.kind == "artifact_access":
-            return _artifact_access(client, project or "", payload)
-        payload.pop("history", None)
-        return _wrap(client.query(tool.target, payload, project=project))
+            out = _wrap(client.query("record_history", {"kind": "charter", "id": payload["id"]}, project=project))
+        elif tool.kind == "artifact_access":
+            out = _artifact_access(client, project or "", payload)
+        else:
+            payload.pop("history", None)
+            out = _wrap(client.query(tool.target, payload, project=project))
+        return {**out, "normalized_arguments": changes} if changes else out
     except ToolFailure:
         raise
     except Exception as exc:  # noqa: BLE001 - mapped to a structured tool error
         raise failure_from(exc) from exc
+
+
+def _maybe_reencoded(value: Any) -> bool:
+    """Whether ``value`` contains a shape the normalizer could change (avoids a schema lookup otherwise)."""
+    if isinstance(value, dict):
+        if set(value) == {"item"} and isinstance(value["item"], list):
+            return True
+        return any(_maybe_reencoded(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_maybe_reencoded(v) for v in value)
+    return isinstance(value, str) and bool(value) and (value[0].isdigit() or value[0] == "-")
+
+
+def _normalize_config(client: Any, tool: Tool, args: dict[str, Any]) -> tuple[Any, list[dict[str, Any]]]:
+    """Changes to ``config`` per the component's ``config_schema`` (read with the caller's own token). A component
+    the caller cannot read, or one without a schema, gets no normalization: the lab reports the real error."""
+    cfg, ref = args.get("config"), args.get("component_ref")
+    if not (isinstance(cfg, dict) and isinstance(ref, str) and ref and _maybe_reencoded(cfg)
+            and any(p.name == "config" for p in tool.params)):
+        return cfg, []
+    try:
+        release = client.query("describe_component", {"component_ref": ref}, project=args.get("project"))
+    except Exception:  # noqa: BLE001 - no schema, no normalization
+        return cfg, []
+    body = release.get("body") if isinstance(release, dict) and isinstance(release.get("body"), dict) else release
+    manifest = body.get("manifest") if isinstance(body, dict) else None
+    schema = manifest.get("config_schema") if isinstance(manifest, dict) else None
+    if not isinstance(schema, dict):
+        return cfg, []
+    return normalize(cfg, schema, "config")
 
 
 def _wrap(result: Any) -> dict[str, Any]:

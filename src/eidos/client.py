@@ -55,9 +55,12 @@ class LabClient:
         raise AssertionError("unreachable")
 
     def command(self, name: str, payload: dict | None = None, *, project: str | None = None,
-                key: str | None = None, expected_revision: int | None = None) -> dict:
-        body = {"project_id": project, "command_key": key or uuid.uuid4().hex, "payload": payload or {},
-                "expected_revision": expected_revision}
+                key: str | None = None, expected_revision: int | None = None,
+                normalized_arguments: list[dict] | None = None) -> dict:
+        body: dict[str, Any] = {"project_id": project, "command_key": key or uuid.uuid4().hex,
+                                "payload": payload or {}, "expected_revision": expected_revision}
+        if normalized_arguments:  # MCP adapter only (ADR 0017): recorded in the receipt, never validated against
+            body["normalized_arguments"] = normalized_arguments
         return self._post(f"/v1/commands/{name}", body)
 
     def query(self, name: str, params: dict | None = None, *, project: str | None = None) -> Any:

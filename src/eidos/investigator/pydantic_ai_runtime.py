@@ -17,7 +17,15 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from eidos.investigator import structured_output as so
-from eidos.investigator.runtime import DecisionRequest, DecisionResult, ModelCallFailed, output_cap
+from eidos.investigator.runtime import (
+    ABORT_POLL_SECONDS,
+    DecisionAbort,
+    DecisionAborted,
+    DecisionRequest,
+    DecisionResult,
+    ModelCallFailed,
+    output_cap,
+)
 
 PROMPT_REVISION = "investigator-prompt/1"
 SYSTEM = (
@@ -171,6 +179,7 @@ class TokenEnvelope:
         self.spent = 0
         self.last: tuple[int, int] | None = None  # (input, charged output) of the last response with reported input
         self.admitted: list[dict[str, int]] = []
+        self.responses: list[Any] = []  # every response of the decision, in order: what a stopped decision has billed
 
     def estimate(self, messages: list, settings: Any, params: Any) -> int:
         from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
@@ -195,18 +204,48 @@ class TokenEnvelope:
 
     def record(self, response: Any) -> None:
         r_in, r_out, _, _ = _charged(response, self.reasoning_billing)
+        self.responses.append(response)
         self.spent += r_in + r_out
         self.last = (r_in, r_out) if r_in > 0 else None
 
 
-def _guarded(model: Any, envelope: TokenEnvelope) -> Any:
-    """``model`` with ``envelope`` checked before, and charged after, every request."""
+async def _abortable(request: Any, abort: DecisionAbort, abandoned: dict[str, Any] | None) -> Any:
+    """Await the provider request ``request`` unless ``abort`` is set first: then cancel it (the HTTP client closes the
+    connection, so the provider stops streaming to us; what it bills for the abandoned request is unknown) and raise
+    ``DecisionAborted``. A response that completed is always returned, even if ``abort`` was set meanwhile: the caller
+    decides what an aborted decision may still use (nothing, ADR 0017)."""
+    import asyncio
+    task = asyncio.ensure_future(request)
+    try:
+        while not task.done():
+            await asyncio.wait({task}, timeout=ABORT_POLL_SECONDS)
+            reason = None if task.done() else abort.poll()
+            if reason:
+                task.cancel()
+                try:
+                    await task
+                except BaseException:  # noqa: BLE001 - CancelledError or the transport's own error: abandoned either way
+                    pass
+                raise DecisionAborted(reason, in_flight=True, abandoned=abandoned)
+    except asyncio.CancelledError:
+        task.cancel()
+        raise
+    return task.result()
+
+
+def _guarded(model: Any, envelope: TokenEnvelope, abort: DecisionAbort | None = None) -> Any:
+    """``model`` with ``envelope`` checked before, and charged after, every request; with ``abort``, no request starts
+    once it is set and an in-flight request is abandoned when it is set (ADR 0017)."""
     from pydantic_ai.models.wrapper import WrapperModel
 
     class EnvelopeModel(WrapperModel):
         async def request(self, messages, model_settings, model_request_parameters):
+            reason = abort.poll() if abort is not None else None
+            if reason:
+                raise DecisionAborted(reason)
             envelope.admit(messages, model_settings, model_request_parameters)
-            response = await super().request(messages, model_settings, model_request_parameters)
+            call = super().request(messages, model_settings, model_request_parameters)
+            response = await (_abortable(call, abort, envelope.admitted[-1]) if abort is not None else call)
             envelope.record(response)
             return response
     return EnvelopeModel(model)
@@ -298,10 +337,11 @@ class PydanticAIRuntime:
     def __init__(self, config: dict[str, Any]):
         self.config = config
         self.envelope: TokenEnvelope | None = None  # set per decision; every request of the decision passes it
+        self.abort: DecisionAbort | None = None  # the decision's abort signal (stop, pause, cancellation, deadline)
 
     def _model(self) -> Any:
         model = build_model(self.config)
-        return _guarded(model, self.envelope) if self.envelope is not None else model
+        return _guarded(model, self.envelope, self.abort) if self.envelope is not None else model
 
     def _agent(self, req: DecisionRequest, *, with_tools: bool = True, output_type: Any = None,
                instructions: str | None = None):
@@ -338,9 +378,38 @@ class PydanticAIRuntime:
             raise ModelCallFailed(f"unknown output_mode {mode!r} (one of {OUTPUT_MODES})", retryable=False)
         self.envelope = TokenEnvelope(int(self.config.get("max_tokens_per_decision", 120_000)), output_cap(self.config),
                                       self._billing())
-        if mode != "tool":
-            return self._decide_text(req, mode)
-        return self._decide_tool(req)
+        self.abort = req.abort
+        try:
+            if mode != "tool":
+                return self._decide_text(req, mode)
+            return self._decide_tool(req)
+        except DecisionAborted as exc:
+            return self._aborted(exc)
+
+    def _aborted(self, exc: DecisionAborted) -> DecisionResult:
+        """A decision whose abort signal was set (ADR 0017). Nothing from it is ever proposed: the usage is that of
+        every response received (uncertain when a request was abandoned in flight: its bill is unknown, and the
+        abandoned request's admitted worst case is recorded with it). At the decision deadline the result is the
+        explicit no-effect decision ``decision-deadline``; on stop, pause or cancellation ``DecisionAborted`` is raised
+        with that usage, and the decide activity records it without proposing anything."""
+        assert self.envelope is not None
+        max_requests = int(self.config.get("max_requests_per_decision", 8))
+        responses = list(self.envelope.responses)
+        usage = self._usage(responses)
+        usage["aborted"] = {"reason": exc.reason, "in_flight": exc.in_flight,
+                            **({"abandoned_request": exc.abandoned} if exc.abandoned else {})}
+        if exc.in_flight:
+            usage["uncertain"] = True
+        if exc.reason != "decision-deadline":
+            raise DecisionAborted(exc.reason, in_flight=exc.in_flight, abandoned=exc.abandoned,
+                                  possible_usage=usage) from exc
+        usage["limit_reached"] = ("decision deadline: the in-flight request was abandoned" if exc.in_flight
+                                  else "decision deadline: no further request was started")
+        proposal = {"rationale": "no usable decision (decision-deadline); no effects proposed", "calls": [],
+                    "control": {"action": "wait_for_jobs", "summary": "decision-deadline",
+                                "bounded_outcome": "decision-deadline"}}
+        return DecisionResult(proposal, usage, json.loads(_messages_json(responses)),
+                              self._settings(usage, max_requests), PROMPT_REVISION)
 
     # -- text output with bounded repair (ADR 0014) and an Eidos-owned read loop (ADR 0016) -----------------------
     def _json_mode_settings(self, reads: list[str] | tuple[str, ...] = ()) -> dict[str, Any] | None:
@@ -565,6 +634,8 @@ class PydanticAIRuntime:
                             raw = json.loads(_messages_json(first + list(result.new_messages())))
                             return DecisionResult(to_proposal(result.output), usage, raw,
                                                   self._settings(usage, max_requests), PROMPT_REVISION)
+                        except DecisionAborted:
+                            raise
                         except Exception:  # noqa: BLE001 - fall through to the bounded outcome below
                             messages.extend(m for m in final_messages if m not in messages)
                 # A bounded outcome, not a lost failure: every billed request is reported and the

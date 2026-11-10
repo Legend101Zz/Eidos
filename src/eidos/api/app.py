@@ -28,6 +28,8 @@ class CommandRequest(BaseModel):
     expected_revision: int | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
     delegation: dict[str, Any] = Field(default_factory=dict)
+    # Argument shapes the MCP adapter normalized before sending (ADR 0017); recorded in the receipt, nothing else.
+    normalized_arguments: list[dict[str, Any]] = Field(default_factory=list, max_length=64)
 
 
 class QueryRequest(BaseModel):
@@ -113,7 +115,8 @@ def create_app(service: CommandService, *, relay: Any = None, maintenance_flag: 
                   "delegation": body.delegation}
         return await asyncio.to_thread(service.execute, pr, name, project_id=body.project_id,
                                        command_key=body.command_key, payload=body.payload,
-                                       expected_revision=body.expected_revision, delegation=client)
+                                       expected_revision=body.expected_revision, delegation=client,
+                                       normalized_arguments=body.normalized_arguments)
 
     @app.post("/v1/queries/{name}")
     async def run_query(name: str, body: QueryRequest, request: Request):

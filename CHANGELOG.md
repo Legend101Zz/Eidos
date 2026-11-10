@@ -8,6 +8,26 @@ Reasoning models through OpenAI-compatible endpoints (ADR 0016). Measured with M
 its OpenAI-compatible endpoint at 16384 output tokens and a 300 s request timeout: `json` 8/8 (was 5/8 at the 4096
 cap and 6/8 at 16384 tokens / 120 s), `tool` 6/8 (was 4/8); `docs/release/evidence/g4-111-minimax-m31flash-*.json`.
 
+### Post-pilot robustness (ADR 0017)
+- **MCP arguments re-encoded by a client or provider.** The MCP adapter undoes exactly two unambiguous shapes, only
+  where a schema it holds says what the value must be (the tool's input schema; for `config`, the release's
+  `config_schema`, read with the caller's token): `{"item": [...]}` where an array is required, and a canonical
+  numeric string (at most 64 characters) where an integer or number is required. Every change is recorded in the
+  command receipt as `normalized_arguments` (path, rule, expected type, original; query results carry the same key).
+  Ambiguous shapes are passed through and refused by the lab as before; the lab's validators are unchanged.
+  The `config` parameter description asks for exact JSON types. Seen with MiniMax-M3.1-Flash through Claude Code
+  (`config.argv` as `{"item": [...]}`, `config.seed` as `"11"`).
+- **Stop and deadline abandon the in-flight model request.** Before, `stop_investigation` or the decide activity's
+  timeout left a running provider request to finish, and its usage reached the ledger late (pilot smoke arm4-02:
+  19.5 s after the deadline). Now each decision has an abort signal: the investigation stops or pauses (checked every
+  `abort_poll_seconds`, default 1 s), Temporal cancels the activity, or the decision deadline passes (turn deadline
+  less 10%, at most 15 s). No request starts after it, and an in-flight request is cancelled and its connection
+  closed. Usage is recorded as uncertain (`aborted` with the abandoned request's worst case), the reservation is
+  settled, and the turn ends `cancelled` (stop, pause) or with the no-effect `decision-deadline` outcome.
+- `accept_decision` refuses (records unapplied) a decision when the investigation is not active, when a later attempt
+  of the same slot has started (`superseded-attempt`), or when the attempt began more than the turn deadline ago
+  (`decision-deadline-passed`; `reserve_model_budget` records each attempt's start).
+
 ### Output and time limits
 - `scripts/qualify/live_provider_check.py --max-output-tokens N` (default 4096, unchanged); recorded in the receipt's
   `caps`. The receipt also totals `total_reasoning_tokens`.

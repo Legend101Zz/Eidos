@@ -8,6 +8,8 @@ from typing import Any
 
 from eidos.client import LabError
 
+_ABSENT = object()
+
 
 class FakeLab:
     def __init__(self, tokens: dict[str, str] | None = None):
@@ -17,6 +19,7 @@ class FakeLab:
         self.executed = 0
         self.revision = 3
         self.queries: dict[str, Any] = {}
+        self.command_extras: list[dict] = []  # extra keyword arguments each command() call was given (ADR 0017)
 
     def client(self, token: str) -> FakeClient:
         return FakeClient(self, token)
@@ -34,17 +37,23 @@ class FakeClient:
             raise LabError(401, {"code": "UNAUTHENTICATED", "message": "invalid token"})
         return {"id": self.lab.tokens[self.token], "kind": "human", "scopes": [], "projects": ["*"]}
 
-    def command(self, name, payload=None, *, project=None, key=None, expected_revision=None):
+    def command(self, name, payload=None, *, project=None, key=None, expected_revision=None,
+                normalized_arguments=_ABSENT, **unexpected):
+        if unexpected:
+            raise TypeError(f"command() got unexpected keyword arguments {sorted(unexpected)}")
         self.whoami()
         payload = payload or {}
         self.lab.calls.append(("command", name, payload, project, key, self.token))
+        # Only keyword arguments the adapter actually passed are recorded, so a test can tell "not sent" from "empty".
+        self.lab.command_extras.append({} if normalized_arguments is _ABSENT
+                                       else {"normalized_arguments": normalized_arguments})
         if name == "launch_trial" and payload.get("trial_id") == "t-broke":
             raise LabError(409, {"code": "BUDGET_EXHAUSTED", "message": "exploration budget exhausted",
                                  "details": {"dimension": "compute_seconds"}, "next_action": "Raise the budget."})
         if expected_revision is not None and expected_revision != self.lab.revision:
             raise LabError(409, {"code": "STALE_REVISION", "message": "revision changed",
                                  "details": {"observed_revision": self.lab.revision}, "next_action": "Re-read."})
-        fp = json.dumps([name, payload, expected_revision], sort_keys=True)
+        fp = json.dumps([name, payload, expected_revision], sort_keys=True)  # the record is not part of the hash
         hit = self.lab.receipts.get((project or "", key))
         if hit:
             if hit[0] == fp:
@@ -56,6 +65,8 @@ class FakeClient:
         self.lab.executed += 1
         receipt = {"status": "committed", "command": name, "replayed": False, "command_key": key, "events": [1],
                    "result": {"investigation_id": f"inv_{self.lab.executed}", "revision": 1}}
+        if normalized_arguments is not _ABSENT and normalized_arguments:
+            receipt["normalized_arguments"] = list(normalized_arguments)
         self.lab.receipts[(project or "", key)] = (fp, receipt)
         return receipt
 

@@ -86,7 +86,8 @@ def P(name: str, type_: str, doc: str = "", required: bool = False) -> Param:
 _RUN = (
     P("component_ref", "s", "Release ref, e.g. name@1.2.3 (from list_components).", True),
     P("inputs", "o", "Port name -> artifact id."),
-    P("config", "o", "Component configuration (validated against its contract)."),
+    P("config", "o", "Component configuration, validated against the release's config_schema (describe_component). "
+      "Send JSON types exactly: arrays as JSON arrays, integers and numbers as JSON numbers."),
     P("overrides", "o", "Explicit overrides of bound defaults."),
     P("environment", "s", "Project environment name."),
     P("seed", "i"), P("wall_seconds", "i", "Wall-clock ceiling for the job."),

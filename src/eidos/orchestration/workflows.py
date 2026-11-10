@@ -247,7 +247,10 @@ class TurnWorkflow:
                             stop = "invalid-proposals"  # waits like other wait reasons; no hot loop
                             break
                         continue  # the next slot sees why the proposal was refused
-                    stop = {"stale-revision": "stale-revision", "budget-exhausted": "budget-exhausted"}.get(
+                    # A decision aborted because the investigation stopped or paused ends the turn as cancelled
+                    # (ADR 0017); older histories never carry these reasons.
+                    stop = {"stale-revision": "stale-revision", "budget-exhausted": "budget-exhausted",
+                            "investigation-stopped": "cancelled", "investigation-paused": "cancelled"}.get(
                         d.get("reason"), "error")
                     break
                 invalid_run = 0

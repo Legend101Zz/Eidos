@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 
 from eidos.application.service import Ctx, command
@@ -313,6 +314,11 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
     if turn["status"] != "open":
         ctx.tx.insert_decision(did, turn["id"], slot, False, {"proposal": p.get("proposal"), "reason": "turn-closed"})
         return {"accepted": False, "decision_id": did, "reason": "turn-closed"}
+    late = _late_decision(ctx, turn, inv, slot, p.get("attempt"))
+    if late:  # ADR 0017: a decision from a stopped investigation or a cancelled request is never applied
+        ctx.tx.insert_decision(did, turn["id"], slot, False, {"proposal": p.get("proposal"), "reason": late})
+        ctx.event("decision.unapplied", did, {"reason": late}, investigation_id=inv.id)
+        return {"accepted": False, "decision_id": did, "reason": late}
     if inv.revision != turn["study_revision"]:
         ctx.tx.insert_decision(did, turn["id"], slot, False, {"proposal": p.get("proposal"), "reason": "stale-revision",
                                                                "observed_revision": inv.revision})
@@ -339,6 +345,44 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
     ctx.event("decision.accepted", did, {"turn_id": turn["id"], "slot": slot, "calls": [c["tool"] for c in calls],
                                          "control": decision["control"]}, investigation_id=inv.id)
     return {"accepted": True, "decision_id": did, "calls": calls, "control": decision["control"]}
+
+
+def _late_decision(ctx: Ctx, turn: dict, inv, slot: int, attempt: int | None) -> str | None:
+    """Why a proposed decision may no longer be applied (ADR 0017), or None:
+
+    * ``investigation-<status>``: the investigation is no longer active (stopped, paused, concluded);
+    * ``superseded-attempt``: a later attempt of the same decision slot has started, so this one was cancelled or
+      timed out (Temporal retried it) and its request only finished late;
+    * ``decision-deadline-passed``: the attempt began (``reserve_model_budget``, lab clock) more than the turn
+      deadline ago, the decide activity's own timeout, so Temporal has already given up on it.
+
+    The attempt checks apply to callers that report their attempt (the decide activity); others are checked as
+    before."""
+    if inv.status != "active":
+        return f"investigation-{inv.status}"
+    if attempt is None:
+        return None
+    rec = ctx.tx.get_record("decision_attempt", f"{turn['id']}:{slot}")
+    if rec is None:
+        return None
+    if int(attempt) < int(rec.body.get("attempt", 0)):
+        return "superseded-attempt"
+    deadline = float((turn["spec"].get("limits") or {}).get("deadline_seconds") or 0)
+    if int(attempt) == int(rec.body.get("attempt", 0)) and deadline \
+            and time.time() > float(rec.body.get("started_at", 0)) + deadline:
+        return "decision-deadline-passed"
+    return None
+
+
+def _note_attempt(ctx: Ctx, turn: dict, slot: int, attempt: int) -> None:
+    """Record that ``attempt`` of a decision slot has started (lab clock), unless a later one already has."""
+    rid = f"{turn['id']}:{slot}"
+    rec = ctx.tx.get_record("decision_attempt", rid, lock=True)
+    if rec is not None and int(rec.body.get("attempt", 0)) >= attempt:
+        return
+    ctx.tx.put_record("decision_attempt", rid, ctx.project_id,
+                      {"turn_id": turn["id"], "slot": slot, "attempt": attempt, "started_at": time.time()},
+                      created_by=ctx.principal.id, status="started")
 
 
 def _check_something_to_wait_for(ctx: Ctx, inv, decision: dict) -> None:
@@ -414,6 +458,8 @@ def _charge_model_usage(ctx: Ctx, inv_id: str, usage: dict, *, ref: str, reserve
     reserved = reserved or {}
     uncertain = bool(usage.get("uncertain"))
     detail = {k: usage.get(k) for k in ("provider", "model", "request_ids", "calls")}
+    if usage.get("aborted"):  # ADR 0017: why the decision ended and what was abandoned in flight
+        detail["aborted"] = usage["aborted"]
     if usage.get("reasoning_tokens") is not None:  # already inside output_tokens (ADR 0016); on the ledger too
         detail["reasoning_tokens"] = usage["reasoning_tokens"]
     tokens = float(usage.get("input_tokens", 0) or 0) + float(usage.get("output_tokens", 0) or 0)
@@ -454,6 +500,8 @@ def reserve_model_budget(ctx: Ctx, p: dict) -> dict:
     for (dim, old_ref), left in _open_by_ref(ctx, scope, f"model:{p['turn_id']}:{p.get('slot')}:").items():
         if old_ref != ref:
             ctx.tx.settle(scope, dim, reserved=left, actual=0, ref=old_ref, detail={"released_by": ref})
+    if p.get("attempt") is not None:  # earlier attempts of this slot can no longer get a decision accepted
+        _note_attempt(ctx, turn, int(p.get("slot") or 0), int(p["attempt"]))
     out = {}
     for dim, amount in (p.get("estimate") or {}).items():
         if dim in ("model_tokens", "model_usd") and dim in budgets and float(amount) > 0:

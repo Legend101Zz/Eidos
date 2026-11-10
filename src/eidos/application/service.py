@@ -98,7 +98,11 @@ class CommandService:
 
     def execute(self, principal: Principal, name: str, *, project_id: str | None, command_key: str,
                 payload: dict[str, Any], expected_revision: int | None = None,
-                delegation: dict[str, Any] | None = None) -> dict[str, Any]:
+                delegation: dict[str, Any] | None = None,
+                normalized_arguments: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        """``normalized_arguments``: argument shapes the MCP adapter normalized before sending (ADR 0017). Recorded
+        in the receipt only; ``payload`` is validated exactly as for any other caller, and the idempotency hash
+        covers the payload, not this record."""
         spec = COMMANDS.get(name)
         if spec is None:
             raise NotFound(f"unknown command {name!r}")
@@ -110,7 +114,7 @@ class CommandService:
         for attempt in range(4):
             try:
                 receipt = self._execute_once(spec, principal, name, pid, command_key, payload, payload_hash,
-                                             expected_revision, delegation)
+                                             expected_revision, delegation, normalized_arguments)
                 break
             except Exception as exc:  # noqa: BLE001 - only transient serialization failures are retried
                 state = getattr(getattr(exc, "orig", None), "sqlstate", None) or getattr(exc, "sqlstate", None)
@@ -129,7 +133,8 @@ class CommandService:
 
     def _execute_once(self, spec: Spec, principal: Principal, name: str, pid: str, command_key: str,
                       payload: dict[str, Any], payload_hash: str, expected_revision: int | None,
-                      delegation: dict[str, Any] | None) -> dict[str, Any]:
+                      delegation: dict[str, Any] | None,
+                      normalized_arguments: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         with self.ledger.transaction() as tx:
             tx.project_id = pid
             if spec.project_scoped and tx.get_project(pid) is None:
@@ -147,6 +152,8 @@ class CommandService:
             result = spec.fn(ctx, payload)
             receipt = {"command": name, "command_key": command_key, "status": "committed",
                        "result": result, "events": ctx.emitted, "replayed": False}
+            if normalized_arguments:
+                receipt["normalized_arguments"] = list(normalized_arguments)
             tx.complete_command(receipt)
         return receipt
 

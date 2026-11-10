@@ -17,6 +17,8 @@ import hashlib
 import json
 import tempfile
 import threading
+import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from typing import Any
 
@@ -26,7 +28,14 @@ from temporalio.exceptions import ApplicationError
 from eidos.client import LabClient, LabError
 from eidos.domain.turns import EFFECT_TOOLS, WORKFLOW_PAYLOAD_LIMIT, check_payload
 from eidos.investigator.context import pack
-from eidos.investigator.runtime import DecisionRequest, ModelCallFailed, build_runtime, output_cap
+from eidos.investigator.runtime import (
+    DecisionAbort,
+    DecisionAborted,
+    DecisionRequest,
+    ModelCallFailed,
+    build_runtime,
+    output_cap,
+)
 from eidos_wire import command_key
 
 
@@ -42,6 +51,51 @@ def _heartbeating(every: float = 5.0):
             try:
                 activity.heartbeat()
             except Exception:  # noqa: BLE001 - the activity is gone; nothing to heartbeat
+                return
+
+    threading.Thread(target=lambda: ctx.run(loop), daemon=True).start()
+    try:
+        yield
+    finally:
+        stop.set()
+
+
+# ADR 0017: a decision is aborted (its in-flight provider request abandoned) when the investigation stops or pauses,
+# when Temporal cancels the activity, and shortly before the activity's own timeout (the turn deadline), leaving this
+# margin to record its usage and its no-effect outcome before Temporal gives up on the attempt.
+ABORT_WATCH_SECONDS = 1.0
+DEADLINE_MARGIN_SECONDS = 15.0
+
+
+def decision_deadline(started: float, deadline_seconds: float) -> float | None:
+    """When (a ``time.monotonic`` reading) a decision that started at ``started`` is aborted: the turn deadline (the
+    decide activity's start-to-close timeout) less a margin of 10% of it, at most ``DEADLINE_MARGIN_SECONDS``."""
+    if not deadline_seconds or deadline_seconds <= 0:
+        return None
+    return started + deadline_seconds - min(DEADLINE_MARGIN_SECONDS, 0.1 * deadline_seconds)
+
+
+@contextmanager
+def _watching(abort: DecisionAbort, check: Callable[[], str | None], every: float = ABORT_WATCH_SECONDS):
+    """While the body runs, set ``abort`` as soon as Temporal cancels the activity or ``check`` returns a reason
+    (polled every ``every`` seconds; a failing check is skipped, never fatal)."""
+    ctx = contextvars.copy_context()
+    stop = threading.Event()
+
+    def loop() -> None:
+        while not stop.wait(every):
+            try:
+                if activity.is_cancelled():
+                    abort.trigger("activity-cancelled")
+                    return
+            except Exception:  # noqa: BLE001 - outside an activity context (tests): only the check applies
+                pass
+            try:
+                reason = check()
+            except Exception:  # noqa: BLE001 - the lab may be briefly unreachable; the deadline still applies
+                reason = None
+            if reason:
+                abort.trigger(reason)
                 return
 
     threading.Thread(target=lambda: ctx.run(loop), daemon=True).start()
@@ -160,6 +214,7 @@ class InvestigatorActivities:
     @activity.defn(name="decide")
     @_hb
     def decide(self, a: dict) -> dict:
+        started = time.monotonic()  # the activity's start-to-close timeout counts from about here
         p = a["project_id"]
         turn = self.wf.query("get_turn", {"turn_id": a["turn_id"]}, project=p)
         existing = next((d for d in turn["decisions"] if d["accepted"] and d["slot"] == a["slot"]), None)
@@ -196,12 +251,25 @@ class InvestigatorActivities:
             if exc.code == "BUDGET_EXHAUSTED":
                 return {"accepted": False, "reason": "budget-exhausted", "n_calls": 0}
             raise
+        abort = DecisionAbort(decision_deadline(started, float(turn["spec"]["limits"].get("deadline_seconds") or 0)))
         req = DecisionRequest(turn_id=a["turn_id"], slot=a["slot"], context=context_text,
                               turn_so_far=self._turn_so_far(p, turn), limits=turn["spec"]["limits"], settings=cfg,
-                              read_tools=self._read_tools(p), view=view)
+                              read_tools=self._read_tools(p), view=view, abort=abort)
         attempt = activity.info().attempt
         try:
-            res = runtime.decide(req)
+            with _watching(abort, lambda: self._not_active(p, a["investigation_id"]),
+                           float(cfg.get("abort_poll_seconds", ABORT_WATCH_SECONDS))):
+                res = runtime.decide(req)
+        except DecisionAborted as exc:
+            # Stopped, paused or cancelled: nothing is proposed. Usage is what the responses reported; uncertain when a
+            # request was abandoned in flight (its bill is unknown), and the reservation is settled against it.
+            usage = {**exc.possible_usage, "uncertain": bool(exc.in_flight or exc.possible_usage.get("uncertain"))}
+            self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": usage, "reserved": reserved,
+                            "reservation_ref": reservation_ref}, project=p,
+                            key=f"usage-abort:{a['turn_id']}:{a['slot']}:{attempt}")
+            if exc.reason == "activity-cancelled":
+                raise ApplicationError(str(exc), type="DECISION_ABORTED", non_retryable=True) from exc
+            return {"accepted": False, "reason": exc.reason, "n_calls": 0}
         except ModelCallFailed as exc:
             self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": {**exc.possible_usage, "uncertain": True,
                             "error": str(exc)[:500]}, "reserved": reserved,
@@ -212,6 +280,12 @@ class InvestigatorActivities:
         self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": res.usage, "reserved": reserved,
                                                       "reservation_ref": reservation_ref},
                         project=p, key=f"usage:{a['turn_id']}:{a['slot']}:{attempt}")
+        if abort.reason not in (None, "decision-deadline"):
+            # Stopped, paused or cancelled after the last response arrived: its decision is never proposed (ADR 0017).
+            if abort.reason == "activity-cancelled":
+                raise ApplicationError("decision aborted: activity-cancelled", type="DECISION_ABORTED",
+                                       non_retryable=True)
+            return {"accepted": False, "reason": abort.reason, "n_calls": 0}
         resp = self.inv.upload(p, data=json.dumps(res.raw_response, default=str, sort_keys=True).encode(),
                                media_type="application/json", schema="model-response/1", role="context",
                                name=f"response-{a['turn_id']}-{a['slot']}-{attempt}",
@@ -221,12 +295,17 @@ class InvestigatorActivities:
                                 "usage": res.usage, "usage_recorded": True, "model_settings": res.model_settings,
                                 "prompt_revision": res.prompt_revision,
                                 "bounded_outcome": ((res.proposal or {}).get("control") or {}).get("bounded_outcome"),
-                                "response_artifact_id": resp["result"]["artifact_id"]},
+                                "response_artifact_id": resp["result"]["artifact_id"], "attempt": attempt},
                                 project=p, key=f"accept:{a['turn_id']}:{a['slot']}:{attempt}")["result"]
         except LabError as exc:
             raise _app_error(exc) from exc
         return bounded({"accepted": r["accepted"], "decision_id": r["decision_id"], "n_calls": len(r.get("calls") or []),
                         "control": r.get("control"), "reason": r.get("reason")})
+
+    def _not_active(self, p: str, investigation_id: str) -> str | None:
+        """``investigation-<status>`` once the investigation is no longer active (stopped, paused, concluded)."""
+        status = self.wf.query("get_record", {"kind": "investigation", "id": investigation_id}, project=p).get("status")
+        return None if status in (None, "active") else f"investigation-{status}"
 
     def _read_tools(self, p: str) -> dict:
         return {
