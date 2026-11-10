@@ -44,6 +44,7 @@ def agent_env(run_dir):
     env = {k: os.environ[k] for k in ("LANG", "LC_ALL", "TERM", "USER") if k in os.environ}
     env.update({
         "HOME": str(root / ".home"), "TMPDIR": str(root / ".tmp"),
+        "CLAUDE_CODE_TMPDIR": str(root / ".tmp"),
         "XDG_CACHE_HOME": str(root / ".cache"), "XDG_CONFIG_HOME": str(root / ".home"),
         "CLAUDE_CONFIG_DIR": str(root / ".claude-cfg"),
         "PATH": os.pathsep.join([str(Path(research_python()).parent), str(node.parent),
@@ -57,12 +58,14 @@ def agent_env(run_dir):
     return env
 
 
-def sandbox_command(run_dir, command):
+def sandbox_command(run_dir, command, *, network=True):
     """Public helper for arms 1–3. Parameters avoid profile string interpolation."""
     python = research_python()
     prefix = subprocess.check_output([python, "-c", "import sys; print(sys.prefix)"], text=True).strip()
     node = Path(shutil.which("node") or "/usr/bin/node").resolve().parent.parent
-    return ["/usr/bin/sandbox-exec", "-f", str(STUDY / "sandbox/agent.sb"),
+    profile = ["-f", str(STUDY / "sandbox/agent.sb")] if network else [
+        "-p", (STUDY / "sandbox/agent.sb").read_text() + "\n(deny network*)\n"]
+    return ["/usr/bin/sandbox-exec", *profile,
             "-D", "RUN_DIR=" + str(Path(run_dir).resolve()),
             "-D", "PYTHON_PREFIX=" + str(Path(prefix).resolve()),
             "-D", "NODE_PREFIX=" + str(node), *map(str, command)]

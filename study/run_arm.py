@@ -75,7 +75,8 @@ class UsageTracker:
 
 def incident_text(text):
     return bool(re.search(
-        r"\b(?:429|5\d\d)\b|rate[ _-]?limit|overloaded|quota|insufficient.{0,20}(?:credit|balance)|"
+        r"\b429\b|(?:http|status|error|code)[\s\"':=_-]{0,12}5\d\d\b|"
+        r"\b5\d\d\s+(?:internal|server|error)|rate[ _-]?limit|overloaded|quota|insufficient.{0,20}(?:credit|balance)|"
         r"(?:credit|balance).{0,20}(?:insufficient|exhausted)|usage limit|out of credits|capacity exceeded",
         text, re.I))
 
@@ -97,11 +98,14 @@ def utc_now():
 
 def stop_process_tree(process):
     """Kill only our own launched process and its descendants, individually by PID."""
-    rows = subprocess.check_output(["/bin/ps", "-axo", "pid=,ppid="], text=True).splitlines()
+    rows = subprocess.check_output(["/bin/ps", "-axo", "pid=,ppid=,pgid="], text=True).splitlines()
     children = {}
+    group_members = []
     for row in rows:
-        pid, parent = map(int, row.split())
+        pid, parent, group = map(int, row.split())
         children.setdefault(parent, []).append(pid)
+        if group == process.pid:
+            group_members.append(pid)
     owned = []
 
     def collect(pid):
@@ -110,7 +114,7 @@ def stop_process_tree(process):
         owned.append(pid)
 
     collect(process.pid)
-    for pid in owned:
+    for pid in dict.fromkeys(owned + group_members):
         try:
             os.kill(pid, signal.SIGKILL)
         except ProcessLookupError:
@@ -128,7 +132,7 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
     process = None
     with transcript.open("w") as log:
         try:
-            process = subprocess.Popen(command, cwd=root, env=env, stdout=subprocess.PIPE,
+            process = subprocess.Popen(command, cwd=root, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                        stderr=subprocess.PIPE, start_new_session=True)
             selector = selectors.DefaultSelector()
             buffers = {}
@@ -187,6 +191,7 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
                     consume(line, name)
             selector.close()
             process.wait(timeout=10)
+            stop_process_tree(process)
             if status == "ok" and usage.tokens["total"] > token_limit:
                 status = "token_budget"
             if status == "ok" and (process.returncode != 0 or error_seen):
@@ -196,6 +201,11 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
                 stop_process_tree(process)
             status, reason = "incident", f"runner infrastructure: {type(exc).__name__}: {exc}"
             log.write(json.dumps({"type": "runner_error", "error": reason}) + "\n")
+        finally:
+            if process is not None:
+                for stream in (process.stdout, process.stderr):
+                    if stream is not None:
+                        stream.close()
     record = {k: arm[k] for k in ("arm", "card", "run_index", "block_id")}
     record.update(status=status, incident_reason=reason, started_at=started, ended_at=utc_now(),
                   wall_s=time.monotonic() - clock, tokens=usage.tokens, billed_usd=None,

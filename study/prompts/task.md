@@ -17,7 +17,12 @@ Submit exactly one locked candidate, or an honest abstention. Write
 Put the candidate source, model weights, dependency lock, predictions and evidence
 files beside it under `out/`; artifact paths in the answer are relative to `out/`.
 Include an ordinary runnable project.py with train and infer commands compatible
-with the supplied project, and a reproducible training command. The evaluator will
+with the supplied project, and a reproducible training command. Use the candidate
+field `predictions_path` for your locked validation predictions. In
+`reproduce_command`, use `{inputs}`, `{out}` and `{seed}` as argument placeholders
+(for example, `["python", "project.py", "train", "--inputs", "{inputs}", "--out",
+"{out}", "--seed", "{seed}"]`). Keep all imported project modules under `out/`.
+The evaluator will
 provide inference inputs separately. Do not fabricate test predictions or evidence.
 State your claim, its scope and its supporting evidence explicitly in the answer
 and in your final message. Record uncertainty, failed attempts, costs you know,
