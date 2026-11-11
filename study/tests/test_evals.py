@@ -82,7 +82,7 @@ class ReplayExtraction(unittest.TestCase):
         home = root / "lab"
         record = dict(expected["run_record"], lab_home=str(home))
         write_json(run / "run_record.json", record)
-        write_json(run / "investigation_latest.json", expected["final_state"])
+        write_json(run / "investigation_latest.json", expected["observed_state"])
         events = {event["seq"]: event for event in expected["receipts"]}
         for artifact in expected["response_artifacts"]:
             digest = artifact["sha256"]
@@ -95,6 +95,7 @@ class ReplayExtraction(unittest.TestCase):
                 seq=artifact["ledger_seq"], type="artifact.registered", subject=artifact["artifact_id"],
                 body=dict(name=artifact["name"], digest=digest, schema="model-response/1"))
         rows = [dict(type="ledger_event", data=e) for _, e in sorted(events.items())]
+        rows.append(dict(type="investigation", data=expected["final_state"]))
         rows.extend(dict(type="turn", data=dict(t, id=t["turn_id"])) for t in expected["turns"])
         (run / "transcript.jsonl").write_text("".join(json.dumps(row) + "\n" for row in rows))
         return run, expected
@@ -110,6 +111,8 @@ class ReplayExtraction(unittest.TestCase):
             self.assertEqual(fixture["schema_version"], REPLAY_SCHEMA)
             self.assertEqual(fixture["requests"], expected["requests"])
             self.assertEqual(fixture["final_state"], expected["final_state"])
+            self.assertEqual(fixture["final_state"]["status"], "stopped")
+            self.assertEqual(fixture["observed_state"]["status"], "active")
             self.assertEqual(len(fixture["response_artifacts"]), 19)
             self.assertEqual(len(fixture["requests"]), 41)
             # Only 12 accepted decisions were exported by the original arm adapter.

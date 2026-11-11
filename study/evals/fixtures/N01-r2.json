@@ -20118,7 +20118,7 @@
       "created_at": "2026-11-11 19:34:58.713041+05:30"
     }
   ],
-  "final_state": {
+  "observed_state": {
     "kind": "investigation",
     "id": "inv_06e6e82552e9",
     "revision": 1,
@@ -20244,6 +20244,829 @@
       "details": {},
       "refused_turns": 3
     },
+    "turns": [
+      {
+        "id": "turn_inv_06e6e82552e9_1",
+        "seq": 1,
+        "status": "failed",
+        "horizon": 1296,
+        "stop_reason": "error"
+      },
+      {
+        "id": "turn_inv_06e6e82552e9_2",
+        "seq": 2,
+        "status": "completed",
+        "horizon": 1366,
+        "stop_reason": "waiting"
+      },
+      {
+        "id": "turn_inv_06e6e82552e9_3",
+        "seq": 3,
+        "status": "completed",
+        "horizon": 1384,
+        "stop_reason": "waiting"
+      },
+      {
+        "id": "turn_inv_06e6e82552e9_4",
+        "seq": 4,
+        "status": "completed",
+        "horizon": 1449,
+        "stop_reason": "waiting"
+      },
+      {
+        "id": "turn_inv_06e6e82552e9_5",
+        "seq": 5,
+        "status": "completed",
+        "horizon": 1540,
+        "stop_reason": "waiting"
+      },
+      {
+        "id": "turn_inv_06e6e82552e9_6",
+        "seq": 6,
+        "status": "completed",
+        "horizon": 1572,
+        "stop_reason": "waiting"
+      },
+      {
+        "id": "turn_inv_06e6e82552e9_7",
+        "seq": 7,
+        "status": "completed",
+        "horizon": 1729,
+        "stop_reason": "waiting"
+      },
+      {
+        "id": "turn_inv_06e6e82552e9_8",
+        "seq": 8,
+        "status": "completed",
+        "horizon": 1841,
+        "stop_reason": "waiting"
+      },
+      {
+        "id": "turn_inv_06e6e82552e9_9",
+        "seq": 9,
+        "status": "completed",
+        "horizon": 1876,
+        "stop_reason": "waiting"
+      },
+      {
+        "id": "turn_inv_06e6e82552e9_10",
+        "seq": 10,
+        "status": "completed",
+        "horizon": 2013,
+        "stop_reason": "invalid-proposals"
+      },
+      {
+        "id": "turn_inv_06e6e82552e9_11",
+        "seq": 11,
+        "status": "completed",
+        "horizon": 2023,
+        "stop_reason": "invalid-proposals"
+      },
+      {
+        "id": "turn_inv_06e6e82552e9_12",
+        "seq": 12,
+        "status": "completed",
+        "horizon": 2031,
+        "stop_reason": "invalid-proposals"
+      }
+    ],
+    "jobs": [
+      {
+        "id": "job_e9b52ce8e08a4ad1",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_cbcfc61378d44bbc",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_4d2fd5b354534b7a",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.diagnose.baseline-errors@1.0.0"
+      },
+      {
+        "id": "job_b17a42f11da54da0",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.search.recipe-sweep@1.1.0"
+      },
+      {
+        "id": "job_a82900fc383d4352",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_1b0fc88b1f454622",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_cc0cce314cee4243",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_8ccc5a397f0b47d7",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_292eb2a52ea54de7",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_e5003bf388ce463c",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_10f6350f832f4837",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_dca5ffad89cb4c04",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_b7f8bd06f6e14e39",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_b207981f55584f33",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_d9cf81ac117442fa",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_e178c45ad163468c",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_5f87f5152cdf410c",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_d7a7cb3e233b42b0",
+        "status": "failed",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_0389573e46b74d86",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_3f4f6264dd0f40da",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_49d4dfd99e624386",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_96005965b37d4314",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_ead9e89f0a2a4bef",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_8fcfabf8d26443d2",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_5e6ce881d9fa4c1f",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_43af88df8c6d4069",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_8eaff02a00ac45d6",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_8d20bcefd2554043",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_e09d00e75ac84eb9",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_61e6fe4e19ed4052",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_3ee144467640400a",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_c8d121e8cd7b420c",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_fa907ebcb6994440",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_a59da7fd473b4a14",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_e7f4c5e86df2451c",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_6ef328bac6954897",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_7635fddd227a4cd8",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_8dc250a4224e4d71",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_077d22240aed484f",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_29da148615584aa3",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_fec87dbf39f24e28",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_d1f4515f0835430d",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_8f370d5cb7d54bf1",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_837da44f28df4af1",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_2d2ae7b8150e4601",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_df464c67cafe489b",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_844a9792ebee4863",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_23aea6ec040a4bd8",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_ed2462adabd34ae0",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_e42483dd28bc4149",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_66425d1d9dc64e1f",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_df50c588782f40c8",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_ca2b2fce2423409d",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_d3c27f7c28624ea9",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_5d4da0f928d54590",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_90d006bc21e541c3",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_9e7e9e24ab664e5c",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_5225d6f3921f4d9f",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_3d97b12476d94e24",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_f2467947d6dd420d",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_71c7fb62a7e945a1",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_a478fa6131894a41",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_fcfd80477c13417f",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_21952d6e3b994656",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_4776943b224842ff",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_1af56d88c4284502",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_817cd92cd02243ff",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_37c47f573d9e4804",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_e9bcc186304142d6",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_567d10d4bcda496e",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_973d2f85d9ad4c60",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_eebdc90e05da4daf",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_b641807c12554a08",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_1ad63bacdc054b9f",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_89d60a74c2d64156",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_3eacea4c4df240d2",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_e703d730ee634bbd",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_c9b73a987ead4d83",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_cf55ca370d404ce8",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_f2598bd8600046df",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_6b116cb2c49b415f",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_adb960b38edb4fac",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_2a62cb0a9d054d72",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_d02a957aeadc454f",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_1f65976f75bd4049",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_a6ae99cc457d4a52",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_c234f546e3fb4897",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_ec14e4a81394453d",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_ba9f7c7bedbf4f0e",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_2763e978e79f47e8",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_f19634b8f93c4952",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_e066adcacf394e71",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_57b8399e3f6f4e68",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_ff10645c472b47b4",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_55e85ad3f6294f51",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_1f1d003425f7410e",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      },
+      {
+        "id": "job_d23d7767b749446a",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.project.command@1.0.7"
+      },
+      {
+        "id": "job_cd85eaba1cd14592",
+        "status": "succeeded",
+        "kind": "artifact-op",
+        "component": "eidos.task.score-classification@1.0.2"
+      }
+    ],
+    "budgets": {
+      "exploration": {
+        "compute_seconds": {
+          "limit_amount": 100000000.0,
+          "reserved": 0.0,
+          "used": 407.163,
+          "uncertain": 0.0
+        },
+        "trials": {
+          "limit_amount": 1000000.0,
+          "reserved": 0.0,
+          "used": 98.0,
+          "uncertain": 0.0
+        },
+        "model_tokens": {
+          "limit_amount": 8000000.0,
+          "reserved": 0.0,
+          "used": 1024848.0,
+          "uncertain": 17459.0
+        },
+        "turns": {
+          "limit_amount": 10000.0,
+          "reserved": 0.0,
+          "used": 12.0,
+          "uncertain": 0.0
+        }
+      },
+      "confirmation": {}
+    }
+  },
+  "final_state": {
+    "kind": "investigation",
+    "id": "inv_06e6e82552e9",
+    "revision": 2,
+    "head_revision": 2,
+    "status": "stopped",
+    "digest": "sha256:c1f90fb414092e425c8c64261c6dbd2ef1fa815283e75a98d1b40f81a206d6ae",
+    "created_by": "admin",
+    "parent_id": null,
+    "labels": {
+      "needs_input": null
+    },
+    "created_at": "2026-11-11T19:34:58.713041+05:30",
+    "body": {
+      "task": {
+        "role": "public_development",
+        "hashes": {
+          "brief.md": "de7825bb3bbb3a5e942a3d4b90c250a4e785ffb6634b6b2c6255d10bcaa20209",
+          "train.npz": "ed4d89393e550c522df51b79c14687b744a0d631d4c0e2bed4b50ef0b6e07185",
+          "project.py": "575ddc4fb5ad323ac1e7fb312e4508e807f946c18b60923e13b1991172bbacf7",
+          "validation.npz": "5b4d5531fa38373cd86095510a393c569713c8b3b42406aa60f19f93393578c1",
+          "answer_schema.py": "a22da0fc4fa56d555fc46f97eb1958f1c270b97449c23b76aabe9fdb84f01c4c",
+          "requirements.lock": "be1d27623dd05e7d6c630152f4d3c4850786238b28530e9f2a88124027ecec41"
+        },
+        "inputs": {
+          "train": {
+            "dtype": "float32",
+            "shape": [
+              341,
+              30
+            ]
+          },
+          "validation": {
+            "dtype": "float32",
+            "shape": [
+              114,
+              30
+            ]
+          }
+        },
+        "metric": "accuracy",
+        "project": "breast_cancer",
+        "task_id": "N01",
+        "nclasses": 2,
+        "direction": "maximize",
+        "task_type": "classification",
+        "denominator": "fixed evaluator input IDs",
+        "answer_schema": "eidos-answer/0.2",
+        "qualification": "see QUALIFICATION_P3.md",
+        "schema_version": "eidos-task-bundle/0.1",
+        "resource_profile": {
+          "threads": 1,
+          "cpu_cores": 1,
+          "ram_gib_estimate": 2,
+          "reference_timeout_seconds": 120,
+          "disk_gib_environment_estimate": 4
+        },
+        "allowed_operations": [
+          "edit model/trainer",
+          "train-only preprocessing/augmentation",
+          "create instruments"
+        ],
+        "investigator_budget": "UNDECIDED",
+        "reference_visibility": "excluded from this investigator bundle; controller only"
+      },
+      "wall": {
+        "wall_seconds": 1794.831722021103,
+        "deadline_unix": 1794406549.680487,
+        "conclude_threshold_seconds": 179.4831722021103
+      },
+      "notes": "Study deadline unix=1794406554.678092; wall_seconds=1800. Outer controller cancels the investigation and jobs at this deadline.",
+      "inputs": {
+        "task": "art_15c104d890214d94",
+        "train": "art_07dc34993a5043f3",
+        "validation": "art_2759191c617441b0"
+      },
+      "limits": {
+        "turns": 10000,
+        "trials": 1000000,
+        "model_tokens": 8000000,
+        "compute_seconds": 100000000
+      },
+      "control": {
+        "by": "admin",
+        "status": "stopped",
+        "running_job_policy": "cancel"
+      },
+      "question": "Work on the research task in `task/`. Read `task/brief.md`, `task/task.json`,\nthe supplied project and the answer interface in `task/answer_schema.py`.\nUse only the supplied training and validation data for exploration and selection.\nThe evaluator owns test data and performs independent confirmation after you finish.\n\nThe task owner's practical bar: a candidate counts as a useful improvement only if its accuracy on the evaluator's held-out test data beats the supplied baseline (seed 11) by at least 0.02 absolute, and the recipe reproduces from fresh initialization. If you cannot show that, an honest abstention or a qualified null is the correct answer.\n\nYour tools: You are the internal Eidos investigator. Use the lab's component catalog, read tools, immutable source artifacts, jobs, trials, claims and evidence plans. The supplied task bundle is your only scientific input. Read METHOD.md and the task's brief and source; reproduce its baseline before changing it. Use eidos.project.command for the supplied train/infer CLI, author_source for candidate files, and eidos.task.score-classification for visible validation scoring. For baseline reproduction, inputs.source is unnecessary: eidos.project.command already copies the supplied registered project. Keep CPU work single-threaded. Once you select one successful training job, record_note with kind \"candidate_lock\", text containing exactly a JSON object {\"job_id\":\"the selected training job id\"}, and evidence_refs naming its receipts. Keep this selection fixed for subsequent confirmation. Project-command models are ordinary model-file artifacts: the controller exports them directly; the checkpoint-only export_model tool is not the export path for these task projects. Conclude with your claim, evidence, assessor outcome if any, and limitations. In the conclude control's scope.answer object, put your eidos-answer/0.2 scientific fields: status, claim_type, claim, scope (string), measurements, alternative_explanations, abstention and optional confidence/confidence_outcome. Each measurement uses the task's answer schema; for evidence_receipt you may name the actual lab job id and the controller exports that receipt to a relative file. The controller fills artifact paths/hashes, costs and provenance from lab receipts, preserving your scientific statements, and exports the locked or confirmed training job or the reproduced baseline otherwise. If no structured answer metadata is provided, it emits an inconclusive submission with your verbatim conclusion. The evaluator supplies inference inputs separately.\n\nYour envelope is 30 minutes of wall time and 8,000,000 total processed model tokens\n(input, cache reads, cache writes and output), stopping at the first exhausted limit.\nUse CPU only and one computational thread: keep OMP_NUM_THREADS=1 and\nMKL_NUM_THREADS=1, and call torch.set_num_threads(1) in task code. Do not launch\nparallel training jobs. Stay within the assigned run directory. Do not seek grader\nfiles, reference solutions, unrelated host files, external datasets or paid services.\n\nSubmit exactly one locked candidate, or an honest abstention. Write\n`out/answer.json` in the eidos-answer/0.2 format defined by `task/answer_schema.py`.\nPut the candidate source, model weights, dependency lock, predictions and evidence\nfiles beside it under `out/`; artifact paths in the answer are relative to `out/`.\nInclude an ordinary runnable project.py with train and infer commands compatible\nwith the supplied project, and a reproducible training command. Use the candidate\nfield `predictions_path` for your locked validation predictions. In\n`reproduce_command`, use `{inputs}`, `{out}` and `{seed}` as argument placeholders\n(for example, `[\"python\", \"project.py\", \"train\", \"--inputs\", \"{inputs}\", \"--out\",\n\"{out}\", \"--seed\", \"{seed}\"]`). Keep all imported project modules under `out/`.\nThe evaluator will\nprovide inference inputs separately. Do not fabricate test predictions or evidence.\nState your claim, its scope and its supporting evidence explicitly in the answer\nand in your final message. Record uncertainty, failed attempts, costs you know,\nunknown costs, exposures and limitations. A negative or inconclusive result is valid;\nan unsuccessful search does not prove that improvement is impossible.\n\n\nPackaged task files:\n{\"answer_schema.py\": \"\\\"\\\"\\\"Validate the common answer's structure only; never execute or open artifacts.\\n\\nPassing does not establish artifact integrity, filesystem confinement, budget\\ncompliance, independent reproduction, or scientific validity.\\n\\\"\\\"\\\"\\nimport argparse\\nimport json\\nimport math\\nfrom pathlib import Path, PurePosixPath\\nimport re\\n\\nSTATUSES = {'improvement_claimed', 'no_improvement_found', 'inconclusive', 'invalid', 'abstained'}\\nCLAIMS = {'checkpoint_improvement', 'recipe_improvement', 'architecture_improvement', 'planted_diagnosis', 'operational_reliability', 'transfer', 'no_positive_claim'}\\nCOST_NUMBERS = {'elapsed_seconds', 'cpu_core_seconds', 'gpu_device_seconds', 'model_input_tokens', 'model_output_tokens', 'model_reasoning_tokens', 'model_calls', 'billed_usd'}\\nCOST_INTEGERS = {'model_input_tokens', 'model_output_tokens', 'model_reasoning_tokens', 'model_calls'}\\n\\n\\ndef require(condition, message):\\n    if not condition:\\n        raise ValueError(message)\\n\\n\\ndef string(value, field):\\n    require(isinstance(value, str) and bool(value.strip()), 'expected nonempty string: ' + field)\\n\\n\\ndef strings(value, field):\\n    require(isinstance(value, list), 'expected list: ' + field)\\n    for item in value:\\n        string(item, field)\\n\\n\\ndef number(value, field):\\n    require(type(value) in (int, float) and math.isfinite(value), 'expected finite number: ' + field)\\n\\n\\ndef path(value, field):\\n    string(value, field)\\n    require('\\\\\\\\' not in value and '\\\\x00' not in value and ':' not in value and not PurePosixPath(value).is_absolute() and all(p not in ('', '.', '..') for p in value.split('/')), 'expected relative POSIX artifact path: ' + field)\\n\\n\\ndef digest(value, field):\\n    require(isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value) is not None, 'expected SHA-256: ' + field)\\n\\n\\ndef fields(value, names, field):\\n    require(isinstance(value, dict) and set(names) <= value.keys(), 'missing fields in ' + field)\\n\\n\\ndef validate(a):\\n    required = {'schema_version', 'task_id', 'run_id', 'status', 'claim_type', 'claim', 'scope', 'candidate', 'measurements', 'evidence', 'alternative_explanations', 'abstention', 'cost', 'exposures', 'deviations', 'confidence'}\\n    fields(a, required, 'answer')\\n    require(a['schema_version'] == 'eidos-answer/0.2', 'unknown schema')\\n    require(isinstance(a['status'], str) and a['status'] in STATUSES, 'unknown status')\\n    require(isinstance(a['claim_type'], str) and a['claim_type'] in CLAIMS, 'unknown claim type')\\n    for key in ('task_id', 'run_id', 'claim', 'scope'):\\n        string(a[key], key)\\n    for key in ('alternative_explanations', 'exposures', 'deviations'):\\n        strings(a[key], key)\\n    for key in ('measurements', 'evidence'):\\n        require(isinstance(a[key], list), 'expected list: ' + key)\\n\\n    abst = a['abstention']\\n    fields(abst, {'abstained', 'reason', 'unresolved', 'next_discriminating_test'}, 'abstention')\\n    require(type(abst['abstained']) is bool, 'abstained must be boolean')\\n    require(abst['abstained'] == (a['status'] == 'abstained'), 'status and abstention disagree')\\n    strings(abst['unresolved'], 'abstention.unresolved')\\n    for key in ('reason', 'next_discriminating_test'):\\n        if abst[key] is not None:\\n            string(abst[key], 'abstention.' + key)\\n    if abst['abstained']:\\n        require(bool(abst['reason']) and bool(abst['unresolved']) and bool(abst['next_discriminating_test']), 'abstention needs reason, unresolved obligations and next test')\\n        require(a['claim_type'] == 'no_positive_claim', 'abstention cannot assert a positive claim type')\\n\\n    candidate = a['candidate']\\n    if candidate is not None:\\n        fields(candidate, {'code_path', 'code_sha256', 'model_path', 'model_sha256', 'predictions_path', 'predictions_sha256', 'reproduce_command', 'environment_lock', 'environment_lock_sha256', 'parent_checkpoint', 'restore_class'}, 'candidate')\\n        for key in ('code_path', 'model_path', 'predictions_path', 'environment_lock'):\\n            path(candidate[key], 'candidate.' + key)\\n        for key in ('code_sha256', 'model_sha256', 'predictions_sha256', 'environment_lock_sha256'):\\n            digest(candidate[key], 'candidate.' + key)\\n        strings(candidate['reproduce_command'], 'candidate.reproduce_command')\\n        require(bool(candidate['reproduce_command']), 'empty reproduce command')\\n        string(candidate['restore_class'], 'candidate.restore_class')\\n        if candidate['parent_checkpoint'] is not None:\\n            path(candidate['parent_checkpoint'], 'candidate.parent_checkpoint')\\n\\n    evidence_paths = set()\\n    for item in a['evidence']:\\n        fields(item, {'path', 'sha256', 'role', 'supports', 'limitations'}, 'evidence entry')\\n        path(item['path'], 'evidence.path')\\n        digest(item['sha256'], 'evidence.sha256')\\n        require(item['path'] not in evidence_paths, 'duplicate evidence path')\\n        evidence_paths.add(item['path'])\\n        for key in ('role', 'supports', 'limitations'):\\n            string(item[key], 'evidence.' + key)\\n    for item in a['measurements']:\\n        fields(item, {'metric', 'direction', 'split', 'denominator', 'units', 'baseline', 'candidate', 'uncertainty_method', 'evidence_receipt'}, 'measurement')\\n        for key in ('metric', 'split', 'units', 'uncertainty_method'):\\n            string(item[key], 'measurement.' + key)\\n        require(item['direction'] in ('higher_is_better', 'lower_is_better'), 'invalid metric direction')\\n        require(type(item['denominator']) is int and item['denominator'] > 0, 'denominator must be a positive integer')\\n        for key in ('baseline', 'candidate'):\\n            number(item[key], 'measurement.' + key)\\n        path(item['evidence_receipt'], 'measurement.evidence_receipt')\\n        require(item['evidence_receipt'] in evidence_paths, 'measurement receipt missing from evidence')\\n    if a['status'] == 'improvement_claimed':\\n        require(candidate is not None and bool(a['evidence']) and bool(a['measurements']), 'positive claim needs candidate/evidence/measurement')\\n        require(a['claim_type'] != 'no_positive_claim', 'positive status requires a positive claim type')\\n\\n    cost = a['cost']\\n    fields(cost, COST_NUMBERS | {'gpu_type', 'unknown_fields', 'receipt_paths'}, 'cost')\\n    strings(cost['unknown_fields'], 'cost.unknown_fields')\\n    nullable = COST_NUMBERS | {'gpu_type'}\\n    require(set(cost['unknown_fields']) == {key for key in nullable if cost[key] is None} and len(cost['unknown_fields']) == len(set(cost['unknown_fields'])), 'unknown_fields must name exactly the null cost fields')\\n    for key in COST_NUMBERS:\\n        if cost[key] is not None:\\n            number(cost[key], 'cost.' + key)\\n            require(cost[key] >= 0, 'negative cost: ' + key)\\n            if key in COST_INTEGERS:\\n                require(type(cost[key]) is int, 'cost counter must be integer: ' + key)\\n    if cost['gpu_type'] is not None:\\n        string(cost['gpu_type'], 'cost.gpu_type')\\n    require(isinstance(cost['receipt_paths'], list), 'expected cost receipt list')\\n    for receipt in cost['receipt_paths']:\\n        path(receipt, 'cost.receipt_paths')\\n    if a['confidence'] is not None:\\n        number(a['confidence'], 'confidence')\\n        require(0 <= a['confidence'] <= 1, 'invalid confidence')\\n        string(a.get('confidence_outcome'), 'confidence_outcome')\\n    return True\\n\\n\\nif __name__ == '__main__':\\n    parser = argparse.ArgumentParser()\\n    parser.add_argument('answer')\\n    args = parser.parse_args()\\n    validate(json.loads(Path(args.answer).read_text()))\\n    print('structural check passed; artifacts, security, costs and science not independently verified')\\n\", \"brief.md\": \"Improve a functioning tabular classifier. Work within the assigned research envelope. prospective development improvement task. Use training and validation data for selection. Submit a reproducible recipe and scoped evidence; fresh initialization confirmation is required.\\n\\nRun: python project.py train --inputs . --out ../baseline --seed 11\\nInput arrays: x float32 [N,D], y [N], ids int64 [N]. Output: ids int64 [N], predictions [N] int64 class IDs. No test feedback during search. No paid calls. Research budget must be assigned separately.\\n\", \"project.py\": \"\\\"\\\"\\\"Ordinary supplied baseline for the D03\u2013D06 and N01\u2013N04 investigator bundles.\\nOnly consumes supplied train/validation arrays; no development references/labels.\\n\\\"\\\"\\\"\\nimport argparse\\nimport hashlib\\nimport json\\nfrom pathlib import Path\\nimport time\\nimport numpy as np\\nimport torch\\nfrom torch import nn\\n\\ntorch.set_num_threads(1)\\n\\nclass Model(nn.Module):\\n    def __init__(self, nin, nout, kind, mean=None, scale=None):\\n        super().__init__()\\n        self.kind = kind\\n        self.register_buffer('mean', torch.zeros(nin) if mean is None else mean)\\n        self.register_buffer('scale', torch.ones(nin) if scale is None else scale)\\n        self.net = nn.Linear(1 if kind == 'pool' else nin, nout)\\n\\n    def forward(self, x):\\n        x = (x - self.mean) / self.scale\\n        if self.kind == 'constant':\\n            return torch.zeros((len(x), 2))\\n        if self.kind == 'last': return x[:, -1:]\\n        if self.kind == 'pool': x = x.mean(-1, keepdim=True)\\n        return self.net(x)\\n\\ndef train(root, out, seed):\\n    started = time.perf_counter()\\n    root, out = Path(root), Path(out)\\n    out.mkdir(parents=True, exist_ok=True)\\n    task = json.loads((root/'task.json').read_text())\\n    with np.load(root/'train.npz', allow_pickle=False) as data:\\n        x = torch.tensor(data['x']); y = torch.tensor(data['y'])\\n    torch.manual_seed(seed)\\n    project = task['project']\\n    nin, nout = x.shape[1], task['nclasses']\\n    mean, scale = torch.zeros(nin), torch.ones(nin)\\n    if project == 'iris':\\n        mean, scale = x.mean(0), x.std(0).clamp_min(.001)\\n    kind = {'order': 'pool', 'forecast': 'last'}.get(project, 'linear')\\n    prospective = task['task_id'] in ('N01', 'N02', 'N03', 'N04')\\n    steps = 80 if prospective else {'digits_shift':100, 'conditioning':160, 'forecast':0, 'order':60}[project]\\n    model = Model(nin, nout, kind, mean, scale)\\n    opt = torch.optim.Adam(model.parameters(), lr=.01 if prospective else .02)\\n    for _ in range(steps):\\n        prediction = model(x)\\n        loss = nn.functional.cross_entropy(prediction, y) if task['task_type'] == 'classification' else nn.functional.mse_loss(prediction[:, 0], y)\\n        opt.zero_grad(); loss.backward(); opt.step()\\n    config = dict(nin=nin, nout=nout, kind=kind)\\n    config['task_type'] = task['task_type']\\n    torch.save({'config':config, 'state_dict':model.state_dict()}, out/'model.pt')\\n    infer(out/'model.pt', root/'validation.npz', out/'validation_predictions.npz')\\n    receipt = dict(seed=seed, steps=steps, examples_seen=steps*len(y), device='cpu', threads=1,\\n                   elapsed_seconds=time.perf_counter()-started,\\n                   model_sha256=hashlib.sha256((out/'model.pt').read_bytes()).hexdigest())\\n    (out/'receipt.json').write_text(json.dumps(receipt, indent=2)+'\\\\n')\\n\\ndef infer(checkpoint, inputs, output):\\n    # This is a local candidate process, never the trusted label-owning scorer.\\n    saved = torch.load(checkpoint, map_location='cpu', weights_only=True)\\n    config = dict(saved['config']); task_type = config.pop('task_type')\\n    model = Model(**config); model.load_state_dict(saved['state_dict']); model.eval()\\n    with np.load(inputs, allow_pickle=False) as data:\\n        x, ids = data['x'], data['ids']\\n    with torch.no_grad():\\n        prediction = model(torch.tensor(x))\\n        predictions = prediction.argmax(-1).numpy() if task_type == 'classification' else prediction[:, 0].numpy()\\n    np.savez(output, ids=ids, predictions=predictions)\\n\\nif __name__ == '__main__':\\n    parser = argparse.ArgumentParser()\\n    commands = parser.add_subparsers(dest='command', required=True)\\n    fit = commands.add_parser('train'); fit.add_argument('--inputs', default='.'); fit.add_argument('--out', required=True); fit.add_argument('--seed', type=int, default=11)\\n    pred = commands.add_parser('infer'); pred.add_argument('--model', required=True); pred.add_argument('--inputs', required=True); pred.add_argument('--out', required=True)\\n    args = parser.parse_args()\\n    if args.command == 'train': train(args.inputs, args.out, args.seed)\\n    else: infer(args.model, args.inputs, args.out)\\n\", \"requirements.lock\": \"aiohappyeyeballs==2.7.1\\naiohttp==3.14.5\\naiosignal==1.4.0\\nanyio==4.16.0\\nattrs==26.1.0\\nclick==8.5.1\\ncloudpickle==3.1.2\\ndatasets==5.1.0\\ndill==0.4.1\\nfilelock==4.2.9\\nfrozenlist==1.8.0\\nfsspec==2026.7.0\\nh11==0.16.0\\nhf-xet==1.8.0\\nhttpcore2==2.16.0\\nhttpx2==2.16.0\\nhuggingface-hub==2.4.0\\nidna==3.20\\njinja2==3.1.6\\njoblib==1.6.0\\nmarkupsafe==3.0.4\\nmpmath==1.3.0\\nmultidict==7.2.1\\nmultiprocess==0.70.19\\nnarwhals==2.28.0\\nnetworkx==3.7\\nnumpy==2.5.4\\npackaging==26.3\\npandas==3.1.1\\npropcache==0.5.4\\npyarrow==26.0.1\\npython-dateutil==4.0.0\\npyyaml==6.0.3\\nscikit-learn==1.9.1\\nscipy==1.18.1\\nsetuptools==84.2.1\\nsympy==1.14.0\\nthreadpoolctl==3.8.0\\ntorch==2.15.0\\ntqdm==4.70.1\\ntruststore==0.10.5\\ntyping-extensions==4.16.0\\ntzdata==2026.6\\nxxhash==4.0.2\\nyarl==1.25.1\\n\", \"task.json\": \"{\\n  \\\"schema_version\\\": \\\"eidos-task-bundle/0.1\\\",\\n  \\\"task_id\\\": \\\"N01\\\",\\n  \\\"project\\\": \\\"breast_cancer\\\",\\n  \\\"role\\\": \\\"public_development\\\",\\n  \\\"nclasses\\\": 2,\\n  \\\"task_type\\\": \\\"classification\\\",\\n  \\\"inputs\\\": {\\n    \\\"train\\\": {\\n      \\\"shape\\\": [\\n        341,\\n        30\\n      ],\\n      \\\"dtype\\\": \\\"float32\\\"\\n    },\\n    \\\"validation\\\": {\\n      \\\"shape\\\": [\\n        114,\\n        30\\n      ],\\n      \\\"dtype\\\": \\\"float32\\\"\\n    }\\n  },\\n  \\\"metric\\\": \\\"accuracy\\\",\\n  \\\"direction\\\": \\\"maximize\\\",\\n  \\\"denominator\\\": \\\"fixed evaluator input IDs\\\",\\n  \\\"allowed_operations\\\": [\\n    \\\"edit model/trainer\\\",\\n    \\\"train-only preprocessing/augmentation\\\",\\n    \\\"create instruments\\\"\\n  ],\\n  \\\"reference_visibility\\\": \\\"excluded from this investigator bundle; controller only\\\",\\n  \\\"qualification\\\": \\\"see QUALIFICATION_P3.md\\\",\\n  \\\"resource_profile\\\": {\\n    \\\"threads\\\": 1,\\n    \\\"cpu_cores\\\": 1,\\n    \\\"ram_gib_estimate\\\": 2,\\n    \\\"disk_gib_environment_estimate\\\": 4,\\n    \\\"reference_timeout_seconds\\\": 120\\n  },\\n  \\\"investigator_budget\\\": \\\"UNDECIDED\\\",\\n  \\\"answer_schema\\\": \\\"eidos-answer/0.2\\\",\\n  \\\"hashes\\\": {\\n    \\\"answer_schema.py\\\": \\\"a22da0fc4fa56d555fc46f97eb1958f1c270b97449c23b76aabe9fdb84f01c4c\\\",\\n    \\\"brief.md\\\": \\\"de7825bb3bbb3a5e942a3d4b90c250a4e785ffb6634b6b2c6255d10bcaa20209\\\",\\n    \\\"project.py\\\": \\\"575ddc4fb5ad323ac1e7fb312e4508e807f946c18b60923e13b1991172bbacf7\\\",\\n    \\\"requirements.lock\\\": \\\"be1d27623dd05e7d6c630152f4d3c4850786238b28530e9f2a88124027ecec41\\\",\\n    \\\"train.npz\\\": \\\"ed4d89393e550c522df51b79c14687b744a0d631d4c0e2bed4b50ef0b6e07185\\\",\\n    \\\"validation.npz\\\": \\\"5b4d5531fa38373cd86095510a393c569713c8b3b42406aa60f19f93393578c1\\\"\\n  }\\n}\\n\", \"METHOD.md\": \"# Written research method\\n\\n1. Frame a precise question about the supplied model and population. Distinguish\\n   a checkpoint repair, a training recipe, an architecture claim, a mechanism and\\n   transfer; each needs different evidence. Record known exposures and assumptions.\\n2. Before exploring, fix the baseline, useful gain, metric, guardrails, data splits,\\n   analysis unit, seed policy and resource budget from the task. Record unresolved\\n   obligations. Do not lower a success bar after seeing results.\\n3. Import and verify the working baseline first. Check inputs, training and\\n   validation separation, model export/reload and basic behavior. Keep baseline\\n   and parent artifacts immutable; record exact code, configuration and hashes.\\n4. Form a hypothesis with a discriminating test. Change one thing at a time when\\n   diagnosing a cause. Use controls for competing explanations; association alone\\n   does not establish causation. Record failed interventions and actual resources.\\n5. Select one candidate using allowed training/validation feedback. Match training\\n   and tuning allowances in comparisons. Freeze the candidate and recipe before\\n   confirmation; never select from hidden evaluation feedback.\\n6. Confirm independently on held-out data. Recipe and architecture claims need\\n   fresh training initializations; an inherited checkpoint repair alone supports\\n   only a checkpoint-specific statement. Use grouping and uncertainty appropriate\\n   to the data, rather than treating correlated examples as independent projects.\\n7. Report the claim, realized evidence, scope, guardrail results, uncertainty,\\n   costs, deviations and alternative explanations. A reproducible negative or\\n   inconclusive result is useful. Abstain when obligations remain unmet; absence\\n   of an improvement in a bounded search does not establish impossibility.\\n\\nCondensed from the research-method sections of the model research harness design\\n(question and scope; claims and evidence plans; scientific confirmation). This\\ndocument confers no authority to grade your own final claim.\\n\"}",
+      "steering": [],
+      "charter_ref": {
+        "id": "charter:n01-pilot-practical",
+        "digest": "sha256:03e8617f668c1fb63537b1d1f8dc6771f5efd1465257d1ff7f100222a3cbd7f8",
+        "revision": 1
+      },
+      "environment": "default",
+      "investigator": {
+        "model": "openai-compatible:MiniMax-M3.1-Flash",
+        "runtime": "pydantic-ai",
+        "settings": {
+          "base_url": "http://127.0.0.1:52038/v1",
+          "output_mode": "json",
+          "request_timeout": 300,
+          "max_output_tokens": 16384,
+          "max_tokens_per_decision": 262144,
+          "max_requests_per_decision": 8
+        },
+        "max_turns": 10000,
+        "wall_seconds": 1794.831722021103,
+        "context_policy": "context-policy/3",
+        "max_calls_per_turn": 32,
+        "turn_deadline_seconds": 1800,
+        "max_model_calls_per_turn": 32
+      },
+      "model_artifact_id": null,
+      "confirmation_envelope": {}
+    },
+    "needs_input": null,
     "turns": [
       {
         "id": "turn_inv_06e6e82552e9_1",

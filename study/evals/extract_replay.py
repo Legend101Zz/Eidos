@@ -53,8 +53,10 @@ def extract(run_dir, lab_home=None):
     transcript = read_transcript(run_dir)
     events = sorted((row["data"] for row in transcript if row["type"] == "ledger_event"), key=lambda row: row["seq"])
     turns = sorted((row["data"] for row in transcript if row["type"] == "turn"), key=lambda row: row["seq"])
-    state = read_json(run_dir / "investigation_latest.json")
-    deadline = state["body"]["wall"]["deadline_unix"]
+    observed = read_json(run_dir / "investigation_latest.json")
+    states = [row["data"] for row in transcript if row["type"] == "investigation"]
+    state = states[-1] if states else observed
+    deadline = observed["body"]["wall"]["deadline_unix"]
     decisions = {d["body"].get("response_artifact_id"): d for t in turns for d in t.get("decisions", [])}
     artifacts, requests = [], []
     last_usage = None
@@ -112,12 +114,12 @@ def extract(run_dir, lab_home=None):
                     created_at=t["created_at"], ended_at=t.get("ended_at"), spec=t["spec"],
                     stop_reason=(t.get("result") or {}).get("stop_reason"),
                     result=t.get("result"), decisions=t.get("decisions", [])) for t in turns],
-        needs_input=state.get("needs_input") or state.get("labels", {}).get("needs_input"),
+        needs_input=observed.get("needs_input") or observed.get("labels", {}).get("needs_input"),
         needs_input_events=[e for e in events if e["type"] == "investigation.needs_input"],
         receipts=[e for e in events if e["type"] in {
             "model.usage", "decision.accepted", "turn.completed", "incumbent.changed", "note.recorded",
             "investigation.needs_input", "investigation.input_received", "investigation.stopped", "investigation.concluded"}],
-        final_state=state, run_record=record,
+        observed_state=observed, final_state=state, run_record=record,
     )
     if SECRET.search(json.dumps(fixture)):
         raise ValueError("credential-shaped value found in fixture; inspect source before publishing")

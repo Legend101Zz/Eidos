@@ -12,8 +12,8 @@ def inspect_run(run_dir):
     root = Path(run_dir)
     record = read_json(root / "run_record.json")
     rows = read_transcript(root)
-    events = [r["data"] for r in rows if r["type"] == "ledger_event"]
-    turns = [r["data"] for r in rows if r["type"] == "turn"]
+    events = [r["data"] for r in rows if r.get("type") == "ledger_event"]
+    turns = [r["data"] for r in rows if r.get("type") == "turn"]
     state_path = root / "investigation_latest.json"
     state = read_json(state_path) if state_path.exists() else {}
     body = state.get("body") or {}
@@ -29,7 +29,7 @@ def inspect_run(run_dir):
     concluded = bool(conclusion or state.get("status") == "concluded" or concluded_events)
     if record.get("stub") or record.get("arm") == 2:
         concluded = record["status"] == "ok" and (root / "out/answer.json").is_file()
-    locked = any(r["type"] == "note" and r["data"].get("body", {}).get("kind") == "candidate_lock" for r in rows)
+    locked = any(r.get("type") == "note" and r["data"].get("body", {}).get("kind") == "candidate_lock" for r in rows)
     locked = locked or any(e["type"] == "incumbent.changed" for e in events)
     deadline_limits = [e for e in events if e["type"] == "model.usage"
                        and "deadline" in str(e["body"].get("usage", {}).get("limit_reached", "")).lower()]
@@ -80,7 +80,9 @@ def scan_held_out(record, rows, events):
         name = data.get("name", "").lower()
         if name.endswith("/test.npz") or name == "test.npz" or data.get("role") in {"held-out", "heldout", "test"}:
             known.update((event["subject"], data["digest"]))
-    model_facing = [r["data"] for r in rows if r["type"] == "model_response"]
+    model_facing = [r["data"] for r in rows if r.get("type") == "model_response"]
+    if record.get("arm") == 2:
+        model_facing.extend(rows)
     reads = [e["body"].get("usage", {}).get("structured_output", {}).get("reads", [])
              for e in events if e["type"] == "model.usage"]
     model_facing.extend(reads)

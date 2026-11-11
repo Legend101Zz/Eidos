@@ -19,7 +19,7 @@ Use `--lab-home PATH` when the read-only artifact store has moved. The default c
 - `turns` preserves the ordered turn specs, decisions, result, status, timestamps and stop reason. Specs include limits, completion boundaries and exploration state.
 - `needs_input` preserves the terminal input marker, and `needs_input_events` retains its ledger evidence even when an operator stop subsequently clears it.
 - `receipts` retains usage, accepted-decision, turn completion, incumbent, note and investigation terminal events.
-- `final_state` is the complete exported `investigation_latest.json`. `run_record` preserves adapter outcome and accounting.
+- `observed_state` is the complete exported `investigation_latest.json`, retaining the state before operator teardown. `final_state` is the last investigation export in the transcript, falling back to `observed_state` when absent. `run_record` preserves adapter outcome and accounting.
 
 The coordinator replay test belongs in Eidos core's test suite. It loads the JSON fixture, feeds response messages in `requests` order to the scripted fake provider, scales recorded durations to its fake clock and supplies the recorded receipts/state through its test harness. It asserts the corrected conclusion or explicit reasoned abstention and the relevant invariant on the build under test. The fixture captures the historical failure for that assertion. Core replay tests should verify fixture schema versions and consume artifact/message references directly.
 
