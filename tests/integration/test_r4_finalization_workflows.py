@@ -113,7 +113,8 @@ async def test_failed_finalization_is_not_retried_and_has_structured_input_neede
     assert fake.marks[0]['details']['export_receipt'] == {'kind': 'finalization_export_receipt', 'id': wid}
 
 
-async def test_operator_runtime_outcome_waits_without_a_hot_loop(env):  # noqa: F811
+@pytest.mark.parametrize('mode', ['runtime', 'deadline'])
+async def test_operator_runtime_outcome_waits_without_a_hot_loop(env, mode):  # noqa: F811
     class Operator(Recovery):
         @activity.defn(name='enter_finalization')
         async def enter_finalization(self, a):
@@ -124,7 +125,7 @@ async def test_operator_runtime_outcome_waits_without_a_hot_loop(env):  # noqa: 
         async def check_news(self, a):
             return {'news': False}
 
-    fake = Operator('runtime')
+    fake = Operator(mode)
     wid = 'inv-r4-operator-' + uuid.uuid4().hex
     async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
             Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=fake.acts()):
@@ -137,7 +138,8 @@ async def test_operator_runtime_outcome_waits_without_a_hot_loop(env):  # noqa: 
                     break
                 await asyncio.sleep(0.1)
             assert fake.marks[0]['code'] == 'runtime-bounded'
+            assert len(fake.decisions) == (1 if mode == 'runtime' else 0)
             await asyncio.sleep(1.5)
-            assert fake.turns == len(fake.decisions) == len(fake.transitions) == 1
+            assert fake.turns == len(fake.transitions) == 1
         finally:
             await handle.terminate()

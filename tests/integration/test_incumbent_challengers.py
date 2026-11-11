@@ -98,7 +98,7 @@ class Scene:
     def investigation(self, *, limits: dict | None = None, **investigator) -> str:
         return self.cmd("start_investigation", {
             "question": "which recipe is best?", "charter_id": f"charter:s{self.pid}", "environment": "lab",
-            "limits": limits or LIMITS, "investigator": {"runtime": "fixture", "finalization": "operator",
+            "limits": limits or LIMITS, "investigator": {"runtime": "fixture",
                                                          "settings": {"max_tokens_per_decision": 120_000},
                                                          **investigator}})["investigation_id"]
 

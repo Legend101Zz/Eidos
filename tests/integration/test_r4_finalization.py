@@ -164,8 +164,10 @@ def test_exploration_boundary_begins_one_finalization_with_holdback_available(sc
     wall = scene.q('get_investigation', {'investigation_id': inv})['body']['wall']
     monkeypatch.setattr('eidos.application.handlers.investigations.time.time', lambda: wall['deadline_unix'] - 400)
     turn = scene.begin(inv)
-    assert turn['spec']['finalization']['incumbent']['job_id'] == job
-    assert turn['spec']['finalization']['trigger'] == 'wall-holdback'
+    assert 'finalization' not in turn['spec']
+    assert turn['spec']['finalization_phase']['mode'] == 'ordinary'
+    assert turn['spec']['exploration']['incumbent']['job_id'] == job
+    assert turn['spec']['limits']['max_calls'] > 0
     assert turn['spec']['completion']['remaining_seconds'] == 400
     assert turn['spec']['limits']['deadline_seconds'] == 400
     assert 'exploration_deadline_unix' not in turn['spec']['completion']
@@ -237,3 +239,91 @@ def test_finalization_reports_the_exact_lock_when_its_job_predates_the_investiga
     _complete(scene.lab, scene.pid, turn['turn_id'], 'concluded', control)
     claim = scene.q('get_investigation', {'investigation_id': inv})['body']['conclusion']['claim_state']
     assert claim['confirmed'] is False
+
+
+@pytest.mark.parametrize('policy', ['autonomous', 'operator'])
+def test_real_boundary_preserves_ordinary_finalization_across_turns(scene, monkeypatch, policy):
+    inv = scene.investigation(finalization=policy, wall_seconds=1800)
+    scene.rule(inv)
+    job = scene.job(inv, metrics={'accuracy': 0.91}, config={'seed': 11})
+    scene.lock(inv, job)
+    wall = scene.q('get_investigation', {'investigation_id': inv})['body']['wall']
+    monkeypatch.setattr('eidos.application.handlers.investigations.time.time', lambda: wall['deadline_unix'] - 400)
+    admission = scene.cmd('enter_finalization', {'investigation_id': inv, 'trigger': 'exploration-boundary'})
+    assert admission['enabled'] and admission['mode'] == 'ordinary'
+    turn = scene.begin(inv)
+    assert 'finalization' not in turn['spec']
+    assert turn['spec']['finalization_phase']['mode'] == 'ordinary'
+    assert turn['spec']['limits']['max_calls'] > 0
+    assert 'exploration_deadline_unix' not in turn['spec']['completion']
+    accepted = scene.propose(turn['turn_id'], 0, {'rationale': 'reproduce incumbent', 'purpose': 'reproduction',
+        'calls': [{'tool': 'run_component', 'args': {'component_ref': scene.trial,
+            'config': {'split': 'validation', 'seed': 23}}}]})
+    assert accepted['accepted'], accepted
+    scene.finish_turn(turn['turn_id'])
+    next_turn = scene.begin(inv)
+    assert next_turn['spec']['finalization_phase'] == turn['spec']['finalization_phase']
+    assert 'finalization' not in next_turn['spec']
+
+
+@pytest.mark.parametrize('failure_kind', ['child-failure', 'child-timeout', 'coordinator-restarted'])
+def test_abandoned_finalization_is_closed_durably_before_retry_or_restart(scene, failure_kind):
+    inv, job = _locked(scene)
+    _entered(scene, inv)
+    turn = scene.begin(inv)
+    failure = {'error_type': failure_kind, 'message': 'child did not close', 'retryable': True}
+    recovered = scene.cmd('reconcile_finalization', {'investigation_id': inv, 'failure': failure})
+    assert recovered['finalization'] is True
+    shown = scene.q('get_investigation', {'investigation_id': inv})
+    receipt = shown['finalization_export_receipt']
+    assert receipt['incumbent']['job_id'] == job and receipt['investigator_concluded'] is False
+    assert receipt['failure']['error_type'] == failure_kind
+    assert shown['needs_input']['code'] == 'finalization-failed'
+    assert scene.q('get_turn', {'turn_id': turn['turn_id']})['status'] == 'failed'
+    # A new coordinator/worker sees the same terminal recovery, without replaying a model turn.
+    again = scene.cmd('reconcile_finalization', {'investigation_id': inv})
+    assert again == recovered
+    assert scene.cmd('begin_turn', {'investigation_id': inv})['reason'] == 'finalization-exhausted'
+    assert scene.q('get_investigation', {'investigation_id': inv})['finalization_export_receipt'] == receipt
+
+
+def test_finalization_denies_direct_and_transitively_derived_held_out_reads_and_context(lab):
+    import hashlib
+
+    from eidos.client import LabError
+
+    secret = b'{"secret-held-out": [1, 0, 1]}'
+    sc = Scene(lab, held_out={'labels': [hashlib.sha256(secret).hexdigest()]})
+    digest, size = lab.store.put_bytes(secret)
+    held = sc.cmd('register_artifact', {'digest': digest, 'size': size, 'media_type': 'application/json',
+                                      'schema': 'class-predictions/1', 'role': 'input'})['artifact_id']
+    inv, safe = _locked(sc)
+    direct = sc.job(inv, ref=sc.infer, inputs={'predictions': held}, metrics={'secret-direct': 1})
+    derived = sc.job(inv, ref=sc.infer, inputs={'predictions': sc.output(direct)}, metrics={'secret-derived': 1})
+    # The provenance chain can cross the investigation boundary.
+    outside = sc.job(None, ref=sc.infer, inputs={'predictions': sc.output(derived)})
+    _entered(sc, inv)
+    turn = sc.begin(inv)
+    principal = lab.principal(f'inv-{sc.pid}', ['investigator'], [sc.pid])
+    acts = InvestigatorActivities(ShimClient(lab, principal), ShimClient(lab, sc.wf))
+    tools = acts._read_tools(sc.pid, finalization=turn['spec']['finalization'])
+    assert tools['get_job'](safe)['id'] == safe
+    assert tools['inspect_evidence'](sc.output(safe))['available']
+    for aid in [held, sc.output(direct), sc.output(derived), sc.output(outside)]:
+        with pytest.raises(LabError):
+            tools['inspect_evidence'](aid)
+    for jid in [direct, derived, outside]:
+        with pytest.raises(LabError):
+            tools['get_job'](jid)
+    # A guessed id outside the durable evidence allowlist is also denied.
+    unrelated = sc.job(None)
+    with pytest.raises(LabError):
+        tools['get_job'](unrelated)
+    base = {'project_id': sc.pid, 'investigation_id': inv, 'turn_id': turn['turn_id']}
+    _env(1).run(acts.build_context, base)
+    context = sc.q('get_turn', {'turn_id': turn['turn_id']})['context']
+    art = sc.q('get_artifact', {'artifact_id': context['context_artifact_id']})
+    packed = lab.store.path_for(art['digest']).read_text()
+    for forbidden in [direct, derived, 'secret-direct', 'secret-derived', held, sc.output(direct), sc.output(derived)]:
+        assert forbidden not in packed
+    assert safe in packed
