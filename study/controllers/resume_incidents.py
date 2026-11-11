@@ -107,14 +107,47 @@ def dispatch(blocks, runs_root, markers, history, cutoff, run_block, *,
             job.result()
 
 
+def hosted_attempt_state(attempt):
+    """Describe transport evidence without accepting a verdict for the study."""
+    def mapping(path):
+        try:
+            value = json.loads(path.read_bytes())
+        except (OSError, ValueError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    dispatch_receipt = mapping(attempt / "dispatch.json")
+    if type(dispatch_receipt.get("run_id")) is not int or not dispatch_receipt.get("run_tag"):
+        return "dispatch_failed_or_missing_receipt"
+    fetched = mapping(attempt / "fetch.out")
+    grade = mapping(attempt / "result" / "grade.json")
+    if not fetched or fetched != grade:
+        return "fetch_failed_or_missing_receipt"
+    if (grade.get("run_tag") != dispatch_receipt["run_tag"]
+            or not dispatch_receipt.get("candidate_sha256")
+            or grade.get("candidate_sha256") != dispatch_receipt["candidate_sha256"]):
+        return "fetch_receipt_identity_mismatch"
+    if grade.get("grading_status") == "incident" or grade.get("status") == "incident":
+        return "hosted_grader_incident"
+    if grade.get("grading_status") not in ("scored", "candidate_failure"):
+        return "unrecognized_grading_status"
+    return "hosted_receipt_observed_pending_reconciliation"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("list", "dispatch", "cutoff"))
+    parser.add_argument("command", choices=("list", "dispatch", "cutoff", "hosted-attempt-state"))
     parser.add_argument("--pilot", type=Path)
     parser.add_argument("--history", type=Path)
+    parser.add_argument("--attempt", type=Path)
     args = parser.parse_args()
     if args.command == "cutoff":
         print(CUTOFF)
+        return
+    if args.command == "hosted-attempt-state":
+        if args.attempt is None:
+            parser.error("hosted-attempt-state requires --attempt")
+        print(hosted_attempt_state(args.attempt))
         return
     if args.pilot is None or (args.command == "dispatch" and args.history is None):
         parser.error("list and dispatch require --pilot, and dispatch requires --history")

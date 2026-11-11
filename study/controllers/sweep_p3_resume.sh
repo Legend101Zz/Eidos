@@ -48,11 +48,15 @@ while :; do
       echo "$(date '+%H:%M:%S') sweep graded $B: $(command grep "GRADE $B" "$LOG" | tail -4 | sed 's/GRADE //' | tr '\n' ';')" | tee -a "$LOG" >> "$P/drive-astra-resume.log"
     fi
     if [ -f "$P/.hosted-ok" ] && [ ! -f "$P/sweep-hosted/$B" ]; then
-      touch "$P/sweep-hosted/$B"
+      printf 'dispatch attempts reserved\n' > "$P/sweep-hosted/$B" || continue
       ( for ARM in 1 2 3 4; do
           [ -f "$P/runs/$B/arm$ARM/out/answer.json" ] || continue
-          "$HOME/eidos-internal/bin/regrade-gh.sh" "$P/runs" "$P/github-sweep" "$B" "$ARM" p3s >> "$LOG" 2>&1
-        done; echo "$(date '+%H:%M:%S') hosted done $B" >> "$LOG" ) &
+          helper_exit=0
+          "$HOME/eidos-internal/bin/regrade-gh.sh" "$P/runs" "$P/github-sweep" "$B" "$ARM" p3s >> "$LOG" 2>&1 || helper_exit=$?
+          state=$("$RP" -m study.controllers.resume_incidents hosted-attempt-state \
+            --attempt "$P/github-sweep/$B/arm$ARM") || state=receipt_inspection_failed
+          echo "$(date '+%H:%M:%S') hosted attempt $B arm$ARM helper_exit=$helper_exit state=$state" >> "$LOG"
+        done; echo "$(date '+%H:%M:%S') hosted attempt batch returned $B; reconciliation pending" >> "$LOG" ) &
     fi
   done
   [ "$driver_done" -eq 0 ] || { wait; echo "$(date '+%H:%M:%S') SWEEP DONE" >> "$LOG"; exit 0; }

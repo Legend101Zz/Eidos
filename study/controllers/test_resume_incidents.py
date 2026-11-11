@@ -152,6 +152,28 @@ class AdmissionTests(unittest.TestCase):
             future.result(timeout=5)
         self.assertCountEqual(self.admitted, ["N01-r1", "N01-r2"])
 
+    def test_hosted_attempt_states_distinguish_receipts_from_completion(self):
+        attempt = self.root / "hosted"
+        result = attempt / "result"
+        result.mkdir(parents=True)
+        classify = resume.hosted_attempt_state
+        self.assertEqual(classify(attempt), "dispatch_failed_or_missing_receipt")
+        receipt = {"run_tag": "tag", "candidate_sha256": "digest"}
+        (attempt / "dispatch.json").write_text(json.dumps({**receipt, "run_id": 1}))
+        self.assertEqual(classify(attempt), "fetch_failed_or_missing_receipt")
+        grade = {**receipt, "grading_status": "incident", "status": "crash"}
+        (result / "grade.json").write_text(json.dumps(grade))
+        self.assertEqual(classify(attempt), "fetch_failed_or_missing_receipt")
+        (attempt / "fetch.out").write_text(json.dumps(grade))
+        self.assertEqual(classify(attempt), "hosted_grader_incident")
+        grade["grading_status"] = "scored"
+        for path in (attempt / "fetch.out", result / "grade.json"):
+            path.write_text(json.dumps(grade))
+        self.assertEqual(classify(attempt), "hosted_receipt_observed_pending_reconciliation")
+        for path in (attempt / "fetch.out", result / "grade.json"):
+            path.write_text(json.dumps({**grade, "candidate_sha256": "wrong"}))
+        self.assertEqual(classify(attempt), "fetch_receipt_identity_mismatch")
+
     def test_design_refuses_changed_bytes(self):
         path = self.root / "design.json"
         path.write_text("[]")
