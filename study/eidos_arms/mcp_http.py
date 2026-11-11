@@ -49,7 +49,9 @@ class Session:
             state = json.loads(self.state_path.read_text())
         except (OSError, ValueError):
             return None
-        return state.get('session_id') if state.get('owner') == self._owner else None
+        if not isinstance(state, dict) or state.get('owner') != self._owner:
+            return None
+        return state.get('session_id') if isinstance(state.get('session_id'), str) else None
 
     def _save(self):
         if not self.state_path:

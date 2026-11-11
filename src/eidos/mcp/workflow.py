@@ -191,6 +191,11 @@ def validate_batch(calls: Any, investigation_id: str | None, client: Any = None,
             validate_args(spec, {**probe, "project": "p", **({"command_key": "k"} if spec.mutating else {})})
         except ToolFailure as exc:
             raise WorkflowFailure("INVALID_BATCH", f"{where} ({tool}): {exc.message}", details={"call": i}) from exc
+        if tool == "upload_source" and not iter_has_ref(args.get("files")):
+            try:
+                source_bundle(args.get("files"))  # refused here, before any effect, as a single upload_source call is
+            except WorkflowFailure as exc:
+                raise WorkflowFailure("INVALID_BATCH", f"{where} ({tool}): {exc.message}", details={"call": i}) from exc
         if client is not None and not iter_has_ref(args.get("config")):
             cfg, cfg_changes = _normalize_config(client, spec, {**args, "project": project})
             if cfg_changes:
