@@ -274,16 +274,15 @@ def mark_needs_input(ctx: Ctx, p: dict) -> dict:
     inv = ctx.tx.require("investigation", p["investigation_id"], lock=True)
     if inv.body.get("controller_abstention"):
         return {"investigation_id": inv.id, "controller_abstention": inv.body["controller_abstention"]}
-    if p.get("terminal") and inv.status == "active" and inv.body["investigator"].get("finalization") != "operator":
-        incumbent = exploration.final_incumbent(ctx, inv)
-        details = p.get("details") or {}
-        failure = _bounded_details(redact_value(details.get("failure")))
-        terminal_provider = code == "provider-unavailable" or (failure.get("provider") or {}).get("status") == 429
-        non_retryable = code == "turn-failed" and failure.get("retryable") is False
-        if (incumbent and incumbent.get("job_id")) or terminal_provider or non_retryable:
+    if p.get("terminal"):
+        if inv.status != "active":
+            return {"investigation_id": inv.id, "already": True}
+        if inv.body["investigator"].get("finalization") != "operator":
+            details = p.get("details") or {}
             abstention = _record_controller_abstention(
                 ctx, inv, code=code, reason=str(p.get("reason", ""))[:300],
-                failure=failure, incumbent=incumbent)
+                failure=_bounded_details(redact_value(details.get("failure") or details)),
+                incumbent=exploration.final_incumbent(ctx, inv))
             return {"investigation_id": inv.id, "controller_abstention": abstention}
     if (inv.labels or {}).get("needs_input"):
         # F5 (A1): every needs-input wait gets its own cursor. An operator event that ended an earlier wait without
@@ -520,9 +519,9 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
         finalization = None  # explicit resume does not grant another bounded recovery
     if "turns" in budgets:
         remaining_turns = budgets["turns"]["limit_amount"] - budgets["turns"]["used"] - budgets["turns"]["reserved"]
-        if remaining_turns < 1 and finalization:
+        if remaining_turns < 1:
             _fail_pending_finalization(ctx, inv, "turn-budget-exhausted")
-            return {"started": False, "reason": "budget-exhausted", "dimension": "turns"}
+            return {"started": False, "reason": "turn-budget-exhausted", "dimension": "turns"}
         ctx.tx.reserve(inv_scope(inv.id), "turns", 1, f"turn:{inv.id}:{seq}")
     tid = f"turn_{inv.id}_{seq}"
     spec = {

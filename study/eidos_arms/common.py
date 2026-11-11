@@ -223,17 +223,22 @@ def classify(shown, receipts, models, timed_out=False, answer_valid=True):
     # Admission/closure can emit zero-call bookkeeping after the last provider request.
     last = next((r for r in reversed(receipts) if r.get('calls') or r.get('failed_request') or r.get('error')), {})
     controller = (shown.get('body') or {}).get('controller_abstention') or {}
-    provider = (controller.get('failure') or {}).get('provider') or {}
+    terminal = controller.get('failure') or {}
+    terminal_cause = terminal.get('error_type') or terminal.get('reason')
+    provider = terminal.get('provider') or {}
     provider_failure = (
         controller.get('code') == 'provider-unavailable' or
         provider.get('status') == 429 or
         bool(last.get('failed_request') or last.get('error')) and _provider_incident(last, timed_out)
     )
-    if timed_out:
+    if timed_out or terminal_cause == 'wall-deadline-reached':
         return 'timeout', None
-    if any(t.get('stop_reason') == 'budget-exhausted' for t in shown.get('turns', [])) or (
+    if terminal_cause == 'budget-exhausted' or any(
+            t.get('stop_reason') == 'budget-exhausted' for t in shown.get('turns', [])) or (
             'budget-exhausted' in str(shown.get('needs_input', ''))):
         return 'token_budget', None
+    if terminal_cause in {'max-turns-reached', 'turn-budget-exhausted'}:
+        return 'crash', 'investigation turn limit reached: ' + terminal_cause
     # Scientific completion is determined by the final state and exported answer,
     # not by recovered request/turn errors. A controller fallback alone is not a conclusion.
     if shown.get('status') == 'concluded':

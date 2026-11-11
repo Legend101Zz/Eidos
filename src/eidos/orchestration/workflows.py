@@ -51,7 +51,7 @@ BATCH_POLL_SECONDS = 2
 BATCH_FINAL_MARGIN_SECONDS = 120
 FAILED_TURN_BACKOFF_SECONDS = 60
 MAX_FAILED_TURN_BACKOFF_SECONDS = 900
-TERMINAL_REASONS = ("concluded", "budget-exhausted", "max-turns-reached", "stopped", "investigation is stopped",
+TERMINAL_REASONS = ("concluded", "budget-exhausted", "turn-budget-exhausted", "max-turns-reached", "stopped", "investigation is stopped",
                     "investigation is concluded", "finalization-exhausted", WALL_REACHED)
 
 
@@ -154,9 +154,7 @@ class InvestigationWorkflow:
                 return
 
     async def _surface_end(self, a: dict, inv: str, counter: int, reason: str) -> bool:
-        """The coordinator stops on its own (budget or turn limit, repeated failures) while the investigation is
-        still active: record that it needs the operator (visible label and event). The reconciler then leaves it
-        alone instead of restarting a coordinator that would only stop again (G5 live run)."""
+        """Record why the coordinator reached a terminal limit before it exits."""
         if not workflow.patched("terminal-outcome-needs-input-v1"):
             return False
         terminal = workflow.patched("terminal-controller-abstention-v1")
@@ -164,7 +162,7 @@ class InvestigationWorkflow:
             "mark_needs_input", {"investigation_id": inv, "project_id": a["project_id"], "turn_counter": counter,
                                  "reason": f"coordinator stopped: {reason}" if terminal else
                                            f"coordinator stopped: {reason}; steer or resume to continue (limits are fixed at start), or stop",
-                                 **({"terminal": True} if terminal else {})},
+                                 **({"terminal": True, "details": {"failure": {"error_type": reason}}} if terminal else {})},
             task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
         return bool((marked or {}).get("controller_abstention"))
 
@@ -360,7 +358,7 @@ class InvestigationWorkflow:
                 return {"status": "needs_input", "reason": "finalization-failed", "turn_counter": counter}
             if reason in TERMINAL_REASONS or reason.startswith("investigation is stopped") or reason == "max-turns-reached":
                 self._status = "finished"
-                if reason in ("budget-exhausted", "max-turns-reached", WALL_REACHED) and await self._surface_end(a, inv, counter, reason):
+                if reason in ("budget-exhausted", "turn-budget-exhausted", "max-turns-reached", WALL_REACHED) and await self._surface_end(a, inv, counter, reason):
                     self._status = "controller abstained"
                     return {"status": "abstained", "reason": "controller-abstained", "turn_counter": counter}
                 return {"status": "finished", "reason": reason, "turn_counter": counter}

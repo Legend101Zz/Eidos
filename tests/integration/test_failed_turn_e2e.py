@@ -189,11 +189,12 @@ async def until(what: str, probe, timeout: float = 55.0, every: float = 0.3):
 
 
 @contextlib.asynccontextmanager
-async def running(env, lab, prov: FakeProvider, *, investigator_options=None, **workflow_args):
+async def running(env, lab, prov: FakeProvider, *, investigator_options=None, investigation_limits=None, **workflow_args):
     """Start the real investigation coordinator against ``prov`` and terminate it at the end."""
     pid, _, _ = setup(lab)  # project, environment, component and charter of the turn-recovery tests
     inv = lab.cmd(lab.admin, "start_investigation", {
-        "question": "q", "charter_id": f"charter:s{pid}", "limits": {"model_tokens": 1e6, "trials": 100},
+        "question": "q", "charter_id": f"charter:s{pid}",
+        "limits": {"model_tokens": 1e6, "trials": 100, **(investigation_limits or {})},
         "investigator": {"runtime": "pydantic-ai", "model": "openai-compatible:fake", "finalization": "operator",
                          "settings": {"max_tokens_per_decision": 120_000},
                          **(investigator_options or {})}}, project=pid)["result"]["investigation_id"]
@@ -466,3 +467,40 @@ async def test_default_terminal_non_retryable_provider_before_any_lock_abstains(
         assert abstention["failure"]["provider"]["kind"] == kind
         assert abstention["investigator_concluded"] is False
         assert fake.count == 1 and not run.events("investigation.turn_retry_scheduled")
+
+
+async def test_default_no_lock_abstains_after_retryable_failure_exhausts_its_retries(env, lab, provider):
+    unavailable = error_reply(503)
+    fake = provider([], unavailable)
+    async with running(env, lab, fake, investigator_options={"finalization": "autonomous"}) as run:
+        result = await asyncio.wait_for(run.handle.result(), 45)
+        assert result["status"] == "abstained" and result["reason"] == "controller-abstained"
+        shown = run.view()
+        assert shown["status"] == "stopped" and shown["needs_input"] is None
+        abstention = shown["body"]["controller_abstention"]
+        assert abstention["incumbent"] is None and abstention["code"] == "turn-failed"
+        assert abstention["failure"]["retryable"] is True
+        assert abstention["failure"]["provider"]["status"] == 503 and abstention["investigator_concluded"] is False
+        assert len(run.events("investigation.turn_retry_scheduled")) == MAX_FAILED_TURN_RETRIES
+        assert run.stop_reasons() == ["error"] * (MAX_FAILED_TURN_RETRIES + 1)
+        assert fake.count == 3 * (MAX_FAILED_TURN_RETRIES + 1)
+
+
+@pytest.mark.parametrize(("options", "limits", "cause"), [
+    ({"max_turns": 0}, {}, "max-turns-reached"),
+    ({}, {"turns": 0}, "turn-budget-exhausted"),
+    ({}, {"model_tokens": 0}, "budget-exhausted"),
+    ({"wall_seconds": 0.00001}, {}, "wall-deadline-reached"),
+])
+async def test_default_hard_limit_before_first_turn_abstains_with_exact_cause(env, lab, provider, options, limits, cause):
+    fake = provider([], decision_reply(ASK))
+    async with running(env, lab, fake, investigator_options={"finalization": "autonomous", **options},
+                       investigation_limits=limits) as run:
+        result = await asyncio.wait_for(run.handle.result(), 20)
+        assert result["status"] == "abstained" and result["reason"] == "controller-abstained"
+        shown = run.view()
+        assert shown["status"] == "stopped" and shown["needs_input"] is None
+        abstention = shown["body"]["controller_abstention"]
+        assert abstention["incumbent"] is None and abstention["code"] == "coordinator-stopped"
+        assert abstention["failure"]["error_type"] == cause and abstention["investigator_concluded"] is False
+        assert not shown["turns"] and fake.count == 0

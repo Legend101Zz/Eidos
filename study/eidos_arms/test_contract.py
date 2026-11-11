@@ -66,6 +66,19 @@ class Receipts(unittest.TestCase):
         self.assertEqual(classify({'status': 'stopped'}, [usage], [])[0], record['source']['recorded_outcome'])
 
 
+    def test_terminal_controller_limits_preserve_distinct_study_outcomes(self):
+        provider_receipts = [{'error': 'HTTP 429'}]
+        for cause, expected in (('budget-exhausted', 'token_budget'), ('wall-deadline-reached', 'timeout'),
+                                ('max-turns-reached', 'crash'), ('turn-budget-exhausted', 'crash')):
+            with self.subTest(cause=cause):
+                shown = {'status': 'stopped', 'turns': [], 'body': {'controller_abstention': {
+                    'author': 'controller', 'code': 'coordinator-stopped',
+                    'investigator_concluded': False, 'failure': {'error_type': cause}}}}
+                self.assertEqual(classify(shown, provider_receipts, [])[0], expected)
+        shown['body']['controller_abstention']['failure'] = {'kind': 'finalization-incomplete', 'reason': 'deadline'}
+        self.assertEqual(classify(shown, [], [])[0], 'crash')
+
+
 class Selection(unittest.TestCase):
     def setUp(self):
         self.jobs = {}
