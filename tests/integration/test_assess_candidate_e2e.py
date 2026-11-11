@@ -42,6 +42,7 @@ from test_f5_turn_authorization import RUN_A
 from test_f5c_ticket_and_handoff import _accept, _begin_turn
 from test_f5d_conclude_race import _complete
 
+from eidos.domain.assessment import REPORT_REF
 from eidos.domain.errors import Invalid
 
 pytestmark = pytest.mark.pg
@@ -787,3 +788,109 @@ def test_an_exploratory_refusal_can_still_be_concluded_as_a_submitted_candidate(
     assert state["point_estimate"]["source"] == "investigator" and state["point_estimate"]["value"] == pytest.approx(0.15)
     assert state["unfulfilled_obligations"]
     assert any("held-out" in o for o in state["unfulfilled_obligations"])
+
+
+# =====================================================================================================================
+# 15. R13: the freeze boundary covers manual plans too, and the pinned state and lock formats match it
+# =====================================================================================================================
+def _read_the_labels(scene: Scene, baseline: str, candidate: str, **extra) -> str:
+    """An exploratory report over the attested labels: anything it returns has been seen before a plan is frozen."""
+    flow = scene.flow
+    return scene.cmd("run_component", {
+        "component_ref": REPORT_REF, "environment": "lab", "isolation_profile": "dev:same-user",
+        "inputs": {"baseline": flow.output(flow.job(baseline), "predictions")[0],
+                   "candidate": flow.output(flow.job(candidate), "predictions")[0], "labels": scene.labels},
+        "config": {"role": "baseline", "cluster": "11"}, **extra})["job_id"]
+
+
+def test_a_manual_plan_over_labels_already_used_for_selection_is_refused_at_freeze(scene):
+    baseline, candidate = scene.job(BASELINE_RECIPE), scene.job(CANDIDATE_RECIPE)
+    peek = _read_the_labels(scene, baseline, candidate)
+    plan_id = scene.draft_plan(scene.fresh_draft(baseline, candidate))
+    with pytest.raises(Invalid) as err:
+        scene.cmd("freeze_evidence_plan", {"plan_id": plan_id})
+    assert err.value.details["reason_code"] == "selection-exposed" and err.value.details["jobs"] == [peek]
+    assert scene.record("evidence_plan", plan_id)["status"] == "draft"
+
+
+def test_a_manual_plan_rerunning_a_recipe_and_seed_already_seen_is_refused_at_freeze(scene):
+    baseline, candidate = scene.job(BASELINE_RECIPE), scene.job(CANDIDATE_RECIPE)
+    plan_id = scene.draft_plan(scene.fresh_draft(baseline, candidate, seeds=[SEED]))
+    with pytest.raises(Invalid) as err:
+        scene.cmd("freeze_evidence_plan", {"plan_id": plan_id})
+    assert err.value.details["reason_code"] == "seed-already-observed" and err.value.details["seeds"] == [SEED]
+    assert set(err.value.details["jobs"]) == {baseline, candidate}
+    assert scene.record("evidence_plan", plan_id)["status"] == "draft"
+
+
+def test_a_manual_plan_on_fresh_data_and_fresh_seeds_still_freezes_eligible(scene):
+    baseline, candidate = scene.job(BASELINE_RECIPE), scene.job(CANDIDATE_RECIPE)
+    plan_id = scene.draft_plan(scene.fresh_draft(baseline, candidate))
+    scene.cmd("freeze_evidence_plan", {"plan_id": plan_id})
+    plan = scene.record("evidence_plan", plan_id)
+    assert plan["status"] == "frozen" and plan["body"]["confirmation"]["eligible"] is True
+
+
+def test_labels_an_exploratory_plan_already_read_cannot_be_confirmed_through_assess_candidate(scene):
+    baseline, candidate = scene.job(BASELINE_RECIPE), scene.job(CANDIDATE_RECIPE)
+    draft = scene.fresh_draft(baseline, candidate)
+    del draft["data_provenance"]  # exploratory: it claims no data, so it reserves none, but its jobs read the labels
+    exploratory = scene.launch_plan(draft)
+    scene.run_plan_and_assess(exploratory)
+    claims = scene.claims()
+    receipt = scene.assess_candidate(scene.request(baseline, candidate, seeds=[31]))
+    assert receipt["status"] == "refused" and receipt["exploratory"] is True, receipt
+    (reason,) = [r for r in receipt["reasons"] if r["code"] == "selection-exposed"]
+    assert reason["details"]["jobs"] and scene.claims() == claims
+
+
+def test_the_view_pins_an_exploratory_pass_as_a_submitted_candidate(scene):
+    baseline, candidate = scene.job(BASELINE_RECIPE), scene.job(CANDIDATE_RECIPE)
+    inv = scene.investigation()
+    claim_id, _ = _file_claim(scene, inv)
+    draft = scene.fresh_draft(baseline, candidate)
+    del draft["data_provenance"]
+    plan_id = scene.launch_plan(draft, claim_id=claim_id, investigation_id=inv)
+    assessment = scene.run_plan_and_assess(plan_id)
+    assert assessment["evaluation"]["outcome"] == "protocol-passed"
+    state = scene.q("investigation_view", {"investigation_id": inv, "horizon": 0})["claim_state"]
+    assert state["state"] == "candidate-submitted" and state["confirmed"] is False and state["plan_id"] == plan_id
+
+
+def test_the_view_does_not_carry_an_assessment_over_to_a_revised_claim(scene):
+    baseline, candidate = scene.job(BASELINE_RECIPE), scene.job(CANDIDATE_RECIPE)
+    inv = scene.investigation()
+    claim_id, revision = _file_claim(scene, inv)
+    plan_id = scene.launch_plan(scene.fresh_draft(baseline, candidate), claim_id=claim_id, investigation_id=inv)
+    scene.run_plan_and_assess(plan_id)
+    assert scene.q("investigation_view", {"investigation_id": inv, "horizon": 0})["claim_state"]["state"] == "protocol-passed"
+    scene.cmd("file_claim", {"claim_id": claim_id, "supersedes_revision": revision, "investigation_id": inv, **CLAIM,
+                             "kind": "improves"})
+    state = scene.q("investigation_view", {"investigation_id": inv, "horizon": 0})["claim_state"]
+    assert state["state"] == "candidate-submitted" and state["assessment_id"] is None
+
+
+def _note(scene: Scene, inv: str, text: str, refs: list | None = None) -> None:
+    scene.cmd("record_note", {"investigation_id": inv, "kind": "candidate_lock", "text": text,
+                              **({"evidence_refs": refs} if refs is not None else {})})
+
+
+@pytest.mark.parametrize("refs", [lambda job: [job], lambda job: [{"job_id": job}, "art_context"]])
+def test_a_natural_language_lock_naming_one_job_in_evidence_refs_can_be_assessed(scene, refs):
+    baseline, candidate = scene.job(BASELINE_RECIPE), scene.job(CANDIDATE_RECIPE)
+    inv = scene.investigation()
+    _note(scene, inv, "two features beat one on validation, so this is my candidate", refs(candidate))
+    receipt = scene.assess_candidate(scene.request(baseline, candidate, investigation_id=inv))
+    assert receipt["status"] == "launched", receipt
+
+
+def test_a_natural_language_lock_with_no_single_job_is_refused_with_the_format(scene):
+    baseline, candidate = scene.job(BASELINE_RECIPE), scene.job(CANDIDATE_RECIPE)
+    inv = scene.investigation()
+    _note(scene, inv, f"my candidate is {candidate}")  # a prose mention identifies nothing
+    _note(scene, inv, "either of these", [baseline, candidate])
+    claims = scene.claims()
+    receipt = scene.assess_candidate(scene.request(baseline, candidate, investigation_id=inv))
+    scene.assert_refused(receipt, "candidate-not-locked", claims=claims)
+    message = next(r["message"] for r in receipt["reasons"] if r["code"] == "candidate-not-locked")
+    assert '{"job_id"' in message and "evidence_refs" in message

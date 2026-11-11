@@ -9,7 +9,6 @@ a receipt with ``status: refused`` and its reasons.
 from __future__ import annotations
 
 import copy
-import json
 import uuid
 from typing import Any
 
@@ -32,6 +31,10 @@ REQUEST_FIELDS = ("success_rule_id", "charter_id", "claim_id", "baseline", "cand
 
 # A refusal for one of these leaves the candidate exploratory: it is still submitted for confirmation at the conclusion.
 EXPLORATORY_REASONS = ("selection-data", "selection-exposed", "provenance-required", "held-out-unattested")
+
+
+NO_LOCK_MESSAGE = ("no candidate_lock note names a job; before assessing, record_note kind 'candidate_lock' with text "
+                   "{\"job_id\": \"<selected training job>\"}, or any text with exactly one job in evidence_refs")
 
 
 class _StepBlocked(Invalid):
@@ -95,15 +98,13 @@ def _claim_problem(ctx: Ctx, p: dict) -> dict[str, Any] | None:
 
 
 def _candidate_lock(ctx: Ctx, inv_id: str) -> dict[str, Any] | None:
-    """The job named by the investigation's latest ``candidate_lock`` note; ``{}`` when no note names a job."""
+    """The job named by the investigation's latest ``candidate_lock`` note that identifies one (R13: JSON text, or exactly
+    one job in evidence_refs); None when no note does."""
     notes = [n for n in ctx.tx.list_records(ctx.project_id, "note", parent_id=inv_id, limit=100000)
              if n.body.get("kind") == "candidate_lock"]
     for note in sorted(notes, key=lambda n: n.created_at, reverse=True):
-        try:
-            jid = json.loads(note.body.get("text") or "")["job_id"]
-        except (ValueError, KeyError, TypeError):
-            continue
-        job = ctx.tx.get_job(jid)
+        jid = rules.candidate_lock_job_id(note.body)
+        job = ctx.tx.get_job(jid) if jid else None
         if job and job["project_id"] == ctx.project_id:
             return job
     return None
@@ -115,8 +116,7 @@ def _recipe_jobs(ctx: Ctx, p: dict, seeds: list[str], slot: str, inv_id: str | N
     seeds are new for that recipe. The jobs themselves are never evidence: their results are already visible."""
     locked = _candidate_lock(ctx, inv_id) if inv_id else None
     if inv_id and locked is None:
-        reasons.append(rules.reason("candidate-not-locked", "no candidate_lock note names a job; record_note kind "
-                                    "'candidate_lock', text {\"job_id\": \"<selected training job>\"}, before assessing"))
+        reasons.append(rules.reason("candidate-not-locked", NO_LOCK_MESSAGE))
     recipes: dict[str, dict[str, Any]] = {}
     known = [j["lock"] for j in ctx.tx.list_jobs(ctx.project_id, limit=100000)]
     for role in rules.ROLES:
@@ -219,8 +219,7 @@ def _check_locked_recipe(ctx: Ctx, spec: dict, inv_id: str, train_ref: str | Non
     """The submitted train/evaluate candidate must be the recipe the investigation locked."""
     locked = _candidate_lock(ctx, inv_id)
     if locked is None:
-        reasons.append(rules.reason("candidate-not-locked", "no candidate_lock note names a job; record_note kind "
-                                    "'candidate_lock', text {\"job_id\": \"<selected training job>\"}, before assessing"))
+        reasons.append(rules.reason("candidate-not-locked", NO_LOCK_MESSAGE))
         return
     candidate = spec.get("candidate")
     if isinstance(candidate, dict) and candidate.get("post"):
@@ -387,10 +386,14 @@ def _assessment_view(a: Any) -> dict[str, Any]:
             "remaining_alternatives": a.body.get("remaining_alternatives") or []}
 
 
-def conclusion_claim_state(ctx: Ctx, inv: Any, control: dict[str, Any]) -> dict[str, Any]:
-    """Build the claim state of a conclusion from the investigation's recorded claims, plans and assessments."""
+def conclusion_claim_state(ctx: Ctx, inv: Any, control: dict[str, Any], *, cutoff_ts: Any = None) -> dict[str, Any]:
+    """Build the claim state of a conclusion from the investigation's recorded claims, plans and assessments. With
+    ``cutoff_ts``, the state as of that moment (the pinned candidate state of a historical view uses the same rules)."""
+    def visible(rec: Any) -> bool:
+        return cutoff_ts is None or rec.created_at <= cutoff_ts
+
     records = sorted((c for c in ctx.tx.list_records(ctx.project_id, "claim", limit=100000)
-                      if c.body.get("investigation_id") == inv.id), key=lambda c: c.created_at)
+                      if c.body.get("investigation_id") == inv.id and visible(c)), key=lambda c: c.created_at)
     claims = [{"id": c.id, "revision": c.revision, "statement": c.body.get("statement"), "scope": c.body.get("scope")}
               for c in records]
     claim_ids = {c["id"] for c in claims}
@@ -398,10 +401,11 @@ def conclusion_claim_state(ctx: Ctx, inv: Any, control: dict[str, Any]) -> dict[
               "claim_id": (pl.body.get("claim_ref") or {}).get("id"), "data_provenance": pl.body.get("data_provenance"),
               "confirmation": pl.body.get("confirmation")}
              for pl in ctx.tx.list_records(ctx.project_id, "evidence_plan", limit=100000)
-             if pl.body.get("investigation_id") == inv.id]
+             if pl.body.get("investigation_id") == inv.id and visible(pl)]
     plan_ids = {p["plan_id"] for p in plans}
     assessments = sorted((a for a in ctx.tx.list_records(ctx.project_id, "assessment", limit=100000)
-                          if (a.body.get("claim_ref") or {}).get("id") in claim_ids or a.body.get("plan_id") in plan_ids),
+                          if ((a.body.get("claim_ref") or {}).get("id") in claim_ids or a.body.get("plan_id") in plan_ids)
+                          and visible(a)),
                          key=lambda a: a.created_at)
     ref = inv.body.get("charter_ref") or {}
     charter = ctx.tx.get_record("charter", ref["id"], ref.get("revision")) if ref.get("id") else None

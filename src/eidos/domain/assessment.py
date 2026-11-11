@@ -14,6 +14,7 @@ confirmation"). ``fresh_classification_draft`` freezes the two recipes, seeds, d
 
 from __future__ import annotations
 
+import json
 import math
 from typing import Any
 
@@ -123,6 +124,22 @@ def fresh_initialization_problem(lock: dict[str, Any]) -> str | None:
     if (lock.get("config") or {}).get("branch"):
         return "it branched from a parent trial"
     return None
+
+
+def candidate_lock_job_id(note: dict[str, Any]) -> str | None:
+    """The job a ``candidate_lock`` note names: ``job_id`` in its JSON text, else the single job in its evidence_refs (a
+    string ``job_...`` or ``{"job_id": ...}``). None when the note does not identify exactly one job."""
+    try:
+        named = json.loads(note.get("text") or "")
+    except (ValueError, TypeError):
+        named = None
+    if isinstance(named, dict) and isinstance(named.get("job_id"), str) and named["job_id"]:
+        return str(named["job_id"])
+    refs = note.get("evidence_refs")
+    ids = {ref.get("job_id") if isinstance(ref, dict) else ref for ref in refs if isinstance(ref, (str, dict))} \
+        if isinstance(refs, list) else set()
+    jobs = {i for i in ids if isinstance(i, str) and i.startswith("job_")}
+    return jobs.pop() if len(jobs) == 1 else None
 
 
 def job_seed(lock: dict[str, Any]) -> str | None:

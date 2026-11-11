@@ -225,3 +225,109 @@ def test_a_digest_that_is_not_a_known_result_is_not_refused():
     other = {"schema": "dataset/1", "digest": "sha256:inputs"}
     result = status(make_plan(extra="art_inputs"), artifacts={"art_inputs": other}, results={"sha256:elsewhere"})
     assert result["eligible"] is True
+
+
+# -- prior use at the freeze boundary (R13): selection evidence cannot become confirmation -------------------------------
+def prior_job(job_id="job_seen", *, purpose="open-search", inputs=None, config=None, component="eidos.pytorch.train", seed=None):
+    return {"id": job_id, "purpose": purpose,
+            "lock": {"component": {"ref": component}, "inputs": inputs or {}, "config": config or {}, "seed": seed}}
+
+
+def check(plan, jobs, *, artifacts=None):
+    known = {LABELS_ART: LABELS_ROW, **(artifacts or {})}
+    verdict = ev.confirmation_status(plan, charter=CHARTER, artifacts=known, result_digests=set())
+    assert verdict["eligible"] is True
+    ev.check_prospective(plan, status=verdict, artifacts=known, jobs=jobs)
+
+
+def refusal(plan, jobs, *, artifacts=None):
+    with pytest.raises(Invalid) as err:
+        check(plan, jobs, artifacts=artifacts)
+    return err.value.details
+
+
+READ_LABELS = {"labels": {"digest": LABELS_DIGEST}}
+
+
+def test_attested_labels_an_exploratory_job_already_read_are_refused_as_selection_data():
+    details = refusal(make_plan(), [prior_job(inputs=READ_LABELS)])
+    assert details["reason_code"] == "selection-exposed" and details["jobs"] == ["job_seen"]
+
+
+def test_labels_read_by_a_job_of_an_earlier_exploratory_plan_are_refused_though_its_purpose_is_confirmation():
+    details = refusal(make_plan(), [prior_job(purpose="confirmation", inputs=READ_LABELS)])
+    assert details["reason_code"] == "selection-exposed"
+
+
+def test_an_attested_split_an_earlier_job_already_evaluated_is_refused_as_selection_data():
+    plan = make_plan(labels=None, split="final")
+    details = refusal(plan, [prior_job(config={"evaluation": {"split": "final"}})])
+    assert details["reason_code"] == "selection-exposed" and details["jobs"] == ["job_seen"]
+
+
+def test_data_no_earlier_job_read_passes():
+    other_labels = {"labels": {"digest": "sha256:other"}}
+    check(make_plan(), [prior_job(inputs=other_labels)])
+    check(make_plan(labels=None, split="final"), [prior_job(config={"evaluation": {"split": "visible"}})])
+
+
+@pytest.mark.parametrize("config, lock_seed", [({"seed": 1}, None), ({}, 1)])
+def test_a_recipe_and_seed_that_already_ran_is_refused(config, lock_seed):
+    details = refusal(make_plan(), [prior_job(config=config, seed=lock_seed)])
+    assert details["reason_code"] == "seed-already-observed" and details["seeds"] == ["1"]
+    assert details["jobs"] == ["job_seen"] and "baseline.s1.train" in details["steps"]
+
+
+def test_the_same_recipe_under_a_new_seed_passes():
+    check(make_plan(seeds=(7, 8)), [prior_job(config={"seed": 1}), prior_job("job_other", config={"seed": 2})])
+
+
+def test_another_configuration_or_component_is_another_recipe():
+    check(make_plan(), [prior_job(config={"seed": 1, "lr": 0.1}), prior_job("job_b", config={"seed": 1}, component="eidos.other@1")])
+
+
+def test_an_unseeded_step_whose_recipe_ran_under_any_seed_is_refused():
+    plan = make_plan(seeds=(1,))
+    for arm in plan["arms"]:
+        for run in arm["runs"]:
+            run["jobs"][0]["config"] = {}
+    details = refusal(plan, [prior_job(seed=5)])
+    assert details["reason_code"] == "seed-already-observed" and details["seeds"] == ["5"]
+
+
+def test_an_unseeded_step_whose_recipe_ran_unseeded_is_refused():
+    plan = make_plan(seeds=(1,))
+    for arm in plan["arms"]:
+        for run in arm["runs"]:
+            run["jobs"][0]["config"] = {}
+    details = refusal(plan, [prior_job()])
+    assert details["reason_code"] == "seed-already-observed" and details["jobs"] == ["job_seen"]
+
+
+def test_a_seeded_step_is_new_against_a_run_of_its_recipe_that_recorded_no_seed():
+    check(make_plan(seeds=(1,)), [prior_job()])
+
+
+def with_data_input(plan: dict) -> dict:
+    for arm in plan["arms"]:
+        for run in arm["runs"]:
+            run["jobs"][0]["inputs"] = {"data": "art_data"}
+    return plan
+
+
+DATA_ROW = {"art_data": {"schema": "dataset/1", "digest": "sha256:data"}}
+
+
+def test_literal_inputs_of_a_recipe_are_compared_by_their_bytes():
+    plan = with_data_input(make_plan(seeds=(1,)))
+    same = prior_job(inputs={"data": {"digest": "sha256:data"}}, config={"seed": 1})
+    assert refusal(plan, [same], artifacts=DATA_ROW)["reason_code"] == "seed-already-observed"
+    check(plan, [prior_job(inputs={"data": {"digest": "sha256:other"}}, config={"seed": 1})], artifacts=DATA_ROW)
+
+
+def test_a_step_fed_by_an_earlier_step_of_the_plan_is_not_compared_as_a_recipe():
+    plan = make_plan(seeds=(1,))  # the report steps read this plan's own train steps, which do not exist yet
+    report = {"component": {"ref": A.REPORT_REF}, "inputs": {"baseline": {"digest": None}, "candidate": {"digest": None},
+                                                               "labels": {"digest": "sha256:other"}},
+              "config": {"role": "baseline", "cluster": "1"}}
+    check(plan, [{"id": "job_report", "purpose": "open-search", "lock": report}])

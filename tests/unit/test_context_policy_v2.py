@@ -598,3 +598,60 @@ def test_concluding_turn_may_use_all_that_is_left():
 def test_concluding_turn_is_floored_even_past_the_deadline():
     assert turn_seconds(600, completion_state(1000.0, 995.0, 100.0)) == MIN_TURN_SECONDS
     assert turn_seconds(600, completion_state(1000.0, 1500.0, 100.0)) == MIN_TURN_SECONDS
+
+
+# -- the pinned candidate state uses the conclusion's rules (R13) -------------------------------------------------------
+PASS = {"assessment_id": "as_1", "outcome": "protocol-passed", "conformance": "conformant", "health": "intact"}
+
+
+def assessed_plan(eligible=True, assessment=PASS):
+    return {"plan_id": "plan_a", "status": "assessed", "claim": "c1", "assessment": assessment,
+            "confirmation": {"eligible": eligible, "reasons": [] if eligible else ["no verified held-out data"]}}
+
+
+def claim_state(state, assessment_id="as_1", outcome="protocol-passed", conformance="conformant", health="intact"):
+    considered = [{"id": assessment_id, "plan_id": "plan_a", "claim_id": "c1", "outcome": outcome, "conformance": conformance,
+                   "health": health}] if assessment_id else []
+    return {"state": state, "claim_id": "c1", "claim_revision": 2, "assessment_id": assessment_id,
+            "plan_id": "plan_a" if assessment_id else None, "assessments_considered": considered}
+
+
+def test_a_passing_exploratory_plan_is_pinned_as_a_submitted_candidate_not_a_confirmation():
+    text = pack(make_view(evidence_plans=[assessed_plan(eligible=False)], claim_state=claim_state("candidate-submitted")), [])["text"]
+    assert "- Candidate state: candidate-submitted (claim c1 revision 2, plan plan_a, assessment as_1" in text
+    assert "Candidate state: protocol-passed" not in text and "exploratory, cannot confirm" in text
+
+
+def test_a_passing_eligible_plan_is_pinned_as_protocol_passed():
+    text = pack(make_view(evidence_plans=[assessed_plan()], claim_state=claim_state("protocol-passed")), [])["text"]
+    assert "- Candidate state: protocol-passed (claim c1 revision 2, plan plan_a, assessment as_1" in text
+
+
+def test_an_assessment_of_an_earlier_claim_revision_is_not_pinned_as_the_claims_state():
+    view = make_view(evidence_plans=[assessed_plan()], claim_state=claim_state("candidate-submitted", assessment_id=None))
+    line = line_starting(pack(view, [])["text"], "- Candidate state:")
+    assert "candidate-submitted" in line and "no assessment of revision 2 of claim c1" in line
+    assert "protocol-passed" not in line
+
+
+def test_an_intact_failure_is_pinned_though_a_later_plan_passed():
+    view = make_view(evidence_plans=[assessed_plan()],
+                     claim_state=claim_state("not-supported", assessment_id="as_0", outcome="protocol-failed"))
+    assert "- Candidate state: not-supported (claim c1 revision 2, plan plan_a, assessment as_0, outcome protocol-failed" in pack(view, [])["text"]
+
+
+def test_without_a_derived_state_a_recorded_pass_is_never_pinned_as_confirmed():
+    line = line_starting(pack(make_view(evidence_plans=[assessed_plan()]), [])["text"], "- Candidate state:")
+    assert "candidate-submitted" in line and "protocol-passed" not in line
+
+
+def test_a_lock_that_names_no_job_is_pinned_with_how_to_make_it_usable():
+    notes = [{"id": "n1", "kind": "candidate_lock", "text": "the lr=0.01 run is my candidate"}]
+    line = line_starting(pack(make_view(pinned_notes=notes), [])["text"], "- Current lock")
+    assert "names no job" in line and "assess_candidate" in line
+
+
+@pytest.mark.parametrize("note", [{"text": '{"job_id": "job_abc"}'}, {"text": "lr=0.01 wins", "evidence_refs": ["job_abc"]}])
+def test_a_lock_naming_one_job_is_pinned_without_a_warning(note):
+    line = line_starting(pack(make_view(pinned_notes=[{"id": "n1", "kind": "candidate_lock", **note}]), [])["text"], "- Current lock")
+    assert "names no job" not in line
