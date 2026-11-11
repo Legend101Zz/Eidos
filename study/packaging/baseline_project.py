@@ -1,4 +1,4 @@
-"""Ordinary baseline project for the D01/D02/D12 investigator bundles.
+"""Ordinary supplied baseline for the D03–D06 investigator bundles.
 Only consumes supplied train/validation arrays; no development references/labels.
 """
 import argparse

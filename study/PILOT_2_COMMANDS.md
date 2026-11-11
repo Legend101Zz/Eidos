@@ -7,7 +7,9 @@ source ~/eidos-internal/env.sh
 cd ~/eidos-internal/p2
 export EIDOS_STUDY_HOME=~/eidos-internal/p2-lab
 # Build a separate fixed installation once; this refuses to overwrite a venv.
-bash study/eidos_arms/build_lab_p2.sh
+if [ ! -f ~/eidos-internal/venvs/pilot-2-lab/pilot-build.json ]; then
+  bash study/eidos_arms/build_lab_p2.sh
+fi
 export EIDOS_STUDY_PYTHON=~/eidos-internal/venvs/pilot-2-lab/bin/python
 export P2_OUTPUT=~/eidos-internal/pilot-2
 mkdir -p "$P2_OUTPUT"

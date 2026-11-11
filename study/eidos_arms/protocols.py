@@ -22,6 +22,7 @@ def prepare(c, project, run_dir):
     from study.common import read_json
     card = read_json(run_dir / "arm.json")["card"]
     assessor = "eidos.assessors.paired-ci@1.2.0" if card in ("D03", "D06") else ASSESSOR
+    template = "eidos.templates.improves-under-budget@1.2.0" if card in ("D03", "D06") else TEMPLATE
     from eidos.cli.main import builtin_component_dirs, install_component
     c.command('register_environment', {'name': 'lab', 'python_executable': lab.python(),
               'project_root': str(run_dir / 'task'), 'python_version': sys.version.split()[0],
@@ -46,7 +47,7 @@ def prepare(c, project, run_dir):
     planted = copy.deepcopy(base)
     planted['candidate']['post'] = [{'component': 'eidos.pytorch.weight-edit',
                                       'config': {'edits': [{'entry': 'weight', 'op': 'set', 'value': 0}]}}]
-    template_suite = {'target': {'kind': 'template', 'ref': TEMPLATE}, 'scope': ['improves'],
+    template_suite = {'target': {'kind': 'template', 'ref': template}, 'scope': ['improves'],
         'origin': {'authored_by': 'pilot integration author controls; not independent', 'committed_before_run': True},
         'controls': [
             {'id': 'planted-distinct', 'type': 'planted', 'deterministic': True, 'repetitions': 1,
@@ -58,7 +59,7 @@ def prepare(c, project, run_dir):
              'input': {'inputs': {'request': {**planted, 'min_effect': 0}}}}]}
     receipts = []
     for name, ref, runner, suite in [('assessor', assessor, RUNNER, assessor_suite),
-                                    ('template', TEMPLATE, result['component_ref'], template_suite)]:
+                                    ('template', template, result['component_ref'], template_suite)]:
         sid = c.command('register_control_suite', {'suite_id': 'suite:pilot-' + name, 'suite': suite},
                         project=project)['result']['suite_id']
         q = c.command('qualify_protocol', {'suite_id': sid, 'release_ref': ref, 'runner_ref': runner,
