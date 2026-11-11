@@ -54,6 +54,15 @@ def grader_reproduce_command(argv):
     return ['python', 'reproduce.py', '--out', 'reproduced']
 
 
+# The lab's wall deadline ends this far before the watchdog's, so that a registered deadline is never the later of the two.
+WATCHDOG_MARGIN_SECONDS = 5.0
+
+
+def remaining_wall_seconds(deadline_unix, now=None):
+    """Seconds the investigation may run: the watchdog's deadline, as measured right before the investigation starts."""
+    return max(1.0, deadline_unix - (time.time() if now is None else now) - WATCHDOG_MARGIN_SECONDS)
+
+
 def stop_investigation(c, project, inv):
     return c.command('stop_investigation', {'investigation_id': inv, 'running_job_policy': 'cancel'},
                      project=project, key='study-outer-stop:' + inv)
@@ -82,6 +91,8 @@ def run(run_dir, meta):
         bridge, bridge_receipt = start_bridge(run_dir, investigator['settings']['base_url'],
                                               deadline_utc, investigator['settings']['request_timeout'])
         investigator['settings']['base_url'] = bridge_receipt['base_url']
+        # ADR 0020: completion state, the conclusion's reserve and the "conclude now" turn, inside the watchdog's envelope.
+        investigator['wall_seconds'] = remaining_wall_seconds(deadline_utc)
         r = c.command('start_investigation', {
             'question': question, 'charter_id': imported['charter_id'], 'environment': 'default',
             'inputs': imported['artifacts'], 'task': imported['task'], 'investigator': investigator,

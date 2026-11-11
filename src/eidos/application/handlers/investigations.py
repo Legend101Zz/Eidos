@@ -11,6 +11,7 @@ from eidos.application.service import EFFECT_ADMISSION, Ctx, command
 from eidos.domain import charter as charter_rules
 from eidos.domain import turns as turn_rules
 from eidos.domain.errors import BudgetExhausted, EffectNotAdmitted, Invalid, QuestionRevised, StaleRevision
+from eidos.domain.redaction import redact_value
 
 RUNNING_JOB_POLICIES = ("drain", "checkpoint-and-stop", "cancel")
 BUDGET_DIMS = ("model_tokens", "model_usd", "compute_seconds", "trials", "turns")
@@ -1000,7 +1001,7 @@ def _close_turn(ctx: Ctx, turn: dict, p: dict) -> dict:
     result = {"stop_reason": reason, "summary": str(p.get("summary", ""))[:4000], "receipts": p.get("receipts", []),
               "unfinished_handles": p.get("unfinished_handles", []), "control": p.get("control"),
               **({"control_refused": control_refused} if control_refused else {})}
-    failure = _bounded_details(p.get("failure")) if reason == "error" else {}
+    failure = _bounded_details(redact_value(p.get("failure"))) if reason == "error" else {}  # redacted before it is bounded
     if failure:  # why the turn failed (ADR 0019): on the turn and on its turn.completed event
         result["failure"] = failure
     result["uncertain_model_reservations"] = release_turn_model_reservations(ctx, turn)

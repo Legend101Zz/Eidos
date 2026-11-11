@@ -22,6 +22,14 @@ Investigator reliability and completion (ADR 0020, from the diagnosis of develop
 - **Deadline-aware completion.** Optional `investigator.wall_seconds` and `conclude_threshold_seconds`: turns and jobs
   stop before the conclusion's reserve, the investigator is told to conclude and a conclusion is required once it
   starts, retries are bounded by the remaining wall time, and the deadline surfaces as `wall-deadline-reached`.
+- **Review R10 of the above (ADR 0020 addendum).** The environment probe imports nothing from the probed environment
+  (`environment-capabilities/2`: `-I -S`, distribution metadata only, killed as a process group); it no longer measures
+  importability or GPUs. Requirements are parsed with `packaging` (markers for the probed interpreter, compound constraints,
+  extras, includes); import names come from metadata; what cannot be decided is inconclusive, never refused, and recorded in
+  the job lock. Failure text is redacted before any cut, for stored and model-visible data, including quoted JSON secrets.
+  Every pinned context section has a budget, omissions are recorded, and the final text never exceeds the limit. A turn,
+  retries and execution included, ends at the reserve's start and a fresh conclusion turn begins there (stop reason
+  `deadline`). The environment registration key digests its whole payload. The study arm passes `investigator.wall_seconds`.
 
 ## Unreleased / 1.1.1
 

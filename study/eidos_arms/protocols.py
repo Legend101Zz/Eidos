@@ -20,12 +20,12 @@ RUNNER = 'eidos.qualification-runner@1.0.0'
 
 def prepare(c, project, run_dir):
     from eidos.cli.main import builtin_component_dirs, install_component
-    from eidos.runtime.env_probe import probe_environment
-    c.command('register_environment', {'name': 'lab', 'python_executable': lab.python(),
-              'project_root': str(run_dir / 'task'), 'python_version': sys.version.split()[0],
-              'notes': 'Installed lab interpreter; only the packaged task is the project root',
-              **probe_environment(lab.python(), project_root=run_dir / 'task')},
-              project=project, key='pilot-lab-env:' + project)
+    from eidos.runtime.env_probe import probe_environment, registration_key
+    payload = {'name': 'lab', 'python_executable': lab.python(),
+               'project_root': str(run_dir / 'task'), 'python_version': sys.version.split()[0],
+               'notes': 'Installed lab interpreter; only the packaged task is the project root',
+               **probe_environment(lab.python(), project_root=run_dir / 'task')}
+    c.command('register_environment', payload, project=project, key=registration_key('pilot-lab-env:' + project, payload))
     dirs = {p.name: p for p in builtin_component_dirs(lab_env_only=True)}
     for name in ('eidos.assessors.paired-ci', 'eidos.templates.improves-under-budget', 'eidos.qualification-runner'):
         result = install_component(c, project, dirs[name], 'lab', True)

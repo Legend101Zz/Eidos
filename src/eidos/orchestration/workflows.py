@@ -25,7 +25,7 @@ from temporalio.exceptions import (
     RetryState,
 )
 
-from eidos.domain.turns import WALL_REACHED
+from eidos.domain.turns import WALL_REACHED, turn_boundary
 from eidos.orchestration.names import ASSESSOR_QUEUE, INVESTIGATOR_QUEUE, WORKFLOW_QUEUE
 
 NON_RETRYABLE = ["PAYLOAD_TOO_LARGE", "FORBIDDEN", "INVALID", "NonRetryable"]
@@ -307,6 +307,13 @@ class InvestigationWorkflow:
                 if cursor:
                     a["operator_cursor"] = int(cursor)
             completion = res.get("completion") or {}
+            if completion and reason == "deadline":
+                # A retry that would have crossed the boundary ended a little before it: the fresh turn starts there.
+                left = float(completion["deadline_unix"]) - float(completion["conclude_threshold_seconds"]) - workflow.now().timestamp()
+                if left > 0:
+                    await workflow.sleep(left)
+                self._status = "concluding (wall time reserved for the conclusion)"
+                continue
             if completion and reason != "error" and float(completion["deadline_unix"]) - float(
                     completion["conclude_threshold_seconds"]) <= workflow.now().timestamp():
                 # ADR 0020: inside the conclusion's reserve there is nothing to wait for. Start the next turn at once;
@@ -372,18 +379,26 @@ class TurnWorkflow:
         failure: dict[str, Any] = {}
         invalid_run = 0
         failed_waits = 0  # accepted waits whose calls left nothing outstanding
+        # ADR 0020 addendum R10: everything in this turn, every retry included, ends at its boundary. A schedule-to-close
+        # timeout covers all attempts of one activity; the check before each slot covers the slots between them.
+        boundary = turn_boundary(b["completion"]) if b.get("completion") else None
+
+        def bounded() -> dict[str, Any]:
+            if boundary is None:
+                return {}
+            return {"schedule_to_close_timeout": timedelta(seconds=max(1.0, boundary - workflow.now().timestamp()))}
+
         try:
             await workflow.execute_activity("build_context", base, task_queue=INVESTIGATOR_QUEUE,
                                             start_to_close_timeout=timedelta(seconds=120),
-                                            heartbeat_timeout=HB, retry_policy=SHORT)
+                                            heartbeat_timeout=HB, retry_policy=SHORT, **bounded())
             for slot in range(int(b.get("max_model_calls", 4))):
-                # ADR 0020: with a wall limit the decide retries are bounded by the wall time left, as a whole
-                wall_left = float(b["completion"]["deadline_unix"]) - workflow.now().timestamp() if b.get("completion") else None
+                if boundary is not None and workflow.now().timestamp() >= boundary:
+                    stop = "deadline"
+                    break
                 d = await workflow.execute_activity("decide", {**base, "slot": slot}, task_queue=INVESTIGATOR_QUEUE,
                                                     start_to_close_timeout=timedelta(seconds=int(b.get("model_timeout", 300))),
-                                                    schedule_to_close_timeout=(timedelta(seconds=max(1.0, wall_left))
-                                                                               if wall_left is not None else None),
-                                                    heartbeat_timeout=HB, retry_policy=MODEL)
+                                                    heartbeat_timeout=HB, retry_policy=MODEL, **bounded())
                 if not d.get("accepted"):
                     # Versioned change: histories recorded before it ended the turn on any rejection.
                     if d.get("reason") == "invalid" and workflow.patched("invalid-proposal-feedback-v1"):
@@ -413,7 +428,7 @@ class TurnWorkflow:
                     r = await workflow.execute_activity("execute_decision", {**base, "decision_id": d["decision_id"]},
                                                         task_queue=INVESTIGATOR_QUEUE,
                                                         start_to_close_timeout=timedelta(seconds=600),
-                                                        heartbeat_timeout=HB, retry_policy=SHORT)
+                                                        heartbeat_timeout=HB, retry_policy=SHORT, **bounded())
                     receipts.append({"decision_id": d["decision_id"], "summary": r.get("summary")})
                     if (r.get("stopped") or r.get("skipped")) and workflow.patched("refused-execution-cancels-v1"):
                         # F5d (review R9): execution refused (a stop, pause, turn closure or a run that lost the turn
@@ -453,6 +468,11 @@ class TurnWorkflow:
         except ActivityError as exc:
             cause = exc.cause
             stop = "budget-exhausted" if isinstance(cause, ApplicationError) and cause.type == "BUDGET_EXHAUSTED" else "error"
+            if stop == "error" and boundary is not None and (
+                    exc.retry_state == RetryState.TIMEOUT or workflow.now().timestamp() >= boundary):
+                # ADR 0020 addendum R10: the boundary ended this activity (a retry that would cross it counts). That is
+                # not a failed turn: the coordinator starts a fresh one, which sees the wall time then left.
+                stop = "deadline"
             if stop == "error":
                 failure = turn_failure(exc)
         finally:

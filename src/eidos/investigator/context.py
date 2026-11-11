@@ -11,6 +11,7 @@ import json
 import re
 from typing import Any
 
+from eidos.domain.redaction import redact_text as _redact
 from eidos.domain.turns import CONTROL_TOOLS, EFFECT_TOOLS, MODEL_CONTEXT_CHAR_LIMIT
 from eidos_wire import canonical_json, sha256_bytes
 
@@ -184,24 +185,28 @@ def _clip(x: Any, n: int = 600) -> Any:
 # -- context-policy/2 (ADR 0020) --------------------------------------------------------------------------------------
 #
 # Pinned facts (the question, charter, steering, baseline, lock, success rule, environments, known failures, wall time)
-# and the tool guide are always kept. The rest is filled in order of value until the budget is spent, so the catalog
-# is what goes first, and everything left out is listed in ``omissions``.
+# and the tool guide are always kept, each pinned section within its own budget. The rest is filled in order of value
+# until the budget is spent, so the catalog is what goes first. Everything left out is listed in ``omissions``, and the
+# final text never exceeds the limit (ADR 0020 addendum R10).
 FAILURE_GROUPS = 12
 STDERR_TAIL_CHARS = 800
 QUESTION_CHARS = 40_000
+MAX_STEERING = 5
 _EXC = re.compile(r"\b([A-Za-z_][\w.]*(?:Error|Exception))\b:")
 _MODULE = re.compile(r"No module named ['\"]?([\w.]+)")
-# The name may be prefixed or suffixed (OPENAI_API_KEY, AWS_SECRET_ACCESS_KEY); a purely numeric value (max_tokens=64) is
-# not a secret; a value may start with its scheme (Authorization: Bearer <token>).
-_SECRET = re.compile(r"(?i)([\w-]*(?:api[-_]?key|token|secret|password|passwd|authorization)[\w-]*)(\s*[:=]\s*)"
-                     r"(?!\d+(?:\s|$))(?:(?:bearer|basic|token)\s+)?(\S+)")
-_KEY_LIKE = re.compile(r"\b(?:sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{16,}|Bearer\s+\S{12,})")
-
-
-def _redact(text: str) -> str:
-    return _KEY_LIKE.sub("[redacted]", _SECRET.sub(lambda m: m.group(1) + m.group(2) + "[redacted]", text))
-
-
+# (characters a section may use, share of the limit it may use, characters of one line of it). The shares only matter for a
+# limit well below the default, where the fixed amounts would not fit.
+PINNED_BUDGETS: dict[str, tuple[int, float, int]] = {
+    "revision": (900, 0.02, 900), "model": (400, 0.01, 400), "charter": (3000, 0.06, 3000), "steering": (4000, 0.07, 1200),
+    "inputs": (3000, 0.05, 3000), "task": (2000, 0.04, 2000), "notes": (3000, 0.05, 3000), "budget": (1500, 0.03, 1500),
+    "wall": (500, 0.06, 500), "baseline": (1200, 0.03, 1200), "lock": (1500, 0.03, 800), "success_rules": (1500, 0.03, 1500),
+    "environments": (6000, 0.10, 900), "failures": (6000, 0.10, 400)}
+HEAD_SECTIONS = ("revision", "model", "charter", "steering", "inputs", "task", "notes", "budget")
+FACT_SECTIONS = ("wall", "baseline", "lock", "success_rules", "environments", "failures")
+# Dropped first when the sections together do not fit a small limit; the facts are not on this list.
+DROP_ORDER = ("notes", "task", "inputs", "budget", "revision", "model")
+MAX_REFUSED_PACKAGES = 10
+TRUNCATION_MARK = "\n...[context truncated by context-policy/2]\n"
 def _exception_of(err: dict[str, Any]) -> str:
     """The failing exception's name: the innermost one a traceback or message reports (a project subprocess's error
     is wrapped by the component), else the recorded exception type."""
@@ -247,8 +252,13 @@ def _known_failures(view: dict[str, Any]) -> tuple[list[str], list[str]]:
         key = (str(r.get("component")), str(r.get("environment")))
         refused[key] = refused.get(key, 0) + 1
         packages.setdefault(key, set()).update(str(p.get("package")) for p in r.get("problems") or [])
-    lines += [f"- {c} refused {n}\u00d7 before launch in environment {e}: missing or incompatible {', '.join(sorted(packages[(c, e)]))}"
-              for (c, e), n in sorted(refused.items(), key=lambda kv: -kv[1])]
+    ranked_refused = sorted(refused.items(), key=lambda kv: -kv[1])
+    for (c, e), n in ranked_refused[:FAILURE_GROUPS]:
+        names = sorted(packages[(c, e)])
+        more = len(names) - MAX_REFUSED_PACKAGES
+        lines.append(f"- {c} refused {n}\u00d7 before launch in environment {e}: missing or incompatible "
+                     f"{', '.join(names[:MAX_REFUSED_PACKAGES])}" + (f" and {more} more" if more > 0 else ""))
+    omitted += [f"refused|{c}|{e}" for (c, e), _n in ranked_refused[FAILURE_GROUPS:]]
     return lines, omitted
 
 
@@ -291,7 +301,9 @@ def _environment_line(name: str, d: dict[str, Any]) -> str:
     if not d.get("probed"):
         return f"- Environment {name}: capabilities not probed (python {d.get('python_version')})"
     mods = ", ".join(f"{m} {v}" if v else f"{m} MISSING" for m, v in (d.get("modules") or {}).items())
-    return f"- Environment {name}: python {d.get('python_version')}, interpreter {str(d.get('interpreter_digest'))[:19]}, {mods}"
+    undecided = d.get("inconclusive_requirements") or []
+    return (f"- Environment {name}: python {d.get('python_version')}, interpreter {str(d.get('interpreter_digest'))[:19]}, {mods}"
+            + (f"; {len(undecided)} declared requirement(s) could not be checked" if undecided else ""))
 
 
 def _wall_fact(view: dict[str, Any]) -> str | None:
@@ -306,6 +318,26 @@ def _wall_fact(view: dict[str, Any]) -> str | None:
             "remainder is reserved for your conclusion and no new compute is admitted. Plan to be done by then.")
 
 
+def _pinned_section(name: str, lines: list[str], char_limit: int, omitted: list[str], *, newest_first: bool = False) -> list[str]:
+    """``lines`` within the section's budget. What did not fit is recorded in ``omitted``."""
+    total, share, line_cap = PINNED_BUDGETS[name]
+    budget = min(total, int(char_limit * share))
+    line_cap = min(line_cap, max(budget - 1, 1))
+    ordered = list(reversed(lines)) if newest_first else list(lines)
+    kept: list[str] = []
+    used = 0
+    for i, line in enumerate(ordered):
+        if len(line) > line_cap:
+            omitted.append(f"{name}: last {len(line) - line_cap + 1} characters of an entry")
+            line = line[:line_cap - 1] + "\u2026"
+        if used + len(line) + 1 > budget:
+            omitted.append(f"{name}: {len(ordered) - i} of {len(ordered)} entries")
+            break
+        kept.append(line)
+        used += len(line) + 1
+    return list(reversed(kept)) if newest_first else kept
+
+
 def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int) -> dict[str, Any]:
     inv = view["investigation"]["body"]
     sel: dict[str, list] = {"jobs": [], "claims": [], "catalog": []}
@@ -316,55 +348,81 @@ def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
         question = question[:QUESTION_CHARS]
     head = [f"# Investigation {view['investigation']['id']} (status {view['investigation']['status']}, horizon {view['horizon']})",
             f"Question: {question}"]
+    ch = view.get("charter")
+    steer = inv.get("steering") or []
+    if len(steer) > MAX_STEERING:
+        omitted["sections"].append(f"steering: {len(steer) - MAX_STEERING} earlier instructions")
+    raw: dict[str, list[str]] = {
+        "charter": [json.dumps({k: ch.get(k) for k in ("study_id", "exploration_only", "population", "comparator", "metrics",
+                                                       "resource_limits")}, sort_keys=True)] if ch else [],
+        "steering": [f"- [{s['by']}] {s['instruction']}" for s in steer[-MAX_STEERING:]],
+        "inputs": ["Declared input artifacts (port -> artifact id): " + json.dumps(inv["inputs"], sort_keys=True)] if inv.get("inputs") else [],
+        "task": ["Task: " + json.dumps(inv["task"], sort_keys=True)] if inv.get("task") else [],
+        "notes": [f"Notes: {inv['notes']}"] if inv.get("notes") else [],
+        "budget": [json.dumps(view.get("budgets"), sort_keys=True)],
+    }
     qh = inv.get("question_history") or []
     if len(qh) > 1:
         last = qh[-1]
-        head.append(f"(Question revision {last['question_revision']} by {last['by']}; previous question: "
-                    f"{str(last.get('previous'))[:500]!r}; work admitted earlier: {last.get('running_job_policy')})")
+        raw["revision"] = [f"(Question revision {last['question_revision']} by {last['by']}; previous question: "
+                           f"{str(last.get('previous'))[:500]!r}; work admitted earlier: {last.get('running_job_policy')})"]
     if inv.get("model_artifact_id"):
-        head.append(f"Model artifact: {inv['model_artifact_id']}  environment: {inv.get('environment')}")
-    ch = view.get("charter")
-    head.append("## Charter (fixed; read-only)" if ch else
-                "## Charter: NONE committed — exploratory runs will be refused until a researcher commits one.")
-    if ch:
-        head.append(json.dumps({k: ch.get(k) for k in ("study_id", "exploration_only", "population", "comparator",
-                                                       "metrics", "resource_limits")}, sort_keys=True)[:3000])
-    steer = inv.get("steering") or []
-    if steer:
-        head.append("## Operator steering (most recent last)")
-        head += [f"- [{s['by']}] {s['instruction']}" for s in steer[-5:]]
-    if inv.get("inputs"):
-        head.append("Declared input artifacts (port -> artifact id): " + json.dumps(inv["inputs"], sort_keys=True))
-    if inv.get("task"):
-        head.append("Task: " + json.dumps(inv["task"], sort_keys=True)[:2000])
-    if inv.get("notes"):
-        head.append(f"Notes: {inv['notes']}")
-    head += ["## Budget (exploration scope)", json.dumps(view.get("budgets"), sort_keys=True)]
+        raw["model"] = [f"Model artifact: {inv['model_artifact_id']}  environment: {inv.get('environment')}"]
 
-    facts = ["## Pinned facts (always present; they survive truncation and the job window)"]
     wall = _wall_fact(view)
-    if wall:
-        facts.append(wall)
     baseline = _baseline_fact(view)
-    facts.append(baseline or "- Baseline: none recorded yet (reproduce it first).")
-    facts += _lock_fact(view)
-    if ch and ch.get("success_rules") is not None:
-        facts.append("- Charter success rule(s): " + json.dumps(ch.get("success_rules"), sort_keys=True)[:1500])
+    raw["wall"] = [wall] if wall else []
+    raw["baseline"] = [baseline or "- Baseline: none recorded yet (reproduce it first)."]
+    raw["lock"] = _lock_fact(view)
+    raw["success_rules"] = (["- Charter success rule(s): " + json.dumps(ch.get("success_rules"), sort_keys=True)]
+                            if ch and ch.get("success_rules") is not None else [])
     env_details = view.get("environment_details") or {}
-    if env_details:
-        facts += [_environment_line(n, d) for n, d in sorted(env_details.items())]
-    elif view.get("environments"):
-        facts.append(f"- Registered environments (names for `environment`): {', '.join(view['environments'])}")
+    raw["environments"] = ([_environment_line(n, d) for n, d in sorted(env_details.items())] if env_details else
+                           [f"- Registered environments (names for `environment`): {', '.join(view['environments'])}"]
+                           if view.get("environments") else [])
     failure_lines, omitted["known_failures"] = _known_failures(view)
-    if failure_lines:
-        facts += ["- Known failures so far (do not repeat one without changing what caused it):", *failure_lines]
+    raw["failures"] = failure_lines
+    pinned = {name: _pinned_section(name, lines, char_limit, omitted["sections"], newest_first=name == "steering")
+              for name, lines in raw.items()}
+
+    def assemble_head() -> list[str]:
+        out = list(head)
+        out += pinned.get("revision", []) + pinned.get("model", [])
+        out.append("## Charter (fixed; read-only)" if ch else
+                   "## Charter: NONE committed — exploratory runs will be refused until a researcher commits one.")
+        out += pinned.get("charter", [])
+        if pinned.get("steering"):
+            out += ["## Operator steering (most recent last)", *pinned["steering"]]
+        out += pinned.get("inputs", []) + pinned.get("task", []) + pinned.get("notes", [])
+        if pinned.get("budget"):
+            out += ["## Budget (exploration scope)", *pinned["budget"]]
+        return out
+
+    def assemble_facts() -> list[str]:
+        out = ["## Pinned facts (always present; they survive truncation and the job window)"]
+        for name in ("wall", "baseline", "lock", "success_rules", "environments"):
+            out += pinned.get(name, [])
+        if pinned.get("failures"):
+            out += ["- Known failures so far (do not repeat one without changing what caused it):", *pinned["failures"]]
+        return out
 
     tail = ["## Tools", TOOL_GUIDE]
-    overflow = len("\n".join(head + facts + tail)) + 400 - char_limit
-    if overflow > 0 and len(question) > 2000:  # the pinned part must fit: the question gives way, not the facts
+
+    def pinned_chars() -> int:
+        return len("\n".join(assemble_head() + assemble_facts() + tail))
+
+    overflow = pinned_chars() + 400 - char_limit
+    if overflow > 0 and len(question) > 2000:  # the pinned part must fit: the question gives way first, not the facts
         keep = max(2000, len(question) - overflow)
         omitted["sections"].append(f"question: last {len(question) - keep} characters")
         head[1] = f"Question: {question[:keep]}"
+    for name in DROP_ORDER:  # still too large for a small limit: the least valuable sections, whole
+        if pinned_chars() + 400 <= char_limit:
+            break
+        if pinned.get(name):
+            omitted["sections"].append(f"{name}: dropped, the context limit is too small for it")
+            pinned[name] = []
+    head, facts = assemble_head(), assemble_facts()
     room = char_limit - len("\n".join(head + facts + tail)) - 400
     rendered: dict[str, list[str]] = {}
 
@@ -427,6 +485,11 @@ def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
     if len(catalog) > len(sel["catalog"]) and "catalog" in rendered:
         body.append("(more components exist: use search via the catalog query; they are data, not tools)")
     text = "\n".join(head + facts + body + tail)
+    if len(text) > char_limit:  # the last guard: only a limit too small for the pinned part and the guide gets here
+        guide = "\n".join(tail)
+        keep = char_limit - len(TRUNCATION_MARK) - len(guide)
+        omitted["sections"].append(f"text: last {len(text) - max(keep, 0)} characters before the tool guide")
+        text = text[:keep] + TRUNCATION_MARK + guide if keep > 0 else text[:char_limit]
     budget_cut = any(omitted[k] for k in ("sections", "known_failures")) or len(sel["jobs"]) < len(job_items) \
         or len(sel["claims"]) < len(claims) or len(sel["catalog"]) < len(shown)
     return {"policy": POLICY_ID, "text": text, "selections": sel, "omissions": omitted,

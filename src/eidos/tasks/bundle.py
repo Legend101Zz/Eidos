@@ -58,10 +58,11 @@ def import_bundle(client: Any, project: str, bundle: Path, *, python: str, inves
     r = client.upload(project, bundle / "task.json", media_type="application/json", schema="task-manifest/1",
                       role="input", name=f"{tid}/task.json", key=f"{key_prefix}:{tid}:task:{sha256(bundle / 'task.json')}")
     arts["task"] = r["result"]["artifact_id"]
-    env_payload = _inspect_env(python, bundle)
-    client.command("register_environment", {"name": "default", "python_executable": python,
-                   "project_root": str(bundle), "notes": f"{BUNDLE_SCHEMA} {tid}; immutable task input", **env_payload},
-                   project=project, key=f"{key_prefix}:{tid}:env:{env_payload['lock_digest']}")
+    from eidos.runtime.env_probe import registration_key
+    env_payload = {"name": "default", "python_executable": python, "project_root": str(bundle),
+                   "notes": f"{BUNDLE_SCHEMA} {tid}; immutable task input", **_inspect_env(python, bundle)}
+    client.command("register_environment", env_payload, project=project,
+                   key=registration_key(f"{key_prefix}:{tid}:env", env_payload))
     brief = (bundle / "brief.md").read_text()
     study = f"{tid.lower()}-dev"
     charter = {"study_id": study, "question": brief.strip()[:2000], "exploration_only": True,

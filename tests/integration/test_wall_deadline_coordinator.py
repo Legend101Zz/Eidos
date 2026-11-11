@@ -1,5 +1,6 @@
 """ADR 0020, the wall deadline on a Temporal development server: a quiet wait ends when the conclusion's reserve begins, a
-retry's backoff and the decide retries stay within the remaining wall time, and the deadline ends the coordinator."""
+turn (retries and hung decisions included) ends at the reserve and a fresh conclusion turn starts there, and the deadline
+ends the coordinator."""
 
 from __future__ import annotations
 
@@ -31,7 +32,11 @@ class WallScripted(Scripted):
         if self.reason:
             return {"started": False, "reason": self.reason}
         r = await Scripted.begin_turn(self, a)
-        return {**r, "completion": completion(self.deadline, self.threshold)} if r.get("started") else r
+        if not r.get("started"):
+            return r
+        # as persisted: the first begin of a turn fixes its completion state, as the lab's turn spec does
+        self.begun[a["index"]] = {**r, "completion": r.get("completion") or completion(self.deadline, self.threshold)}
+        return self.begun[a["index"]]
 
     @activity.defn(name="check_news")
     async def check_news(self, a: dict) -> dict:
@@ -52,15 +57,28 @@ async def test_a_quiet_wait_ends_when_the_reserve_begins(env):  # noqa: F811
 
 
 @temporal
-async def test_retries_and_backoff_stay_within_the_wall_time(env):  # noqa: F811
+async def test_a_retry_that_would_cross_the_reserve_ends_the_turn_and_a_fresh_turn_starts(env):  # noqa: F811
     fake = WallScripted({1: "retryable"}, stop_after=2, deadline=time.time() + 3, threshold=0.5)
     async with running(env, fake, failed_turn_backoff_seconds=100) as (h, _):
-        await until(lambda: fake.retries, 30, "the recorded retry")
-        await until(lambda: 2 in fake.started, 30, "the retry turn")
+        await until(lambda: 2 in fake.started, 30, "the fresh turn at the reserve")
         await asyncio.wait_for(h.result(), 30)
-    # the MODEL policy's third attempt starts 6 s in, past the deadline
+    # the MODEL policy's third attempt would start 6 s in, past the boundary at 2.5 s
     assert fake.decide_attempts[1] <= 2
-    assert fake.retries[0]["delay_seconds"] <= 3
+    assert fake.completed_turn(1)["stop_reason"] == "deadline"
+    assert fake.retries == []  # not a failed turn: no backoff, no retry bookkeeping
+
+
+@temporal
+async def test_a_hung_decision_ends_at_the_reserve_and_the_next_turn_is_the_conclusion(env):  # noqa: F811
+    fake = WallScripted({1: "hang"}, stop_after=2, deadline=time.time() + 62.5, threshold=60)  # the reserve begins in 2.5 s
+    began = time.monotonic()
+    async with running(env, fake) as (h, _):
+        await until(lambda: 2 in fake.started, 30, "the conclusion turn")
+        elapsed = time.monotonic() - began
+        await asyncio.wait_for(h.result(), 30)
+    assert elapsed < 9  # the hang lasts 10 s; the model timeout and the MODEL retries would run far longer
+    assert fake.completed_turn(1)["stop_reason"] == "deadline" and not fake.completed_turn(1).get("failure")
+    assert fake.begun[2]["completion"]["conclude_now"] is True  # a fresh state, not the first turn's snapshot
 
 
 @temporal

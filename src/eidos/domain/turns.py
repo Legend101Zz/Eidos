@@ -83,6 +83,13 @@ def turn_seconds(configured: int, completion: dict[str, Any]) -> int:
     return max(MIN_TURN_SECONDS, min(int(configured), int(usable)))
 
 
+def turn_boundary(completion: dict[str, Any]) -> float:
+    """When a turn must be over, retries and execution included: where the conclusion's reserve begins, or for the concluding
+    turn the wall deadline itself."""
+    deadline = float(completion["deadline_unix"])
+    return deadline if completion["conclude_now"] else deadline - float(completion["conclude_threshold_seconds"])
+
+
 def check_payload(obj: Any, *, limit: int = WORKFLOW_PAYLOAD_LIMIT, what: str = "payload") -> int:
     size = len(canonical_json(obj).encode())
     if size > limit:

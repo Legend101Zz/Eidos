@@ -131,14 +131,21 @@ def _source_requirements(ctx: Ctx, artifact_id: str) -> list[str]:
     from eidos.application.handlers.components import read_bundle
     try:
         _art, bundle = read_bundle(ctx, artifact_id)
-        text = (bundle.get("files") or {}).get("requirements.txt")
+        files = bundle.get("files") or {}
+        text = files.get("requirements.txt")
     except Exception:  # noqa: BLE001 - preflight must not turn an unreadable bundle into a different failure
         return []
-    return environments.parse_requirements(text) if isinstance(text, str) else []
+
+    def include(path: str) -> str | None:
+        body = files.get(path)
+        return body if isinstance(body, str) else None
+
+    return environments.parse_requirements(text, include=include) if isinstance(text, str) else []
 
 
-def _preflight(ctx: Ctx, p: dict, target: dict, env: dict) -> None:
-    """ADR 0020: refuse a job whose component or project declares what this environment measurably lacks."""
+def _preflight(ctx: Ctx, p: dict, target: dict, env: dict) -> list[dict[str, Any]]:
+    """ADR 0020: refuse a job whose component or project declares what this environment measurably lacks. Returns what
+    could not be decided, for the job's lock."""
     man = target["manifest"]
     needs = {target["ref"]: list(man.get("dependencies") or [])}
     if man.get("implements") == environments.PROJECT_CODE_CAPABILITY:
@@ -146,9 +153,10 @@ def _preflight(ctx: Ctx, p: dict, target: dict, env: dict) -> None:
         if (p.get("inputs") or {}).get("source"):
             declared += _source_requirements(ctx, p["inputs"]["source"])
         needs["the project"] = declared
-    problems = environments.unsatisfied(needs, env)
+    verdict = environments.assess(needs, env)
+    problems = verdict["problems"]
     if not problems:
-        return
+        return verdict["inconclusive"]
     prof = get_profile(ctx).body.get("environments") or {}
     raise PreflightRefused(
         f"environment {env['name']!r} cannot run {target['ref']}: missing or incompatible "
@@ -231,7 +239,7 @@ def resolve_lock(ctx: Ctx, p: dict, *, extra_config: dict | None = None) -> dict
         target = {**target, "manifest": man}
     env_name = p.get("environment") or target["environment"]["name"]
     env = env_for(ctx, env_name)
-    _preflight(ctx, p, target, env)
+    undecided = _preflight(ctx, p, target, env)
     missing_adapter = [c for c in env_caps if c.startswith("pytorch.adapter/")
                        and not (env.get("adapter") or (p.get("config") or {}).get("adapter"))]
     if missing_adapter:
@@ -255,6 +263,8 @@ def resolve_lock(ctx: Ctx, p: dict, *, extra_config: dict | None = None) -> dict
     lock["inputs"] = {k: {**lock["inputs"][k], "media_type": v["media_type"], "size": v["size"], "role": v["role"]}
                       for k, v in inputs.items()}
     lock["environment"] = env
+    if undecided:  # only when there is something to record, so other locks keep their digests
+        lock["preflight_inconclusive"] = undecided[:environments.MAX_REPORTED]
     choice = choose_profile(ctx, p.get("isolation_profile"), p.get("isolation_waiver"))
     profile_name = choice["profile"]
     lock["isolation_profile"] = profile_name

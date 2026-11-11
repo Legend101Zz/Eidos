@@ -26,6 +26,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from eidos.client import LabClient, LabError
+from eidos.domain.redaction import redact_value
 from eidos.domain.turns import EFFECT_TOOLS, WORKFLOW_PAYLOAD_LIMIT, check_payload
 from eidos.investigator.context import POLICY_V1, pack
 from eidos.investigator.runtime import (
@@ -392,7 +393,7 @@ class InvestigatorActivities:
                 "search_components", {"text": text, "capability": capability, "limit": 20}, project=p),
             "describe_component": lambda component_ref: self.inv.query(
                 "describe_component", {"component_ref": component_ref}, project=p),
-            "get_job": lambda job_id: self.inv.query("get_job", {"job_id": job_id, "include_lock": False}, project=p),
+            "get_job": lambda job_id: redact_value(self.inv.query("get_job", {"job_id": job_id, "include_lock": False}, project=p)),
         }
 
     # -- effects -------------------------------------------------------------------------------

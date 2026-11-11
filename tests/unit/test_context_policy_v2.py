@@ -261,10 +261,10 @@ def make_heavy_view():
     """40 bulky jobs (baseline and three failures first, so all fall outside the job window), a lock, a rule, an
     environment capability record and a large catalog."""
     env = {"python_version": "3.12.1", "installed": {"numpy": "2.1"},
-           "capabilities": {"schema": "environment-capabilities/1", "status": "ok", "python_version": "3.12.1",
+           "capabilities": {"schema": "environment-capabilities/2", "status": "ok", "python_version": "3.12.1",
                             "interpreter_digest": "sha256:" + "cd" * 32,
-                            "modules": {"numpy": {"importable": True, "version": "2.1"},
-                                        "sklearn": {"importable": False, "error": "ModuleNotFoundError"}}}}
+                            "modules": {"numpy": {"provided": True, "version": "2.1"},
+                                        "sklearn": {"provided": False}}}}
     bulky = {"k" + str(n): "v" * 40 for n in range(30)}
     jobs = [make_job(0, purpose="reproduction", status="succeeded", receipt={"metrics": {"accuracy": 0.61}})]
     jobs += [failed_job(i) for i in range(1, 4)]
@@ -289,7 +289,7 @@ def test_pinned_facts_survive_truncation():
     assert_pinned_facts(out["text"])
     assert out["truncations"]["context_truncated"] is True
     assert out["chars"] == len(out["text"])
-    assert out["chars"] <= char_limit + 400
+    assert out["chars"] <= char_limit
 
 
 def test_truncation_lists_the_dropped_catalog_entries_and_jobs():
@@ -423,8 +423,8 @@ def test_missing_charter_is_stated():
 
 
 def test_probed_environment_line_shows_versions_and_missing_modules():
-    env = {"capabilities": {"status": "ok", "python_version": "3.12.1", "interpreter_digest": "sha256:" + "ef" * 32,
-                            "modules": {"numpy": {"importable": True, "version": "2.1"}, "torch": {"importable": False}}}}
+    env = {"capabilities": {"schema": "environment-capabilities/2", "status": "ok", "python_version": "3.12.1", "interpreter_digest": "sha256:" + "ef" * 32,
+                            "modules": {"numpy": {"provided": True, "version": "2.1"}, "torch": {"provided": False}}}}
     text = pack(make_view(environment_details={"lab": capability_summary(env)}), [])["text"]
     line = line_starting(text, "- Environment lab:")
     assert line == "- Environment lab: python 3.12.1, interpreter sha256:efefefefefef, numpy 2.1, torch MISSING"

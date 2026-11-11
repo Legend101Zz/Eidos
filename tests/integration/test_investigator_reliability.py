@@ -25,16 +25,18 @@ NOTE = {"tool": "record_note", "args": {"kind": "hypothesis", "text": "a note"}}
 
 # -- helpers ----------------------------------------------------------------------------------------------------------
 
-def _caps(numpy_importable: bool) -> dict:
-    numpy = ({"importable": True, "version": "1.26.4"} if numpy_importable
-             else {"importable": False, "error": "ModuleNotFoundError"})
-    return {"schema": "environment-capabilities/1", "status": "ok", "interpreter_digest": DIGEST, "python_version": "3.12",
-            "modules": {"numpy": numpy, "torch": {"importable": True, "version": "2.1"}}}
+def _caps(has_numpy: bool) -> dict:
+    numpy = {"provided": True, "distribution": "numpy", "version": "1.26.4"} if has_numpy else {"provided": False}
+    return {"schema": "environment-capabilities/2", "status": "ok", "interpreter_digest": DIGEST, "python_version": "3.12",
+            "marker_environment": {"python_version": "3.12", "sys_platform": "linux"}, "import_names": {},
+            "modules": {"numpy": numpy, "torch": {"provided": True, "distribution": "torch", "version": "2.1"}}}
 
 
 def _register(lab, pid: str, name: str, **extra) -> None:
+    modules = (extra.get("capabilities") or {}).get("modules") or {}
+    installed = {m["distribution"]: m["version"] for m in modules.values() if m.get("provided")}
     lab.cmd(lab.admin, "register_environment", {"name": name, "python_executable": sys.executable, "project_root": "/tmp",
-                                                "python_version": "3.12", "installed": {}, **extra}, project=pid)
+                                                "python_version": "3.12", "installed": installed, **extra}, project=pid)
 
 
 def _component(lab, pid: str, cid: str, *, dependencies: list[str] | None = None, implements: str | None = None) -> str:
@@ -114,8 +116,7 @@ def test_preflight_refuses_a_component_whose_dependency_the_environment_lacks_an
     d = exc.details
     assert d["component"] == w.needs and d["environment"] == "nonum" and d["investigation_id"] == w.inv
     assert d["interpreter_digest"] == DIGEST
-    assert [(x["owner"], x["package"], x["problem"], x["error"]) for x in d["problems"]] == [
-        (w.needs, "numpy", "not-importable", "ModuleNotFoundError")]
+    assert [(x["owner"], x["package"], x["problem"]) for x in d["problems"]] == [(w.needs, "numpy", "not-installed")]
     assert {"lab", "nonum", "hasnum"} <= set(d["available_environments"])
 
     # The command rolled back: no job, no reservation, no trial...
@@ -138,14 +139,25 @@ def test_preflight_refuses_a_component_whose_dependency_the_environment_lacks_an
 def test_preflight_never_refuses_without_a_measurement_or_where_the_module_imports(lab, world):
     w = world
     unprobed = _admit(lab, w, w.needs, "lab")      # environment registered without capabilities
-    probed = _admit(lab, w, w.needs, "hasnum")     # numpy measured importable
+    probed = _admit(lab, w, w.needs, "hasnum")     # numpy in the measured inventory
     assert unprobed["job_id"] != probed["job_id"]
     assert len(_jobs(lab, w)) == 2
-    _register(lab, w.pid, "failed-probe", capabilities={"schema": "environment-capabilities/1", "status": "failed",
+    _register(lab, w.pid, "failed-probe", capabilities={"schema": "environment-capabilities/2", "status": "failed",
                                                         "error": "probe timed out"})
     assert _admit(lab, w, w.needs, "failed-probe")["job_id"]   # a failed probe is not evidence of absence either
     assert lab.q(lab.admin, "list_events", {"investigation_id": w.inv, "types": ["admission.refused"]},
                  project=w.pid)["events"] == []
+
+
+def test_what_preflight_cannot_decide_is_admitted_and_recorded_in_the_lock(lab, world):
+    w = world
+    _register(lab, w.pid, "undecided", capabilities=_caps(True),
+              requirements=["foo @ https://example.com/foo.whl", "-r missing.txt"])
+    proj = _component(lab, w.pid, "test.project-undecided", implements="project-command/1")
+    job = _admit(lab, w, proj, "undecided")["job_id"]
+    lock = lab.q(lab.admin, "get_job", {"job_id": job, "include_lock": True}, project=w.pid)["lock"]
+    assert {(x["requirement"], x["inconclusive"]) for x in lock["preflight_inconclusive"]} == {
+        ("foo @ https://example.com/foo.whl", "url-requirement"), ("-r missing.txt", "not-a-parsed-requirement")}
 
 
 # -- 2. project-declared requirements ---------------------------------------------------------------------------------
@@ -158,7 +170,7 @@ def test_environment_requirements_apply_to_project_command_components_only(lab, 
         _admit(lab, w, proj, "projreq")
     d = caught.value.details
     assert "numpy" in caught.value.message and "'projreq'" in caught.value.message
-    assert [(x["owner"], x["package"], x["problem"]) for x in d["problems"]] == [("the project", "numpy", "not-importable")]
+    assert [(x["owner"], x["package"], x["problem"]) for x in d["problems"]] == [("the project", "numpy", "not-installed")]
     assert _jobs(lab, w) == []
     # An ordinary component declaring nothing is not refused for the project's requirements, in the same environment.
     assert _admit(lab, w, "test.echo@1.0.0", "projreq")["job_id"]
@@ -236,7 +248,8 @@ def test_failed_job_error_shows_exception_and_stderr_tail_redacted_and_bounded(l
     st = lab.cmd(launcher, "start_attempt", {"job_id": job}, project=w.pid)["result"]
     stderr = ("HEAD-MARKER\n" + "noise line\n" * 400
               + "Traceback (most recent call last):\n  File \"project.py\", line 1, in <module>\n    import numpy\n"
-              "ModuleNotFoundError: No module named 'numpy'\nsetting token=hunter2secret\n")
+              "ModuleNotFoundError: No module named 'numpy'\nsetting token=hunter2secret\n"
+              '{"password": "json-sensitive-value"}\n')
     lab.cmd(launcher, "finish_attempt", {
         "job_id": job, "attempt_id": st["attempt_id"], "epoch": st["epoch"], "status": "failed", "final": True,
         "error": {"category": "user-code", "type": "builtins.RuntimeError",
@@ -245,7 +258,8 @@ def test_failed_job_error_shows_exception_and_stderr_tail_redacted_and_bounded(l
     view = _view(lab, w.pid, w.inv)
     vj = next(j for j in view["jobs"] if j["id"] == job)
     assert vj["status"] == "failed" and vj["error"]["type"] == "builtins.RuntimeError"
-    assert vj["error"]["stderr_tail"] == stderr  # the view carries what the launcher reported
+    assert "hunter2secret" not in vj["error"]["stderr_tail"]  # stored redacted, whichever path reported it
+    assert "token=[redacted]" in vj["error"]["stderr_tail"] and "HEAD-MARKER" in vj["error"]["stderr_tail"]
     text = pack(view, [])["text"]
     line = next(json.loads(x) for x in text.splitlines() if x.startswith("{") and json.loads(x).get("id") == job)
     err = line["error"]
@@ -254,6 +268,7 @@ def test_failed_job_error_shows_exception_and_stderr_tail_redacted_and_bounded(l
     assert "ModuleNotFoundError: No module named 'numpy'" in err["stderr_tail"]
     assert "HEAD-MARKER" not in err["stderr_tail"] and len(err["stderr_tail"]) <= 800  # the tail, bounded
     assert "hunter2secret" not in text and "token=[redacted]" in err["stderr_tail"]
+    assert "json-sensitive-value" not in text and "json-sensitive-value" not in json.dumps(vj)
     assert f"- {w.needs} failed 1× in environment hasnum with ModuleNotFoundError numpy (last: {job})" in text
 
 
