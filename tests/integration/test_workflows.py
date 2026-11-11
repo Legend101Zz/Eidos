@@ -79,9 +79,14 @@ class FakeInvestigator:
         self.marked = getattr(self, "marked", 0) + 1
         return {"already": False}
 
+    @activity.defn(name="record_turn_retry")
+    async def record_turn_retry(self, a: dict) -> dict:
+        self.retries = [*getattr(self, "retries", []), a]
+        return {}
+
     def acts(self):
         return [self.begin_turn, self.build_context, self.decide, self.execute_decision, self.complete_turn,
-                self.check_news, self.mark_needs_input]
+                self.check_news, self.mark_needs_input, self.record_turn_retry]
 
 
 async def test_coordinator_rolls_over_and_carries_counters(env):
@@ -187,7 +192,7 @@ async def test_stress_many_turns_bounded_histories_and_oversized_results(env):
 
         def acts(self):
             return [self.begin_turn, self.build_context, self.decide, self.execute_decision, self.complete_turn,
-                    self.check_news, self.mark_needs_input]
+                    self.check_news, self.mark_needs_input, self.record_turn_retry]
 
     fake = Big(stop_after=int(os.environ.get("EIDOS_STRESS_TURNS", "16")))
     wid = f"inv-stress-{uuid.uuid4().hex[:6]}"
@@ -297,7 +302,7 @@ async def test_idle_polls_without_news_spend_no_model_turns(env):
 
     wid = f"inv-idle-{uuid.uuid4().hex[:6]}"
     async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
-            Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=[*fake.acts()[:-2], check_news, fake.mark_needs_input]):
+            Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=[*fake.acts()[:-3], check_news, fake.mark_needs_input, fake.record_turn_retry]):
         h = await env.client.start_workflow(InvestigationWorkflow.run, {"investigation_id": wid, "project_id": "p",
                                             "idle_poll_seconds": 1}, id=wid, task_queue=WORKFLOW_QUEUE)
         await asyncio.sleep(5)
@@ -323,7 +328,7 @@ async def test_quiet_wait_survives_rollover_without_a_model_turn(env):
 
     wid = f"inv-quiet-roll-{uuid.uuid4().hex[:6]}"
     async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
-            Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=[*fake.acts()[:-2], check_news, fake.mark_needs_input]):
+            Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=[*fake.acts()[:-3], check_news, fake.mark_needs_input, fake.record_turn_retry]):
         h = await env.client.start_workflow(InvestigationWorkflow.run, {"investigation_id": wid, "project_id": "p",
                                             "idle_poll_seconds": 1, "history_limit": 60,
                                             "max_idle_turn_seconds": 3600}, id=wid, task_queue=WORKFLOW_QUEUE)
@@ -355,7 +360,7 @@ async def test_max_idle_counts_across_quiet_rollovers(env):
 
     wid = f"inv-idle-roll-{uuid.uuid4().hex[:6]}"
     async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
-            Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=[*fake.acts()[:-2], check_news, fake.mark_needs_input]):
+            Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=[*fake.acts()[:-3], check_news, fake.mark_needs_input, fake.record_turn_retry]):
         h = await env.client.start_workflow(InvestigationWorkflow.run, {"investigation_id": wid, "project_id": "p",
                                             "idle_poll_seconds": 1, "history_limit": 60,
                                             "max_idle_turn_seconds": 12}, id=wid, task_queue=WORKFLOW_QUEUE)

@@ -232,7 +232,8 @@ TOOLS: tuple[Tool, ...] = (
           P("note", "s")), grant="promote_protocol"),
     # -- reads -----------------------------------------------------------------------------------------
     Tool("get_investigation", "query", "get_investigation",
-         "Investigation status, revision, turns with stop reasons, jobs and budgets.",
+         "Investigation status, revision, needs_input (null, or {code, reason, details} while it waits for an operator: "
+         "code turn-failed, refused-proposals or coordinator-stopped), turns with stop reasons, jobs and budgets.",
          (P("investigation_id", "s", required=True),), grant="project:read"),
     Tool("get_run", "query", "get_job",
          "A job: status, lock, attempts, outputs, terminal receipt.",

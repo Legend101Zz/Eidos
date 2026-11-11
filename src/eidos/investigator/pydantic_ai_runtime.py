@@ -206,6 +206,10 @@ class TokenEnvelope:
         r_in, r_out, _, _ = _charged(response, self.reasoning_billing)
         self.responses.append(response)
         self.spent += r_in + r_out
+        if is_runaway(response):
+            # A runaway reply is not sent back (ADR 0019): the next request's input is the history before it, so the
+            # estimate keeps counting from the last response that stays in the history (or from the request bytes).
+            return
         self.last = (r_in, r_out) if r_in > 0 else None
 
 
@@ -312,6 +316,40 @@ def _read(tools: dict[str, Any], name: str, *a: Any) -> Any:
 def _bounded(x: Any, limit: int = 8000) -> Any:
     s = json.dumps(x, default=str)
     return x if len(s) <= limit else {"truncated": True, "preview": s[:limit]}
+
+
+# Runaway reasoning (ADR 0019): a reasoning model may spend a request's whole output cap on reasoning and return no
+# answer (``finish_reason=length``, only reasoning or blank text; MiniMax-M3.1-Flash in pilot D12-r3, 16384 of 16384
+# output tokens). That is not a provider failure: retrying the whole decision repeats it from scratch. The runtime
+# re-asks once within the decision, concisely and with a smaller scope; a second runaway ends the decision in the
+# bounded no-effect outcome ``reasoning-runaway``. Every runaway request is counted and recorded.
+RUNAWAY_NOTE = ("Your previous reply to this message used its whole output limit ({cap} tokens) on reasoning and "
+                "contained no answer. Think briefly. Do not request further reads: reply now with ONLY the JSON "
+                "decision object, with a short rationale. If you cannot decide yet, reply with a decision whose "
+                "control.action is request_input (or wait_for_jobs if jobs are outstanding) and a one-line summary.")
+RUNAWAY_TOOL_NOTE = ("Your previous reply used its whole output limit ({cap} tokens) on reasoning and contained no "
+                     "answer. No further reads are available. Think briefly and return your decision now, with a "
+                     "short rationale; if you cannot decide yet, use control.action request_input.")
+REASONING_EFFORTS = ("minimal", "low", "medium", "high")
+
+
+def is_runaway(response: Any) -> bool:
+    """A response that hit the output cap (``finish_reason == "length"``) before giving any answer: no part other than
+    reasoning (``ThinkingPart``) or blank text. A truncated answer (some text) is not a runaway: it is a malformed
+    reply, handled by the schema-guided re-ask."""
+    from pydantic_ai.messages import ModelResponse, TextPart, ThinkingPart
+    if not isinstance(response, ModelResponse) or response.finish_reason != "length":
+        return False
+    return all(isinstance(p, ThinkingPart) or (isinstance(p, TextPart) and not (p.content or "").strip())
+               for p in response.parts)
+
+
+def runaway_record(response: Any, request: int, reask: bool, reasoning_billing: str = "included") -> dict[str, Any]:
+    """What is recorded for one runaway request (in ``usage.structured_output.runaway``)."""
+    _, charged, reasoning, _ = _charged(response, reasoning_billing)
+    return {"request": request, "reask": reask, "finish_reason": response.finish_reason,
+            "output_tokens": response.usage.output_tokens, "reasoning_tokens": reasoning, "charged_output": charged,
+            "request_id": response.provider_response_id}
 
 
 def build_model(cfg: dict[str, Any]):
@@ -439,6 +477,32 @@ class PydanticAIRuntime:
         return {"response_format": {"type": "json_schema", "json_schema": {
             "name": "eidos_decision", "strict": False, "schema": schema}}}
 
+    def _runaway_effort(self) -> str | None:
+        """The reduced reasoning request sent with a runaway re-ask: ``runaway_reasoning_effort`` (opt-in; one of
+        ``REASONING_EFFORTS``), as the OpenAI-compatible ``reasoning_effort`` body field. Only OpenAI and
+        OpenAI-compatible endpoints get it, and only when configured: an endpoint that rejects the field would turn
+        the re-ask into a failed request."""
+        effort = self.config.get("runaway_reasoning_effort")
+        if not effort or self._provider() not in ("openai", "openai-compatible"):
+            return None
+        if effort not in REASONING_EFFORTS:
+            raise ModelCallFailed(f"runaway_reasoning_effort must be one of {REASONING_EFFORTS}", retryable=False)
+        return str(effort)
+
+    def _runaway_settings(self, settings: dict[str, Any], mode: str) -> dict[str, Any]:
+        """Settings of a runaway re-ask: the same output cap (a smaller one would only cut the answer shorter), the
+        decision-only response schema in JSON mode (no read request), and the reduced reasoning request if configured."""
+        out = dict(settings)
+        body = dict(self._json_mode_settings(()) or {}) if mode == "json" else {}
+        effort = self._runaway_effort()
+        if effort:
+            body["reasoning_effort"] = effort
+        if body:
+            out["extra_body"] = body
+        else:
+            out.pop("extra_body", None)
+        return out
+
     def _decide_text(self, req: DecisionRequest, mode: str) -> DecisionResult:
         """One model request at a time, each counted against ``max_requests_per_decision`` and the decision's
         token envelope. A reply is a decision, a read request (executed here, results sent back) or malformed
@@ -447,10 +511,11 @@ class PydanticAIRuntime:
         never called a tool and put the read tool into its effect calls instead)."""
         from pydantic import ValidationError
         from pydantic_ai import capture_run_messages
-        from pydantic_ai.exceptions import UsageLimitExceeded
+        from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
         from pydantic_ai.messages import ModelResponse
         from pydantic_ai.usage import UsageLimits
 
+        self._runaway_effort()  # a misconfigured effort fails before any request
         max_requests = int(self.config.get("max_requests_per_decision", 8))
         max_tokens = int(self.config.get("max_tokens_per_decision", 120_000))
         model = self.config.get("model")
@@ -460,7 +525,8 @@ class PydanticAIRuntime:
         if extra:
             settings["extra_body"] = extra
         report: dict[str, Any] = {"mode": mode, "json_mode": bool(extra), "repairs": [], "reasks": 0,
-                                  "errors": [], "valid": False, "read_requests": 0, "reads": []}
+                                  "errors": [], "valid": False, "read_requests": 0, "reads": [], "runaway": [],
+                                  "runaway_reasks": 0}
         shape = so.JSON_SHAPE + ("\n\n" + so.read_shape(reads_allowed) if reads_allowed else "")
         instructions = SYSTEM + "\n\n" + shape
         agent = self._agent(req, with_tools=False, output_type=str, instructions=instructions)
@@ -468,9 +534,9 @@ class PydanticAIRuntime:
                    + f"\n\n## Decision budget\nYou may make at most {max_requests} model requests for this decision, "
                    "including read requests and one possible correction of a malformed reply.\n\n" + shape)
 
-        def parse(text: str) -> tuple[list[Any] | None, dict[str, Any] | None]:
+        def parse(text: str, decision_only: bool = False) -> tuple[list[Any] | None, dict[str, Any] | None]:
             obj, repairs = so.extract_json(text)
-            reads, obj, read_repairs = so.split_read_request(obj, reads_allowed)
+            reads, obj, read_repairs = so.split_read_request(obj, [] if decision_only else reads_allowed)
             report["repairs"] += repairs + read_repairs
             if reads is not None:
                 return reads, None
@@ -488,53 +554,96 @@ class PydanticAIRuntime:
         deadline = float((req.limits or {}).get("deadline_seconds") or 0)
         request_timeout = float(self.config.get("request_timeout", 120))
         started = time.monotonic()
+        def runaway(response: Any, was_reask: bool) -> DecisionResult | None:
+            """Record a runaway reply; the bounded outcome if no re-ask is left, else None (re-ask once)."""
+            report["runaway"].append(runaway_record(response, len(billed), was_reask, self._billing()))
+            if was_reask:  # the concise re-ask ran away too: a bounded outcome, not a retried failure
+                return self._bounded(history, model, max_requests, f"reasoning runaway: output cap "
+                                     f"{output_cap(self.config)} reached twice without an answer",
+                                     "reasoning-runaway", report, billed)
+            if len(billed) >= max_requests:
+                return self._bounded(history, model, max_requests, f"reasoning runaway in the last of "
+                                     f"{max_requests} requests", "reasoning-runaway", report, billed)
+            return None
+
         history: list = []
+        # Every response of this decision, in order: what it billed. ``history`` (what the model sees next) leaves out
+        # a runaway reply, which carries no answer; its tokens and its request still count.
+        billed: list = []
         reask_pending = False  # counted only once the re-ask request is actually made
+        runaway_pending = False  # likewise for the runaway re-ask
         while True:
-            used = sum(1 for m in history if isinstance(m, ModelResponse))
+            used = len(billed)
             if used and deadline and time.monotonic() - started + request_timeout > deadline:
                 return self._bounded(history, model, max_requests, f"a further request (timeout {request_timeout:g}s)"
                                      f" could outlive the decision deadline ({deadline:g}s)", "decision-deadline",
-                                     report)
+                                     report, billed)
             # The envelope (``TokenEnvelope``) admits the request only if its worst case fits what is left; the
             # usage limit is the same envelope checked after the response.
-            left = max(max_tokens - sum(self._tokens(history)), 1)
+            left = max(max_tokens - sum(self._tokens(billed)), 1)
             reask_now, reask_pending = reask_pending, False
             if reask_now:
                 report["reasks"] += 1
+            runaway_now, runaway_pending = runaway_pending, False
+            if runaway_now:
+                report["runaway_reasks"] += 1
             with capture_run_messages() as captured:
                 try:
-                    run = agent.run_sync(message, message_history=history or None,
-                                         usage_limits=UsageLimits(request_limit=1, total_tokens_limit=left),
-                                         model_settings=settings or None)
+                    run = agent.run_sync(
+                        message + ("\n\n" + RUNAWAY_NOTE.format(cap=output_cap(self.config)) if runaway_now else ""),
+                        message_history=history or None,
+                        usage_limits=UsageLimits(request_limit=1, total_tokens_limit=left),
+                        model_settings=(self._runaway_settings(settings, mode) if runaway_now else settings) or None)
                 except EnvelopeRefused as exc:  # not started: nothing billed, a re-ask that was not sent is not counted
                     report["reasks"] -= int(reask_now)
-                    outcome = "structured-output-invalid" if report["errors"] and not report["valid"] \
-                        else "request-budget-exhausted"
+                    report["runaway_reasks"] -= int(runaway_now)
+                    outcome = "reasoning-runaway" if runaway_now else (
+                        "structured-output-invalid" if report["errors"] and not report["valid"]
+                        else "request-budget-exhausted")
                     return self._bounded(history, model, max_requests, f"decision token envelope: {exc}", outcome,
-                                         report)
+                                         report, billed)
                 except UsageLimitExceeded as exc:
+                    billed += [m for m in captured if isinstance(m, ModelResponse) and m not in billed]
                     history += [m for m in captured if m not in history]
-                    return self._bounded(history, model, max_requests, str(exc), "request-budget-exhausted", report)
+                    return self._bounded(history, model, max_requests, str(exc), "request-budget-exhausted", report,
+                                         billed)
                 except ModelCallFailed:
                     raise
                 except Exception as exc:  # provider/transport failure: report everything that may have billed
-                    usage = self._usage(history + [m for m in captured if m not in history])
+                    new = [m for m in captured if isinstance(m, ModelResponse) and m not in history]
+                    billed += new
+                    if isinstance(exc, UnexpectedModelBehavior) and new and is_runaway(new[-1]):
+                        ended = runaway(new[-1], runaway_now)
+                        if ended is not None:
+                            return ended
+                        runaway_pending = True  # same history, same message, concise and decision-only
+                        continue
+                    usage = self._usage(billed)
                     usage["failed_request"] = {"error": type(exc).__name__,
                                                "status_code": getattr(exc, "status_code", None)}
                     report["repairs"] = sorted(set(report["repairs"]))
                     usage["structured_output"] = report
                     raise ModelCallFailed(f"{type(exc).__name__}: {exc}"[:500], retryable=classify_failure(exc),
                                           possible_usage=usage) from exc
+            new_responses = [m for m in run.new_messages() if isinstance(m, ModelResponse)]
+            billed += new_responses
+            if new_responses and is_runaway(new_responses[-1]):
+                # Whitespace-only text at the cap: Pydantic AI returns it as text, but it is the same runaway.
+                ended = runaway(new_responses[-1], runaway_now)
+                if ended is not None:
+                    return ended
+                runaway_pending = True
+                continue
             history = list(run.all_messages())
-            used = sum(1 for m in history if isinstance(m, ModelResponse))
+            used = len(billed)
             try:
-                reads, proposal = parse(run.output)
+                reads, proposal = parse(run.output, decision_only=runaway_now)
             except (so.StructuredOutputError, ValidationError, ValueError) as exc:
                 msg = so.validation_message(exc)
                 report["errors"].append(msg)
                 if report["reasks"] >= 1 or used >= max_requests:  # at most one schema-guided re-ask
-                    return self._bounded(history, model, max_requests, msg, "structured-output-invalid", report)
+                    return self._bounded(history, model, max_requests, msg, "structured-output-invalid", report,
+                                         billed)
                 reask_pending = True
                 message = ("Your reply could not be used: " + msg + "\nReply with ONLY the corrected JSON object in "
                            "the required shape, nothing else.")
@@ -548,7 +657,7 @@ class PydanticAIRuntime:
                 report["reads"] += [{"request": used, "tool": r.get("tool") if isinstance(r, dict) else None,
                                      "executed": False} for r in reads]
                 return self._bounded(history, model, max_requests, f"read request in the last of {max_requests} "
-                                     "requests", "request-budget-exhausted", report)
+                                     "requests", "request-budget-exhausted", report, billed)
             results = []
             for i, entry in enumerate(reads):
                 rec: dict[str, Any] = {"request": used, "tool": entry.get("tool") if isinstance(entry, dict) else None}
@@ -572,8 +681,8 @@ class PydanticAIRuntime:
                     f"You have {remaining} model requests left for this decision, including your decision.")
             message = "## Read results\n" + json.dumps(results, default=str) + "\n\n" + note
         report["repairs"] = sorted(set(report["repairs"]))
-        usage = self._usage(history)
-        usage["structured_output"] = report  # repairs, re-asks and reads are never silent: usage, receipts, settings
+        usage = self._usage(billed)
+        usage["structured_output"] = report  # repairs, re-asks, reads and runaways are never silent
         assert proposal is not None
         return DecisionResult(proposal, usage, json.loads(_messages_json(history)), self._settings(usage, max_requests),
                               PROMPT_REVISION)
@@ -591,9 +700,10 @@ class PydanticAIRuntime:
         return int(u["input_tokens"]), int(u["output_tokens"])
 
     def _bounded(self, messages: list, model: Any, max_requests: int, reason: str, outcome: str,
-                 report: dict) -> DecisionResult:
-        """No usable decision within the bounds: an explicit no-effect decision; every billed request reported."""
-        usage = self._usage(messages)
+                 report: dict, billed: list | None = None) -> DecisionResult:
+        """No usable decision within the bounds: an explicit no-effect decision; every billed request reported
+        (``billed``: every response of the decision, when ``messages`` leaves some out)."""
+        usage = self._usage(messages if billed is None else billed)
         usage["limit_reached"] = str(reason)[:300]
         report["repairs"] = sorted(set(report["repairs"]))
         usage["structured_output"] = report
@@ -606,6 +716,7 @@ class PydanticAIRuntime:
         from pydantic_ai import capture_run_messages
         from pydantic_ai.exceptions import UsageLimitExceeded
         from pydantic_ai.usage import UsageLimits
+        self._runaway_effort()  # a misconfigured effort fails before any request (nothing billed yet)
         agent = self._agent(req)
         max_requests = int(self.config.get("max_requests_per_decision", 8))
         prompt = (req.context + "\n\n## This turn so far\n" + json.dumps(req.turn_so_far, default=str)[:20000]
@@ -663,6 +774,11 @@ class PydanticAIRuntime:
             except ModelCallFailed:
                 raise
             except Exception as exc:  # provider/transport failure: report everything that may have billed
+                from pydantic_ai.exceptions import UnexpectedModelBehavior
+                from pydantic_ai.messages import ModelResponse
+                responses = [m for m in messages if isinstance(m, ModelResponse)]
+                if isinstance(exc, UnexpectedModelBehavior) and responses and is_runaway(responses[-1]):
+                    return self._tool_runaway(req, list(messages), responses[-1], max_requests, settings)
                 usage = self._usage(messages)
                 usage["failed_request"] = {"error": type(exc).__name__,
                                            "status_code": getattr(exc, "status_code", None)}
@@ -673,12 +789,74 @@ class PydanticAIRuntime:
         return DecisionResult(to_proposal(result.output), usage, raw, self._settings(usage, max_requests),
                               PROMPT_REVISION)
 
+    def _tool_runaway(self, req: DecisionRequest, messages: list, runaway: Any, max_requests: int,
+                      settings: dict[str, Any]) -> DecisionResult:
+        """Tool mode: the last response ran away (``is_runaway``). One concise request WITHOUT read tools over the
+        history before it (reduced reasoning request if configured), if the request budget has one left; a second
+        runaway, or no request left, ends in the bounded no-effect outcome ``reasoning-runaway`` (ADR 0019)."""
+        from pydantic_ai import capture_run_messages
+        from pydantic_ai.messages import ModelResponse
+        from pydantic_ai.usage import UsageLimits
+        billed = [m for m in messages if isinstance(m, ModelResponse)]
+        kept = _close_tool_calls([m for m in messages if m is not runaway])
+        report: dict[str, Any] = {"mode": "tool", "runaway": [runaway_record(runaway, len(billed), False,
+                                                                             self._billing())], "runaway_reasks": 0}
+
+        def bounded(reason: str, history: list) -> DecisionResult:
+            usage = self._usage(billed)
+            usage["limit_reached"] = reason[:300]
+            usage["structured_output"] = report
+            proposal = {"rationale": "no usable decision (reasoning-runaway); no effects proposed", "calls": [],
+                        "control": {"action": "wait_for_jobs", "summary": "reasoning-runaway",
+                                    "bounded_outcome": "reasoning-runaway"}}
+            return DecisionResult(proposal, usage, json.loads(_messages_json(history)),
+                                  self._settings(usage, max_requests), PROMPT_REVISION)
+
+        if len(billed) >= max_requests:
+            return bounded(f"reasoning runaway in the last of {max_requests} requests", kept)
+        effort = self._runaway_effort()
+        final_settings = {**settings, **({"extra_body": {"reasoning_effort": effort}} if effort else {})}
+        report["runaway_reasks"] = 1
+        final_agent = self._agent(req, with_tools=False)
+        with capture_run_messages() as final_messages:
+            try:
+                result = final_agent.run_sync(RUNAWAY_TOOL_NOTE.format(cap=output_cap(self.config)),
+                                              message_history=kept, usage_limits=UsageLimits(request_limit=1),
+                                              model_settings=final_settings)
+            except EnvelopeRefused as exc:  # not started: nothing billed
+                report["runaway_reasks"] = 0
+                return bounded(f"decision token envelope: {exc}", kept)
+            except (DecisionAborted, ModelCallFailed):
+                raise
+            except Exception as exc:  # noqa: BLE001
+                from pydantic_ai.exceptions import UnexpectedModelBehavior
+                new = [m for m in final_messages if isinstance(m, ModelResponse) and m not in billed]
+                billed.extend(new)
+                if isinstance(exc, UnexpectedModelBehavior) and new and is_runaway(new[-1]):
+                    report["runaway"].append(runaway_record(new[-1], len(billed), True, self._billing()))
+                    return bounded(f"reasoning runaway: output cap {output_cap(self.config)} reached twice without "
+                                   "an answer", kept)
+                usage = self._usage(billed)
+                usage["failed_request"] = {"error": type(exc).__name__,
+                                           "status_code": getattr(exc, "status_code", None)}
+                usage["structured_output"] = report
+                raise ModelCallFailed(f"{type(exc).__name__}: {exc}"[:500], retryable=classify_failure(exc),
+                                      possible_usage=usage) from exc
+        new_messages = list(result.new_messages())
+        billed.extend(m for m in new_messages if isinstance(m, ModelResponse))
+        usage = self._usage(billed)
+        usage["structured_output"] = report
+        return DecisionResult(to_proposal(result.output), usage, json.loads(_messages_json(kept + new_messages)),
+                              self._settings(usage, max_requests), PROMPT_REVISION)
+
     def _settings(self, usage: dict, max_requests: int) -> dict[str, Any]:
         return {"runtime": "pydantic-ai", "model": self.config.get("model"), "served_models": usage.get("served_models"),
                 "max_output_tokens": output_cap(self.config), "temperature": "provider default",
                 "max_requests_per_decision": max_requests, "output_retries": int(self.config.get("output_retries", 1)),
                 "transport_retries": 0, "args_encoding": "json-string",
                 "output_mode": self.config.get("output_mode", "tool"),
+                **({"runaway_reasoning_effort": self.config["runaway_reasoning_effort"]}
+                   if self.config.get("runaway_reasoning_effort") else {}),
                 **({"structured_output": usage["structured_output"]} if usage.get("structured_output") else {})}
 
     def _provider(self) -> str:

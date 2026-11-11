@@ -35,6 +35,7 @@ limit (4096) exceeded before any response was generated`. Recommended `investiga
 | `turn_deadline_seconds` | `1200` (at least 2 × `request_timeout`) | the `decide` activity's timeout; the text-mode loop does not start a request that could outlive it (`bounded_outcome: decision-deadline`) |
 | `max_requests_per_decision` | `6` to `8` (default 8) | read rounds and the re-ask count against it; the measured read decision used 4 |
 | `max_tokens_per_decision` | `120000` (default) | the reservation prices `max_requests_per_decision × max_output_tokens` of it at the output rate, which at 8 × 16384 is all of it; a request starts only if tokens already charged + its input estimate + `max_output_tokens` fit in it |
+| `runaway_reasoning_effort` | unset (opt-in: `low`) | ADR 0019: a request that spends the whole output cap on reasoning without an answer is re-asked once, concisely and decision-only; this adds the OpenAI-compatible `reasoning_effort` field to that re-ask. Not measured with MiniMax-M3.1-Flash: set it only for an endpoint known to accept the field |
 
 Usage receipts record reasoning tokens (`reasoning_tokens`, `reasoning_accounting`). They are counted inside the
 output tokens, as the OpenAI-compatible API reports them; set `reasoning_tokens_billing: "separate"` for a provider
