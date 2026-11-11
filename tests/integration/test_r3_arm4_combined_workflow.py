@@ -34,8 +34,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from test_cancel_through_acceptance import _env
@@ -43,6 +45,7 @@ from test_command_path import _publish
 from test_diagnose_and_template_sweep_lab import GENERATE, _bundle
 from test_f5d_conclude_race import _complete as _complete_turn
 from test_incumbent_challengers import SCORER_RULE, Scene, _request, refusal
+from test_r2_combined_workflow import FakeProvider, Journey, call, decision, ref
 from test_turn_recovery import ShimClient
 
 from eidos.domain.errors import Invalid
@@ -63,6 +66,36 @@ CLAIM = {"statement": "the locked recipe raises validation accuracy over the bas
          "scope": {"task": "toy-4class", "split": "validation"}}
 ESTIMATE = {"metric": "accuracy", "baseline": 0.61, "candidate": 0.85, "split": "validation"}
 RULE_WITH_SCORER = SCORER_RULE  # {metric: accuracy, split: validation, higher_is_better, scorer: proj.scorer, data: ...}
+
+# The project's own components for the scripted journey. The trial predicts the first ``correct`` of ten labels right; the
+# scorer reports accuracy from the predictions it reads (its receipt is the selection evidence); the command is the baseline.
+ARM_CODE = """
+LABELS = [0, 1, 2, 0, 1, 2, 0, 1, 2, 0]
+
+
+def trial(inputs, config, *, reader=None, writer=None, context=None):
+    rows = [{"id": i, "prediction": label if i < int(config["correct"]) else (label + 1) % 3}
+            for i, label in enumerate(LABELS)]
+    writer.stage_json("predictions", rows, schema="class-predictions/1")
+    return {"examples": len(rows)}
+
+
+def score(inputs, config, *, reader=None, writer=None, context=None):
+    rows = reader.json("predictions")
+    accuracy = sum(1 for r in rows if r["prediction"] == LABELS[r["id"]]) / len(LABELS)
+    writer.stage_json("report", {"accuracy": accuracy}, schema="score-report/1")
+    return {"metrics": {"accuracy": accuracy}}
+"""
+ARM_COMMAND = {"id": "eidos.project.command", "release": "1.1.0", "implements": "project-command/1", "kind": "artifact-op",
+               "entry": "m:trial", "scientific_effects": ["observe"], "optional_inputs": {"source": "source-bundle/1"},
+               "output": {"predictions": "class-predictions/1"}}
+ARM_TRIAL = {"id": "proj.arm4-trial", "release": "1.0.0", "implements": "trial/1", "kind": "artifact-op", "entry": "m:trial",
+             "scientific_effects": ["observe"], "output": {"predictions": "class-predictions/1"}}
+ARM_SCORER = {"id": "proj.arm4-scorer", "release": "1.0.0", "implements": "scorer/1", "kind": "artifact-op",
+              "entry": "m:score", "scientific_effects": ["observe"], "input": {"predictions": "class-predictions/1"},
+              "output": {"report": "score-report/1"}}
+SCORED_RULE = {**SCORER_RULE, "scorer": "proj.arm4-scorer"}  # the scorer of the scripted journey, on the validation split
+ON_VALIDATION = {"split": "validation"}  # the selection data the rule names: the scorer jobs' configuration
 
 # The baseline's validation predictions: the true labels with 30 percent of them wrong (ids as in GENERATE).
 PREDICTIONS = """
@@ -98,6 +131,13 @@ class ArmScene(Scene):
         root = tmp_path / "labroot"
         self.runner = AttemptRunner(ShimClient(lab, self.launcher), lab.store, lab_root=root, launcher_id=self.launcher.id,
                                     api_port=1, credential_path=str(root / "config" / "secrets" / "launcher.token"))
+        self.flow = SimpleNamespace(runner=self.runner)  # what test_r2_combined_workflow.Journey runs admitted jobs with
+
+    def publish_project_components(self) -> dict[str, str]:
+        """The project's own runnable command, trial and scorer (the synthetic ones of the incumbent scene only answer to
+        a launcher's chosen receipts): the real runner executes these, so a scripted model's calls produce real receipts."""
+        return {key: _publish(self.lab, self.pid, manifest, {"m.py": ARM_CODE})["component_ref"]
+                for key, manifest in (("command", ARM_COMMAND), ("trial", ARM_TRIAL), ("scorer", ARM_SCORER))}
 
     def component_job(self, inv: str, name: str, config: dict, ports: tuple[str, ...]) -> dict:
         """Admit a real component job of the investigation and run it through the attempt runner; returns its final view."""
@@ -356,3 +396,135 @@ def test_selection_and_submission_without_the_components(lab):
     assert pack({**scene.view(inv), "exploration": turn["spec"]["exploration"]}, [], policy=POLICY_ID)["text"].count(
         "- Incumbent v2") == 1
     submit(scene, inv, turn, held)
+
+
+# =====================================================================================================================
+# the same workflow, driven by a scripted fake provider through the real decide/execute activities (test_r2 harness)
+# =====================================================================================================================
+LAB = {"environment": "lab", "isolation_profile": "dev:same-user"}
+
+
+def job_of(prompt: str, component: str, tag: str) -> str:
+    """The id of the succeeded job of ``component`` whose configuration carries ``tag``, as the model reads it in the Jobs
+    section of its own context (the lock a model writes names a job it saw there)."""
+    for line in prompt.splitlines():
+        try:
+            row = json.loads(line) if line.startswith('{"') else {}
+        except ValueError:
+            continue
+        if row.get("component") == component and (row.get("config") or {}).get("tag") == tag and row.get("status") == "succeeded":
+            return row["id"]
+    raise AssertionError(f"no succeeded {component} job tagged {tag!r} among the jobs of this context")
+
+
+def lock(component: str, tag: str, **control):
+    """A decision (a function of the prompt the model got) that locks the job it finds in its context as the candidate."""
+    return lambda prompt: decision(call("record_note", kind="candidate_lock",
+                                        text=json.dumps({"job_id": job_of(prompt, component, tag)})), **control)
+
+
+@needs_numpy
+def test_a_scripted_fake_provider_drives_the_arm4_workflow_through_the_real_activities(lab, tmp_path):
+    scene = ArmScene(lab, tmp_path)
+    refs = scene.publish_project_components()
+    sources = {name: scene.arts[name] for name in ("train", "validation")}
+
+    def trial(tag: str, correct: int) -> dict:
+        return call("run_component", component_ref=refs["trial"], **LAB, config={"correct": correct, "tag": tag})
+
+    def scorer(tag: str, index: int) -> dict:  # reads the predictions of the call at ``index`` of its own decision
+        return call("run_component", component_ref=refs["scorer"], **LAB, config={**ON_VALIDATION, "tag": f"{tag}-score"},
+                    inputs={"predictions": ref(index, "outputs.predictions")})
+
+    script = [
+        # 1. the baseline: the project's own command, then its scorer (it names the command's predictions with a $ref)
+        decision(call("run_component", component_ref=refs["command"], **LAB, config={"correct": 6, "tag": "baseline"}),
+                 scorer("baseline", 0), action="wait_for_jobs"),
+        # 2. the diagnosis, on train, validation and the baseline's predictions
+        decision(call("run_component", component_ref=scene.refs[DIAGNOSE], **RUN, config={"seed": 3},
+                      inputs={**sources, "predictions": scene.arts["predictions"]}), action="wait_for_jobs"),
+        # 3. one typed template sweep
+        decision(call("run_component", component_ref=scene.refs[SWEEP], **RUN, config={"template": TEMPLATE}, inputs=sources),
+                 action="wait_for_jobs"),
+        # 4. the selection rule first; then the first candidate and its score (admitted after the rule)
+        decision(call("record_note", kind="selection_rule", text=json.dumps(SCORED_RULE)), trial("first", 7),
+                 scorer("first", 1), action="wait_for_jobs"),
+        # 5. the first candidate is locked (a function of the context it was scored in); a challenger round follows
+        lock(refs["trial"], "first"),
+        decision(trial("challenger", 9), scorer("challenger", 0), action="wait_for_jobs"),
+        # 6. the scored challenger is better: re-lock it
+        lock(refs["trial"], "challenger", action="wait_for_jobs"),
+        # 7. submit: file the claim, conclude with disposition candidate
+        decision(call("file_claim", **CLAIM)),
+        decision(action="conclude", scope={"split": "validation", "population": "visible validation only"},
+                 claim={"disposition": "candidate", "point_estimate": ESTIMATE}),
+    ]
+    provider = FakeProvider(*script)
+    journey = Journey(scene, provider, f"charter:s{scene.pid}")
+    inv = journey.inv
+    assert [journey.turn()["stop_reason"] for _ in range(7)] == ["waiting"] * 6 + ["concluded"]
+    assert len(provider.prompts) == len(script)  # one model request per decision: each scripted decision was accepted as written
+    receipts = {i: journey.receipts(i) for i in range(len(script) - 1)}  # the conclusion has no calls, so no receipts
+    assert all(r["ok"] for rs in receipts.values() for r in rs), receipts
+
+    # 1. the baseline: recorded by the lab from the first project-command job, scored by the job that read its predictions
+    base, base_scorer = receipts[0][0]["result"]["job_id"], receipts[0][1]["result"]["job_id"]
+    assert receipts[0][1]["depends_on"] == [0] and receipts[0][1]["resolved"][0]["ref"] == "call[0].outputs.predictions"
+    record = scene.baseline(inv)
+    assert record["status"] == "scored" and record["body"]["job_id"] == base and record["body"]["basis"] == "automatic"
+    assert record["body"]["scored_by"] == {"job_id": base_scorer, "metrics": {"accuracy": 0.6}}
+
+    # 2. the diagnosis job succeeded and ranked the planted offset first
+    diagnosis = scene.q("get_job", {"job_id": receipts[1][0]["result"]["job_id"]})
+    assert diagnosis["status"] == "succeeded" and diagnosis["lock"]["component"]["ref"] == scene.refs[DIAGNOSE]
+    assert {"train", "validation", "predictions"} <= set(diagnosis["lock"]["inputs"])
+    report = scene.artifact_json(diagnosis, "report")
+    assert report["hypotheses"][0]["cause"] == "per-example-additive-offset" and report["claim"] is None
+
+    # 3. the template sweep: ranked evidence in one call, and its winner agrees with the diagnosis
+    sweep = scene.q("get_job", {"job_id": receipts[2][0]["result"]["job_id"]})
+    assert sweep["status"] == "succeeded" and sweep["lock"]["config"] == {"template": TEMPLATE}
+    table, best = scene.artifact_json(sweep, "evidence_table"), scene.artifact_json(sweep, "best_recipe")
+    assert table["counts"]["evaluated"] == table["counts"]["usable"] == 8 and best["status"] == "found"
+    assert best["recipe"]["parameters"]["preprocess"] in ("per_example_center", "per_example_standardize")
+
+    # 4. the rule came first; the first candidate is incumbent v1; the challenger, run after the rule, is v2
+    (rule,) = scene.notes(inv, "selection_rule")
+    assert rule["id"] == receipts[3][0]["result"]["note_id"] and json.loads(rule["body"]["text"]) == SCORED_RULE
+    first, first_score = receipts[3][1]["result"]["job_id"], receipts[3][2]["result"]["job_id"]
+    challenger, challenger_score = receipts[5][0]["result"]["job_id"], receipts[5][1]["result"]["job_id"]
+    assert receipts[5][1]["depends_on"] == [0]  # the score names the challenger's predictions with a $ref
+    assert journey.proposal(5)["calls"][1]["args"]["inputs"]["predictions"] == ref(0, "outputs.predictions")
+    assert receipts[4][0]["result"]["incumbent"] == {"version": 1, "basis": "first-lock", "evidence": {
+        "metric": "accuracy", "split": "validation", "value": 0.7, "scored_by": first_score}}
+    second = receipts[6][0]["result"]["incumbent"]
+    assert second["version"] == 2 and second["basis"] == "beats-incumbent"
+    assert second["evidence"] == {"metric": "accuracy", "split": "validation", "value": 0.9, "scored_by": challenger_score}
+    assert scene.locked_job(inv) == challenger
+    changed = scene.events(inv, "incumbent.changed")
+    assert [(e["body"]["version"], e["body"]["job_id"]) for e in changed] == [(1, first), (2, challenger)]
+    assert changed[-1]["body"]["basis"] == "beats-incumbent" and changed[-1]["body"]["previous"]["job_id"] == first
+    jobs = {j["id"]: j for j in scene.view(inv)["jobs"]}
+    assert jobs[challenger]["receipt"]["examples"] == 10 and "metrics" not in jobs[challenger]["receipt"]  # the trial scores nothing
+    assert jobs[challenger_score]["receipt"]["metrics"] == {"accuracy": 0.9}  # the rule's scorer does
+
+    # 5. submitted: the claim state is derived from the evidence (no assessment), not from the disposition asked for
+    claim_id = receipts[7][0]["result"]["claim_id"]
+    state = journey.conclusion()["claim_state"]
+    assert state["state"] == "candidate-submitted" and state["confirmed"] is False, state
+    assert state["claim_id"] == claim_id and state["assessment_id"] is None and "downgraded_from" not in state
+    assert state["label"] == "candidate submitted for confirmation" and state["requested_disposition"] == "candidate"
+
+    # the pinned facts of the last turn's context (the model's own prompt): baseline, incumbent v2, allowance, diagnosis
+    facts = pinned_facts(provider.prompts[-1])
+    assert (f"- Baseline (recorded): job {base} (eidos.project.command@1.1.0, environment lab), metrics null; "
+            f'scored by {base_scorer}: {{"accuracy": 0.6}}') in facts
+    assert f"- Incumbent v2: job {challenger}, accuracy 0.9 (scored by {challenger_score}); not reproduced yet" in facts
+    assert f"- Selection rule: {json.dumps(SCORED_RULE, sort_keys=True)}" in facts
+    exploration = next(line for line in facts.splitlines() if line.startswith("- Exploration:"))
+    left = re.search(r"Allowance left: (\d+) model tokens \(after 150000 held back\)\.", exploration)
+    assert exploration.startswith("- Exploration: keep improving. ") and left and 0 < int(left[1]) < 850_000, exploration
+    assert f"- Diagnosis {diagnosis['id']} (succeeded): report " in facts and "top hypothesis per-example-additive-offset" in facts
+    assert f"- Sweep {sweep['id']} (succeeded): " in facts and "evidence_table" in facts
+    assert next(line for line in facts.splitlines() if line.startswith("- Current lock")).startswith(
+        f"- Current lock ({receipts[6][0]['result']['note_id']}, 2 recorded): ")
