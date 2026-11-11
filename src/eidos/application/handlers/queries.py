@@ -11,6 +11,7 @@ from typing import Any
 from eidos.application.handlers.components import catalog
 from eidos.application.handlers.investigations import confirm_scope, inv_scope
 from eidos.application.service import Ctx, query
+from eidos.domain import assessment as ev_assessment
 from eidos.domain import support
 from eidos.domain.environments import capability_summary
 from eidos.domain.errors import Forbidden, NotFound
@@ -284,7 +285,31 @@ def get_claim(ctx: Ctx, p: dict) -> dict:
                     "health": a.labels.get("health", "intact"), "plan_id": a.body.get("plan_id")}
                    for a in ctx.tx.list_records(ctx.project_id, "assessment", parent_id=claim.id)]
     _expose(ctx, claim.body.get("investigation_id"), f"claim:{claim.id}", {"assessments": [a["id"] for a in assessments]})
-    return {**claim.view(), "assessments": assessments, "support": support.support_status(justs, affected)}
+    return {**claim.view(), "assessments": assessments, "support": support.support_status(justs, affected),
+            "claim_state": _claim_state(ctx, assessments, claim.revision, ctx.tx.list_records(ctx.project_id, "assessment",
+                                                                                             parent_id=claim.id))}
+
+
+def _claim_state(ctx: Ctx, assessments: list[dict], revision: int, records: list) -> dict:
+    """The claim's state from its current revision's assessments (ADR 0021): an intact failure outweighs a pass, and a
+    pass on a plan not verified at freeze (an exploratory or older plan) does not confirm."""
+    rev = {r.id: (r.body.get("claim_ref") or {}).get("revision") for r in records}
+    plan_of = {r.id: r.body.get("plan_id") for r in records}
+
+    def state_of(a: dict) -> str:
+        state = ev_assessment.lifecycle_state(a["outcome"], a["conformance"], a["health"])
+        plan = ctx.tx.get_record("evidence_plan", plan_of[a["id"]]) if state == ev_assessment.PROTOCOL_PASSED else None
+        return ev_assessment.CANDIDATE_SUBMITTED if state == ev_assessment.PROTOCOL_PASSED and not ev_assessment.can_confirm(
+            plan.body if plan else None) else state
+
+    states = [state_of(a) for a in assessments if rev.get(a["id"]) == revision]
+    if ev_assessment.NOT_SUPPORTED in states:
+        state = ev_assessment.NOT_SUPPORTED
+    elif ev_assessment.PROTOCOL_PASSED in states:
+        state = ev_assessment.PROTOCOL_PASSED
+    else:
+        state = ev_assessment.CANDIDATE_SUBMITTED
+    return {"state": state, "confirmed": state == ev_assessment.PROTOCOL_PASSED, "label": ev_assessment.LABELS[state]}
 
 
 @query("get_assessment")
@@ -345,14 +370,15 @@ def budgets(ctx: Ctx, p: dict) -> dict:
 def assessment_inputs(ctx: Ctx, p: dict) -> dict:
     """What the assessor may read: the frozen plan, each arm's receipts and output artifacts."""
     plan = ctx.tx.require("evidence_plan", p["plan_id"])
-    from eidos.application.handlers.evidence import arm_jobs
+    from eidos.application.handlers.evidence import arm_jobs, intermediate_jobs
     arms = {}
+    intermediate = intermediate_jobs(plan.body)
     for arm_id, jids in arm_jobs(plan.body).items():
         jobs = [ctx.tx.get_job(j) for j in jids]
         statuses = [j["status"] for j in jobs]
         arms[arm_id] = {"job_ids": jids, "status": "succeeded" if statuses and all(x == "succeeded" for x in statuses)
                         else "incomplete", "receipts": [(j.get("terminal") or {}).get("receipt", {}) for j in jobs],
-                        "outputs": [_jsonable(o) for j in jids for o in ctx.tx.publications(j)]}
+                        "outputs": [_jsonable(o) for j in jids if j not in intermediate for o in ctx.tx.publications(j)]}
     return {"plan_id": plan.id, "plan_digest": plan.digest, "plan": plan.body, "arms": arms}
 
 
@@ -446,12 +472,17 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
                       "jobs": launch.get("jobs"), "blocked": launch.get("blocked"),
                       "assessment": None if asm is None else {"assessment_id": asm.id, "outcome": asm.body.get("outcome"),
                                                               "conformance": asm.body.get("conformance")}})
+    requests = [{"request_id": r.id, "status": r.status, "plan_id": r.body.get("plan_id"), "path": r.body.get("path"),
+                 "exploratory": r.body.get("exploratory"), "reasons": r.body.get("reasons")}
+                for r in ctx.tx.list_records(ctx.project_id, "assessment_request", parent_id=inv.id, limit=100000)
+                if cutoff_ts is None or r.created_at <= cutoff_ts]
     approved = sorted({(ap.body["release_ref"], tuple(ap.body.get("scope") or ()))
                        for ap in ctx.tx.list_records(ctx.project_id, "approval", status="active", limit=100000)})
     return {"investigation": {"id": inv.id, "status": inv.status, "body": inv_body}, "horizon": horizon,
             "environments": environments, "environment_details": environment_details, "admission_refusals": refusals,
             "pinned_notes": pinned_notes, "created_artifacts": created[-50:], "call_results": call_results[-30:],
             "evidence_plans": plans[-10:],
+            "assessment_requests": requests[-10:],
             "approved_protocols": [{"release_ref": r, "scope": list(sc)} for r, sc in approved],
             "charter": charter, "jobs": jobs,
             "events": [{"seq": e["seq"], "type": e["type"], "subject": e["subject"]} for e in events[-200:]],

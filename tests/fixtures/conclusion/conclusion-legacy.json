@@ -1,0 +1,8 @@
+{
+  "action": "conclude",
+  "scope": {
+    "task": "toy-3class"
+  },
+  "summary": "Recorded before ADR 0021.",
+  "turn_id": "turn_fixture_0000"
+}

@@ -4,7 +4,7 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.2.0
 
-Investigator reliability and completion (ADR 0020, from the diagnosis of development pilot 1).
+### Investigator reliability and completion (ADR 0020, from the diagnosis of development pilot 1)
 
 - **Environment preflight.** Registration records a capability probe (interpreter digest, key modules, versions) and
   the project's declared requirements. Admission refuses a job whose component or project declares what the environment
@@ -30,6 +30,41 @@ Investigator reliability and completion (ADR 0020, from the diagnosis of develop
   Every pinned context section has a budget, omissions are recorded, and the final text never exceeds the limit. A turn,
   retries and execution included, ends at the reserve's start and a fresh conclusion turn begins there (stop reason
   `deadline`). The environment registration key digests its whole payload. The study arm passes `investigator.wall_seconds`.
+
+### Assessment by default and evidence-derived claim state (ADR 0021)
+- **`assess_candidate`** (lab command, investigator tool, MCP tool, `lab assess`) goes from a locked candidate, a
+  baseline and a charter rule to a frozen, launched evidence plan, using the paired-classification adapter and
+  `eidos.assessors.paired-ci@1.2.0` for accuracy and the template's train/evaluate path for paired metrics. It
+  validates output schemas, seed pairing and fresh initializations, the charter id and data provenance before launch.
+  Refusals are recorded (`assessment_request`) with stable reason codes.
+- **Selection data stays exploratory.** `data_provenance.split: selection` is refused, a plan that declares it cannot
+  be frozen, and held-out data needs an operator attestation in the charter (`held_out: {labels, splits}`).
+- **A conclusion's claim state comes from recorded evidence.** `conclusion.claim_state` (schema `conclusion-claim/1`,
+  published as `schemas/eidos-wire/v1/conclusion.schema.json`) is `protocol-passed` only for a conformant, healthy
+  assessor pass, `candidate-submitted` with point estimate, uncertainty, population and unfulfilled obligations when
+  nothing confirmed it, and `not-supported` after an intact failure. The model can abstain or report a null; a claimed
+  confirmation without a pass is recorded as a downgrade. `get_claim` returns the derived state.
+- **Study adapter.** `study/eidos_arms/arm4.py::map_claim_state` maps the states explicitly onto `eidos-answer/0.2`;
+  see `study/eidos_arms/CHARTER_RULES.md`.
+- Tests: `tests/unit/test_claim_state.py`, `tests/unit/test_assessment_pipeline_rules.py`,
+  `tests/unit/test_conclusion_schema.py`, `tests/unit/test_arm4_claim_state_mapping.py`,
+  `tests/components/test_assessment_pipeline_template.py`, `tests/integration/test_assess_candidate_e2e.py`.
+
+### Prospective confirmation (ADR 0021, E2b)
+- **A plan that can confirm a claim needs verified held-out data.** `freeze_evidence_plan` records `confirmation` from
+  the ledger against the charter's `held_out`. Missing provenance is exploratory: its assessment is `inconclusive`.
+  This applies to manual plans too, and a new conclusion over an older plan gives a submitted candidate.
+- **Confirming evidence must not exist yet.** Freezing refuses plans pinning existing results, by schema or digest.
+  `assess_candidate` now freezes recipes and seeds and launches fresh arms; a held-out set confirms only once, and
+  a recipe's already-run seeds are refused. `baseline` and `candidate` are now `{"job_id": ...}` naming a recipe.
+- **`eidos.templates.improves-under-budget@1.2.0`'s classification path can no longer be frozen**, since it pins
+  existing predictions.
+- The train/evaluate path verifies the candidate against the investigation's `candidate_lock` and pins its component
+  releases, so it can launch.
+- An abstention or a null in either representation takes precedence over the other. A reported point estimate is
+  normalized by the metric's direction, with lower-is-better metrics no longer reversed.
+- The investigator's tool guide states that a candidate can be submitted without a held-out verdict, the normal case
+  when the evaluator owns the held-out data.
 
 ## Unreleased / 1.1.1
 

@@ -1010,9 +1010,17 @@ def _close_turn(ctx: Ctx, turn: dict, p: dict) -> dict:
     if "turns" in budgets:
         ctx.tx.settle(inv_scope(inv_id), "turns", reserved=1, actual=1, ref=turn["id"])
     if control.get("action") in ("conclude", "stop") and not control_refused:
+        from eidos.application.handlers.assessment import conclusion_claim_state
+        from eidos.domain.assessment import CONCLUSION_SCHEMA
         body = dict(inv.body)
-        body["conclusion"] = {"turn_id": turn["id"], "summary": control.get("summary") or result["summary"],
-                              "scope": control.get("scope"), "action": control["action"]}
+        # ADR 0021: the claim state comes from recorded evidence and assessor state, not the model's status.
+        claim_state = conclusion_claim_state(ctx, inv, control)
+        body["conclusion"] = {"schema": CONCLUSION_SCHEMA, "turn_id": turn["id"],
+                              "summary": control.get("summary") or result["summary"], "scope": control.get("scope"),
+                              "action": control["action"], "claim_state": claim_state}
+        ctx.event("assessment.claim_state", inv_id, {k: claim_state.get(k) for k in ("state", "confirmed", "claim_id",
+                                                                                   "assessment_id", "requested_disposition")},
+                  investigation_id=inv_id)
         ctx.tx.put_record("investigation", inv_id, ctx.project_id, body, created_by=ctx.principal.id,
                           status="concluded")
     ctx.event("turn.completed", turn["id"], {"stop_reason": reason, "status": status,

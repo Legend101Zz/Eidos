@@ -87,7 +87,10 @@ def _assert_conclusion_refused(lab, pid, inv, tid, status: str, control: dict) -
 def _assert_concluded(lab, pid, inv, tid, action: str) -> None:
     rec = _investigation(lab, pid, inv)
     assert rec["status"] == "concluded"
-    assert rec["body"]["conclusion"] == {"turn_id": tid, "summary": SUMMARY, "scope": SCOPE, "action": action}
+    conclusion = rec["body"]["conclusion"]
+    assert {k: conclusion[k] for k in ("turn_id", "summary", "scope", "action")} == {
+        "turn_id": tid, "summary": SUMMARY, "scope": SCOPE, "action": action}
+    assert conclusion["claim_state"]["schema"] == "conclusion-claim/1"  # ADR 0021: additive, derived from evidence
     turn = _turn_view(lab, pid, tid)
     assert turn["status"] == "completed" and turn["result"]["stop_reason"] == "concluded"
     assert "control_refused" not in turn["result"]
