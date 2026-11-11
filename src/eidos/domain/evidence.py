@@ -8,11 +8,12 @@ conformance (conformant, deviated, incomplete) is a third field.
 from __future__ import annotations
 
 import copy
+import math
 from typing import Any
 
 from eidos.domain.charter import charter_digest, find_rule, reject_threshold_overrides
 from eidos.domain.errors import Invalid, QualificationMissing
-from eidos.domain.stats import paired_difference
+from eidos.domain.stats import paired_difference, two_way_paired_difference
 from eidos_wire import canonical_json, sha256_bytes
 
 CLAIM_KINDS = ("improves", "intervention-effect", "decodable", "transfer", "mechanism", "exploratory")
@@ -161,12 +162,31 @@ def check_conformance(plan: dict[str, Any], realized: dict[str, Any]) -> dict[st
     return {"conformance": status, "findings": findings}
 
 
-def evaluate_success_rule(plan: dict[str, Any], per_unit: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+# Interval methods for evaluate_success_rule. The default is the original one so that assessor releases that
+# call evaluate_success_rule(plan, per_unit) keep their recorded results (paired-ci@1.0.0, @1.1.0).
+INTERVAL_SEED_CLUSTERED = "seed-clustered-normal"
+INTERVAL_TWO_WAY = "two-way-seed-example-t"
+INTERVALS = (INTERVAL_SEED_CLUSTERED, INTERVAL_TWO_WAY)
+
+
+def evaluate_success_rule(
+    plan: dict[str, Any], per_unit: dict[str, list[dict[str, Any]]], *, interval: str = INTERVAL_SEED_CLUSTERED
+) -> dict[str, Any]:
     """Apply the plan's materialized charter rule to per-unit results.
 
     ``per_unit[arm_role] = [{"unit": id, "cluster": c, "<metric>": value, ...}]``. Units are paired
     by id between candidate and baseline.
+
+    ``interval``: ``seed-clustered-normal`` (original: normal CI, clustered by ``cluster`` when the plan has
+    ``cluster_by``, otherwise units independent) or ``two-way-seed-example-t`` (ADR 0018, F3b: units are
+    held-out examples crossed with training seeds = ``cluster`` values; upward-biased two-way variance and a
+    t critical value, see ``stats.two_way_paired_difference``). The two-way method always treats distinct
+    ``cluster`` values as seeds, whether or not the plan declares ``cluster_by``; with ``cluster_by`` and a
+    single seed the interval is unbounded (seed variance demanded but not estimable), without it a single
+    seed gives the plain paired t-interval over examples.
     """
+    if interval not in INTERVALS:
+        raise Invalid(f"unknown interval method {interval!r} (known: {list(INTERVALS)})")
     rule = plan["success_rule"]
     metric = rule["metric"]
     mdef = plan["metric_definitions"][metric]
@@ -177,13 +197,38 @@ def evaluate_success_rule(plan: dict[str, Any], per_unit: dict[str, list[dict[st
     keys = sorted(set(cand) & set(base), key=lambda k: (str(k[0]), str(k[1])))
     if not keys:
         return {"outcome": "inconclusive", "reason": "no paired units", "effect": None, "guardrails": []}
+    # F5 (review B2; pre-existing on main): the arms must cover the same units. Silently intersecting them let a
+    # selective loss of units (e.g. the candidate's failures dropped from its report) pass. A mismatch is reported
+    # and the outcome is inconclusive, whatever the interval says.
+    only_base, only_cand = set(base) - set(cand), set(cand) - set(base)
+    mismatch = {"only_baseline": len(only_base), "only_candidate": len(only_cand),
+                "examples": [f"{c}/{u}" for c, u in sorted(only_base | only_cand, key=lambda k: (str(k[0]),
+                                                                                                  str(k[1])))[:5]]
+                } if only_base or only_cand else None
     std = rule["decision_standard"]
     conf = std.get("confidence", 0.95)
     diffs = [sign * (float(cand[k][metric]) - float(base[k][metric])) for k in keys]
     clusters = [str(k[0]) for k in keys] if plan.get("cluster_by") else None
-    eff = paired_difference(diffs, clusters, conf)
+
+    def interval_of(values: list[float], subset: list[tuple[Any, Any]]) -> dict[str, Any]:
+        if interval == INTERVAL_TWO_WAY:
+            return two_way_paired_difference(values, [str(k[0]) for k in subset], [str(k[1]) for k in subset], conf,
+                                             require_seed_variance=bool(plan.get("cluster_by")))
+        return paired_difference(values, clusters, conf)  # unchanged original computation
+
+    eff = interval_of(diffs, keys)
     min_eff = float(rule["min_effect"])
-    if std["kind"] == "threshold":
+    # F5c (review R8 #4, ADR 0018 s.8): a two-way interval that is unbounded below because the variance collapsed or
+    # there are too few seed clusters never supports a pass under ANY decision standard. A threshold rule used to
+    # compare the point estimate alone, so three favourable seeds of a discrete seed effect could still pass it.
+    # Such evidence is decided by its interval, exactly as under the interval standard: it can fail (the upper bound
+    # is below the minimum effect, e.g. identical arms), never pass, and is otherwise inconclusive. The original
+    # interval method keeps its recorded behaviour (assessor releases before paired-ci@1.2.0).
+    # The variance may also be not estimable at all (one seed when the plan demands seed variance, fewer than two
+    # examples): the interval is then unbounded both ways with no collapse reason, and is treated the same.
+    unbounded = (eff.get("unbounded_reason") or ("variance-not-estimable" if not math.isfinite(eff["ci_low"])
+                                                 else None)) if interval == INTERVAL_TWO_WAY else None
+    if std["kind"] == "threshold" and not unbounded:
         outcome = "protocol-passed" if eff["estimate"] >= min_eff else "protocol-failed"
     elif eff["ci_low"] >= min_eff:
         outcome = "protocol-passed"
@@ -195,18 +240,27 @@ def evaluate_success_rule(plan: dict[str, Any], per_unit: dict[str, list[dict[st
     for g in rule.get("guardrails", []):
         gm = g["metric"]
         gsign = 1 if plan["metric_definitions"][gm]["direction"] == "increase" else -1
-        gd = [gsign * (float(cand[k][gm]) - float(base[k][gm])) for k in keys if gm in cand[k] and gm in base[k]]
+        gkeys = [k for k in keys if gm in cand[k] and gm in base[k]]
+        gd = [gsign * (float(cand[k][gm]) - float(base[k][gm])) for k in gkeys]
         if not gd:
             guards.append({"metric": gm, "status": "missing"})
             outcome = "inconclusive" if outcome == "protocol-passed" else outcome
             continue
-        ge = paired_difference(gd, clusters, conf)
+        ge = interval_of(gd, gkeys)
         ok = ge["ci_low"] >= -float(g["max_regression"])
         guards.append({"metric": gm, "status": "ok" if ok else "violated", **ge})
         if not ok and outcome == "protocol-passed":
             outcome = "protocol-failed" if ge["ci_high"] < -float(g["max_regression"]) else "inconclusive"
-    return {"outcome": outcome, "effect": eff, "min_effect": min_eff, "guardrails": guards,
-            "direction": mdef["direction"], "metric": metric}
+    out = {"outcome": outcome, "effect": eff, "min_effect": min_eff, "guardrails": guards,
+           "direction": mdef["direction"], "metric": metric}
+    if unbounded:  # surfaced in the result: why this evidence cannot pass, whatever the decision standard
+        out["unbounded_reason"] = unbounded
+        out["decided_by"] = "interval-upper-bound" if outcome == "protocol-failed" else "none"
+        if outcome == "inconclusive":
+            out["reason"] = f"the interval is unbounded below ({unbounded}): this evidence cannot support a pass"
+    if mismatch:
+        out.update(outcome="inconclusive", reason="baseline and candidate units do not match", unit_mismatch=mismatch)
+    return out
 
 
 def finalize_assessment(

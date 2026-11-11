@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
+import time
 import uuid
+from typing import Any
 
-from eidos.application.service import Ctx, command
+from eidos.application.service import EFFECT_ADMISSION, Ctx, command
 from eidos.domain import charter as charter_rules
 from eidos.domain import turns as turn_rules
-from eidos.domain.errors import BudgetExhausted, Invalid, QuestionRevised, StaleRevision
+from eidos.domain.errors import BudgetExhausted, EffectNotAdmitted, Invalid, QuestionRevised, StaleRevision
 
 RUNNING_JOB_POLICIES = ("drain", "checkpoint-and-stop", "cancel")
 BUDGET_DIMS = ("model_tokens", "model_usd", "compute_seconds", "trials", "turns")
@@ -208,19 +211,63 @@ def _clear_needs_input(ctx: Ctx, inv, status: str, action: str) -> None:
                   "was": inv.labels["needs_input"]}, investigation_id=inv.id)
 
 
+NEEDS_INPUT_CODES = ("refused-proposals", "coordinator-stopped", "turn-failed")
+NEEDS_INPUT_DETAILS_BYTES = 2000
+
+
+def _bounded_details(details: Any) -> dict:
+    """Machine-readable details of a needs-input mark or a turn failure: a JSON object of bounded size."""
+    if not isinstance(details, dict):
+        return {}
+    if len(json.dumps(details, default=str)) <= NEEDS_INPUT_DETAILS_BYTES:
+        return details
+    return {"truncated": True, "preview": json.dumps(details, default=str)[:NEEDS_INPUT_DETAILS_BYTES]}
+
+
 @command("mark_needs_input", "turn")
 def mark_needs_input(ctx: Ctx, p: dict) -> dict:
-    """The coordinator surfaces an investigation that keeps producing refused proposals: durable and visible
-    (investigation label, event) until an operator steers, resumes or stops it."""
+    """The coordinator surfaces an investigation it will not continue on its own: durable and visible (investigation
+    label, event) until an operator steers, resumes or stops it. ``code`` says why, for clients and operators
+    (``NEEDS_INPUT_CODES``: refused proposals after bounded retries, the coordinator stopped on a limit, or a turn
+    failed with a non-retryable error or after its bounded automatic retries, ADR 0019); ``details`` is a bounded
+    JSON object (for a failed turn: the turn, the error type and message, retryable, attempts)."""
+    code = p.get("code") or ("refused-proposals" if int(p.get("refused_turns", 0) or 0) else "coordinator-stopped")
+    if code not in NEEDS_INPUT_CODES:
+        raise Invalid(f"code must be one of {NEEDS_INPUT_CODES}")
+    if code == "turn-failed":  # F5 (A2): a turn the failed child left open is closed and settled, never resumed
+        close_abandoned_turn(ctx, p["investigation_id"], (p.get("details") or {}).get("failure"))
     inv = ctx.tx.require("investigation", p["investigation_id"], lock=True)
     if (inv.labels or {}).get("needs_input"):
-        return {"investigation_id": inv.id, "needs_input": inv.labels["needs_input"], "already": True}
+        # F5 (A1): every needs-input wait gets its own cursor. An operator event that ended an earlier wait without
+        # clearing the mark (e.g. a charter amendment) is behind it and never counts as news again.
+        mark = {**inv.labels["needs_input"], "cursor": ctx.tx.horizon()}
+        ctx.tx.set_status("investigation", inv.id, inv.status, labels={"needs_input": mark})
+        return {"investigation_id": inv.id, "needs_input": mark, "already": True, "cursor": mark["cursor"]}
     from datetime import UTC, datetime
-    mark = {"since": datetime.now(UTC).isoformat(), "reason": str(p.get("reason", ""))[:300],
-            "refused_turns": int(p.get("refused_turns", 0))}
+    mark = {"since": datetime.now(UTC).isoformat(), "code": code, "reason": str(p.get("reason", ""))[:300],
+            "refused_turns": int(p.get("refused_turns", 0)), "details": _bounded_details(p.get("details"))}
+    seq = ctx.event("investigation.needs_input", inv.id, mark, investigation_id=inv.id)
+    # F5 (A1): the coordinator waits only for operator events after this cursor (the mark's own event), not after
+    # the last turn's horizon, which does not move while turn workflows fail before creating a turn.
+    mark = {**mark, "cursor": seq}
     ctx.tx.set_status("investigation", inv.id, inv.status, labels={"needs_input": mark})
-    ctx.event("investigation.needs_input", inv.id, mark, investigation_id=inv.id)
-    return {"investigation_id": inv.id, "needs_input": mark, "already": False}
+    return {"investigation_id": inv.id, "needs_input": mark, "already": False, "cursor": seq}
+
+
+@command("record_turn_retry", "turn")
+def record_turn_retry(ctx: Ctx, p: dict) -> dict:
+    """The coordinator schedules a bounded automatic retry after a turn failed with a retryable error (ADR 0019):
+    recorded before the backoff starts, so the wait is never silent (event ``investigation.turn_retry_scheduled``).
+    The retried turn is an ordinary turn: it reserves the turns budget and its decisions reserve model budget."""
+    # F5 (A2): a turn workflow that failed (e.g. its execution timeout) can leave its turn open. The retry must be a
+    # new turn that reserves the turns budget, not a resumption of the abandoned one: close and settle it first.
+    closed = close_abandoned_turn(ctx, p["investigation_id"], p.get("failure"))
+    inv = ctx.tx.require("investigation", p["investigation_id"])
+    body = {"failed_turn_id": p.get("failed_turn_id") or closed, "attempt": int(p.get("attempt", 0)),
+            "max_attempts": int(p.get("max_attempts", 0)), "delay_seconds": float(p.get("delay_seconds", 0)),
+            "failure": _bounded_details(p.get("failure")), **({"closed_abandoned_turn": closed} if closed else {})}
+    ctx.event("investigation.turn_retry_scheduled", inv.id, body, investigation_id=inv.id)
+    return {"investigation_id": inv.id, **body}
 
 
 @command("resume_investigation", "control")
@@ -239,13 +286,25 @@ def stop_investigation(ctx: Ctx, p: dict) -> dict:
 
 @command("begin_turn", "turn")
 def begin_turn(ctx: Ctx, p: dict) -> dict:
+    run = str(p.get("run_id") or "")  # the TurnWorkflow run that begins or resumes the turn (F5, ADR 0017 addendum)
+    pre = ctx.tx.last_turn(p["investigation_id"])
+    if pre and pre["status"] == "open":  # lock order (F2b): the turn row, then the investigation row
+        _turn(ctx, pre["id"], lock=True)
     inv = ctx.tx.require("investigation", p["investigation_id"], lock=True)
+    stale = _fence_turn_ticket(ctx, inv.id, run, p.get("ticket"))
+    if stale:  # F5c (R8 #1): a delayed begin_turn of an earlier turn workflow begins and resumes nothing
+        return {"started": False, "reason": "superseded-run", **stale}
     if inv.status != "active":
         return {"started": False, "reason": f"investigation is {inv.status}"}
     last = ctx.tx.last_turn(inv.id)
     if last and last["status"] == "open":
-        # A turn left open by a terminated child is resumed, never duplicated.
-        return {"started": True, "resumed": True, "turn_id": last["id"], "spec": last["spec"]}
+        # A turn left open by a terminated child is resumed, never duplicated. The resuming run takes the turn's
+        # authorization: every decision step of an earlier run is refused from now on (F5, C1).
+        if not pre or pre["id"] != last["id"]:
+            _turn(ctx, last["id"], lock=True)
+        auth = authorize_turn_run(ctx, last, run)
+        return {"started": True, "resumed": True, "turn_id": last["id"], "spec": last["spec"],
+                **({"authorization": auth} if auth else {})}
     seq = (last["seq"] + 1) if last else 1
     cfg = inv.body["investigator"]
     if seq > int(cfg.get("max_turns", 40)):
@@ -275,7 +334,178 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
     ctx.tx.insert_turn({"id": tid, "investigation_id": inv.id, "project_id": ctx.project_id, "seq": seq,
                         "status": "open", "study_revision": inv.revision, "horizon": horizon, "spec": spec})
     ctx.event("turn.started", tid, {"seq": seq, "horizon": horizon}, investigation_id=inv.id)
-    return {"started": True, "turn_id": tid, "spec": spec}
+    auth = authorize_turn_run(ctx, {"id": tid, "investigation_id": inv.id}, run)
+    return {"started": True, "turn_id": tid, "spec": spec, **({"authorization": auth} if auth else {})}
+
+
+# ---------------------------------------------------------------------------------------------
+# Decision authorization (F5, ADR 0017 addendum "Turn and slot authorization"). Two durable, monotonic records,
+# both read and written under the turn row lock:
+#   * ``turn_authorization`` (per turn): the TurnWorkflow run that owns the turn and its generation. begin_turn sets
+#     it; a resume by another run increments the generation, and every decision step of an earlier run is refused.
+#   * ``decision_attempt`` (per turn slot): the execution and attempt that may decide the slot, and its epoch.
+#     begin_decision advances it only for a newer attempt of the owning run (never back to an older attempt).
+# A decision is executed only after a ``decision_handoff`` committed by the owning run (execute_decision's first
+# step). An accepted decision that was never handed off before its run lost the turn is revoked: it never reached
+# execution, and its acceptance may have committed after its workflow was terminated.
+# ---------------------------------------------------------------------------------------------
+
+def _fence_turn_ticket(ctx: Ctx, inv_id: str, run: str, ticket: Any) -> dict | None:
+    """F5c (review R8 #1): fence turn acquisition by the coordinator's ordered ticket (ADR 0017 addendum).
+
+    The coordinator gives every TurnWorkflow it starts a ticket from its workflow clock: durable (the child's input is
+    in the history) and strictly increasing across its turn workflows, since each starts only after the previous one
+    ended. The lab keeps the highest ticket that has begun or resumed a turn of the investigation (``turn_ticket``,
+    under the investigation row lock, which every begin_turn holds) and refuses an older one, so a delayed begin_turn
+    of a terminated run can never take a turn (or start a new one) after a newer run. Without the fence, the last
+    begin_turn to commit won, whatever its run's age.
+
+    Returns why ``run`` is refused, or None (and records its ticket). Callers without a run id (tests, tools) are not
+    fenced. A run without a ticket (a turn workflow started before ``turn-ticket-v1``) is refused once a ticketed run
+    has begun a turn; among unticketed runs the earlier rule applies (the documented limitation)."""
+    if not run:
+        return None
+    rec = ctx.tx.get_record("turn_ticket", inv_id, lock=True)
+    held = rec.body if rec is not None else None
+    if ticket is None:
+        return {"superseded": "unticketed-run", "current_ticket": held["ticket"]} if held else None
+    ticket = int(ticket)
+    if held is not None:
+        if ticket < int(held["ticket"]):
+            return {"superseded": "stale-ticket", "ticket": ticket, "current_ticket": int(held["ticket"])}
+        if ticket == int(held["ticket"]):
+            # The same ticket from another run: the turn workflow was reset by hand (Eidos never does). The run that
+            # holds it keeps it; the order of two runs with one ticket cannot be known.
+            return None if held.get("run") == run else {"superseded": "ticket-held-by-another-run", "ticket": ticket}
+    ctx.tx.put_record("turn_ticket", inv_id, ctx.project_id, {"investigation_id": inv_id, "ticket": ticket, "run": run},
+                      created_by=ctx.principal.id, status="active")
+    return None
+
+
+def _run_of(execution: str) -> str:
+    return str(execution or "").split("/", 1)[0]
+
+
+def authorize_turn_run(ctx: Ctx, turn: dict, run: str) -> dict | None:
+    """Make ``run`` the owner of ``turn`` (caller holds the turn row lock). Callers without a run id (tests, tools)
+    leave the authorization unchanged."""
+    if not run:
+        return None
+    rec = ctx.tx.get_record("turn_authorization", turn["id"], lock=True)
+    if rec is not None and rec.body.get("run") == run:
+        return dict(rec.body)
+    prev = dict(rec.body) if rec is not None else None
+    body = {"turn_id": turn["id"], "run": run, "generation": int((prev or {}).get("generation") or 0) + 1,
+            "previous_run": (prev or {}).get("run")}
+    ctx.tx.put_record("turn_authorization", turn["id"], ctx.project_id, body, created_by=ctx.principal.id,
+                      status="active")
+    if prev is not None:
+        revoked = _revoke_unhanded_decisions(ctx, turn, run)
+        ctx.event("turn.resumed", turn["id"], {"generation": body["generation"], "revoked_decisions": revoked},
+                  investigation_id=turn["investigation_id"])
+    return body
+
+
+def _execution_refused(ctx: Ctx, turn: dict, execution: str) -> str | None:
+    """Why a decision step of ``execution`` may not act on ``turn``, or None. The caller holds the turn row lock."""
+    if not execution:
+        return None  # callers that do not identify themselves are checked as before (epoch, attempt)
+    rec = ctx.tx.get_record("turn_authorization", turn["id"])
+    if rec is None or not rec.body.get("run"):
+        return None  # a turn begun without a run id (tests, tools): no owner to check against
+    return None if _run_of(execution) == rec.body["run"] else "superseded-execution"
+
+
+def _handed_off(ctx: Ctx, decision_id: str) -> bool:
+    return ctx.tx.get_record("decision_handoff", decision_id) is not None
+
+
+def _revoke_unhanded_decisions(ctx: Ctx, turn: dict, owner: str) -> list[str]:
+    """Revoke the turn's accepted decisions that an earlier run accepted but never handed off (C1)."""
+    out = []
+    for d in ctx.tx.decisions(turn["id"]):
+        if not d["accepted"] or decision_revoked(ctx, d["id"]) or _handed_off(ctx, d["id"]) \
+                or ctx.tx.get_record("decision_receipts", d["id"]) is not None:
+            continue
+        origin = (d["body"] or {}).get("attempt") or {}
+        if not origin.get("execution") or _run_of(origin["execution"]) == owner:
+            continue
+        _revoke(ctx, turn, d["id"], int(d["slot"]), "superseded-execution", origin,
+                {"run": owner})
+        out.append(d["id"])
+    return out
+
+
+def _revoke(ctx: Ctx, turn: dict, decision_id: str, slot: int, reason: str, origin: dict, by: dict) -> None:
+    ctx.tx.put_record("decision_revocation", decision_id, ctx.project_id,
+                      {"turn_id": turn["id"], "slot": slot, "reason": reason, "accepted_by": origin,
+                       "revoked_by": by}, created_by=ctx.principal.id, status="revoked", parent_id=turn["id"])
+    ctx.event("decision.revoked", decision_id, {"turn_id": turn["id"], "slot": slot, "reason": reason},
+              investigation_id=turn["investigation_id"])
+
+
+@command("hand_off_decision", "turn")
+def hand_off_decision(ctx: Ctx, p: dict) -> dict:
+    """The first step of executing an accepted decision (F5, C1): under the turn row lock, the owning run records
+    that the decision reached execution. A run that no longer owns the turn, a revoked decision, a closed turn or an
+    investigation that is no longer active (stopped, paused, concluded) is refused (``handed_off`` false) and nothing
+    is executed. F5c (review R8 #2): the turn and investigation state is checked under their locks (turn row, then
+    investigation row, the order stop/pause and accept_decision use) before granting a new handoff AND before
+    returning an existing one, so a stop or a turn closure that commits first always wins. Each effect is checked
+    again at its own admission (``admit_decision_effect``), so a stop that commits after the handoff refuses the
+    decision's remaining effects. Idempotent otherwise: an existing handoff is returned."""
+    dec = ctx.tx.get_decision(p["decision_id"])
+    if not dec or not dec["accepted"]:
+        raise Invalid("only an accepted decision can be handed off")
+    refused = _decision_refused(ctx, dec, str(p.get("execution") or ""))
+    if refused:
+        return {"decision_id": dec["id"], "handed_off": False, "reason": refused}
+    existing = ctx.tx.get_record("decision_handoff", dec["id"])
+    if existing is not None:  # idempotent; the owner of a resumed turn continues a handed-off decision (recovery)
+        return {"decision_id": dec["id"], "handed_off": True, "by": existing.body.get("run")}
+    ctx.tx.put_record("decision_handoff", dec["id"], ctx.project_id,
+                      {"turn_id": dec["turn_id"], "slot": dec["slot"], "run": _run_of(str(p.get("execution") or ""))},
+                      created_by=ctx.principal.id, status="handed-off", parent_id=dec["turn_id"])
+    return {"decision_id": dec["id"], "handed_off": True, "by": _run_of(str(p.get("execution") or ""))}
+
+
+def _decision_refused(ctx: Ctx, dec: dict, execution: str) -> str | None:
+    """Why ``execution`` may not execute (or continue executing) the accepted decision ``dec``, or None. Takes the turn
+    row lock, then the investigation row lock (the order of stop/pause/resume, accept_decision and complete_turn), so
+    the answer is atomic with respect to a stop, a pause and the turn's closing: whichever commits first wins."""
+    turn = _turn(ctx, dec["turn_id"], lock=True)
+    inv = ctx.tx.require("investigation", turn["investigation_id"], lock=True)
+    # first: a run that lost the turn executes nothing, even a decision it had handed off (its retry)
+    return _execution_refused(ctx, turn, execution) \
+        or ("decision-revoked" if decision_revoked(ctx, dec["id"]) else None) \
+        or (f"turn-{turn['status']}" if turn["status"] != "open" else None) \
+        or (f"investigation-{inv.status}" if inv.status != "active" else None)
+
+
+def admit_decision_effect(ctx: Ctx, admission: dict) -> None:
+    """F5c (review R8 #2): the admission boundary of every effect of an accepted decision (``file_claim`` included).
+
+    The investigator's execute_decision sends each effect command with ``admission`` = {decision_id, execution}; the
+    command service calls this in the effect's own transaction, before the handler runs (a replay of an effect that
+    already committed is returned as before). The effect is refused (``EFFECT_NOT_ADMITTED``, nothing written) unless
+    the decision was handed off, is not revoked, its turn is open, the investigation is active and ``execution``'s run
+    still owns the turn. The check holds the turn and investigation row locks until the effect commits, so a stop
+    (or pause) either commits first and the effect is refused, or waits until the effect has committed."""
+    did = str(admission.get("decision_id") or "")
+    dec = ctx.tx.get_decision(did) if did else None
+    if not dec or not dec["accepted"]:
+        raise EffectNotAdmitted("not an effect of an accepted decision", details={"reason": "not-accepted",
+                                                                                   "decision_id": did})
+    _turn(ctx, dec["turn_id"])  # project access
+    refused = _decision_refused(ctx, dec, str(admission.get("execution") or "")) \
+        or (None if _handed_off(ctx, did) else "not-handed-off")
+    if refused:
+        raise EffectNotAdmitted(f"effect of decision {did} not admitted: {refused}",
+                                details={"reason": refused, "decision_id": did})
+
+
+if admit_decision_effect not in EFFECT_ADMISSION:
+    EFFECT_ADMISSION.append(admit_decision_effect)
 
 
 @command("record_turn_context", "turn")
@@ -293,11 +523,77 @@ def record_turn_context(ctx: Ctx, p: dict) -> dict:
     return {"turn_id": p["turn_id"], "revision": rec.revision}
 
 
+@command("begin_decision", "turn")
+def begin_decision(ctx: Ctx, p: dict) -> dict:
+    """Start one attempt of a decision slot (F2c, ADR 0017): every decide activity attempt calls this first.
+
+    Under the turn row lock it bumps the slot's attempt epoch, so a request of any earlier attempt that is still in
+    flight (``reserve_model_budget``, ``accept_decision``) is refused from now on: that is where a cancelled or timed-out
+    attempt is invalidated durably, at the acceptance boundary.
+
+    An accepted decision already in the slot is returned for recovery, except one accepted by an earlier attempt of the
+    SAME activity execution (``execution``: workflow run and activity id). Its result never reached the workflow, since
+    Temporal retries only an attempt it failed (cancelled, timed out, or lost with its worker), so it has never been
+    executed; its acceptance may have committed after Temporal gave up on it. It is revoked (a decision is never
+    updated: a ``decision_revocation`` record), never recovered or executed, and the slot yields no decision
+    (``revoked``). A decision accepted by another execution (a resumed turn after its workflow was terminated) is
+    recovered as before: that run may have executed it; so is one with recorded receipts (it has run)."""
+    turn = _turn(ctx, p["turn_id"], lock=True)
+    slot = int(p.get("slot") or 0)
+    execution, attempt = str(p.get("execution") or ""), int(p.get("attempt") or 0)
+    rid = f"{turn['id']}:{slot}"
+    rec = ctx.tx.get_record("decision_attempt", rid, lock=True)
+    # F5 (C1): a run that no longer owns the turn (it was resumed by another) begins nothing.
+    refused = _execution_refused(ctx, turn, execution)
+    if refused:
+        return {"turn_id": turn["id"], "slot": slot, "superseded": refused}
+    # F5 (C3): the slot's authorization never moves back. A delayed begin of an EARLIER attempt of the same execution
+    # (Temporal already gave up on it and started a later one) changes nothing and is told it is stale.
+    if rec is not None and execution and rec.body.get("execution") == execution \
+            and int(rec.body.get("attempt") or 0) > attempt:
+        return {"turn_id": turn["id"], "slot": slot, "superseded": "stale-attempt",
+                "current_attempt": int(rec.body.get("attempt") or 0)}
+    epoch = int((rec.body if rec else {}).get("epoch") or 0) + 1
+    ctx.tx.put_record("decision_attempt", rid, ctx.project_id,
+                      {"turn_id": turn["id"], "slot": slot, "attempt": attempt, "execution": execution, "epoch": epoch,
+                       "started_at": time.time()}, created_by=ctx.principal.id, status="started")
+    out: dict = {"turn_id": turn["id"], "slot": slot, "epoch": epoch}
+    existing = ctx.tx.accepted_decision(turn["id"], slot)
+    if existing is None:
+        return out
+    if decision_revoked(ctx, existing["id"]):
+        return {**out, "revoked": existing["id"]}
+    origin = (existing["body"] or {}).get("attempt") or {}
+    # never revoke what has run or was handed to execution (F5): that run may have committed effects
+    executed = ctx.tx.get_record("decision_receipts", existing["id"]) is not None or _handed_off(ctx, existing["id"])
+    if execution and origin.get("execution") == execution and int(origin.get("attempt") or 0) < attempt \
+            and not executed:
+        _revoke(ctx, turn, existing["id"], slot, "attempt-failed", origin, {"execution": execution, "attempt": attempt})
+        return {**out, "revoked": existing["id"]}
+    if execution and origin.get("execution") and _run_of(origin["execution"]) != _run_of(execution) \
+            and not executed and ctx.tx.get_record("turn_authorization", turn["id"]) is not None:
+        # F5 (C1): accepted by a run that lost the turn before handing it off: it never reached execution (its
+        # acceptance may have committed after that workflow was terminated). Revoked, never recovered.
+        _revoke(ctx, turn, existing["id"], slot, "superseded-execution", origin, {"execution": execution})
+        return {**out, "revoked": existing["id"]}
+    return {**out, "decision": {"id": existing["id"], "calls": existing["body"]["calls"],
+                                "control": existing["body"].get("control")}}
+
+
+def decision_revoked(ctx: Ctx, decision_id: str) -> bool:
+    """Whether an accepted decision was revoked (F2c): it is never recovered or executed."""
+    return ctx.tx.get_record("decision_revocation", decision_id) is not None
+
+
 @command("accept_decision", "turn")
 def accept_decision(ctx: Ctx, p: dict) -> dict:
     """Persist a proposed decision. Exactly one decision is accepted per (turn, slot); a late or
     stale proposal is kept as an unapplied record with no authority to execute tools."""
     turn = _turn(ctx, p["turn_id"], lock=True)
+    # Lock order (F2b): the turn row, then the investigation row. stop/pause/resume lock only the investigation row
+    # and complete_turn takes the same order, so the status and revision checks below are atomic with respect to a
+    # stop: a stop either commits first (and this decision is refused) or waits until it is accepted.
+    inv = ctx.tx.require("investigation", turn["investigation_id"], lock=True)
     slot = int(p.get("slot", 0))
     existing = ctx.tx.accepted_decision(turn["id"], slot)
     did = f"dec_{uuid.uuid4().hex[:16]}"
@@ -307,12 +603,19 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
     if existing:
         ctx.tx.insert_decision(did, turn["id"], slot, False, {"proposal": p.get("proposal"), "reason": "slot-taken",
                                                                "usage": usage})
+        if decision_revoked(ctx, existing["id"]):  # a revoked decision is never handed out for execution (F2c)
+            return {"accepted": False, "decision_id": did, "reason": "slot-revoked"}
         return {"accepted": False, "decision_id": existing["id"], "reason": "slot-already-accepted",
                 "calls": existing["body"]["calls"], "control": existing["body"].get("control")}
-    inv = ctx.tx.require("investigation", turn["investigation_id"])
     if turn["status"] != "open":
         ctx.tx.insert_decision(did, turn["id"], slot, False, {"proposal": p.get("proposal"), "reason": "turn-closed"})
         return {"accepted": False, "decision_id": did, "reason": "turn-closed"}
+    late = _execution_refused(ctx, turn, str(p.get("execution") or "")) if inv.status == "active" else None
+    late = late or _late_decision(ctx, turn, inv, slot, p.get("attempt"), p.get("epoch"))
+    if late:  # ADR 0017: a decision from a stopped investigation or a cancelled request is never applied
+        ctx.tx.insert_decision(did, turn["id"], slot, False, {"proposal": p.get("proposal"), "reason": late})
+        ctx.event("decision.unapplied", did, {"reason": late}, investigation_id=inv.id)
+        return {"accepted": False, "decision_id": did, "reason": late}
     if inv.revision != turn["study_revision"]:
         ctx.tx.insert_decision(did, turn["id"], slot, False, {"proposal": p.get("proposal"), "reason": "stale-revision",
                                                                "observed_revision": inv.revision})
@@ -335,10 +638,56 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
     calls = turn_rules.keyed_calls(ctx.project_id, turn["id"], did, decision["calls"])
     body = {**decision, "calls": calls, "model": p.get("model_settings") or {}, "usage": usage,
             "response_artifact_id": p.get("response_artifact_id"), "prompt_revision": p.get("prompt_revision")}
+    if p.get("epoch") is not None:  # which attempt accepted it: begin_decision revokes it if that attempt failed (F2c)
+        body["attempt"] = {"execution": str(p.get("execution") or ""), "attempt": int(p.get("attempt") or 0),
+                           "epoch": int(p["epoch"])}
     ctx.tx.insert_decision(did, turn["id"], slot, True, body)
     ctx.event("decision.accepted", did, {"turn_id": turn["id"], "slot": slot, "calls": [c["tool"] for c in calls],
                                          "control": decision["control"]}, investigation_id=inv.id)
     return {"accepted": True, "decision_id": did, "calls": calls, "control": decision["control"]}
+
+
+def _late_decision(ctx: Ctx, turn: dict, inv, slot: int, attempt: int | None, epoch: int | None = None) -> str | None:
+    """Why a proposed decision may no longer be applied (ADR 0017), or None:
+
+    * ``investigation-<status>``: the investigation is no longer active (stopped, paused, concluded);
+    * ``superseded-attempt``: a later attempt of the same decision slot has started (``begin_decision`` bumped the
+      slot's epoch), so this one was cancelled or timed out and its request only finished late;
+    * ``decision-deadline-passed``: the attempt began (lab clock) more than the turn deadline ago, the decide
+      activity's own timeout, so Temporal has already given up on it.
+
+    Callers that carry the epoch from ``begin_decision`` (the decide activity, F2c) are checked against it; callers
+    that report only their attempt number keep the earlier attempt-number check; others are checked as before. The
+    caller holds the turn row lock, which ``begin_decision`` also takes, so the check and the epoch bump are ordered."""
+    if inv.status != "active":
+        return f"investigation-{inv.status}"
+    if attempt is None and epoch is None:
+        return None
+    rec = ctx.tx.get_record("decision_attempt", f"{turn['id']}:{slot}")
+    if rec is None:
+        return "superseded-attempt" if epoch is not None else None
+    if epoch is not None:
+        if int(epoch) != int(rec.body.get("epoch") or 0):
+            return "superseded-attempt"
+    elif int(attempt or 0) < int(rec.body.get("attempt", 0)):
+        return "superseded-attempt"
+    current = epoch is not None or int(attempt or 0) == int(rec.body.get("attempt", 0))
+    deadline = float((turn["spec"].get("limits") or {}).get("deadline_seconds") or 0)
+    if current and deadline and time.time() > float(rec.body.get("started_at", 0)) + deadline:
+        return "decision-deadline-passed"
+    return None
+
+
+def _note_attempt(ctx: Ctx, turn: dict, slot: int, attempt: int) -> None:
+    """Record that ``attempt`` of a decision slot has started (lab clock), unless a later one already has (callers
+    that do not use ``begin_decision``)."""
+    rid = f"{turn['id']}:{slot}"
+    rec = ctx.tx.get_record("decision_attempt", rid, lock=True)
+    if rec is not None and int(rec.body.get("attempt", 0)) >= attempt:
+        return
+    ctx.tx.put_record("decision_attempt", rid, ctx.project_id,
+                      {**(rec.body if rec else {}), "turn_id": turn["id"], "slot": slot, "attempt": attempt,
+                       "started_at": time.time()}, created_by=ctx.principal.id, status="started")
 
 
 def _check_something_to_wait_for(ctx: Ctx, inv, decision: dict) -> None:
@@ -409,19 +758,90 @@ def _check_component_contracts(ctx: Ctx, calls: list[dict]) -> None:
 
 def _charge_model_usage(ctx: Ctx, inv_id: str, usage: dict, *, ref: str, reserved: dict | None = None) -> None:
     """Settle actual model usage against any per-decision reservation. Usage entries are written
-    even for dimensions without a budget row, so unbudgeted spend is still on the ledger."""
+    even for dimensions without a budget row, so unbudgeted spend is still on the ledger.
+
+    F2c: the tokens and dollars ``usage`` reports are those of completed responses (certain unless ``uncertain``).
+    A request abandoned in flight (``aborted.in_flight``) may still be billed: its conservative estimate
+    (``in_flight_estimate``: the request's admitted input estimate plus output cap, priced) is charged as uncertain
+    ``possible-usage``, never as zero; without one, the rest of the reservation is. If the reservation was already
+    reconciled as provisional uncertain usage (the turn closed or a retry began first), that provisional charge is
+    reversed and replaced by what is reported here, so a late settlement never charges twice."""
     scope = inv_scope(inv_id)
     reserved = reserved or {}
     uncertain = bool(usage.get("uncertain"))
     detail = {k: usage.get(k) for k in ("provider", "model", "request_ids", "calls")}
+    if usage.get("aborted"):  # ADR 0017: why the decision ended and what was abandoned in flight
+        detail["aborted"] = usage["aborted"]
+    if usage.get("reasoning_tokens") is not None:  # already inside output_tokens (ADR 0016); on the ledger too
+        detail["reasoning_tokens"] = usage["reasoning_tokens"]
     tokens = float(usage.get("input_tokens", 0) or 0) + float(usage.get("output_tokens", 0) or 0)
     usd = float(usage.get("usd") or 0)
+    in_flight = bool((usage.get("aborted") or {}).get("in_flight"))
+    est = usage.get("in_flight_estimate")
+    estimate: dict[str, float | None] = {"model_tokens": None, "model_usd": None}
+    if isinstance(est, dict):
+        estimate["model_tokens"] = float(est.get("input_tokens") or 0) + float(est.get("output_tokens") or 0)
+        estimate["model_usd"] = float(est["usd"]) if est.get("usd") is not None else None
     still_open = _open_by_ref(ctx, scope, ref) if reserved else {}
+    provisional = _provisional_by_ref(ctx, scope, ref)
+    # Completed responses reported their usage: with a request abandoned in flight, the uncertainty is that request's.
+    known_uncertain = uncertain and not in_flight
     for dim, actual in (("model_tokens", tokens), ("model_usd", usd)):
+        back = provisional.get(dim, 0.0)
+        if back:
+            ctx.tx.reverse_possible_usage(scope, dim, back, ref, detail={"reverses": "provisional",
+                                                                         "replaced_by": "settlement"})
         # Never release more than is still open under this ref (a retry may already have released it).
         held = min(float(reserved.get(dim, 0)), still_open.get((dim, ref), 0.0))
-        if actual or held:
-            ctx.tx.settle(scope, dim, reserved=held, actual=actual, ref=ref, uncertain=uncertain, detail=detail)
+        if not in_flight:
+            if actual or held:
+                ctx.tx.settle(scope, dim, reserved=held, actual=actual, ref=ref, uncertain=known_uncertain,
+                              detail=detail)
+            continue
+        on_known = min(held, actual)
+        if actual:
+            ctx.tx.settle(scope, dim, reserved=on_known, actual=actual, ref=ref, uncertain=known_uncertain,
+                          detail=detail)
+        rest = held - on_known
+        guess = estimate[dim]
+        if guess is None:  # no per-request estimate: all this ref still held (reserved or provisional) may be billed
+            guess = max(held + back - actual, 0.0)
+        if guess or rest:
+            ctx.tx.settle(scope, dim, reserved=rest, actual=guess, ref=ref, uncertain=True,
+                          detail={**detail, "in_flight_estimate": True})
+
+
+def _provisional_by_ref(ctx: Ctx, scope: str, ref: str) -> dict[str, float]:
+    """Per dimension, provisional uncertain usage still charged under exactly ``ref`` (reconciled reservations not yet
+    replaced by a settlement)."""
+    acc: dict[str, float] = {}
+    for e in ctx.tx.budget_entries(scope):
+        if e["ref"] != ref:
+            continue
+        if e["kind"] == "possible-usage" and (e.get("detail") or {}).get("provisional"):
+            acc[e["dimension"]] = acc.get(e["dimension"], 0.0) + float(e["amount"])
+        elif e["kind"] == "correction" and (e.get("detail") or {}).get("reverses") == "provisional":
+            acc[e["dimension"]] = acc.get(e["dimension"], 0.0) + float(e["amount"])  # negative
+    return {k: v for k, v in acc.items() if v > 1e-12}
+
+
+def reconcile_open_model_reservations(ctx: Ctx, scope: str, prefix: str, *, by: str,
+                                      keep: str | None = None) -> dict[str, float]:
+    """Settle every model reservation still open under ``prefix`` (except ``keep``) as provisional uncertain usage,
+    per dimension the whole open amount (F2c). An open reservation means its decide attempt neither settled nor
+    failed cleanly: it was cancelled, timed out or died, possibly with a request at the provider, whose bill is
+    unknown. The whole open amount is the conservative bound (the token envelope keeps a decision inside its
+    reservation). Settled refs are no longer open, so this is idempotent; a late settlement of the same ref reverses
+    the provisional charge and books what it reports instead (``_charge_model_usage``). The caller holds the turn
+    row lock, which every settlement of the turn's reservations takes."""
+    charged: dict[str, float] = {}
+    for (dim, ref), left in sorted(_open_by_ref(ctx, scope, prefix).items()):
+        if ref == keep:
+            continue
+        ctx.tx.settle(scope, dim, reserved=left, actual=left, ref=ref, uncertain=True,
+                      detail={"provisional": True, "reconciled_by": by})
+        charged[dim] = charged.get(dim, 0.0) + left
+    return charged
 
 
 def _open_by_ref(ctx: Ctx, scope: str, prefix: str) -> dict[tuple[str, str], float]:
@@ -442,44 +862,62 @@ def _open_by_ref(ctx: Ctx, scope: str, prefix: str) -> dict[tuple[str, str], flo
 def reserve_model_budget(ctx: Ctx, p: dict) -> dict:
     """Reserve one decision's maximum model envelope before its requests are sent. Raises
     BUDGET_EXHAUSTED (no model call) when the investigation's remaining budget cannot cover it."""
-    turn = _turn(ctx, p["turn_id"])
+    # The turn row lock serializes every read-then-settle of this turn's model reservations (reserve_model_budget,
+    # record_model_usage, complete_turn): two transactions never both see the same reservation open (F2b).
+    turn = _turn(ctx, p["turn_id"], lock=True)
     scope = inv_scope(turn["investigation_id"])
     budgets = ctx.tx.budgets(scope)
-    ref = f"model:{p['turn_id']}:{p.get('slot')}:{p.get('attempt')}"
-    # Only one attempt of a decision slot runs at a time: a reservation left by an earlier attempt of
-    # this slot belongs to a dead activity. Release it so the retry does not collide with it (a late
-    # settlement from that attempt is capped at what is still open, so nothing is released twice).
-    for (dim, old_ref), left in _open_by_ref(ctx, scope, f"model:{p['turn_id']}:{p.get('slot')}:").items():
-        if old_ref != ref:
-            ctx.tx.settle(scope, dim, reserved=left, actual=0, ref=old_ref, detail={"released_by": ref})
+    # F5 (C2): the reservation ref carries the slot epoch, unique per begin_decision across executions (a resumed
+    # turn's execution starts again at attempt 1), so reconciliation and late settlements never touch another
+    # execution's reservation. Callers without begin_decision keep the attempt-only ref.
+    ref = f"model:{p['turn_id']}:{p.get('slot')}:{p.get('attempt')}" + (
+        f":e{int(p['epoch'])}" if p.get("epoch") is not None else "")
+    refused = _execution_refused(ctx, turn, str(p.get("execution") or ""))
+    if refused:  # F5 (C1): a run that lost the turn reserves nothing
+        raise Invalid("superseded decision execution: the turn was resumed by another run",
+                      details={"reason": refused})
+    if p.get("epoch") is not None:  # F2c: a superseded attempt (a later one began) reserves nothing
+        rec = ctx.tx.get_record("decision_attempt", f"{turn['id']}:{int(p.get('slot') or 0)}")
+        if rec is None or int(rec.body.get("epoch") or 0) != int(p["epoch"]):
+            raise Invalid("superseded decision attempt: a later attempt of this decision slot has begun",
+                          details={"reason": "superseded-attempt", "epoch": p["epoch"]})
+    # Only one attempt of a decision slot runs at a time: a reservation left open by an earlier attempt of this slot
+    # belongs to an attempt that was cancelled, timed out or died, possibly with a request in flight. It is settled as
+    # provisional uncertain usage (F2c), not released as zero; a late settlement from that attempt replaces it.
+    reconcile_open_model_reservations(ctx, scope, f"model:{p['turn_id']}:{p.get('slot')}:", by=ref, keep=ref)
+    if p.get("attempt") is not None and p.get("epoch") is None:  # callers without begin_decision
+        _note_attempt(ctx, turn, int(p.get("slot") or 0), int(p["attempt"]))
     out = {}
     for dim, amount in (p.get("estimate") or {}).items():
         if dim in ("model_tokens", "model_usd") and dim in budgets and float(amount) > 0:
             ctx.tx.reserve(scope, dim, float(amount), ref)
             out[dim] = float(amount)
-    return {"reserved": out, "reservation_ref": f"model:{p['turn_id']}:{p.get('slot')}:{p.get('attempt')}"}
+    return {"reserved": out, "reservation_ref": ref}
 
 
 def release_turn_model_reservations(ctx: Ctx, turn: dict) -> dict:
-    """Release model reservations of a turn that were never settled (e.g. the activity died)."""
-    scope = inv_scope(turn["investigation_id"])
-    released: dict[str, float] = {}
-    # Release under each reservation's own ref (G7 re-check): a release booked under a separate ref
-    # left the original ref looking open, so a late settlement from a zombie attempt released the
-    # same amount again and freed budget held by other reservations.
-    for (dim, ref), left in sorted(_open_by_ref(ctx, scope, f"model:{turn['id']}:").items()):
-        ctx.tx.settle(scope, dim, reserved=left, actual=0, ref=ref, detail={"released_by": "complete_turn"})
-        released[dim] = released.get(dim, 0.0) + left
-    return released
+    """Reconcile model reservations of a closing turn that were never settled (its decide attempt was cancelled,
+    timed out or died): each is charged as provisional uncertain usage, not released as zero (F2c). The caller
+    holds the turn row lock (complete_turn), which serializes this with record_model_usage and reserve_model_budget.
+    Charged under each reservation's own ref (G7 re-check), so a late settlement finds and replaces it."""
+    return reconcile_open_model_reservations(ctx, inv_scope(turn["investigation_id"]), f"model:{turn['id']}:",
+                                             by="complete_turn")
 
 
 @command("record_model_usage", "turn")
 def record_model_usage(ctx: Ctx, p: dict) -> dict:
     """Record model usage that is not attached to an accepted decision (failed/timeout calls).
-    A timeout after possible charge is recorded as possible usage with its request ID."""
-    turn = _turn(ctx, p["turn_id"])
-    _charge_model_usage(ctx, turn["investigation_id"], p.get("usage") or {},
-                        ref=p.get("reservation_ref") or f"usage:{p['turn_id']}", reserved=p.get("reserved"))
+    A timeout after possible charge is recorded as possible usage with its request ID.
+
+    The turn row is locked before the reservation is read (F2b): a concurrent complete_turn, a retry's
+    reserve_model_budget or another settlement of the same reservation waits, then sees it settled, so it is
+    released once."""
+    turn = _turn(ctx, p["turn_id"], lock=True)
+    ref = p.get("reservation_ref") or f"usage:{p['turn_id']}"
+    if p.get("reserved") and not str(ref).startswith(f"model:{turn['id']}:"):
+        # Only this turn's reservations are serialized by its lock; settling another turn's would bypass it.
+        raise Invalid("reservation_ref must be a model reservation of this turn", details={"reservation_ref": ref})
+    _charge_model_usage(ctx, turn["investigation_id"], p.get("usage") or {}, ref=ref, reserved=p.get("reserved"))
     ctx.event("model.usage", p["turn_id"], {"usage": p.get("usage")}, investigation_id=turn["investigation_id"])
     return {"recorded": True}
 
@@ -489,27 +927,71 @@ def complete_turn(ctx: Ctx, p: dict) -> dict:
     turn = _turn(ctx, p["turn_id"], lock=True)
     if turn["status"] != "open":
         return {"turn_id": turn["id"], "status": turn["status"], "already_closed": True}
+    refused = _execution_refused(ctx, turn, str(p.get("execution") or ""))
+    if refused:  # F5 (C1): a run that lost the turn to a resuming run never closes it under the new owner
+        return {"turn_id": turn["id"], "status": turn["status"], "superseded": refused}
+    return _close_turn(ctx, turn, p)
+
+
+def close_abandoned_turn(ctx: Ctx, inv_id: str, failure: Any) -> str | None:
+    """Close the investigation's last turn if it is still open, as failed (F5, A2). Called by the coordinator's
+    failed-turn policy (ADR 0019) before an automatic retry or a needs-input wait: the turn's workflow failed (e.g.
+    its execution timeout) without completing it. Its open model reservations are charged as uncertain usage and its
+    turns reservation is settled, like any closing turn; a late acceptance from the abandoned workflow then finds the
+    turn closed and is refused. Lock order: the turn row (here), then the investigation row (callers)."""
+    last = ctx.tx.last_turn(inv_id)
+    if not last or last["status"] != "open":
+        return None
+    turn = _turn(ctx, last["id"], lock=True)
+    if turn["status"] != "open":
+        return None
+    why = {**_bounded_details(failure), "abandoned": True} if isinstance(failure, dict) else \
+        {"error_type": "turn-workflow-failed", "retryable": True, "abandoned": True}
+    _close_turn(ctx, turn, {"stop_reason": "error", "summary": "turn workflow failed; turn closed by the coordinator",
+                            "failure": why})
+    return turn["id"]
+
+
+def _close_turn(ctx: Ctx, turn: dict, p: dict) -> dict:
+    """Close an open turn (the caller holds its row lock): result, reservations, turns budget, event."""
     reason = p.get("stop_reason", "calls-exhausted")
     if reason not in turn_rules.STOP_REASONS:
         raise Invalid(f"stop_reason must be one of {turn_rules.STOP_REASONS}")
+    control = p.get("control") or {}
+    inv_id = turn["investigation_id"]
+    control_refused = None
+    if control.get("action") in ("conclude", "stop"):
+        # F5d (review R9): the conclusion is applied only to an investigation that is still active, checked under its
+        # row lock (lock order: the turn row, held by the caller, then the investigation row). A stop or pause that
+        # committed after the decision was accepted (before or after its effects ran) always wins: the turn closes as
+        # cancelled and the operator's state is never overwritten with ``concluded``.
+        inv = ctx.tx.require("investigation", inv_id, lock=True)
+        if inv.status != "active":
+            control_refused = f"investigation-{inv.status}"
+            if reason == "concluded":
+                reason = "cancelled"
     status = "cancelled" if reason == "cancelled" else ("failed" if reason == "error" else "completed")
     result = {"stop_reason": reason, "summary": str(p.get("summary", ""))[:4000], "receipts": p.get("receipts", []),
-              "unfinished_handles": p.get("unfinished_handles", []), "control": p.get("control")}
-    result["released_model_reservations"] = release_turn_model_reservations(ctx, turn)
+              "unfinished_handles": p.get("unfinished_handles", []), "control": p.get("control"),
+              **({"control_refused": control_refused} if control_refused else {})}
+    failure = _bounded_details(p.get("failure")) if reason == "error" else {}
+    if failure:  # why the turn failed (ADR 0019): on the turn and on its turn.completed event
+        result["failure"] = failure
+    result["uncertain_model_reservations"] = release_turn_model_reservations(ctx, turn)
     ctx.tx.update_turn(turn["id"], status=status, result=result)
-    inv_id = turn["investigation_id"]
     budgets = ctx.tx.budgets(inv_scope(inv_id))
     if "turns" in budgets:
         ctx.tx.settle(inv_scope(inv_id), "turns", reserved=1, actual=1, ref=turn["id"])
-    control = p.get("control") or {}
-    if control.get("action") in ("conclude", "stop"):
-        inv = ctx.tx.require("investigation", inv_id, lock=True)
+    if control.get("action") in ("conclude", "stop") and not control_refused:
         body = dict(inv.body)
         body["conclusion"] = {"turn_id": turn["id"], "summary": control.get("summary") or result["summary"],
                               "scope": control.get("scope"), "action": control["action"]}
         ctx.tx.put_record("investigation", inv_id, ctx.project_id, body, created_by=ctx.principal.id,
                           status="concluded")
-    ctx.event("turn.completed", turn["id"], {"stop_reason": reason, "status": status}, investigation_id=inv_id)
+    ctx.event("turn.completed", turn["id"], {"stop_reason": reason, "status": status,
+                                             **({"failure": failure} if failure else {}),
+                                             **({"control_refused": control_refused} if control_refused else {})},
+              investigation_id=inv_id)
     return {"turn_id": turn["id"], "status": status}
 
 
@@ -557,6 +1039,8 @@ def record_decision_receipts(ctx: Ctx, p: dict) -> dict:
         _turn(ctx, dec["turn_id"])
     if not dec or not dec["accepted"]:
         raise Invalid("receipts can only be recorded for an accepted decision")
+    if decision_revoked(ctx, dec["id"]):  # F2c: a revoked decision is never executed
+        raise Invalid("receipts cannot be recorded for a revoked decision")
     rec = ctx.tx.put_record("decision_receipts", dec["id"], ctx.project_id,
                             {"turn_id": dec["turn_id"], "receipts": p.get("receipts", [])},
                             created_by=ctx.principal.id, status="recorded")

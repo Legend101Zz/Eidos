@@ -86,7 +86,8 @@ def P(name: str, type_: str, doc: str = "", required: bool = False) -> Param:
 _RUN = (
     P("component_ref", "s", "Release ref, e.g. name@1.2.3 (from list_components).", True),
     P("inputs", "o", "Port name -> artifact id."),
-    P("config", "o", "Component configuration (validated against its contract)."),
+    P("config", "o", "Component configuration, validated against the release's config_schema (describe_component). "
+      "Send JSON types exactly: arrays as JSON arrays, integers and numbers as JSON numbers."),
     P("overrides", "o", "Explicit overrides of bound defaults."),
     P("environment", "s", "Project environment name."),
     P("seed", "i"), P("wall_seconds", "i", "Wall-clock ceiling for the job."),
@@ -186,7 +187,9 @@ TOOLS: tuple[Tool, ...] = (
          grant="propose"),
     Tool("draft_evidence_plan", "command", "draft_evidence_plan",
          "Compile a draft evidence plan against the pinned charter; success rules come from the charter, "
-         "any threshold in the draft is rejected (THRESHOLD_OVERRIDE).",
+         "any threshold in the draft is rejected (THRESHOLD_OVERRIDE). For ordinary (multiclass) accuracy from "
+         "existing held-out predictions, build the draft with eidos.templates.improves-under-budget@1.2.0's "
+         "'classification' request (see its describe_component card).",
          (P("claim_id", "s", required=True), P("charter_id", "s", required=True),
           P("template_ref", "s", required=True), P("draft", "o"), P("draft_artifact_id", "s"),
           P("claim_revision", "i"), P("charter_revision", "i"), P("plan_id", "s"), P("investigation_id", "s")),
@@ -229,7 +232,8 @@ TOOLS: tuple[Tool, ...] = (
           P("note", "s")), grant="promote_protocol"),
     # -- reads -----------------------------------------------------------------------------------------
     Tool("get_investigation", "query", "get_investigation",
-         "Investigation status, revision, turns with stop reasons, jobs and budgets.",
+         "Investigation status, revision, needs_input (null, or {code, reason, details} while it waits for an operator: "
+         "code turn-failed, refused-proposals or coordinator-stopped), turns with stop reasons, jobs and budgets.",
          (P("investigation_id", "s", required=True),), grant="project:read"),
     Tool("get_run", "query", "get_job",
          "A job: status, lock, attempts, outputs, terminal receipt.",

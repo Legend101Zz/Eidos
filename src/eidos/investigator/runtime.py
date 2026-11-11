@@ -9,6 +9,8 @@ recorded call.
 from __future__ import annotations
 
 import json
+import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -27,6 +29,45 @@ DECISION_SCHEMA = {
 }
 
 
+# Every model request of a decision carries an output cap: the configured ``max_output_tokens``, else this default
+# (the live check's default). The runtime sends it and admits a request only if its input estimate plus this cap fits
+# what is left of the decision's token envelope; the decide activity prices the same cap (ADR 0016).
+DEFAULT_MAX_OUTPUT_TOKENS = 4096
+
+
+def output_cap(settings: dict[str, Any]) -> int:
+    """The output cap of each model request (``max_output_tokens`` or the default)."""
+    return int(settings.get("max_output_tokens") or DEFAULT_MAX_OUTPUT_TOKENS)
+
+
+class DecisionAbort:
+    """Why the decision in progress must end now, shared by the decide activity and the runtime (ADR 0017).
+
+    The activity sets it (``trigger``) when the investigation stops or pauses, or when Temporal cancels the activity; the
+    runtime checks it (``poll``) before it starts every provider request and every ``ABORT_POLL_SECONDS`` while one is
+    in flight, and abandons the request (its connection is closed) once it is set. ``deadline`` (a ``clock`` reading)
+    sets it to ``decision-deadline`` when it passes. Thread-safe: the activity's watcher thread triggers it while the
+    runtime's event loop polls it."""
+
+    def __init__(self, deadline: float | None = None, *, clock: Callable[[], float] = time.monotonic):
+        self.deadline, self.clock = deadline, clock
+        self.reason: str | None = None
+        self._lock = threading.Lock()
+
+    def trigger(self, reason: str) -> None:
+        with self._lock:
+            if self.reason is None:  # the first reason wins
+                self.reason = reason
+
+    def poll(self) -> str | None:
+        if self.reason is None and self.deadline is not None and self.clock() >= self.deadline:
+            self.trigger("decision-deadline")
+        return self.reason
+
+
+ABORT_POLL_SECONDS = 0.1  # how often an in-flight request checks its DecisionAbort
+
+
 @dataclass
 class DecisionRequest:
     turn_id: str
@@ -37,6 +78,7 @@ class DecisionRequest:
     settings: dict[str, Any] = field(default_factory=dict)
     read_tools: dict[str, Callable[..., Any]] = field(default_factory=dict)
     view: dict[str, Any] | None = None  # structured authorized view (same horizon as context)
+    abort: DecisionAbort | None = None  # set by the decide activity: stop, pause, cancellation, deadline
 
 
 @dataclass
@@ -55,6 +97,17 @@ class ModelCallFailed(Exception):
         super().__init__(message)
         self.possible_usage = possible_usage or {}
         self.retryable = retryable
+
+
+class DecisionAborted(ModelCallFailed):
+    """The decision ended because its ``DecisionAbort`` was set (``reason``). ``in_flight``: a provider request had been
+    sent and was abandoned, so what it billed is unknown (recorded as uncertain usage, never as zero).
+    ``abandoned``: that request's admitted worst case (input estimate, output cap), for the record."""
+
+    def __init__(self, reason: str, *, in_flight: bool = False, abandoned: dict[str, Any] | None = None,
+                 possible_usage: dict[str, Any] | None = None):
+        super().__init__(f"decision aborted: {reason}", possible_usage=possible_usage, retryable=False)
+        self.reason, self.in_flight, self.abandoned = reason, in_flight, abandoned
 
 
 class InvestigatorRuntime(Protocol):

@@ -33,13 +33,13 @@ from staging import stage_component  # noqa: E402
 ADAPTER = "eidos_adapter:ADAPTER"
 TRAIN, EVALUATE, EDIT = "eidos.pytorch.train@1.2.0", "eidos.pytorch.evaluate@1.0.0", "eidos.pytorch.weight-edit@1.0.0"
 BEHAVIOR, SCORER = "eidos.pytorch.behavior-check@1.0.0", "lab.pairs.by_group@1.0.0"
-ASSESSOR, TEMPLATE = "eidos.assessors.paired-ci@1.0.0", "eidos.templates.improves-under-budget@1.1.0"
+ASSESSOR, TEMPLATE = "eidos.assessors.paired-ci@1.2.0", "eidos.templates.improves-under-budget@1.2.0"
 RUNNER = "eidos.qualification-runner@1.0.0"
 EVAL_CFG = {"adapter": ADAPTER, "evaluation": {"split": "test", "data_seed": 76102, "pairs": 4000}}
 EDIT_CFG = {"edits": [{"entry": "readout.weight", "index": [0, -1], "op": "set", "value": 0.0}],
             "reason": "silence the recorder weight"}
 LAB_ENV_COMPONENTS = ("eidos.assessors.paired-ci", "eidos.qualification-runner", "eidos.templates.improves-under-budget",
-                      "lab.pairs.by_group")
+                      "eidos.task.paired-classification-report", "lab.pairs.by_group")
 TORCH_COMPONENTS = ("eidos.pytorch.train", "eidos.pytorch.evaluate", "eidos.pytorch.weight-edit",
                     "eidos.pytorch.behavior-check")
 # Jobs now default to the strongest available profile (bwrap-sealed), which cannot see the checkout's journey support
@@ -273,8 +273,8 @@ def step3(j: Journey, a: argparse.Namespace) -> None:
         # ---- no-change continuation (restore class exact) vs an uninterrupted control ----------------
         mig = {k: "copy" for k in art45["meta"]["checkpoint"]["state_entries"]}
         rc, data, err = j.cli("checkpoint", "branch", j.project, "--parent", ck45, "--component", TRAIN,
-                              "--migration", json.dumps(mig), "--stream-policy", "paired", "--wall-seconds", "600",
-                              "--config", json.dumps({**base_cfg, "steps": 180, "verify_no_change": True}))
+                              "--migration", j.at_file(mig), "--stream-policy", "paired", "--wall-seconds", "600",
+                              "--config", j.at_file({**base_cfg, "steps": 180, "verify_no_change": True}))
         j.check("lab checkpoint branch (no-change continuation) planned and launched", rc == 0 and data, err=err[-300:])
         if not data:
             raise Blocked("branch failed")

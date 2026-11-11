@@ -1,0 +1,93 @@
+{
+ "name": "candidate lacks a labelled id",
+ "author_test": true,
+ "inputs": {
+  "baseline": {
+   "json": [
+    {
+     "id": 0,
+     "prediction": "cat"
+    },
+    {
+     "id": 1,
+     "prediction": "cat"
+    },
+    {
+     "id": 2,
+     "prediction": "bird"
+    },
+    {
+     "id": 3,
+     "prediction": "dog"
+    },
+    {
+     "id": 4,
+     "prediction": "dog"
+    },
+    {
+     "id": 5,
+     "prediction": "cat"
+    }
+   ]
+  },
+  "candidate": {
+   "json": [
+    {
+     "id": 4,
+     "prediction": "dog"
+    },
+    {
+     "id": 3,
+     "prediction": "cat"
+    },
+    {
+     "id": 2,
+     "prediction": "bird"
+    },
+    {
+     "id": 1,
+     "prediction": "dog"
+    },
+    {
+     "id": 0,
+     "prediction": "cat"
+    }
+   ]
+  },
+  "labels": {
+   "json": [
+    {
+     "id": 0,
+     "label": "cat"
+    },
+    {
+     "id": 1,
+     "label": "dog"
+    },
+    {
+     "id": 2,
+     "label": "bird"
+    },
+    {
+     "id": 3,
+     "label": "cat"
+    },
+    {
+     "id": 4,
+     "label": "dog"
+    },
+    {
+     "id": 5,
+     "label": "bird"
+    }
+   ]
+  }
+ },
+ "config": {
+  "role": "candidate",
+  "cluster": "11"
+ },
+ "expect": {
+  "status": "failed"
+ }
+}

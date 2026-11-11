@@ -18,6 +18,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -54,7 +55,13 @@ def lab(*args: str, check: bool = True) -> dict | list | str:
 
 
 def query(name: str, params: dict | None = None):
-    return lab("query", name, "-p", PROJECT, "--params", json.dumps(params or {}))
+    # JSON via @file, never argv: Linux caps one argv string at 128 KiB (E2BIG).
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump(params or {}, f)
+    try:
+        return lab("query", name, "-p", PROJECT, "--params", f"@{f.name}")
+    finally:
+        os.unlink(f.name)
 
 
 def psql(sql: str) -> list[list[str]]:

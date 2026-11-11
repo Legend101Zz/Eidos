@@ -44,10 +44,11 @@ class ShimClient:
     def __init__(self, lab, principal):
         self.lab, self.pr = lab, principal
 
-    def command(self, name, payload=None, *, project=None, key=None, expected_revision=None):
+    def command(self, name, payload=None, *, project=None, key=None, expected_revision=None, admission=None):
         try:
             return self.lab.svc.execute(self.pr, name, project_id=project, command_key=key or uuid.uuid4().hex,
-                                        payload=payload or {}, expected_revision=expected_revision)
+                                        payload=payload or {}, expected_revision=expected_revision,
+                                        admission=admission)
         except DomainError as exc:
             raise LabError(exc.http_status, exc.to_dict()) from exc
 
@@ -59,11 +60,11 @@ class ShimClient:
             raise LabError(exc.http_status, exc.to_dict()) from exc
 
     def upload(self, project, path=None, *, data=None, media_type="application/octet-stream", schema=None,
-               role="input", access_class="project", name=None, key=None, investigation=None):
+               role="input", access_class="project", name=None, key=None, investigation=None, admission=None):
         digest, size = self.lab.store.put_bytes(data)
         return self.command("register_artifact", {"digest": digest, "size": size, "media_type": media_type,
                                                   "schema": schema, "role": role, "name": name}, project=project,
-                            key=key or f"up:{digest}")
+                            key=key or f"up:{digest}", admission=admission)
 
     def download(self, project, artifact_id, dest):
         art = self.query("get_artifact", {"artifact_id": artifact_id}, project=project)
@@ -178,9 +179,12 @@ def test_in_turn_model_budget_is_reserved_before_each_decision_and_released(lab)
     assert not d1["accepted"] and d1["reason"] == "budget-exhausted"  # no model call without budget
     env.run(acts.complete_turn, {**base, "stop_reason": "budget-exhausted"})
     turn = lab.q(lab.admin, "get_turn", {"turn_id": b["turn_id"]}, project=pid)
-    assert turn["result"]["released_model_reservations"]["model_tokens"] == 100_000
+    # F2c: the leaked reservation may have had a request at the provider: charged as provisional uncertain usage
+    # (the whole open amount), not released as zero.
+    assert turn["result"]["uncertain_model_reservations"]["model_tokens"] == 100_000
     b2 = lab.q(lab.admin, "budgets", {"investigation_id": inv}, project=pid)["budgets"]["model_tokens"]
-    assert b2["reserved"] == 1e6 - 150_000 and b2["used"] > 0  # only the test fill remains reserved
+    assert b2["reserved"] == 1e6 - 150_000 and b2["used"] > 100_000  # only the test fill remains reserved
+    assert b2["uncertain"] == 100_000
 
 
 def test_context_build_retry_after_new_evidence_is_idempotent(lab):
@@ -214,16 +218,17 @@ def test_context_build_retry_after_new_evidence_is_idempotent(lab):
 
 
 def test_retried_decide_does_not_collide_with_its_own_dead_reservation(lab):
-    """Review 2 finding 2: attempt 1 reserved and died; the retry must not see BUDGET_EXHAUSTED from its own
-    leaked reservation, and the dead reservation is released exactly once."""
+    """Review 2 finding 2: attempt 1 reserved and died; the retry must not collide with its own leaked reservation,
+    and the dead reservation is settled exactly once. F2c: it is settled as provisional uncertain usage (the dead
+    attempt may have had a request at the provider), which a late settlement from that attempt replaces."""
     pid, inv, acts = setup(lab)
     env = ActivityEnvironment()
     b = env.run(acts.begin_turn, {"investigation_id": inv, "project_id": pid, "index": 1})
     base = {"turn_id": b["turn_id"], "project_id": pid, "investigation_id": inv}
     env.run(acts.build_context, base)
-    with lab.ledger.transaction() as tx:      # leave 150k of 1M: room for ONE 120k reservation
+    with lab.ledger.transaction() as tx:      # leave 270k of 1M: the dead attempt's 120k (now possibly used) + one more
         tx.project_id = pid
-        tx.reserve(f"inv:{inv}", "model_tokens", 1e6 - 150_000, "test:fill")
+        tx.reserve(f"inv:{inv}", "model_tokens", 1e6 - 270_000, "test:fill")
     wf = lab.principal(f"wf-{pid}", ["workflow"], [pid])
     lab.cmd(wf, "reserve_model_budget", {"turn_id": b["turn_id"], "slot": 0, "attempt": 1,
                                          "estimate": {"model_tokens": 120_000}}, project=pid)
@@ -231,12 +236,15 @@ def test_retried_decide_does_not_collide_with_its_own_dead_reservation(lab):
     env2.info = env2.info.__class__(**{**env2.info.__dict__, "attempt": 2})
     d = env2.run(acts.decide, {**base, "slot": 0})
     assert d.get("reason") != "budget-exhausted", d
-    # a late settlement from the dead attempt releases nothing more
+    bud = lab.q(lab.admin, "budgets", {"investigation_id": inv}, project=pid)["budgets"]["model_tokens"]
+    assert bud["uncertain"] == 120_000 and bud["reserved"] == 1e6 - 270_000, bud  # dead attempt: provisional, once
+    # a late settlement from the dead attempt replaces the provisional charge and releases nothing more
     lab.cmd(wf, "record_model_usage", {"turn_id": b["turn_id"], "usage": {"input_tokens": 0, "output_tokens": 0},
                                        "reserved": {"model_tokens": 120_000},
                                        "reservation_ref": f"model:{b['turn_id']}:0:1"}, project=pid)
     bud = lab.q(lab.admin, "budgets", {"investigation_id": inv}, project=pid)["budgets"]["model_tokens"]
-    assert bud["reserved"] >= 1e6 - 150_000 - 1, bud   # the test fill is still held, not released twice
+    assert bud["reserved"] >= 1e6 - 270_000 - 1, bud   # the test fill is still held, not released twice
+    assert bud["uncertain"] == 0 and bud["used"] < 120_000, bud  # it reported nothing: the provisional 120k is gone
 
 
 def test_late_settlement_after_turn_release_does_not_release_twice(lab):

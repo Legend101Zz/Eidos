@@ -4,6 +4,7 @@ of them hold database credentials."""
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 import uuid
 from pathlib import Path
@@ -55,9 +56,14 @@ class LabClient:
         raise AssertionError("unreachable")
 
     def command(self, name: str, payload: dict | None = None, *, project: str | None = None,
-                key: str | None = None, expected_revision: int | None = None) -> dict:
-        body = {"project_id": project, "command_key": key or uuid.uuid4().hex, "payload": payload or {},
-                "expected_revision": expected_revision}
+                key: str | None = None, expected_revision: int | None = None,
+                normalized_arguments: list[dict] | None = None, admission: dict | None = None) -> dict:
+        body: dict[str, Any] = {"project_id": project, "command_key": key or uuid.uuid4().hex,
+                                "payload": payload or {}, "expected_revision": expected_revision}
+        if admission:  # F5c: an effect of an accepted decision, checked at its admission (never hashed)
+            body["admission"] = admission
+        if normalized_arguments:  # MCP adapter only (ADR 0017): recorded in the receipt, never validated against
+            body["normalized_arguments"] = normalized_arguments
         return self._post(f"/v1/commands/{name}", body)
 
     def query(self, name: str, params: dict | None = None, *, project: str | None = None) -> Any:
@@ -72,7 +78,7 @@ class LabClient:
     def upload(self, project: str, path: str | Path | None = None, *, data: bytes | None = None,
                media_type: str = "application/octet-stream", schema: str | None = None, role: str = "input",
                access_class: str = "project", name: str | None = None, key: str | None = None,
-               investigation: str | None = None) -> dict:
+               investigation: str | None = None, admission: dict | None = None) -> dict:
         if data is not None:
             content = data
         elif path is not None:
@@ -88,6 +94,8 @@ class LabClient:
             headers["x-eidos-name"] = name
         if investigation:
             headers["x-eidos-investigation"] = investigation
+        if admission:
+            headers["x-eidos-admission"] = json.dumps(admission, sort_keys=True)
         return self._handle(self.http.post(f"/v1/projects/{project}/artifacts", content=content, headers=headers))
 
     def download(self, project: str, artifact_id: str, dest: str | Path) -> Path:

@@ -190,7 +190,7 @@ def live(j: Journey, a: argparse.Namespace) -> None:
         rc, data, err = j.cli("investigate", "start", j.project, "--question", BRIEF, "--charter", c["charter_id"],
                               "--environment", "default", "--runtime", "pydantic-ai", "--model", a.model,
                               "--max-turns", str(a.max_turns), "--max-model-calls-per-turn", str(a.max_calls_per_turn),
-                              "--settings", json.dumps(settings), "--investigation-id", inv_id, *limits)
+                              "--settings", j.at_file(settings), "--investigation-id", inv_id, *limits)
         if not j.check("lab investigate start (pydantic-ai runtime, real model)", rc == 0 and bool(data), err=err[-400:]):
             raise Blocked("could not start")
         inv = data["result"]["investigation_id"]

@@ -47,8 +47,24 @@ def lab(*args: str, check: bool = True, timeout: int = 900):
         return s
 
 
+_PAYLOADS: list[int] = [0]
+
+
+def at_file(obj) -> str:
+    """Write a JSON argument to a file under $OUT and return `@path` for the CLI's JSON-or-@file options.
+
+    Payloads never go on argv: Linux caps one argv string at 128 KiB (MAX_ARG_STRLEN), and a control suite exceeds it
+    (`OSError: [Errno 7] Argument list too long`)."""
+    d = OUT / "payloads"
+    d.mkdir(parents=True, exist_ok=True)
+    _PAYLOADS[0] += 1
+    f = d / f"{_PAYLOADS[0]:04d}.json"
+    f.write_text(json.dumps(obj))
+    return f"@{f}"
+
+
 def query(name: str, params: dict | None = None, project: str = PROJECT):
-    return lab("query", name, "-p", project, "--params", json.dumps(params or {}))
+    return lab("query", name, "-p", project, "--params", at_file(params or {}))
 
 
 def step(name: str, interface: str):
@@ -318,7 +334,7 @@ def s3():
         SW,
         train,
         "--config",
-        json.dumps({**base, "steps": 60, "checkpoint_every": 30}),
+        at_file({**base, "steps": 60, "checkpoint_every": 30}),
         "--environment",
         "default",
         "--wait",
@@ -338,13 +354,13 @@ def s3():
         "--component",
         train,
         "--migration",
-        json.dumps({k: "copy" for k in entries}),
+        at_file({k: "copy" for k in entries}),
         "--stream-policy",
         "paired",
         "--wall-seconds",
         "600",
         "--config",
-        json.dumps({**base, "steps": 90}),
+        at_file({**base, "steps": 90}),
     )
     bjob = b["launch"]["result"]["job_id"]
     bj = lab("job", "wait", SW, bjob)
@@ -353,7 +369,7 @@ def s3():
         "restore_class"
     )
     child = next(o["artifact_id"] for o in bj["outputs"] if o["slot"] == "checkpoint")
-    cfg = json.dumps({"adapter": SW_ADAPTER, "builder": "OrderedSwitchNet"})
+    cfg = at_file({"adapter": SW_ADAPTER, "builder": "OrderedSwitchNet"})
     good = lab(
         "run",
         SW,
@@ -381,7 +397,7 @@ def s3():
         "--input",
         f"checkpoint={child}",
         "--config",
-        json.dumps({"adapter": SW_ADAPTER, "builder": "SwitchNet"}),
+        at_file({"adapter": SW_ADAPTER, "builder": "SwitchNet"}),
         "--environment",
         "default",
         "--wait",
@@ -415,7 +431,7 @@ def s3():
 
 def cmd(name: str, payload: dict, project: str = "sw1", key: str | None = None) -> dict:
     """Generic `lab cmd`; returns the receipt's `result`."""
-    args = ["cmd", name, "--payload", json.dumps(payload), "-p", project]
+    args = ["cmd", name, "--payload", at_file(payload), "-p", project]
     if key:
         args += ["--key", key]
     return lab(*args)["result"]
@@ -423,7 +439,7 @@ def cmd(name: str, payload: dict, project: str = "sw1", key: str | None = None) 
 
 def refused(name: str, payload: dict, code: str, project: str = "sw1") -> None:
     r = subprocess.run(
-        [LAB, "cmd", name, "--payload", json.dumps(payload), "-p", project], capture_output=True, text=True
+        [LAB, "cmd", name, "--payload", at_file(payload), "-p", project], capture_output=True, text=True
     )
     out = r.stdout + r.stderr
     assert r.returncode != 0 and code in out, (name, code, out[-300:])
@@ -435,7 +451,7 @@ def job_run(component: str, inputs: dict, config: dict) -> dict:
         "sw1",
         component,
         "--config",
-        json.dumps(config),
+        at_file(config),
         "--environment",
         "default",
         "--wait",

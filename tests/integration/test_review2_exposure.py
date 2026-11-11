@@ -109,3 +109,47 @@ def test_needs_input_is_durable_visible_and_cleared_by_an_operator_action(lab):
     types = [e["type"] for e in lab.q(lab.admin, "list_events", {"investigation_id": inv, "limit": 500},
                                       project=pid)["events"]]
     assert "investigation.needs_input" in types and "investigation.input_received" in types
+
+
+def test_turn_failure_retry_and_needs_input_code_are_on_the_ledger(lab):
+    """ADR 0019: a failed turn records why (turn result and turn.completed event), a scheduled automatic retry is an
+    event, and the needs-input mark carries a machine-readable code and bounded details."""
+    from eidos.domain.errors import Invalid
+    pid = f"p{uuid.uuid4().hex[:8]}"
+    lab.cmd(lab.admin, "create_project", {"project_id": pid})
+    lab.cmd(lab.admin, "commit_study_charter", {"charter": {"study_id": f"s{pid}", "question": "q",
+                                                            "exploration_only": True}}, project=pid)
+    inv = lab.cmd(lab.admin, "start_investigation", {"question": "q", "charter_id": f"charter:s{pid}"},
+                  project=pid)["result"]["investigation_id"]
+    wf = lab.principal(f"wf-{pid}", ["workflow"], [pid])
+    tid = lab.cmd(wf, "begin_turn", {"investigation_id": inv}, project=pid)["result"]["turn_id"]
+    failure = {"activity": "decide", "error_type": "MODEL_CALL_FAILED", "retryable": True,
+               "retry_state": "MAXIMUM_ATTEMPTS_REACHED", "message": "UnexpectedModelBehavior: token limit"}
+    lab.cmd(wf, "complete_turn", {"turn_id": tid, "stop_reason": "error", "failure": failure}, project=pid)
+    turn = lab.q(lab.admin, "get_turn", {"turn_id": tid}, project=pid)
+    assert turn["status"] == "failed" and turn["result"]["failure"] == failure
+
+    retry = lab.cmd(wf, "record_turn_retry", {"investigation_id": inv, "failed_turn_id": tid, "attempt": 1,
+                                              "max_attempts": 2, "delay_seconds": 60, "failure": failure},
+                    project=pid)["result"]
+    assert retry["attempt"] == 1 and retry["failure"] == failure
+
+    with pytest.raises(Invalid, match="code must be one of"):
+        lab.cmd(wf, "mark_needs_input", {"investigation_id": inv, "code": "no-such-code"}, project=pid)
+    details = {"turn_id": tid, "retryable": False, "failure": {**failure, "message": "x" * 5000}}
+    mark = lab.cmd(wf, "mark_needs_input", {"investigation_id": inv, "code": "turn-failed", "reason": "turn failed",
+                                            "details": details}, project=pid)["result"]["needs_input"]
+    assert mark["code"] == "turn-failed" and mark["details"]["truncated"] is True
+    assert len(mark["details"]["preview"]) <= 2000
+    shown = lab.q(lab.admin, "get_investigation", {"investigation_id": inv}, project=pid)
+    assert shown["needs_input"]["code"] == "turn-failed" and shown["turns"][0]["stop_reason"] == "error"
+    events = lab.q(lab.admin, "list_events", {"investigation_id": inv, "limit": 500}, project=pid)["events"]
+    by_type = {e["type"]: e["body"] for e in events}
+    assert by_type["turn.completed"]["failure"] == failure
+    assert by_type["investigation.turn_retry_scheduled"]["delay_seconds"] == 60
+    assert by_type["investigation.needs_input"]["code"] == "turn-failed"
+
+    # Older callers (no code) keep their meaning: refused proposals, or a coordinator limit.
+    lab.cmd(lab.admin, "steer_investigation", {"investigation_id": inv, "instruction": "go on"}, project=pid)
+    m = lab.cmd(wf, "mark_needs_input", {"investigation_id": inv, "reason": "r", "refused_turns": 3}, project=pid)
+    assert m["result"]["needs_input"]["code"] == "refused-proposals"

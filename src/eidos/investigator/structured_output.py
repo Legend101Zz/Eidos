@@ -23,6 +23,9 @@ from typing import Any
 
 FENCE = re.compile(r"```(?:json|JSON)?\s*\n?(.*?)```", re.S)
 TRAILING_COMMA = re.compile(r",\s*([}\]])")
+# Reasoning models served through OpenAI-compatible endpoints may inline their reasoning as <think>...</think>
+# before the answer; braces inside it must not be mistaken for the reply's JSON object.
+THINK = re.compile(r"^\s*<think>.*?</think>", re.S)
 
 
 class StructuredOutputError(ValueError):
@@ -62,6 +65,10 @@ def extract_json(text: str) -> tuple[dict[str, Any], list[str]]:
     """Extract one JSON object from a model reply. Returns (object, repairs applied)."""
     repairs: list[str] = []
     s = (text or "").strip()
+    think = THINK.match(s)
+    if think:
+        s = s[think.end():].strip()
+        repairs.append("think-block")
     if not s:
         raise StructuredOutputError("the reply is empty", repairs)
     m = FENCE.search(s)
@@ -152,3 +159,107 @@ JSON_SHAPE = """Reply with ONE JSON object and nothing else (no prose, no code f
  "calls": [{"tool": "<effect tool name>", "args": {<that tool's arguments>}}],
  "control": {"action": "wait_for_jobs|request_input|conclude|stop", "summary": "...", "scope": {}}}
 Use double quotes, no trailing commas, no comments. "calls" may be empty; "control" may be omitted."""
+
+
+# -- read requests (ADR 0016) -------------------------------------------------------------------------------------
+# In the text modes the reply is either a decision or a read request: {"rationale": ..., "read": [{tool, args}]}.
+# The runtime executes the allowed read tools, sends the results back and asks again; every round is one of the
+# decision's model requests. Read tools are never effects: a decision that names one in "calls" is refused.
+REQUIRED = object()
+READ_TOOLS: dict[str, tuple[tuple[str, tuple[type, ...], Any], ...]] = {
+    "inspect_evidence": (("artifact_id", (str,), REQUIRED), ("max_bytes", (int,), 8192)),
+    "search_components": (("text", (str,), ""), ("capability", (str, type(None)), None)),
+    "describe_component": (("component_ref", (str,), REQUIRED),),
+    "get_job": (("job_id", (str,), REQUIRED),),
+}
+READ_TOOL_DOCS = {
+    "inspect_evidence": '{"artifact_id": "<id>", "max_bytes": <optional int, at most 16384>}: bounded preview of an '
+                        "artifact's content (text/JSON/CSV)",
+    "search_components": '{"text": "<words>", "capability": "<optional>"}: search the installed component catalog',
+    "describe_component": '{"component_ref": "<id@release>"}: manifest, qualification and approvals of one release',
+    "get_job": '{"job_id": "<id>"}: status, receipts and outputs of one job',
+}
+MAX_READS_PER_REQUEST = 4
+MAX_INSPECT_BYTES = 16384
+
+
+def read_shape(tools: list[str]) -> str:
+    """Prompt text for the read-request shape, listing only the read tools available to this decision."""
+    lines = "\n".join(f"- {t} {READ_TOOL_DOCS[t]}" for t in tools)
+    return ("To read evidence before deciding, reply INSTEAD with ONE JSON object of this shape (no \"calls\", "
+            "no \"control\"):\n"
+            '{"rationale": "<what you need to check>", "read": [{"tool": "<read tool>", "args": {<its arguments>}}]}\n'
+            f"Read tools (read-only; never put them in \"calls\"):\n{lines}\n"
+            f"The lab runs the reads (at most {MAX_READS_PER_REQUEST} per request) and sends you the results. Every "
+            "read request uses one of your model requests for this decision; reserve the last one for your decision.")
+
+
+def split_read_request(obj: dict[str, Any], allowed: list[str]) -> tuple[list[Any] | None, dict[str, Any], list[str]]:
+    """Classify a reply object. Returns (reads, decision object, repairs): ``reads`` is None for a decision.
+
+    Structural problems raise ``StructuredOutputError`` (the reply is then re-asked once, as any malformed reply);
+    problems of a single read (unknown tool, bad arguments) are reported back to the model by the runtime."""
+    if "read" not in obj:
+        return None, obj, []
+    reads = obj["read"]
+    rest = {k: v for k, v in obj.items() if k != "read"}
+    if reads is None or reads == []:
+        return None, rest, ["empty-read"]
+    if not allowed:
+        raise StructuredOutputError('no read tools are available for this decision: reply with a decision, '
+                                    'without "read"')
+    if not isinstance(reads, list):
+        raise StructuredOutputError('"read" must be a list of {"tool": ..., "args": {...}} objects')
+    if obj.get("calls") or obj.get("control"):
+        raise StructuredOutputError('a reply is either a read request or a decision, not both: drop "read" or drop '
+                                    '"calls" and "control"')
+    return reads, rest, []
+
+
+def check_read(entry: Any, allowed: list[str]) -> tuple[str, dict[str, Any]]:
+    """Validate one read: a known, allowed read tool with exactly its arguments. Returns (tool, arguments in
+    signature order with defaults) or raises ``ValueError`` with a message for the model."""
+    if not isinstance(entry, dict) or not isinstance(entry.get("tool"), str):
+        raise ValueError('each read must be {"tool": "<read tool>", "args": {...}}')
+    tool = entry["tool"]
+    if tool not in allowed:
+        raise ValueError(f"{tool!r} is not an available read tool (available: {', '.join(allowed)})")
+    args = entry.get("args", {})
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except ValueError:
+            raise ValueError(f"{tool}: args is not a JSON object") from None
+    if args is None:
+        args = {}
+    if not isinstance(args, dict):
+        raise ValueError(f"{tool}: args must be a JSON object")
+    spec = READ_TOOLS[tool]
+    unknown = sorted(set(args) - {name for name, _, _ in spec})
+    if unknown:
+        raise ValueError(f"{tool}: unknown argument(s) {', '.join(unknown)}")
+    out: dict[str, Any] = {}
+    for name, types, default in spec:
+        if name not in args:
+            if default is REQUIRED:
+                raise ValueError(f"{tool}: missing required argument {name!r}")
+            out[name] = default
+            continue
+        value = args[name]
+        if not isinstance(value, types) or isinstance(value, bool):
+            raise ValueError(f"{tool}: argument {name!r} has the wrong type")
+        out[name] = value
+    if tool == "inspect_evidence":
+        out["max_bytes"] = max(1, min(int(out["max_bytes"]), MAX_INSPECT_BYTES))
+    return tool, out
+
+
+def read_tools_in_calls(calls: list[dict[str, Any]], allowed: list[str]) -> str | None:
+    """A message for the re-ask when a decision puts a read tool into its effect calls, else None."""
+    bad = [(i, c.get("tool")) for i, c in enumerate(calls) if c.get("tool") in READ_TOOLS]
+    if not bad:
+        return None
+    named = ", ".join(f"calls.{i}.tool {t!r}" for i, t in bad)
+    how = ('to read evidence, reply with a read request {"rationale": ..., "read": [...]} instead of a decision'
+           if allowed else "no read tools are available for this decision; decide with the evidence you have")
+    return f"{named}: read tools are not effects and never belong in \"calls\"; {how}"

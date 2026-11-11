@@ -1,0 +1,97 @@
+{
+  "id": "eidos.task.paired-classification-report",
+  "release": "1.0.0",
+  "implements": "paired-classification-report/1",
+  "kind": "artifact-op",
+  "entry": "paired_report.report:run",
+  "summary": "Evidence adapter for ordinary (multiclass) accuracy rules: aligns baseline and candidate held-out predictions with labels by example id (fails closed on any mismatch, duplicate or non-finite value) and emits this arm's rows in slot 'predictions' for eidos.assessors.paired-ci@1.2.0 metric 'accuracy'. Use one job per arm and training seed (config.role, config.cluster); eidos.templates.improves-under-budget@1.2.0 'classification' requests plan this for you.",
+  "scientific_effects": [
+    "observe"
+  ],
+  "input": {
+    "baseline": "class-predictions/1",
+    "candidate": "class-predictions/1",
+    "labels": "class-labels/1"
+  },
+  "output": {
+    "predictions": "classification-pair-rows/1"
+  },
+  "metrics": {
+    "accuracy": {
+      "identity": "classification-report/1:accuracy",
+      "numerator": "examples whose prediction equals the label",
+      "denominator": "labelled held-out examples",
+      "direction": "increase",
+      "unit": "example"
+    }
+  },
+  "requires": [
+    "artifact.reader/1",
+    "artifact.writer/1"
+  ],
+  "optional": [],
+  "reads": [
+    "baseline",
+    "candidate",
+    "labels"
+  ],
+  "writes": [
+    "output:predictions"
+  ],
+  "isolation": "immutable-artifacts",
+  "card": "method-card.md",
+  "controls": [
+    "fixtures/aligned-baseline.json",
+    "fixtures/aligned-candidate.json",
+    "fixtures/id-mismatch.json",
+    "fixtures/duplicate-id.json",
+    "fixtures/non-finite.json",
+    "fixtures/missing-role.json"
+  ],
+  "receipt": [
+    "role",
+    "cluster",
+    "examples",
+    "classes",
+    "aligned",
+    "metrics"
+  ],
+  "config_schema": {
+    "type": "object",
+    "required": [
+      "role",
+      "cluster"
+    ],
+    "properties": {
+      "role": {
+        "type": "string",
+        "enum": [
+          "baseline",
+          "candidate"
+        ],
+        "description": "the arm whose rows this run emits; run the component once in each arm"
+      },
+      "cluster": {
+        "type": "string",
+        "minLength": 1,
+        "description": "training seed shared by the baseline and candidate predictions, e.g. \"11\""
+      },
+      "id_field": {
+        "type": "string",
+        "minLength": 1,
+        "description": "record id field (default 'id')"
+      },
+      "classes": {
+        "type": "array",
+        "minItems": 1,
+        "description": "optional allowed class labels; any label or prediction outside them is refused"
+      }
+    }
+  },
+  "cost": {
+    "cpu_seconds": 1
+  },
+  "python": ">=3.11",
+  "dependencies": [],
+  "license": "Apache-2.0"
+}

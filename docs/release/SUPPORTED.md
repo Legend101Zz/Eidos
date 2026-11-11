@@ -10,7 +10,7 @@ v1.0.0 makes no scientific claim. Whether Eidos helps an LLM do model research (
 |---|---|---|
 | Operating systems | **Linux x86_64** and **macOS arm64** (Apple Silicon) | Linux: hosted CI (13 Linux jobs of the 15-job workflow, since 1.1.0). macOS: the owner's M4 (macOS 26.3.1) and the macOS CI runner. See `docs/mac/STATUS.md`. |
 | Devices | **CPU** on both platforms; **MPS** on macOS | CPU: switch journey and components. MPS: cpu/mps parity and cross-device resume (`docs/mac/receipts/a13-mps-smoke.json`). |
-| Model providers | **Anthropic** (`anthropic:<model>`) and **OpenAI-compatible endpoints** (`openai-compatible:<model>` with a `base_url`) | Anthropic: live receipts and full-lab runs with `claude-sonnet-5-5`. OpenAI-compatible: the adapter is verified against a local Ollama endpoint (errors, timeout, request limit, unknown model, schema-valid decisions). **No local model of 14B or less passed full decision-schema conformance on the owner's Mac**: `qwen2.5:14b` passed 4/8 and was too slow for an investigation. Use a capable model; the result is recorded in G4 of `ACCEPTANCE_MATRIX.md` § E. Since 1.1.0, `investigator.settings.output_mode: "json"` adds bounded structured-output repair and JSON mode (ADR 0014): it removes malformed-output failures (qwen2.5 3B 1→5 and 7B 0→5 decisions obtained of 5), but not semantic ones (3B 1→2, 7B 0→1 executable of 5); `docs/release/evidence/g4-110-summary.json`. |
+| Model providers | **Anthropic** (`anthropic:<model>`) and **OpenAI-compatible endpoints** (`openai-compatible:<model>` with a `base_url`) | Anthropic: live receipts and full-lab runs with `claude-sonnet-5-5`. OpenAI-compatible: the adapter is verified against a local Ollama endpoint (errors, timeout, request limit, unknown model, schema-valid decisions). **No local model of 14B or less passed full decision-schema conformance on the owner's Mac**: `qwen2.5:14b` passed 4/8 and was too slow for an investigation. Use a capable model; the result is recorded in G4 of `ACCEPTANCE_MATRIX.md` § E. Since 1.1.0, `investigator.settings.output_mode: "json"` adds bounded structured-output repair and JSON mode (ADR 0014): it removes malformed-output failures (qwen2.5 3B 1→5 and 7B 0→5 decisions obtained of 5), but not semantic ones (3B 1→2, 7B 0→1 executable of 5); `docs/release/evidence/g4-110-summary.json`. Since 1.1.1, **reasoning models** (ADR 0016): **MiniMax-M3.1-Flash** through its OpenAI-compatible endpoint (`https://api.minimax.io/v1`) passed **8/8 in `json` mode** and 6/8 in `tool` mode with the settings below (`docs/release/evidence/g4-111-minimax-m31flash-*.json`). |
 | MCP clients | **Claude Code**, **Codex CLI**, and the **MCP Python SDK** client (stdio and loopback HTTP) | `docs/mac/receipts/a14-*.json`; `tests/mcp`; the CI e2e journey. |
 | Candidate-code isolation, Linux | **`linux:bwrap-sealed`**: the only profile for **sealed (hostile-code) evaluation**. Since 1.1.0, with root setup, candidate code runs as the distinct `eidos-cand` user and the assessor keeps the lab identity (`separate-identity` passed for both; ADR 0011) | Hostile probes in `tests/integration/test_isolation_probes.py`; the sealed runner; CI job `separate-identity` (`tests/integration/test_separate_identity_e2e.py`, as root). |
 | Candidate-code isolation, macOS | **`macos:seatbelt-sealed`**: Seatbelt (`sandbox-exec`), **same OS user** (limits below) | `scripts/ci/seatbelt_probes.py` (macOS CI and the owner's Mac). |
@@ -20,6 +20,64 @@ v1.0.0 makes no scientific claim. Whether Eidos helps an LLM do model research (
 | Services | Local PostgreSQL 14+ (operator-installed) and the regular Temporal Server 1.32.2 (pinned, digest-verified, or built from source), managed by `lab` | `docs/ops/INSTALL_AND_OPERATE.md`. |
 | Python | Lab: Python 3.11–3.13. Worker SDK: Python 3.9+, including Pydantic v1 projects | `tests/worker_compat/run_matrix.sh`. |
 | Worker wire contract | **Schema major 1** (`eidos-wire/1`), JSON Schema 2020-12 files in `schemas/eidos-wire/v1/` generated from the server boundary models. Worker packages `eidos-wire`, `eidos-worker-sdk`, `eidos-pytorch`: **Python 3.9 and later** (standard library only; Pydantic v1 projects work). The server validates every received manifest against the schema; unknown fields from a newer minor are accepted | `tests/unit/test_wire_schemas.py`, `packages/eidos-worker-sdk/tests/test_wire_fixtures.py` (worker-compat matrix, Python 3.9 + pydantic<2), ADR `docs/decisions/0008-versioned-wire-json-schemas.md`. |
+
+## Reasoning models (since 1.1.1; ADR 0016)
+
+A reasoning model spends part of each request's output-token cap on reasoning, and its requests take longer. With the
+1.1.0 defaults (4096 output tokens, 120 s) MiniMax-M3.1-Flash failed 3 of 5 decision scenarios with `Model token
+limit (4096) exceeded before any response was generated`. Recommended `investigator.settings`:
+
+| Setting | Recommended | Why |
+|---|---|---|
+| `output_mode` | `"json"` (OpenAI-compatible endpoints) | 8/8 against 6/8 for `tool` in the G4 1.1.1 measurement; read tools work through the read-request loop |
+| `max_output_tokens` | `16384` | reasoning tokens count against it; one `tool`-mode request still ran past 16384 |
+| `request_timeout` | `300` (seconds) | the longest one-request decision took about 62 s in `json`, the four-request read decision 145 s, a two-request `tool` decision about 121 s; at 16384 tokens / 120 s one request timed out in 1.1.0 |
+| `turn_deadline_seconds` | `1200` (at least 2 × `request_timeout`) | the `decide` activity's timeout; the text-mode loop does not start a request that could outlive it (`bounded_outcome: decision-deadline`) |
+| `max_requests_per_decision` | `6` to `8` (default 8) | read rounds and the re-ask count against it; the measured read decision used 4 |
+| `max_tokens_per_decision` | `120000` (default) | the reservation prices `max_requests_per_decision × max_output_tokens` of it at the output rate, which at 8 × 16384 is all of it; a request starts only if tokens already charged + its input estimate + `max_output_tokens` fit in it |
+| `runaway_reasoning_effort` | unset (opt-in: `low`) | ADR 0019: a request that spends the whole output cap on reasoning without an answer is re-asked once, concisely and decision-only; this adds the OpenAI-compatible `reasoning_effort` field to that re-ask. Not measured with MiniMax-M3.1-Flash: set it only for an endpoint known to accept the field |
+
+Usage receipts record reasoning tokens (`reasoning_tokens`, `reasoning_accounting`). They are counted inside the
+output tokens, as the OpenAI-compatible API reports them; set `reasoning_tokens_billing: "separate"` for a provider
+that counts them separately, and the lab config `llm_broker_reasoning_billing` (for example
+`{"openai-compatible": "separate"}`) for the component LLM broker. Without `max_output_tokens` every request is capped
+at 4096 output tokens, which is too small for a reasoning model.
+
+Measured (one run per configuration, 2026-11-10, five decision scenarios of eight):
+
+| Model | Mode | Cap / timeout | Passed (of 8) | Requests | Output tokens (reasoning) |
+|---|---|---|---|---|---|
+| MiniMax-M3.1-Flash, 1.1.0 code | json | 4096 / 120 s | 5 | | |
+| MiniMax-M3.1-Flash, 1.1.0 code | tool | 4096 / 120 s | 4 | | |
+| MiniMax-M3.1-Flash, 1.1.0 code (patched cap) | json | 16384 / 120 s | 6 | | |
+| MiniMax-M3.1-Flash, 1.1.0 code (patched cap) | tool | 16384 / 120 s | 4 | | |
+| MiniMax-M3.1-Flash, **1.1.1** | **json** | 16384 / 300 s | **8** | 11 | 34127 (25690) |
+| MiniMax-M3.1-Flash, **1.1.1** | tool | 16384 / 300 s | 6 | 15 | 82150 (51141) |
+
+`tool` mode's two failures: one decision ran past 16384 output tokens (22770 of its 24326 output tokens were
+reasoning), and one named a tool that does not exist (`catalog_query`), which the lab refused. One run per
+configuration: a one-scenario difference is within run-to-run variation.
+
+## Assessable metrics (built-in assessor)
+
+`eidos.assessors.paired-ci` decides a charter rule (`paired-difference-ci` or `threshold`) from per-unit rows.
+Supported metric identities, by release:
+
+| Metric identity | Rows | Since | Notes |
+|---|---|---|---|
+| `paired-report/1:both-correct-rate`, `paired-report/1:reference-accuracy` | reference/variant pair rows (`pair_id, cluster, reference_logit, variant_logit, reference_label, variant_label`), binary labels | 1.0.0 | Paired across arms by `(cluster, pair_id)`; units present in only one arm are not used. |
+| `classification-report/1:accuracy` | `eidos.task.paired-classification-report` rows (`example_id, cluster, role, label, prediction`), any number of classes | 1.2.0 (Unreleased; ADR 0018) | Ordinary held-out accuracy. Both arms must cover exactly the same examples (refused otherwise). Several training seeds need `cluster_by: "seed"`; one seed per arm is assessed with the plain paired t-interval over examples, and the conclusion is then about those trained models. |
+
+The supported path from two training jobs with held-out predictions to a verdict is the `classification` request of
+`eidos.templates.improves-under-budget@1.2.0` (its method card, and ADR 0018). Retraining inside the plan on that
+path is not supported yet. Qualification of 1.2.0 is by the author's control suite only, as for 1.0.0.
+
+**Interval (1.2.0, both metric families).** Every training seed is scored on the same held-out examples, so 1.2.0's
+interval accounts for training-seed and example variation together: one-way cluster-robust variance by seed plus
+one-way cluster-robust variance by example (conservative), Student t on Welch-Satterthwaite degrees of freedom (ADR
+0018 section 6). 1.0.0 (and the unreleased 1.1.0) cluster by seed only and can pass an effect carried by a few shared
+examples; their recorded results are unchanged, and plans pinned to 1.0.0 with several seeds should be re-assessed
+with 1.2.0. Expect wider intervals than 1.0.0 with few seeds: three seeds put 2 degrees of freedom on the seed term.
 
 ## Isolation: what Seatbelt does and does not do
 

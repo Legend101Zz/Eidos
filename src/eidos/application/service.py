@@ -42,6 +42,11 @@ def command(name: str, scope: str, *, project_scoped: bool = True):
     return deco
 
 
+# F5c (review R8 #2): the admission check of a decision's effects (``investigations.admit_decision_effect``),
+# registered by that handler module so this layer does not import handlers.
+EFFECT_ADMISSION: list[Callable[[Ctx, dict[str, Any]], None]] = []
+
+
 def query(name: str, scope: str = "project:read", *, project_scoped: bool = True):
     def deco(fn):
         QUERIES[name] = Spec(name, scope, fn, project_scoped, (fn.__doc__ or "").strip())
@@ -98,7 +103,15 @@ class CommandService:
 
     def execute(self, principal: Principal, name: str, *, project_id: str | None, command_key: str,
                 payload: dict[str, Any], expected_revision: int | None = None,
-                delegation: dict[str, Any] | None = None) -> dict[str, Any]:
+                delegation: dict[str, Any] | None = None,
+                normalized_arguments: list[dict[str, Any]] | None = None,
+                admission: dict[str, Any] | None = None) -> dict[str, Any]:
+        """``admission`` (F5c): the accepted decision an effect belongs to ({decision_id, execution}); checked in the
+        effect's own transaction before the handler runs (``EFFECT_NOT_ADMITTED``), never on a replay of a committed
+        effect, and not part of the idempotency hash. ``normalized_arguments``: argument shapes the MCP adapter normalized before sending (ADR 0017). Recorded
+        in the receipt only; ``payload`` is validated exactly as for any other caller, and the idempotency hash
+        covers the payload, not this record. The receipt's ``normalized_arguments`` is this invocation's (logged for
+        every invocation); a replay also returns the committing call's as ``admission_normalized_arguments``."""
         spec = COMMANDS.get(name)
         if spec is None:
             raise NotFound(f"unknown command {name!r}")
@@ -110,7 +123,7 @@ class CommandService:
         for attempt in range(4):
             try:
                 receipt = self._execute_once(spec, principal, name, pid, command_key, payload, payload_hash,
-                                             expected_revision, delegation)
+                                             expected_revision, delegation, normalized_arguments, admission)
                 break
             except Exception as exc:  # noqa: BLE001 - only transient serialization failures are retried
                 state = getattr(getattr(exc, "orig", None), "sqlstate", None) or getattr(exc, "sqlstate", None)
@@ -119,6 +132,10 @@ class CommandService:
                 log.warning("command retried after transient database conflict",
                             extra={"command": name, "sqlstate": state, "attempt": attempt + 1})
                 time.sleep(0.05 * (attempt + 1))
+        if normalized_arguments:  # per invocation, replays included (F2b)
+            log.info("command arguments normalized", extra={"command": name, "principal": principal.id,
+                     "project": pid, "command_key": command_key, "replayed": bool(receipt.get("replayed")),
+                     "normalized_arguments": normalized_arguments})
         if receipt.get("replayed"):
             return receipt
         log.info("command committed", extra={"command": name, "principal": principal.id, "project": pid,
@@ -129,7 +146,9 @@ class CommandService:
 
     def _execute_once(self, spec: Spec, principal: Principal, name: str, pid: str, command_key: str,
                       payload: dict[str, Any], payload_hash: str, expected_revision: int | None,
-                      delegation: dict[str, Any] | None) -> dict[str, Any]:
+                      delegation: dict[str, Any] | None,
+                      normalized_arguments: list[dict[str, Any]] | None = None,
+                      admission: dict[str, Any] | None = None) -> dict[str, Any]:
         with self.ledger.transaction() as tx:
             tx.project_id = pid
             if spec.project_scoped and tx.get_project(pid) is None:
@@ -142,11 +161,24 @@ class CommandService:
                         details={"command_key": command_key, "original_command": existing["command_type"]})
                 receipt = dict(existing["receipt"] or {})
                 receipt["replayed"] = True
+                # F2b: ``normalized_arguments`` always describes THIS invocation; the original admission's record,
+                # if any, is returned separately (the stored receipt is unchanged), so a retry that was normalized
+                # differently from the call that committed is never reported as the other one.
+                admitted = receipt.pop("normalized_arguments", None)
+                if admitted:
+                    receipt["admission_normalized_arguments"] = admitted
+                if normalized_arguments:
+                    receipt["normalized_arguments"] = list(normalized_arguments)
                 return receipt
             ctx = Ctx(tx, principal, pid, command_key, self.store, self.settings, expected_revision)
+            if admission:  # raises before the handler runs; the transaction (and the key's claim) rolls back
+                for admit in EFFECT_ADMISSION:
+                    admit(ctx, admission)
             result = spec.fn(ctx, payload)
             receipt = {"command": name, "command_key": command_key, "status": "committed",
                        "result": result, "events": ctx.emitted, "replayed": False}
+            if normalized_arguments:
+                receipt["normalized_arguments"] = list(normalized_arguments)
             tx.complete_command(receipt)
         return receipt
 

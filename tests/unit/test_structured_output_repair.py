@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.usage import RequestUsage
 
 from eidos.domain.turns import validate_decision
 from eidos.investigator import structured_output as so
@@ -148,8 +149,15 @@ def test_python_literals_that_are_not_json_are_refused_cleanly(text):
 
 
 def test_no_reask_when_the_decision_token_budget_is_spent():
-    m, seen = _model(["not json " * 50, json.dumps(GOOD)])
-    res = PydanticAIRuntime({"_model_object": m, "model": "function:test", "output_mode": "repair",
-                             "max_requests_per_decision": 3, "max_tokens_per_decision": 10}).decide(req())
+    seen: list = []
+
+    def fn(messages, info: AgentInfo):  # a malformed reply that used 10000 output tokens
+        seen.append(messages)
+        text = "not json " * 50 if len(seen) == 1 else json.dumps(GOOD)
+        return ModelResponse(parts=[TextPart(text)], usage=RequestUsage(input_tokens=10, output_tokens=10_000))
+    res = PydanticAIRuntime({"_model_object": FunctionModel(fn), "model": "function:test", "output_mode": "repair",
+                             "max_requests_per_decision": 3, "max_tokens_per_decision": 15_000,
+                             "max_output_tokens": 50}).decide(req())
+    # the first request fits the envelope; the re-ask's worst case (10010 tokens of history + 50) no longer does
     assert len(seen) == 1 and res.usage["structured_output"]["reasks"] == 0  # never beyond the token reservation
     assert res.proposal["control"]["bounded_outcome"] in ("structured-output-invalid", "request-budget-exhausted")

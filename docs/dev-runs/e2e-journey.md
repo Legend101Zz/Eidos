@@ -48,7 +48,9 @@ with a wrong-builder check is refused. All through the CLI.
 
 ## Qualified assessment (step 3b), on the same switch-order project
 
-All through the CLI (`lab cmd <command> --payload ... -p sw1`, `lab query`, `lab run`, `lab artifact`): commit the charter; a promotion without a
+All through the CLI (`lab cmd <command> --payload @file -p sw1`, `lab query --params @file`, `lab run`, `lab artifact`; every JSON
+argument is written to `$OUT/payloads/` and passed as `@path`, because the control suite (about 500 KiB) exceeds Linux's
+128 KiB limit on one argv string): commit the charter; a promotion without a
 qualification receipt is refused (`QUALIFICATION_MISSING`); register the paired-ci author control suite and qualify the assessor with the lab's
 qualification runner (all 7 planted/null controls executed and passed; the receipt flags the suite as an author suite, not independent); promote
 it; qualify the `improves-under-budget` template with the journey's runner (planted, identical-arms and smuggled-threshold controls) and
