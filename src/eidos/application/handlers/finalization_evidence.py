@@ -36,7 +36,7 @@ def excluded(ctx: Ctx, inv) -> set[str]:
             edges.append((component, j["id"]))
     for art in artifacts:
         if art.get("producer_job"):
-            edges.extend([(art["producer_job"], art["id"]), (art["id"], art["producer_job"])])
+            edges.append((art["producer_job"], art["id"]))
         if art.get("access_class") != "project":
             blocked.add(art["id"])
     while True:
@@ -52,7 +52,12 @@ def allowlist(ctx: Ctx, inv, jobs: list[dict]) -> dict:
     from eidos.application.handlers import exploration
     from eidos.domain.assessment import candidate_lock_job_id
 
-    jobs = list(jobs)
+    by_id = {j["id"]: j for j in jobs}
+    # Include safe support jobs as well as experiments: ordinary export/reproduction may need a build or
+    # behavioral validation receipt. Evidence arms remain excluded by provenance below.
+    for job in ctx.tx.list_jobs(ctx.project_id, investigation_id=inv.id, limit=100000):
+        by_id.setdefault(job["id"], exploration.view_job(job, ctx.tx.publications(job["id"])))
+    jobs = list(by_id.values())
     lock_notes = [n for n in exploration._notes(ctx, inv.id) if n.get("kind") == "candidate_lock"]
     locked_id = candidate_lock_job_id(lock_notes[-1]) if lock_notes else None
     if locked_id and all(j["id"] != locked_id for j in jobs):
@@ -113,7 +118,9 @@ def safe_view(view: dict[str, Any], allowed: dict, *, blocked: set[str] | None =
     immutable recovery snapshot supplies refusals and visible metrics separately.
     """
     out = dict(view)
-    out["jobs"] = [j for j in view.get("jobs") or [] if j["id"] in allowed.get("jobs", [])]
+    out["jobs"] = [{**j, **({"outputs": [o for o in j["outputs"]
+                                         if o["artifact_id"] in allowed.get("artifacts", [])]} if "outputs" in j else {})}
+                   for j in view.get("jobs") or [] if j["id"] in allowed.get("jobs", [])]
     for key in ("turns", "events", "call_results", "evidence_plans", "claims", "assessment_requests"):
         out[key] = []
     if ordinary:
@@ -139,7 +146,7 @@ def safe_view(view: dict[str, Any], allowed: dict, *, blocked: set[str] | None =
     body["inputs"] = {k: a for k, a in (body.get("inputs") or {}).items() if a in allowed.get("artifacts", [])}
     if body.get("model_artifact_id") not in allowed.get("artifacts", []):
         body.pop("model_artifact_id", None)
-    inv["body"] = body
+    inv["body"] = {k: sanitize(v, denied) for k, v in body.items()}
     out["investigation"] = inv
     base = out.get("baseline_record")
     if base and base.get("job_id") not in allowed.get("jobs", []):

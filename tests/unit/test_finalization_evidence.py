@@ -71,3 +71,24 @@ def test_ordinary_context_retains_confirmation_handles_without_observations():
     assert 'assessment' not in clean['evidence_plans'][0] and 'jobs' not in clean['evidence_plans'][0]
     assert clean['assessment_requests'][0]['request_id'] == 'request'
     assert clean['call_results'][0]['result'] == {'request_id': 'request'}
+
+
+def test_equal_output_bytes_do_not_reverse_taint_an_independent_producer():
+    # An empty log or receipt may have equal bytes across independent jobs. Its artifact aliases are denied,
+    # but provenance must follow dependencies forward instead of marking every producer of those bytes tainted.
+    ctx, inv = evidence_ctx()
+    ctx.tx.list_jobs.return_value.append({'id': 'independent', 'lock': {'inputs': {}}})
+    ctx.tx.list_artifacts.return_value.append({'id': 'equal-log', 'digest': 'd1',
+                                               'producer_job': 'independent', 'access_class': 'project'})
+    blocked = excluded(ctx, inv)
+    assert 'equal-log' in blocked and 'independent' not in blocked
+    view = {'investigation': {'id': 'inv', 'body': {'question': 'q'}},
+            'jobs': [{'id': 'independent', 'outputs': [{'artifact_id': 'equal-log'}, {'artifact_id': 'safe'}]}]}
+    clean = safe_view(view, {'jobs': ['independent'], 'artifacts': ['safe']}, blocked=blocked)
+    assert clean['jobs'][0]['outputs'] == [{'artifact_id': 'safe'}]
+
+
+def test_question_naming_isolated_evidence_is_redacted_without_destroying_the_context_shape():
+    view = {'investigation': {'id': 'inv', 'body': {'question': 'Read held-job', 'environment': 'lab'}}}
+    clean = safe_view(view, {'jobs': [], 'artifacts': []}, blocked={'held-job'})
+    assert clean['investigation']['body'] == {'question': None, 'environment': 'lab', 'inputs': {}}

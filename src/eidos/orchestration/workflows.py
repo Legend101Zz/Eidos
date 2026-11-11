@@ -327,6 +327,10 @@ class InvestigationWorkflow:
                     task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
                 if recovered.get("finalization"):
                     res["finalization"] = True
+                    if recovered.get("investigator_concluded"):
+                        res["stop_reason"] = "concluded"  # closure committed before the child's failure
+                    elif recovered.get("stop_reason") == "cancelled":
+                        res["stop_reason"] = "cancelled"
             reason = res.get("stop_reason") or res.get("reason") or ""
             if res.get("finalization") and reason not in ("concluded", "cancelled"):
                 self._status = "needs operator input (finalization failed)"

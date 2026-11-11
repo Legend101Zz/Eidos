@@ -114,14 +114,17 @@ def list_events(ctx: Ctx, p: dict) -> dict:
 
 @query("get_job")
 def get_job(ctx: Ctx, p: dict) -> dict:
-    finalization_evidence.check_read(ctx, p, "jobs", p["job_id"])
+    allowed = finalization_evidence.read_allowlist(ctx, p)
+    if allowed is not None and p["job_id"] not in allowed.get("jobs", []):
+        raise Forbidden("job is outside the finalization allowlist or derives from held-out data")
     job = ctx.tx.get_job(p["job_id"])
     if not job or job["project_id"] != ctx.project_id:
         raise NotFound(f"job {p['job_id']} not found")
     _expose_job(ctx, job)
     out = _jsonable(job)
     out["attempts"] = [_jsonable(a) for a in ctx.tx.list_attempts(job["id"])]
-    out["outputs"] = [_jsonable(x) for x in ctx.tx.publications(job["id"])]
+    out["outputs"] = [_jsonable(x) for x in ctx.tx.publications(job["id"])
+                      if allowed is None or x["artifact_id"] in allowed.get("artifacts", [])]
     out["environment"] = _job_environment(job)  # kept when the lock is stripped (ADR 0020)
     if not p.get("include_lock", True):
         out.pop("lock", None)

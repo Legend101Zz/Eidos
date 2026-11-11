@@ -279,8 +279,16 @@ def reconcile_finalization(ctx: Ctx, p: dict) -> dict:
     transaction as a normal failure. Finished recovery is returned idempotently after an activity/worker restart.
     """
     final = ctx.tx.get_record(FINALIZATION_KIND, p["investigation_id"])
-    if final is None or not final.body.get("turn_id"):
+    if final is None:
         return {"finalization": False}
+    if not final.body.get("turn_id"):
+        if final.status != "finished" and not p.get("failure"):
+            return {"finalization": False}  # pending admission, no failed child: its one turn can still begin
+        if final.status != "finished":
+            inv = ctx.tx.require("investigation", p["investigation_id"], lock=True)
+            _fail_pending_finalization(ctx, inv, "child-failed-before-begin-turn", p["failure"])
+        return {"finalization": True, "turn_id": None, "investigator_concluded": False,
+                "export_receipt": {"kind": "finalization_export_receipt", "id": p["investigation_id"]}}
     turn = _turn(ctx, final.body["turn_id"], lock=True)
     if turn["status"] == "open":
         failure = p.get("failure") or {"error_type": "coordinator-restarted", "retryable": False,
@@ -289,6 +297,7 @@ def reconcile_finalization(ctx: Ctx, p: dict) -> dict:
     receipt = ctx.tx.get_record("finalization_export_receipt", p["investigation_id"])
     return {"finalization": True, "turn_id": turn["id"],
             "investigator_concluded": bool(receipt and receipt.body.get("investigator_concluded")),
+            "stop_reason": receipt.body.get("stop_reason") if receipt else None,
             "export_receipt": {"kind": "finalization_export_receipt", "id": p["investigation_id"]}}
 
 
@@ -370,13 +379,13 @@ def enter_finalization(ctx: Ctx, p: dict) -> dict:
     return _enter_finalization(ctx, inv, trigger, p.get("runtime_outcome"))
 
 
-def _fail_pending_finalization(ctx: Ctx, inv, reason: str) -> None:
+def _fail_pending_finalization(ctx: Ctx, inv, reason: str, failure: dict | None = None) -> None:
     final = ctx.tx.get_record(FINALIZATION_KIND, inv.id)
     if final is None or final.status == "finished":
         return
     receipt = {"schema": "finalization-export-receipt/1", "investigation_id": inv.id,
                "investigator_concluded": False, "incumbent": exploration.final_incumbent(ctx, inv),
-               "failure": {"kind": "finalization-not-admitted", "reason": reason},
+               "failure": _bounded_details(redact_value(failure)) if failure else {"kind": "finalization-not-admitted", "reason": reason},
                "provenance_limits": "Controller export only; no investigator conclusion or new confirmation."}
     ctx.tx.put_record("finalization_export_receipt", inv.id, ctx.project_id, receipt,
                       created_by=ctx.principal.id, status="recorded")
@@ -401,7 +410,8 @@ def _finalization_context(ctx: Ctx, inv, state: dict, finalization: dict) -> dic
             jobs.append(exploration.view_job(locked, ctx.tx.publications(job_id)))
     from eidos.application.handlers import finalization_evidence
     evidence = finalization_evidence.allowlist(ctx, inv, jobs)
-    jobs = [j for j in jobs if j["id"] in evidence["jobs"]]
+    jobs = [{**j, "outputs": [o for o in j.get("outputs") or [] if o["artifact_id"] in evidence["artifacts"]]}
+            for j in jobs if j["id"] in evidence["jobs"]]
     candidate = next((j for j in jobs if j["id"] == job_id), None)
     blocked = finalization_evidence.excluded(ctx, inv)
     incumbent = finalization_evidence.sanitize(incumbent, blocked)
@@ -457,7 +467,7 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
             _fail_pending_finalization(ctx, inv, "budget-exhausted")
             return {"started": False, "reason": "budget-exhausted", "dimension": dim}
     finalization = ctx.tx.get_record(FINALIZATION_KIND, inv.id)
-    if finalization and finalization.body.get("turn_id"):
+    if finalization and (finalization.body.get("turn_id") or finalization.status == "finished"):
         return {"started": False, "reason": "finalization-exhausted"}
     if "turns" in budgets:
         remaining_turns = budgets["turns"]["limit_amount"] - budgets["turns"]["used"] - budgets["turns"]["reserved"]

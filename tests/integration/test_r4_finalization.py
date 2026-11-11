@@ -296,7 +296,8 @@ def test_abandoned_finalization_is_closed_durably_before_retry_or_restart(scene,
 
 
 @pytest.mark.parametrize('recovery', [True, False])
-def test_finalization_denies_direct_and_transitively_derived_held_out_reads_and_context(lab, recovery):
+@pytest.mark.parametrize('context_policy', ['context-policy/1', 'context-policy/2', 'context-policy/3'])
+def test_finalization_denies_direct_and_transitively_derived_held_out_reads_and_context(lab, recovery, context_policy):
     import hashlib
 
     from eidos.client import LabError
@@ -306,7 +307,7 @@ def test_finalization_denies_direct_and_transitively_derived_held_out_reads_and_
     digest, size = lab.store.put_bytes(secret)
     held = sc.cmd('register_artifact', {'digest': digest, 'size': size, 'media_type': 'application/json',
                                       'schema': 'class-predictions/1', 'role': 'input'})['artifact_id']
-    inv, safe = _locked(sc)
+    inv, safe = _locked(sc, context_policy=context_policy)
     direct = sc.job(inv, ref=sc.infer, inputs={'predictions': held}, metrics={'secret-direct': 1})
     derived = sc.job(inv, ref=sc.infer, inputs={'predictions': sc.output(direct)}, metrics={'secret-derived': 1})
     # The provenance chain can cross the investigation boundary.
@@ -336,9 +337,11 @@ def test_finalization_denies_direct_and_transitively_derived_held_out_reads_and_
     context = sc.q('get_turn', {'turn_id': turn['turn_id']})['context']
     art = sc.q('get_artifact', {'artifact_id': context['context_artifact_id']})
     packed = lab.store.path_for(art['digest']).read_text()
+    source_art = sc.q('get_artifact', {'artifact_id': context['source_manifest_artifact_id']})
+    source = lab.store.path_for(source_art['digest']).read_text()
     for forbidden in [direct, derived, 'secret-direct', 'secret-derived', held, sc.output(direct), sc.output(derived)]:
-        assert forbidden not in packed
-    assert safe in packed
+        assert forbidden not in packed and forbidden not in source
+    assert safe in packed and safe in source
 
 
 def test_ordinary_finalization_can_read_a_lock_that_predates_the_investigation(scene):
@@ -353,3 +356,33 @@ def test_ordinary_finalization_can_read_a_lock_that_predates_the_investigation(s
     tools = acts._read_tools(scene.pid, finalization={'turn_id': turn['turn_id']})
     assert tools['get_job'](job)['id'] == job
     assert tools['inspect_evidence'](scene.output(job))['available']
+
+
+def test_child_failure_before_begin_turn_closes_pending_recovery_and_fences_a_late_begin(scene):
+    inv, job = _locked(scene)
+    _entered(scene, inv)
+    assert scene.cmd('reconcile_finalization', {'investigation_id': inv}) == {'finalization': False}
+    failure = {'error_type': 'turn-workflow-failed', 'message': 'child timed out before begin committed'}
+    result = scene.cmd('reconcile_finalization', {'investigation_id': inv, 'failure': failure})
+    assert result['finalization'] and result['turn_id'] is None
+    shown = scene.q('get_investigation', {'investigation_id': inv})
+    assert shown['finalization_export_receipt']['failure'] == failure
+    assert shown['finalization_export_receipt']['incumbent']['job_id'] == job
+    assert shown['needs_input']['code'] == 'finalization-failed'
+    # The child begin activity may arrive late, after its workflow timed out: it must not reopen recovery.
+    assert scene.cmd('begin_turn', {'investigation_id': inv})['reason'] == 'finalization-exhausted'
+    assert scene.cmd('reconcile_finalization', {'investigation_id': inv}) == result
+
+
+def test_reconciliation_preserves_a_conclusion_committed_before_the_child_failed(scene):
+    inv, _ = _locked(scene)
+    _entered(scene, inv)
+    turn = scene.begin(inv)
+    _complete(scene.lab, scene.pid, turn['turn_id'], 'concluded',
+              {'action': 'conclude', 'summary': 'Locked candidate, pending independent confirmation.'})
+    result = scene.cmd('reconcile_finalization', {'investigation_id': inv,
+                       'failure': {'error_type': 'turn-workflow-failed', 'message': 'child response lost'}})
+    assert result['investigator_concluded'] is True and result['stop_reason'] == 'concluded'
+    shown = scene.q('get_investigation', {'investigation_id': inv})
+    assert shown['status'] == 'concluded' and shown['needs_input'] is None
+    assert shown['finalization_export_receipt']['investigator_concluded'] is True

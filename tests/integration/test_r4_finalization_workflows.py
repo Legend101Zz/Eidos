@@ -162,7 +162,7 @@ class FailingFinalizationChild:
         raise ApplicationError('finalization child failed', non_retryable=True)
 
 
-@pytest.mark.parametrize('mode', ['failure', 'timeout'])
+@pytest.mark.parametrize('mode', ['failure', 'timeout', 'concluded'])
 async def test_child_failure_reconciles_active_finalization_before_ordinary_retry(env, mode):  # noqa: F811
     class Abandoned(Recovery):
         def __init__(self):
@@ -179,7 +179,7 @@ async def test_child_failure_reconciles_active_finalization_before_ordinary_retr
         @activity.defn(name='reconcile_finalization')
         async def reconcile_finalization(self, a):
             self.reconciled.append(a)
-            return {'finalization': self.running, 'investigator_concluded': False}
+            return {'finalization': self.running, 'investigator_concluded': self.running and mode == 'concluded'}
 
     fake = Abandoned()
     wid = f'inv-r4-child-{mode}-' + uuid.uuid4().hex
@@ -189,10 +189,13 @@ async def test_child_failure_reconciles_active_finalization_before_ordinary_retr
         result = await asyncio.wait_for(env.client.execute_workflow(InvestigationWorkflow.run,
             {'investigation_id': wid, 'project_id': 'p', 'turn_timeout_seconds': 1},
             id=wid, task_queue=WORKFLOW_QUEUE), timeout=20)
-    assert result['reason'] == 'finalization-failed' and fake.turns == 2
+    assert result['reason'] == ('concluded' if mode == 'concluded' else 'finalization-failed') and fake.turns == 2
     assert len(fake.reconciled) == 2 and fake.reconciled[-1]['failure']['error_type'] == 'turn-workflow-failed'
     assert not getattr(fake, 'retries', [])
-    assert fake.marks[0]['details']['export_receipt']['id'] == wid
+    if mode == 'concluded':
+        assert fake.marks == []
+    else:
+        assert fake.marks[0]['details']['export_receipt']['id'] == wid
 
 
 async def test_verified_historical_six_slots_replay_through_coordinator(env):  # noqa: F811
