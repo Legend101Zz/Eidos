@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import statistics
 import subprocess
@@ -47,6 +48,11 @@ def configure_lab(lab_home, lab_python, stub):
         selected = [ports[key] for key in ("api", "pg", "temporal", "mcp")]
         if len(set(selected)) != 4 or any(p in FORBIDDEN_PORTS or not 1024 <= p <= 65535 for p in selected):
             raise ValueError("eval lab requires four distinct, unreserved ports")
+        temporal_block = set(range(ports["temporal"], ports["temporal"] + 9))
+        if max(temporal_block) > 32767 or temporal_block.intersection(FORBIDDEN_PORTS):
+            raise ValueError("Temporal requires nine unreserved ports ending at or below 32767")
+        if temporal_block.intersection(ports[key] for key in ("api", "pg", "mcp")):
+            raise ValueError("eval service overlaps the Temporal port block")
         if config.get("lab_python") != lab_python:
             raise ValueError("eval lab config interpreter differs from --lab-python")
         for key in ("api", "pg", "temporal"):
@@ -146,7 +152,7 @@ def markdown(card):
                      f"{number(row['unused_time_at_conclusion_s'])} | {flags} |")
     lines += ["", "Unverified runs contribute zero to gain ratios. Missing references produce null ratios. "
               "Held-out detection scans known identifiers and digests on a best-effort basis.", "",
-              "```json", __import__("json").dumps(card["aggregate"], indent=2), "```", ""]
+              "```json", json.dumps(card["aggregate"], indent=2), "```", ""]
     return "\n".join(lines)
 
 

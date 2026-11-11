@@ -49,30 +49,43 @@ record = dict(eidos_commit_sha=sys.argv[2], python=str(root / 'venv/bin/python')
               wheels={p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted((root / 'wheels').glob('*.whl'))},
               packages={n: importlib.metadata.version(n) for n in ('eidos-lab', 'eidos-wire', 'eidos-worker-sdk', 'eidos-pytorch')})
 (root / 'venv/pilot-build.json').write_text(json.dumps(record, indent=2) + '\n')
-# Allocate four free ports in 31000..58999. Persisted sibling labs keep their allocations.
+# Temporal owns nine consecutive ports and stores membership ports as PostgreSQL smallint.
+from eidos import settings
+block_size = getattr(settings, 'TEMPORAL_PORT_BLOCK', 9)
+max_temporal = getattr(settings, 'TEMPORAL_MAX_PORT', 32767)
 reserved = {28767, 25546, 27635, 28766, 25544, 27633, 28765}
 for path in root.parent.glob('*/ports.json'):
-    reserved.update(json.loads(path.read_text()).values())
-base = 31000 + int(hashlib.sha256(root.name.encode()).hexdigest()[:8], 16) % 27000
+    sibling = json.loads(path.read_text())
+    reserved.update(sibling.values())
+    reserved.update(range(sibling['temporal'], sibling['temporal'] + block_size))
 ports = {}
 sockets = []
 try:
-    for offset in range(28000):
-        port = 31000 + (base - 31000 + offset) % 28000
-        if port in reserved:
-            continue
-        probe = socket.socket()
-        try:
-            probe.bind(('127.0.0.1', port))
-        except OSError:
-            probe.close()
-            continue
-        sockets.append(probe)
-        ports[('api', 'pg', 'temporal', 'mcp')[len(ports)]] = port
-        if len(ports) == 4:
+    for key in ('temporal', 'api', 'pg', 'mcp'):
+        width = block_size if key == 'temporal' else 1
+        candidates = list(range(30000, max_temporal - width + 2, width)) if key == 'temporal' else list(range(33000, 59000))
+        offset = int(hashlib.sha256((root.name + key).encode()).hexdigest()[:8], 16) % len(candidates)
+        candidates = candidates[offset:] + candidates[:offset]
+        for port in candidates:
+            block = range(port, port + width)
+            if reserved.intersection(block):
+                continue
+            trial = []
+            try:
+                for member in block:
+                    probe = socket.socket()
+                    trial.append(probe)
+                    probe.bind(('127.0.0.1', member))
+            except OSError:
+                for probe in trial:
+                    probe.close()
+                continue
+            ports[key] = port
+            reserved.update(block)
+            sockets.extend(trial)
             break
-    if len(ports) != 4:
-        raise RuntimeError('could not allocate four eval ports')
+        else:
+            raise RuntimeError(f'could not allocate eval ports for {key}')
     (root / 'ports.json').write_text(json.dumps(ports, indent=2) + '\n')
 finally:
     for probe in sockets:

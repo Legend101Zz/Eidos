@@ -18,11 +18,11 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 20
     env:
-      UV_CACHE_DIR: ${{ runner.temp }}/study-evals/cache/uv
-      UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/study-evals/cache/python
-      PIP_CACHE_DIR: ${{ runner.temp }}/study-evals/cache/pip
-      PYTHONPYCACHEPREFIX: ${{ runner.temp }}/study-evals/cache/pycache
-      TMPDIR: ${{ runner.temp }}/study-evals/tmp
+      UV_CACHE_DIR: /tmp/study-evals/cache/uv
+      UV_PYTHON_INSTALL_DIR: /tmp/study-evals/cache/python
+      PIP_CACHE_DIR: /tmp/study-evals/cache/pip
+      PYTHONPYCACHEPREFIX: /tmp/study-evals/cache/pycache
+      TMPDIR: /tmp/study-evals/tmp
       OMP_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
