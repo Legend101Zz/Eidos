@@ -63,7 +63,7 @@ def client():
 
 
 def guard_disk():
-    minimum_gib = 14 if 'p2' in str(home()) or 'pilot-2' in str(home()) else 12
+    minimum_gib = 12.5 if 'p2' in str(home()) or 'pilot-2' in str(home()) else 12  # pilot-2 addendum 2
     if shutil.disk_usage('/').free < minimum_gib * 1024**3:
         raise RuntimeError(f'STOP: internal disk has less than {minimum_gib} GiB free')
     if ROOT not in home().parents:

@@ -14,3 +14,8 @@ Written on 11 November 2026 at about 14:10 IST. No arm, prompt, envelope, succes
 
 ## Charter consequence
 The seven blocks never started, so re-running them is not a re-roll: no outcome existed. They run whole, unchanged, two at a time, after D06-r2 completes. Their placeholder "incident" grades are replaced by the real grades.
+
+## Also affected: D06-r2 (found at 14:15 IST)
+- D06-r2 was running when free space fell. Its arm-4 adapter has its own disk check (also 14 GiB, `study/eidos_arms/lab.py`). That check stopped arm 4 partway through, at 13:58 IST (setup 17.9 s, run 197.5 s, no model tokens recorded). The block was correctly recorded as an infrastructure incident ("one or more runs did not record a returned model id").
+- Arms 1–3 of that block had finished (arm 1: 1004 s; arm 2: 552 s; arm 3: 566 s). Following the charter, **the whole block is re-run**; the partial records are archived under `pilot-2/runs/incidents/`. No outcome of the interrupted block is used.
+- The arm-4 check threshold now matches the launcher (12.5 GiB).
