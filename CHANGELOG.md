@@ -31,7 +31,7 @@ cap and 6/8 at 16384 tokens / 120 s), `tool` 6/8 (was 4/8); `docs/release/eviden
   never passed. The result carries `unbounded_reason`, `decided_by` and `reason`. Before, a threshold rule compared
   the point estimate, so the reviewer's three-favourable-seed sample still passed.
 - Tests: `tests/integration/test_f5c_ticket_and_handoff.py`, `tests/integration/test_f5c_refused_wait_cursor.py`,
-  `tests/unit/test_two_way_interval.py` section 11.
+  `tests/unit/test_two_way_interval.py` section 14.
 
 ### Large CLI payloads go through `@file`, not argv
 - The e2e journey (`scripts/journeys/e2e_journey.py`) failed at step 3b with `OSError: [Errno 7] Argument list too

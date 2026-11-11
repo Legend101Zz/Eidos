@@ -435,8 +435,11 @@ class InvestigatorActivities:
     def _finish_decision(self, p: str, a: dict, dec: dict, receipts: list[dict], stopped: str | None = None) -> dict:
         # Replay-invariant record: a retry after committed effects yields identical receipts.
         stable = [{k: v for k, v in r.items() if k != "replayed"} for r in receipts]
+        # F5c: receipts of a decision stopped at a refused effect have their own key (per refused call), so a retry
+        # that completes the decision after a resume records its full receipts instead of conflicting with them.
+        key = f"receipts:{dec['id']}" + (f":stopped:{receipts[-1].get('index')}" if stopped else "")
         self.wf.command("record_decision_receipts", {"decision_id": dec["id"], "receipts": stable}, project=p,
-                        key=f"receipts:{dec['id']}")
+                        key=key)
         summary = [{"tool": r["tool"], "ok": r["ok"], "replayed": r.get("replayed"), "code": r.get("code")} for r in receipts]
         out: dict[str, Any] = {"summary": summary}
         if stopped:

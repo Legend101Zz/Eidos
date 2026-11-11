@@ -286,8 +286,8 @@ samples whose interval does not collapse. They are unchanged and apply equally t
 the point estimate whenever the interval is bounded. A threshold rule is the weaker standard by design: it carries no
 interval requirement for samples that do not collapse.
 
-**Tests.** `tests/unit/test_two_way_interval.py`, section 11: the reviewer's case under `threshold` and `interval`,
-too few seeds, identical arms (failed by the upper bound), a Monte Carlo run of the discrete design under a
+**Tests.** `tests/unit/test_two_way_interval.py`, section 14: the reviewer's case under `threshold` and `interval`,
+too few seeds, a non-estimable variance (one seed), identical arms (failed by the upper bound), a Monte Carlo run of the discrete design under a
 threshold rule (no collapsed sample passes), the scope of the change (a bounded two-way interval and the original
 method keep the point-estimate rule).
 

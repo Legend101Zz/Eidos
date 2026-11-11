@@ -429,7 +429,8 @@ committed returns its receipt as before.
 
 When an effect is refused, `execute_decision` stops: the effects before it stand, the remaining ones are not sent.
 For a stop, pause, closed turn or revoked decision it records the receipts (the refused call carries
-`EFFECT_NOT_ADMITTED`) and returns `{"stopped": "<reason>"}`. For `superseded-execution` (another run now owns the
+`EFFECT_NOT_ADMITTED`, under their own key per refused call) and returns `{"stopped": "<reason>"}`. A retry
+that completes the decision after a resume records its full receipts under the decision's usual key. For `superseded-execution` (another run now owns the
 turn) it records nothing and returns `skipped`: the new owner continues the handed-off decision with the same
 command keys.
 
