@@ -35,9 +35,11 @@ comes from `config.task_type`, then `task.task_type`, then the labels (integers 
 - *Ranked hypotheses.* `per-example-additive-offset` (centering gain), `per-example-gain-change` (standardization gain
   beyond centering), `feature-wise-distribution-shift` (split-wise standardization gain beyond per-example
   normalization), `spatial-or-positional-shift` (shift-invariant gain beyond centering; centering first removes the zero
-  frequency, so an offset is not credited to translation), `information-loss` (best within-train CV minus best
-  within-validation CV, less one fold-noise standard error: if validation is less learnable by itself whatever the
-  normalization, information is gone), and `no-transfer-shift-detected` at the fixed `min_effect` (default 0.02). Each has
+  frequency, so an offset is not credited to translation), `information-loss` (judged representation by representation: within-train CV minus validation's learnability, the
+  larger of its within-validation CV and the train-fitted model's validation score, less one fold-noise standard error,
+  taking the smallest gap over the reference and every probe that makes validation more learnable: if some helpful
+  representation is about as learnable in validation as in training, nothing is lost), and `no-transfer-shift-detected`
+  at `min_effect` (default 0.02, and for accuracy at least five validation examples' worth). Each has
   a statement, a **prediction** (what a recipe using it should gain) and a **falsifier** (the observation that would
   refute it), its evidence and a suggested next step. `supported` means its score reaches `min_effect`.
 
@@ -46,7 +48,8 @@ input it read, its configuration, a digest of the rows sampled for the probes, a
 and configuration give the same report.
 
 **What it refuses.** Only the ports `train`, `validation`, `predictions`, `groups` and `task` are read; another port
-(such as `test`) is refused, and an array name that names a test or held-out split is refused. It never needs, opens or
+(such as `test`) is refused, and an array name that names a test or held-out split is refused, as is a `group_keys` entry
+that is not an array of the validation input. It never needs, opens or
 names a test file.
 
 **Limits.** Exploratory: it makes no claim and its numbers are selection evidence on visible validation. The probes are

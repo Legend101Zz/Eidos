@@ -335,16 +335,30 @@ def _error_slices(task, va, pred, source, bins, groups):
     return report
 
 
-def _cv_noise(probes, tcv, vcv):
-    """One standard error of the difference between the best within-train and best within-validation CV scores, from
-    their fold-to-fold spread: a gap smaller than this is not read as lost information."""
-    def folds(kind, best):
-        probe = max(best, key=lambda p: best[p])
-        per_model = probes[probe][kind + "_folds"]
-        model = max(per_model, key=lambda m: float(np.mean(per_model[m])))
-        values = np.asarray(per_model[model])
-        return float(values.var(ddof=1)) / len(values) if len(values) > 1 else 0.0
-    return float(math.sqrt(folds("train_cv", tcv) + folds("validation_cv", vcv)))
+def _fold_variance(probes, probe, kind):
+    """Variance of the mean fold score of the probe's best quick model."""
+    per_model = probes[probe][kind + "_folds"]
+    model = max(per_model, key=lambda m: float(np.mean(per_model[m])))
+    values = np.asarray(per_model[model])
+    return float(values.var(ddof=1)) / len(values) if len(values) > 1 else 0.0
+
+
+def _information_gap(probes, tcv, vcv, val):
+    """How much less learnable validation is than train, judged representation by representation. Validation's
+    learnability under a probe is at least its within-validation CV score and at least the score of the model fitted on
+    train (a model fitted elsewhere that scores that well proves the information is there). The gap is the smallest
+    within-train CV minus that, less one fold-noise standard error, over the reference probe and every probe that makes
+    validation more learnable than the reference does. If some representation that helps is about as learnable in
+    validation as in training, no information is lost; a shift it removes is a different cause.
+    Returns (gap, probe, noise allowance)."""
+    learn = {p: max(vcv[p], val[p]) for p in vcv}
+    eligible = [p for p in learn if p == "none" or learn[p] > learn["none"]]
+    gaps = {}
+    for p in eligible:
+        noise = math.sqrt(_fold_variance(probes, p, "train_cv") + _fold_variance(probes, p, "validation_cv"))
+        gaps[p] = (tcv[p] - learn[p] - noise, noise)
+    probe = min(gaps, key=lambda p: (gaps[p][0], p))
+    return gaps[probe][0], probe, gaps[probe][1]
 
 
 def _hypotheses(task, probes, min_effect, metric):
@@ -356,8 +370,7 @@ def _hypotheses(task, probes, min_effect, metric):
     center, standard = delta.get("per_example_center", 0.0), delta.get("per_example_standardize", 0.0)
     split = delta.get("split_standardize", 0.0)
     spatial = (val["shift_invariant"] - max(val.get("per_example_center", ref), ref)) if "shift_invariant" in val else None
-    learn_train, learn_val = max(tcv.values()), max(vcv.values())
-    noise = _cv_noise(probes, tcv, vcv)
+    info_gap, info_probe, noise = _information_gap(probes, tcv, vcv, val)
     unit = "accuracy" if task == "classification" else "R^2"
     out = []
 
@@ -398,16 +411,18 @@ def _hypotheses(task, probes, min_effect, metric):
             "translation augmentation of training data does not help." % (min_effect, metric),
             "Try translation augmentation or shift-invariant features only after ruling out offset and gain.",
             {"validation_%s_shift_invariant" % unit: val["shift_invariant"]})
-    add("information-loss", learn_train - learn_val - noise,
+    add("information-loss", info_gap,
         "Validation inputs carry less information about the target than training inputs (noise, masking or a lost "
         "channel): even a model fitted within validation does worse than one fitted within training, whatever the "
         "normalization.",
-        "No preprocessing closes the gap: the best within-validation CV %s stays about %.3f below the best within-training "
-        "CV %s at equal sample size." % (metric, learn_train - learn_val, metric),
+        "No preprocessing closes the gap: within-validation CV %s stays about %.3f below within-training CV %s at equal "
+        "sample size, for every representation that helps (closest: %s)." % (metric, info_gap, metric, info_probe),
         "A preprocessing or model change raises within-validation CV %s to within %.3f of within-training CV." % (metric, min_effect),
         "Expect a ceiling: report it, and prefer robust or denoising recipes over larger models.",
-        {"best_train_cv_%s" % unit: learn_train, "best_validation_cv_%s" % unit: learn_val,
-         "fold_noise_allowance": noise})
+        {"closest_probe": info_probe, "train_cv_%s" % unit: tcv[info_probe],
+         "validation_cv_%s" % unit: vcv[info_probe], "validation_%s" % unit: val[info_probe],
+         "fold_noise_allowance": noise,
+         "best_train_cv_%s" % unit: max(tcv.values()), "best_validation_cv_%s" % unit: max(vcv.values())})
     gap = tcv["none"] - ref
     add("no-transfer-shift-detected", min_effect,
         "No probe explains the baseline's errors by more than the minimum effect: the baseline is limited by its model "
@@ -442,13 +457,16 @@ def run(inputs, config, *, reader, writer, context):
     if unknown or "none" not in probes_wanted:
         raise DiagnosisConfigError("probes must be drawn from %s and include none" % (list(PROBES),))
     seed = int(config.get("seed", context.seed if getattr(context, "seed", None) is not None else 0))
-    folds = int(config.get("cv_folds", 3))
+    folds = int(config.get("cv_folds", 5))
     bins = int(config.get("quantiles", 4))
-    min_effect = float(config.get("min_effect", 0.02))
+    min_effect_given = config.get("min_effect")
     if folds < 2 or bins < 2:
         raise DiagnosisConfigError("cv_folds and quantiles must be at least 2")
     tr = _load_split(reader, "train", keys, [], True)
     va = _load_split(reader, "validation", keys, group_keys, True)
+    missing = [k for k in group_keys if k not in va["groups"]]
+    if missing:
+        raise DiagnosisConfigError("group_keys %s are not arrays of the validation input" % missing)
     if tr["x"].shape[1] != va["x"].shape[1]:
         raise DiagnosisConfigError("train and validation have different numbers of features")
     task = reader.json("task") if "task" in inputs else None
@@ -463,6 +481,10 @@ def run(inputs, config, *, reader, writer, context):
     i_va = np.sort(rng.choice(len(va["x"]), n_va, replace=False))
     i_cv = np.sort(rng.choice(n_tr, min(n_tr, n_va), replace=False))  # equal sizes: within-split CVs are comparable
     xtr, ytr, xva, yva = tr["x"][i_tr], tr["y"][i_tr], va["x"][i_va], va["y"][i_va]
+    # By default an effect must exceed 0.02 and, for accuracy, five validation examples' worth: smaller differences
+    # between quick refits are within what reshuffling a few examples gives.
+    min_effect = float(min_effect_given) if min_effect_given is not None else (
+        max(0.02, 5.0 / n_va) if task_type == "classification" else 0.02)
     models = _models(config)
     probes = {}
     for probe in probes_wanted:
@@ -501,7 +523,8 @@ def run(inputs, config, *, reader, writer, context):
         "split_statistics": _split_statistics(tr, va, task_type),
         "error_slices": _error_slices(task_type, va, pred, source, bins, groups),
         "invariance_probes": {
-            "models": models, "cv_folds": folds,
+            "models": models, "cv_folds": folds, "min_effect": min_effect,
+            "min_effect_source": "config" if min_effect_given is not None else "default",
             "rows": {"train": int(n_tr), "validation": int(n_va), "within_split_cv": int(len(i_cv))},
             "note": "validation = fitted on train, scored on validation; train_cv and validation_cv = cross-validation "
                     "within one split at equal size. Every probe is followed by train-fitted standardization.",

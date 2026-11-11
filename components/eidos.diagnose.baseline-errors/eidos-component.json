@@ -92,7 +92,7 @@
     "items": {
      "type": "string"
     },
-    "description": "extra arrays in the validation NPZ to slice errors by"
+    "description": "extra arrays in the validation NPZ to slice errors by; a name that is not there is refused"
    },
    "groups_key": {
     "type": "string",
@@ -116,7 +116,8 @@
    },
    "cv_folds": {
     "type": "integer",
-    "minimum": 2
+    "minimum": 2,
+    "description": "folds of the within-split cross-validation; default 5"
    },
    "quantiles": {
     "type": "integer",
@@ -125,7 +126,7 @@
    "min_effect": {
     "type": "number",
     "minimum": 0,
-    "description": "smallest score that counts as support; default 0.02"
+    "description": "smallest score that counts as support; default 0.02, and for accuracy at least 5 / validation rows"
    },
    "max_train_rows": {
     "type": "integer",

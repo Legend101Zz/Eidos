@@ -8,7 +8,6 @@ without it.
 
 from __future__ import annotations
 
-import io
 import json
 import os
 import subprocess
@@ -83,7 +82,7 @@ def _run(scene, name: str, config: dict) -> dict:
 
 def _output(scene, job: dict, slot: str):
     out = next(o for o in job["outputs"] if o["slot"] == slot)
-    return json.load(io.open(scene["lab"].store.path_for(out["digest"])))
+    return json.load(open(scene["lab"].store.path_for(out["digest"])))
 
 
 def test_the_diagnosis_runs_as_a_lab_job_and_ranks_the_planted_offset_first(scene):

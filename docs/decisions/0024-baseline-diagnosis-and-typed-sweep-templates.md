@@ -32,8 +32,12 @@ optionally the baseline's validation `predictions`, `groups` and `task`. Output 
   `per-example-additive-offset` (centering gain), `per-example-gain-change` (standardization gain beyond centering),
   `feature-wise-distribution-shift` (split-wise standardization gain beyond per-example normalization),
   `spatial-or-positional-shift` (shift-invariant gain beyond centering; the zero frequency is removed first, so an offset
-  is never credited to translation, which is the D03 confusion), `information-loss` (best within-train CV minus best
-  within-validation CV, less one fold-noise standard error), and `no-transfer-shift-detected` at `min_effect`.
+  is never credited to translation, which is the D03 confusion), `information-loss` (per representation: within-train
+  CV minus validation's learnability, the larger of within-validation CV and the train-fitted validation score, less
+  one fold-noise standard error; the smallest gap over the reference and every probe that makes validation more
+  learnable), and `no-transfer-shift-detected` at `min_effect` (default 0.02, and for accuracy at least five validation
+  examples). Review of the author tests showed that comparing only the best scores of each split read a weak but
+  transferable shift-invariant representation as lost information; the per-representation gap fixes that.
 - **Provenance**: component release, seed, numpy and Python versions, the SHA-256 of every input read, the configuration
   and a digest of the sampled rows. Deterministic for the same inputs, seed and configuration.
 
