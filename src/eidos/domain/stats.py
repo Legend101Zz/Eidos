@@ -165,6 +165,7 @@ def _cluster_sum_variance(resid: Sequence[float], groups: Sequence[str]) -> tupl
 
 
 TWO_WAY_METHOD = "two-way-seed-example-t/1"
+MIN_SEED_CLUSTERS = 3  # F5 (B1): fewest training seeds for an interval that includes seed variation
 
 
 def two_way_paired_difference(
@@ -182,7 +183,8 @@ def two_way_paired_difference(
     the one-way cluster-robust variance of the grand mean (with the G/(G-1) factor). For a balanced design
     these are ``var(seed means)/S`` and ``var(example means over seeds)/N``. Under the additive model
     ``d = mu + a_seed + b_example + e`` their expectation is ``sigma_a^2/S + sigma_b^2/N + 2 sigma_e^2/(SN)``,
-    the true variance plus ``sigma_e^2/(SN) >= 0``: conservative, never negative, and never smaller than
+    the true variance plus ``sigma_e^2/(SN) >= 0``: biased upward (not a coverage guarantee: ADR 0018 s. 7), never
+    negative, and never smaller than
     either one-way variance. Critical value: Student t with Welch-Satterthwaite degrees of freedom from the
     components (S-1 and N-1), so few seeds widen the interval.
 
@@ -208,6 +210,23 @@ def two_way_paired_difference(
         v_example = float("nan")
     var = float("nan") if n_examples < 2 or (require_seed_variance and not seed_estimated) else sum(
         v for v, _ in terms)
+    # F5 (review B1): fail closed (unbounded, so the assessor is inconclusive) when the variance estimate collapses
+    # or there are too few seed clusters. With bounded outcomes a seed effect can be discrete: if each seed is +1 on
+    # every example with p = 0.4 and -1 with p = 0.6 (population effect -0.2), three seeds are all +1 with
+    # probability 0.064 and the variance estimate is exactly zero; a point interval [1, 1] would pass any min_effect.
+    # No variance-based interval can tell that sample from a population with no seed variation, so zero is never
+    # taken at face value. Two seed clusters give the seed component one degree of freedom, so it is zero or
+    # near zero far too often; at least MIN_SEED_CLUSTERS are needed when seed variation is part of the interval.
+    # The estimates (se, df, components) are still reported; only the interval's lower bound is unbounded.
+    tol = (1e-12 * max(1.0, abs(mean))) ** 2
+    collapsed = None
+    if var == var:
+        if seed_estimated and n_seeds < MIN_SEED_CLUSTERS:
+            collapsed = "too-few-seed-clusters"
+        elif seed_estimated and v_seed <= tol:
+            collapsed = "seed-variance-collapsed"
+        elif var <= tol:
+            collapsed = "variance-collapsed"
     df: float = float("nan")
     if var == var:
         denom = sum(v * v / k for v, k in terms)
@@ -217,7 +236,10 @@ def two_way_paired_difference(
     else:
         se = math.sqrt(var)
         q = student_t_quantile(0.5 + confidence / 2, df) if se > 0 else 0.0
-        lo, hi = mean - q * se, mean + q * se
+        # A collapsed estimate never supports a pass: the lower bound is unbounded. The upper bound is kept, so
+        # identical arms (every difference zero) still fail a rule that needs an improvement (fail closed: the
+        # reviewer's case is a false pass; a collapsed estimate may still fail, never pass).
+        lo, hi = (float("-inf") if collapsed else mean - q * se), mean + q * se
     return {
         "estimate": mean, "ci_low": lo, "ci_high": hi, "units": n,
         "independent_units": min(n_seeds, n_examples) if seed_estimated else n_examples,
@@ -226,6 +248,7 @@ def two_way_paired_difference(
         "variance_components": {"seed": v_seed if seed_estimated else None,
                                 "example": v_example if v_example == v_example else None},
         "df": None if df != df or math.isinf(df) else df,
+        **({"unbounded_reason": collapsed} if collapsed else {}),
     }
 
 

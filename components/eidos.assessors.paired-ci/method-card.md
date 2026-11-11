@@ -27,16 +27,23 @@ same `example_id` or `pair_id` in every `cluster`), so seed clusters are correla
 crossed, training seed (`cluster`) x example (unit id), for both row families and whether or not the plan
 has `cluster_by`: variance = one-way cluster-robust variance by seed + one-way cluster-robust variance by
 example (the Cameron-Gelbach-Miller two-way estimator without subtracting the intersection term, so it is
-conservative and never smaller than either one-way variance), with a Student t critical value on
+biased upward under the additive model and never smaller than either one-way variance), with a Student t critical value on
 Welch-Satterthwaite degrees of freedom from (seeds - 1, examples - 1). One seed: seed variance is not
 estimable (`seed_variance_estimated: false`) and the interval is the plain paired t-interval over examples.
 The effect reports `method`, `seeds`, `examples`, `variance_components` and `df`; the evaluation reports
 `interval`. Recorded 1.0.0 and 1.1.0 results are unchanged: they call the original method.
 
+**Fail-closed cases (F5, ADR 0018 section 7).** With two or more seeds, the lower bound is unbounded (never a
+pass) when there are fewer than 3 seeds, when the seed variance is estimated as zero, or when the whole variance
+is zero (`unbounded_reason`); the upper bound is kept, so identical arms still fail. Arms whose units do not
+match are `inconclusive` (`unit_mismatch`). **Known limitation:** with 3 seeds and discrete seed effects (a seed
+either helps or hurts on a share of the examples), the false-pass rate can reach 5-8% in the designs of ADR 0018
+section 7, against a nominal 2.5%; use 5 or more training seeds for seed-level conclusions.
+
 **Method.** `eidos.domain.evidence.evaluate_success_rule(..., interval="two-way-seed-example-t")` (the
 rule's decision standard and guardrails; guardrails use the same interval). Non-finite interval ends (fewer
-than two examples) are written as `null` and listed in `unbounded_fields`; the outcome is then
-inconclusive. A lab whose domain code lacks the two-way method makes this release fail closed.
+than two examples, or the fail-closed cases above) are written as `null` and listed in `unbounded_fields`; an
+unbounded lower bound never passes. A lab whose domain code lacks the two-way method makes this release fail closed.
 
 **Refuses.** Arms not in the plan or with a different role, duplicate units, unreadable or non-finite
 rows, metrics it cannot compute from rows, and (accuracy) unmatched example ids across arms.

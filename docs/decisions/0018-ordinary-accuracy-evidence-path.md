@@ -147,9 +147,11 @@ widen the interval (t with 2 df is 4.30 instead of 1.96).
 - the true variance of the mean is `σa²/S + σb²/N + σe²/(SN)`;
 - `E[V_seed] = σa²/S + σe²/(SN)` (the shared example effects cancel within the seed means' spread) and
   `E[V_example] = σb²/N + σe²/(SN)`;
-- so `E[V]` exceeds the true variance by `σe²/(SN) ≥ 0`. The estimator is conservative, never negative, and never
-  smaller than either one-way variance, so it is never less conservative than 1.1.0's seed-only variance. The cost is
-  at most a factor √2 in standard error, when the seed-by-example interaction dominates.
+- so `E[V]` exceeds the true variance by `σe²/(SN) ≥ 0`. **In expectation, under the additive model,** the variance
+  estimator is biased upward, never negative, and never smaller than either one-way variance, so it is never less
+  conservative than 1.1.0's seed-only variance. The cost is at most a factor √2 in standard error, when the
+  seed-by-example interaction dominates. This is a statement about the estimator's bias, not about the interval's
+  finite-sample coverage: see section 7 (F5) for designs where coverage is well below nominal.
 - If the unit ids do not denote the same examples across seeds (independent evaluation draws that reuse ids
   `0..n-1`, or nested ids), the crossing is spurious but the estimate stays conservative: the example term then
   re-counts within-seed sampling noise that the seed term already contains.
@@ -182,7 +184,9 @@ declares `cluster_by` (an undeclared second seed can only widen the interval). T
 and the effect records `method`, `seeds`, `examples`, `variance_components` and `df`. A lab whose domain code lacks
 the method makes 1.2.0 fail closed.
 
-Reviewer's example under 1.2.0: estimate 0.03, CI [-0.0040, 0.0640] on 99 df: `inconclusive` (both families).
+Reviewer's example under 1.2.0 as first released (F3b): estimate 0.03, CI [-0.0040, 0.0640] on 99 df:
+`inconclusive` (both families). Since F5 (section 7) every seed has the same mean there, so the seed variance is
+estimated as zero and the lower bound is unbounded: still `inconclusive`.
 A broad improvement still passes: the `accuracy` planted fixture (3 seeds x 300 examples, gain 0.196) has lower
 bound 0.143 (1.1.0: 0.168) on 19.6 df.
 
@@ -197,6 +201,63 @@ same 3 pairs in every seed, metric `reference_accuracy`, `min_effect` 0.02) give
 0.0300], 3 independent units. The fix for that metric is the same 1.2.0 release; 1.0.0's results are not changed.
 Plans pinned to 1.0.0 with several seeds should be re-assessed with 1.2.0 (a new assessment; the old one stays on
 record).
+
+### 7. Review fixes (F5, review of 40cb1f6)
+
+**B1: a collapsed variance or too few seeds never passes.** Bounded outcomes allow discrete seed effects. Reviewer's
+design: each seed gives +1 on every example with p = 0.4 and -1 with p = 0.6 (population effect -0.2). Three seeds
+are all +1 with probability 0.064; every difference is then 1, both variance components are exactly zero, and
+1.2.0 (F3b) reported the point interval [1, 1], `protocol-passed` against `min_effect` 0.02. No variance-based
+interval can tell that sample from a population without seed variation, so `two_way_paired_difference` now fails
+closed when seed variation is part of the interval (two or more seeds):
+- fewer than `MIN_SEED_CLUSTERS` = 3 seeds (`unbounded_reason: too-few-seed-clusters`): the seed component then
+  has one degree of freedom and is zero or near zero far too often;
+- the seed component is zero (all seed means equal, `seed-variance-collapsed`), or the whole variance is zero
+  (`variance-collapsed`).
+In these cases the estimate, `se`, `df` and the components are still reported, the **lower bound is unbounded**
+(no pass) and the upper bound is the usual one, so identical arms (every difference zero) still fail a rule that
+needs an improvement. A collapsed estimate can therefore end `protocol-failed` or `inconclusive`, never
+`protocol-passed`. The author controls are unchanged; the reviewer's R4 example is now inconclusive with
+`seed-variance-collapsed` (as are identical arms with several seeds, which still end `protocol-failed`). The price
+of keeping the upper bound: in the mirrored discrete design (true effect above `min_effect`, every seed
+unfavourable by chance, 6.4% with 3 seeds, 1% with 5) a collapsed sample can end `protocol-failed`. That error is
+in the fail-closed direction and is accepted.
+
+**Finite-sample coverage, reported honestly** (`scripts/research/two_way_interval_coverage.py`, 4000 replicates
+each, nominal 95%, plans with `cluster_by`; "false pass" = `ci_low >= min_effect` while the true effect is below
+`min_effect`; "fail-closed" = share of samples with an unbounded lower bound):
+
+| design | S x N | coverage | false pass | fail-closed |
+|---|---|---|---|---|
+| discrete seed effect ±1 on every example, p_fav 0.4 (effect -0.2), `min_effect` 0.02 | 3 x 100 | 0.775 | 0.0000 | 0.288 |
+| same | 5 x 100 | 0.920 | 0.0000 | 0.089 |
+| same | 10 x 100 | 0.943 | 0.0010 | 0.007 |
+| near-discrete: a seed gains (p_fav 0.4) or loses on a random 10% of examples (effect -0.02), `min_effect` 0.02 | 3 x 100 | 0.746 | **0.0555** | 0.003 |
+| same | 5 x 100 | 0.901 | 0.0107 | 0.000 |
+| same | 10 x 100 | 0.938 | 0.0020 | 0.000 |
+| near-discrete, p_fav 0.45 (effect -0.01), `min_effect` 0 | 3 x 400 | 0.743 | **0.0843** | 0.001 |
+| same | 5 x 400 | 0.936 | 0.0160 | 0.000 |
+
+Coverage counts an unbounded lower bound as covering, so it overstates protection for the fail-closed share. The
+exact discrete design no longer passes falsely. **The near-discrete designs with 3 seeds still do, at 5.5% and
+8.4% (nominal one-sided 2.5%).** When every seed happens to be favourable (probability `p_fav^S`, up to `0.5^S` for
+an effect just below the threshold) the seed means are close but not equal, and the sample carries no sign of the
+unfavourable seeds. No interval computed from three seeds can rule this out without assuming the shape of the seed
+distribution. **This is a known limitation of 1.2.0 with few seeds.** Plans that rely on seed-level conclusions
+should use 5 or more training seeds (false pass 1.1–1.6% in these designs). We tried capping the degrees of freedom
+at `S - 1` (the cluster-count rule). It brings the 3 x 100 near-discrete false pass to 1.0% but not the 3 x 400
+one (still 8.4%), and it turns the 3- and 4-seed planted-effect author controls inconclusive. It was not adopted
+in this round.
+
+**B2: unmatched units are inconclusive (pre-existing on `main`).** `evaluate_success_rule` paired the arms by
+intersecting their (cluster, unit) keys, so a selective loss of units passed silently: drop the candidate's failed
+pairs from its report and the remaining pairs look like a clear gain. The flaw predates this ADR: it was on `main`
+(ee46a03) for the paired-report metrics, and the classification path of 1.1.0 only caught it for the `accuracy`
+family. Now any mismatch between the arms' units makes the outcome `inconclusive`, with `reason` and `unit_mismatch`
+(counts and up to five examples), for every interval method. Re-running 1.0.0 or 1.1.0 on mismatched evidence
+therefore now gives `inconclusive` where it may have given a pass. That is a deliberate fail-closed change: matched
+evidence gives the same results as before. An incomplete arm (a failed report job) still reaches the evaluation
+with its missing clusters, and so does a mismatch, which is inconclusive like the conformance check.
 
 ## Qualification
 
@@ -223,8 +284,9 @@ detects 40/40 and the null control 0/40).
   controls cover planted, null and inconclusive behaviour. The generator's paired rows use nested pair ids per
   seed, so the stochastic paired-report controls do not exercise shared examples; the regression tests do
   (`tests/unit/test_two_way_interval.py`).
-- The two-way interval is conservative by design. A less conservative estimator (full Cameron-Gelbach-Miller with a
+- The two-way variance estimator is biased upward under the additive model (section 6); that does not make the
+  interval conservative in finite samples (section 7). A less biased estimator (full Cameron-Gelbach-Miller with a
   non-negativity repair, or a pinned two-way bootstrap) could recover up to a factor √2 in standard error; it would
   be a new assessor release with its own coverage evidence.
-- The domain's silent intersection of unmatched units remains for the paired-report metrics (their 1.0.0 behaviour);
-  making it strict there would change existing assessments and is left for a separate decision.
+- ~~The domain's silent intersection of unmatched units remains for the paired-report metrics~~: fixed in F5
+  (section 7).

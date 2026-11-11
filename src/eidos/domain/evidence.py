@@ -178,7 +178,7 @@ def evaluate_success_rule(
 
     ``interval``: ``seed-clustered-normal`` (original: normal CI, clustered by ``cluster`` when the plan has
     ``cluster_by``, otherwise units independent) or ``two-way-seed-example-t`` (ADR 0018, F3b: units are
-    held-out examples crossed with training seeds = ``cluster`` values; conservative two-way variance and a
+    held-out examples crossed with training seeds = ``cluster`` values; upward-biased two-way variance and a
     t critical value, see ``stats.two_way_paired_difference``). The two-way method always treats distinct
     ``cluster`` values as seeds, whether or not the plan declares ``cluster_by``; with ``cluster_by`` and a
     single seed the interval is unbounded (seed variance demanded but not estimable), without it a single
@@ -196,6 +196,14 @@ def evaluate_success_rule(
     keys = sorted(set(cand) & set(base), key=lambda k: (str(k[0]), str(k[1])))
     if not keys:
         return {"outcome": "inconclusive", "reason": "no paired units", "effect": None, "guardrails": []}
+    # F5 (review B2; pre-existing on main): the arms must cover the same units. Silently intersecting them let a
+    # selective loss of units (e.g. the candidate's failures dropped from its report) pass. A mismatch is reported
+    # and the outcome is inconclusive, whatever the interval says.
+    only_base, only_cand = set(base) - set(cand), set(cand) - set(base)
+    mismatch = {"only_baseline": len(only_base), "only_candidate": len(only_cand),
+                "examples": [f"{c}/{u}" for c, u in sorted(only_base | only_cand, key=lambda k: (str(k[0]),
+                                                                                                  str(k[1])))[:5]]
+                } if only_base or only_cand else None
     std = rule["decision_standard"]
     conf = std.get("confidence", 0.95)
     diffs = [sign * (float(cand[k][metric]) - float(base[k][metric])) for k in keys]
@@ -232,8 +240,11 @@ def evaluate_success_rule(
         guards.append({"metric": gm, "status": "ok" if ok else "violated", **ge})
         if not ok and outcome == "protocol-passed":
             outcome = "protocol-failed" if ge["ci_high"] < -float(g["max_regression"]) else "inconclusive"
-    return {"outcome": outcome, "effect": eff, "min_effect": min_eff, "guardrails": guards,
-            "direction": mdef["direction"], "metric": metric}
+    out = {"outcome": outcome, "effect": eff, "min_effect": min_eff, "guardrails": guards,
+           "direction": mdef["direction"], "metric": metric}
+    if mismatch:
+        out.update(outcome="inconclusive", reason="baseline and candidate units do not match", unit_mismatch=mismatch)
+    return out
 
 
 def finalize_assessment(

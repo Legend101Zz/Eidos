@@ -67,6 +67,57 @@ def binary(p_base: float, gain: float, fixable: float, seed_sd: float) -> Design
     return design
 
 
+def discrete_seed(p_fav: float) -> Design:
+    """F5 (review B1): a discrete seed effect. Each seed is +1 on every example with probability ``p_fav`` and -1
+    otherwise (population effect 2 p_fav - 1). All seeds favourable is a sample with zero variance."""
+
+    def design(rng: random.Random, n_seeds: int, n_examples: int):
+        d, seeds, examples = [], [], []
+        for i in range(n_seeds):
+            a = 1.0 if rng.random() < p_fav else -1.0
+            for j in range(n_examples):
+                d.append(a)
+                seeds.append(str(i))
+                examples.append(str(j))
+        return d, seeds, examples, 2 * p_fav - 1
+
+    return design
+
+
+def near_discrete_seed(p_fav: float, frac: float) -> Design:
+    """F5 (review B1): a seed is favourable with probability ``p_fav`` (the candidate gains on a random ``frac`` of
+    the examples, drawn per seed) and otherwise loses on a random ``frac``. Binary correctness differences, so the
+    seed variance is small but not zero when every seed is favourable."""
+
+    def design(rng: random.Random, n_seeds: int, n_examples: int):
+        d, seeds, examples = [], [], []
+        for i in range(n_seeds):
+            sign = 1.0 if rng.random() < p_fav else -1.0
+            for j in range(n_examples):
+                d.append(sign if rng.random() < frac else 0.0)
+                seeds.append(str(i))
+                examples.append(str(j))
+        return d, seeds, examples, (2 * p_fav - 1) * frac
+
+    return design
+
+
+def false_pass(name: str, design: Design, n_seeds: int, n_examples: int, min_effect: float, reps: int = 4000,
+               seed: int = 20261111) -> None:
+    """Coverage of the two-way interval and its false-pass rate: ci_low >= min_effect while the true effect is
+    below min_effect (the assessor would report protocol-passed)."""
+    rng = random.Random(seed)
+    covered = passes = unbounded = 0
+    for _ in range(reps):
+        d, seeds, examples, mu = design(rng, n_seeds, n_examples)
+        r = two_way_paired_difference(d, seeds, examples, require_seed_variance=True)
+        covered += r["ci_low"] <= mu <= r["ci_high"]
+        passes += r["ci_low"] >= min_effect
+        unbounded += "unbounded_reason" in r
+    print(f"{name:54s} S={n_seeds} N={n_examples}: coverage {covered / reps:.3f}, false pass "
+          f"{passes / reps:.4f} (min_effect {min_effect}, true effect {mu:+.3f}), fail-closed {unbounded / reps:.3f}")
+
+
 def main() -> None:
     for s, n in ((3, 100), (5, 200), (10, 200)):
         simulate("additive (seed sd .02, example sd .3, interaction .3)", additive(0.02, 0.3, 0.3), s, n)
@@ -74,6 +125,13 @@ def main() -> None:
         simulate("additive, no example effect (seed .05, interaction .3)", additive(0.05, 0.0, 0.3), s, n)
     for s, n in ((3, 100), (3, 400), (5, 400)):
         simulate("binary: gain on a fixed 5% of shared examples", binary(0.3, 0.03, 0.05, 0.02), s, n)
+    # F5 (review B1): difficult discrete, few-seed designs (population effect below min_effect: any pass is false)
+    for s, n in ((3, 100), (5, 100), (10, 100)):
+        false_pass("discrete seed effect +-1 (p_fav 0.4, effect -0.2)", discrete_seed(0.4), s, n, 0.02)
+    for s, n in ((3, 100), (5, 100), (10, 100)):
+        false_pass("near-discrete: +-1 on 10% of examples (p_fav 0.4)", near_discrete_seed(0.4, 0.1), s, n, 0.02)
+    for s, n in ((3, 400), (5, 400)):
+        false_pass("near-discrete: +-1 on 10% of examples (p_fav 0.45)", near_discrete_seed(0.45, 0.1), s, n, 0.0)
 
 
 if __name__ == "__main__":

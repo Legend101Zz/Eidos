@@ -18,7 +18,8 @@ cap and 6/8 at 16384 tokens / 120 s), `tool` 6/8 (was 4/8); `docs/release/eviden
   review R4). Every seed is scored on the same held-out examples, so the seed-only interval of 1.0.0 and 1.1.0
   omitted example variance: three seeds improving on the same 3 of 100 examples gave CI [0.03, 0.03] and passed
   `min_effect` 0.02. 1.2.0 uses variance by seed plus variance by example (Cameron-Gelbach-Miller without subtracting
-  the intersection: conservative, never negative) with a Student t critical value on Welch-Satterthwaite degrees of
+  the intersection: biased upward under the additive model, never negative; not a finite-sample coverage guarantee,
+  see the F5 entry below) with a Student t critical value on Welch-Satterthwaite degrees of
   freedom, for the target and the guardrails and for both metric families; that example is now `inconclusive`
   (CI [-0.0040, 0.0640]). One seed without `cluster_by`: the plain paired t-interval over examples; with
   `cluster_by` one seed stays unbounded. The pre-existing path has the same flaw: 1.0.0 with `reference-accuracy`
@@ -29,6 +30,24 @@ cap and 6/8 at 16384 tokens / 120 s), `tool` 6/8 (was 4/8); `docs/release/eviden
   quantile in `eidos.domain.stats`. Paired-report author controls were resized (not weakened) for the
   conservative interval. Regression tests: `tests/unit/test_two_way_interval.py`; coverage simulation:
   `scripts/research/two_way_interval_coverage.py` (two-way 0.945-0.993 vs seed-only 0.53-0.88 at nominal 0.95).
+- **Review fixes (F5, group B) to the two-way interval and the pairing of units (ADR 0018 section 7).**
+  - With two or more seeds, a collapsed variance estimate (seed component or total exactly zero) or fewer than 3
+    seed clusters now fails closed: the lower bound is unbounded (`unbounded_reason`), so the result is never
+    `protocol-passed`; estimate, `se`, `df` and components are still reported, and identical arms still fail.
+    Before, three seeds that were all favourable by chance under a discrete seed effect (+1 on every example with
+    p = 0.4, -1 with p = 0.6, population effect -0.2; probability 6.4%) gave the point interval [1, 1] and passed
+    `min_effect` 0.02. The R4 example (identical seeds) is now inconclusive through `seed-variance-collapsed`.
+  - **Known limitation, reported in ADR 0018 section 7:** with 3 seeds and near-discrete seed effects the
+    false-pass rate is still 5.5% to 8.4% (nominal 2.5%), 1.1% to 1.6% with 5 seeds. Use 5 or more training seeds
+    for seed-level conclusions. The ADR's "conservative by design" now separates the variance estimator's upward
+    bias under the additive model from finite-sample coverage.
+  - Unmatched units between the arms make the evaluation `inconclusive` (`unit_mismatch`), for every interval
+    method. Before, `evaluate_success_rule` silently intersected the arms, so a selective loss of units (e.g. the
+    candidate's failed pairs dropped from its report) could pass. The flaw was already on `main` for the
+    paired-report metrics. Re-running 1.0.0 or 1.1.0 on mismatched evidence can now give `inconclusive` where it
+    gave a pass; matched evidence is unaffected.
+  - Coverage: `scripts/research/two_way_interval_coverage.py` (discrete and near-discrete few-seed designs, with
+    false-pass rates); tests: `tests/unit/test_two_way_interval.py`.
 - **`eidos.assessors.paired-ci@1.1.0`: metric `accuracy`** (superseded by 1.2.0 before release) (identity `classification-report/1:accuracy`, any number
   of classes). The assessor recomputes correctness from label and prediction; it refuses unmatched example ids
   between the arms, label disagreements, a row role that differs from its arm, rows from several seeds under a
