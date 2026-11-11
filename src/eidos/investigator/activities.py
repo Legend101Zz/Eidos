@@ -192,9 +192,14 @@ class InvestigatorActivities:
     @_hb
     def begin_turn(self, a: dict) -> dict:
         try:
+            # F5 (C1): the TurnWorkflow run that begins or resumes the turn becomes its owner
             r = self.wf.command("begin_turn", {"investigation_id": a["investigation_id"],
-                                               "runtime_release": "eidos-investigator/1"},
-                                project=a["project_id"], key=f"begin:{a['investigation_id']}:{a['index']}")["result"]
+                                               "runtime_release": "eidos-investigator/1",
+                                               "run_id": getattr(activity.info(), "workflow_run_id", "") or ""},
+                                project=a["project_id"],
+                                # per run (F5): a new run of the same index must take the turn, not replay the receipt
+                                key=f"begin:{a['investigation_id']}:{a['index']}:"
+                                    f"{getattr(activity.info(), 'workflow_run_id', '') or ''}")["result"]
         except LabError as exc:
             raise _app_error(exc) from exc
         if not r.get("started"):
@@ -266,7 +271,9 @@ class InvestigatorActivities:
                                 key=f"begin-dec:{a['turn_id']}:{a['slot']}:{execution}:{attempt}")["result"]
         except LabError as exc:
             raise _app_error(exc) from exc
-        if b.get("decision"):  # accepted by another run of this turn (a resumed turn): never regenerate it
+        if b.get("superseded"):  # F5: this run lost the turn (C1) or this attempt is stale (C3): nothing to do
+            return {"accepted": False, "decision_id": None, "reason": f"superseded:{b['superseded']}", "n_calls": 0}
+        if b.get("decision"):  # handed off by another run of this turn (a resumed turn): never regenerate it
             d = b["decision"]
             return {"accepted": True, "decision_id": d["id"], "n_calls": len(d["calls"]), "control": d.get("control"),
                     "reason": "recovered"}
@@ -297,7 +304,8 @@ class InvestigatorActivities:
             estimate["model_usd"] = decision_usd_envelope(est_tokens, price, cfg)
         try:
             rr = self.wf.command("reserve_model_budget", {"turn_id": a["turn_id"], "slot": a["slot"],
-                                 "attempt": attempt, "epoch": epoch, "estimate": estimate}, project=p,
+                                 "attempt": attempt, "epoch": epoch, "estimate": estimate, "execution": execution},
+                                 project=p,
                                  key=f"reserve:{a['turn_id']}:{a['slot']}:{attempt}:{epoch}")["result"]
             reserved, reservation_ref = rr["reserved"], rr.get("reservation_ref")
         except LabError as exc:
@@ -394,6 +402,16 @@ class InvestigatorActivities:
             # F2b: a decision accepted just before its turn was closed (the TurnWorkflow was cancelled while the decide
             # activity was accepting it) is never executed: the turn's closing is the durable cancellation.
             return {"summary": [], "skipped": f"turn-{turn['status']}"}
+        # F5 (C1): the durable handoff, under the turn lock, by the run that owns the turn. A run that lost the turn
+        # (resumed by another) executes nothing; once handed off, a resumed run recovers the decision instead.
+        info = activity.info()
+        h = self.wf.command("hand_off_decision", {"decision_id": dec["id"], "execution":
+                            f"{getattr(info, 'workflow_run_id', '')}/{getattr(info, 'activity_id', '')}"},
+                            # per attempt: a retry is re-checked (a run that lost the turn meanwhile is refused)
+                            project=p, key=f"handoff:{dec['id']}:{getattr(info, 'workflow_run_id', '')}:"
+                                          f"{getattr(info, 'attempt', 1)}")["result"]
+        if not h.get("handed_off"):
+            return {"summary": [], "skipped": h.get("reason") or "not-handed-off"}
         receipts = []
         for call in dec["body"]["calls"]:
             receipts.append(self._execute_call(p, a["investigation_id"], turn["id"], dec["id"], call))
@@ -489,6 +507,9 @@ class InvestigatorActivities:
     def complete_turn(self, a: dict) -> dict:
         r = self.wf.command("complete_turn", {"turn_id": a["turn_id"], "stop_reason": a["stop_reason"],
                             "control": a.get("control"), "receipts": a.get("receipts", []),
+                            "execution": f"{getattr(activity.info(), 'workflow_run_id', '') or ''}/complete",
                             **({"failure": a["failure"]} if a.get("failure") else {})},
-                            project=a["project_id"], key=f"complete:{a['turn_id']}")
+                            project=a["project_id"],
+                            # per run (F5): a completion refused for a run that lost the turn is not the owner's receipt
+                            key=f"complete:{a['turn_id']}:{getattr(activity.info(), 'workflow_run_id', '') or ''}")
         return {"status": r["result"].get("status")}

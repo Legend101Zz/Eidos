@@ -202,15 +202,39 @@ def test_superseded_attempt_cannot_reserve(lab):
     assert bud["reserved"] == live["reserved"]["model_tokens"] == 120_000 and bud["uncertain"] == 0
 
 
-def test_decision_accepted_by_another_run_is_recovered_not_revoked(lab):
-    """A resumed turn (its earlier workflow run was terminated) recovers the decision that run got accepted: that run
-    may have executed it. Only attempts of the same activity execution revoke each other."""
-    pid, inv, acts, base = _turn(lab)
+def test_decision_handed_off_by_another_run_is_recovered_not_revoked(lab):
+    """A resumed turn (its earlier workflow run was terminated) recovers the decision that run got accepted AND handed
+    to execution: that run may have executed part of it (F5, ADR 0017 addendum). Before F5 any decision accepted by
+    another execution was recovered; one that was never handed off is now revoked (next test)."""
+    pid, inv, acts, base = _turn(lab)  # begun by run-A: run-A owns the turn
     tid, wf = base["turn_id"], _wf(lab, pid)
-    e1 = _begin(lab, wf, pid, tid, 1, execution="run-old/decide")["epoch"]
-    acc = lab.cmd(wf, "accept_decision", _accept_payload(tid, 1, e1, "run-old/decide"), project=pid)["result"]
+    e1 = _begin(lab, wf, pid, tid, 1)["epoch"]
+    acc = lab.cmd(wf, "accept_decision", _accept_payload(tid, 1, e1), project=pid)["result"]
+    h = lab.cmd(wf, "hand_off_decision", {"decision_id": acc["decision_id"], "execution": f"{RUN}/execute"},
+                project=pid)["result"]
+    assert h["handed_off"] is True
+    lab.cmd(wf, "begin_turn", {"investigation_id": inv, "run_id": "run-new"}, project=pid)  # the resume
     out = _begin(lab, wf, pid, tid, 1, execution="run-new/decide")
     assert out["decision"]["id"] == acc["decision_id"] and "revoked" not in out
+
+
+def test_decision_accepted_but_never_handed_off_is_revoked_when_another_run_resumes(lab):
+    """F5 (C1): run-A's acceptance commits (e.g. after its workflow was terminated) but never reaches execution; the
+    turn is resumed by run-new. The decision is revoked at the resume, run-new decides the slot afresh, and run-A can
+    neither hand it off nor accept anything else."""
+    pid, inv, acts, base = _turn(lab)
+    tid, wf = base["turn_id"], _wf(lab, pid)
+    e1 = _begin(lab, wf, pid, tid, 1)["epoch"]
+    acc = lab.cmd(wf, "accept_decision", _accept_payload(tid, 1, e1), project=pid)["result"]
+    assert acc["accepted"] is True
+    r = lab.cmd(wf, "begin_turn", {"investigation_id": inv, "run_id": "run-new"}, project=pid)["result"]
+    assert r["resumed"] and r["authorization"]["generation"] == 2 and r["authorization"]["previous_run"] == RUN
+    out = _begin(lab, wf, pid, tid, 1, execution="run-new/decide")
+    assert "decision" not in out and out["epoch"] == e1 + 1
+    h = lab.cmd(wf, "hand_off_decision", {"decision_id": acc["decision_id"], "execution": f"{RUN}/execute"},
+                project=pid)["result"]
+    assert h == {"decision_id": acc["decision_id"], "handed_off": False, "reason": "superseded-execution"}
+    assert [d["revoked"] for d in _decisions(lab, pid, tid) if d["id"] == acc["decision_id"]] == [True]
 
 
 def test_executed_decision_is_never_revoked(lab):
@@ -225,10 +249,14 @@ def test_executed_decision_is_never_revoked(lab):
 
 
 def test_without_the_revocation_the_retry_would_recover_the_late_decision(lab):
-    """Control for the first test: the same acceptance seen by an attempt of a DIFFERENT execution is recovered with
-    its calls, i.e. the revocation is what keeps the cancelled attempt's decision from being executed."""
+    """Control for the first test: the same acceptance, handed off by its run and then seen by an attempt of a
+    DIFFERENT run that resumed the turn, is recovered with its calls, i.e. the revocation is what keeps the cancelled
+    attempt's decision from being executed."""
     pid, inv, acts, base = _turn(lab)
     first = _env(1).run(acts.decide, {**base, "slot": 0})
     assert first["accepted"]
+    lab.cmd(_wf(lab, pid), "hand_off_decision", {"decision_id": first["decision_id"], "execution": f"{RUN}/execute"},
+            project=pid)
+    _env(1, run="run-B").run(acts.begin_turn, {"investigation_id": inv, "project_id": pid, "index": 2})  # resume
     other = _env(1, run="run-B").run(acts.decide, {**base, "slot": 0})
     assert other["reason"] == "recovered" and other["decision_id"] == first["decision_id"] and other["n_calls"] == 2

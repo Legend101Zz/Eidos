@@ -106,6 +106,21 @@ cap and 6/8 at 16384 tokens / 120 s), `tool` 6/8 (was 4/8); `docs/release/eviden
     (`uncertain_model_reservations`) instead of releasing it as zero. A late settlement reverses that provisional
     charge (`correction` entry) and books its own usage, so nothing is charged twice.
 
+- **Review fixes (F5, group C): turn and slot authorization (ADR 0017 addendum "review F5").**
+  - The TurnWorkflow run that begins a turn owns it (`turn_authorization`, with a generation). A resume by another
+    run takes it over and revokes the accepted decisions of earlier runs that were never handed to execution.
+    `begin_decision`, `reserve_model_budget`, `accept_decision`, the new `hand_off_decision` (the first step of
+    `execute_decision`) and `complete_turn` refuse a run that no longer owns the turn.
+  - Before, an old acceptance that committed after its workflow was terminated was recovered and could be executed
+    by the resuming run, although it had never been delivered.
+  - `begin_decision` ignores a delayed earlier attempt of the same execution (`stale-attempt`). Before, it bumped
+    the epoch and superseded the live attempt.
+  - Reservation refs carry the slot epoch (`model:<turn>:<slot>:<attempt>:e<epoch>`), so two executions at
+    attempt 1 no longer share a ref, and one execution's late settlement cannot erase the other's uncertain charge.
+  - Known limitation: a decision handed off by an old run can still be executed by both runs at once, which command
+    keys make idempotent.
+  - Tests: `tests/integration/test_f5_turn_authorization.py`, `tests/integration/test_cancel_through_acceptance.py`.
+
 ### Post-pilot robustness: failed turns and runaway reasoning (ADR 0019)
 - **A failed turn no longer stalls the investigation.** Before, a turn that ended `error` was treated as a wait. The
   coordinator polled for ledger news for up to 6 h, with nothing scheduled and no `needs_input` (pilot D12-r3: active

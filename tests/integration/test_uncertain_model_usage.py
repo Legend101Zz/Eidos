@@ -78,10 +78,12 @@ class Slot:
         assert b["started"], b
         self.tid = b["turn_id"]
         self.scope = f"inv:{inv}"
+        self.epochs: dict[tuple[int, int], int] = {}  # (attempt, slot) -> begin_decision epoch, when reserved with one
 
     # -- the lab commands ---------------------------------------------------------------------------------------------
     def ref(self, attempt: int = 1, slot: int = 0) -> str:
-        return f"model:{self.tid}:{slot}:{attempt}"
+        epoch = self.epochs.get((attempt, slot))  # F5 (C2): a begin_decision epoch is part of the ref
+        return f"model:{self.tid}:{slot}:{attempt}" + (f":e{epoch}" if epoch is not None else "")
 
     def hold(self, tokens: float = OTHER) -> None:
         """Another holder of the same dimension (as in test_late_settlement_after_turn_release_does_not_release_twice)."""
@@ -91,6 +93,8 @@ class Slot:
 
     def reserve(self, attempt: int = 1, slot: int = 0, **extra) -> dict:
         estimate = {"model_tokens": RESERVED, **({"model_usd": USD_RESERVED} if self.usd else {})}
+        if extra.get("epoch") is not None:
+            self.epochs[(attempt, slot)] = int(extra["epoch"])
         r = self.lab.cmd(self.wf, "reserve_model_budget", {"turn_id": self.tid, "slot": slot, "attempt": attempt,
                                                            "estimate": estimate, **extra}, project=self.pid)["result"]
         assert r["reservation_ref"] == self.ref(attempt, slot)

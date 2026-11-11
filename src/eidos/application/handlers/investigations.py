@@ -286,13 +286,22 @@ def stop_investigation(ctx: Ctx, p: dict) -> dict:
 
 @command("begin_turn", "turn")
 def begin_turn(ctx: Ctx, p: dict) -> dict:
+    run = str(p.get("run_id") or "")  # the TurnWorkflow run that begins or resumes the turn (F5, ADR 0017 addendum)
+    pre = ctx.tx.last_turn(p["investigation_id"])
+    if pre and pre["status"] == "open":  # lock order (F2b): the turn row, then the investigation row
+        _turn(ctx, pre["id"], lock=True)
     inv = ctx.tx.require("investigation", p["investigation_id"], lock=True)
     if inv.status != "active":
         return {"started": False, "reason": f"investigation is {inv.status}"}
     last = ctx.tx.last_turn(inv.id)
     if last and last["status"] == "open":
-        # A turn left open by a terminated child is resumed, never duplicated.
-        return {"started": True, "resumed": True, "turn_id": last["id"], "spec": last["spec"]}
+        # A turn left open by a terminated child is resumed, never duplicated. The resuming run takes the turn's
+        # authorization: every decision step of an earlier run is refused from now on (F5, C1).
+        if not pre or pre["id"] != last["id"]:
+            _turn(ctx, last["id"], lock=True)
+        auth = authorize_turn_run(ctx, last, run)
+        return {"started": True, "resumed": True, "turn_id": last["id"], "spec": last["spec"],
+                **({"authorization": auth} if auth else {})}
     seq = (last["seq"] + 1) if last else 1
     cfg = inv.body["investigator"]
     if seq > int(cfg.get("max_turns", 40)):
@@ -322,7 +331,107 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
     ctx.tx.insert_turn({"id": tid, "investigation_id": inv.id, "project_id": ctx.project_id, "seq": seq,
                         "status": "open", "study_revision": inv.revision, "horizon": horizon, "spec": spec})
     ctx.event("turn.started", tid, {"seq": seq, "horizon": horizon}, investigation_id=inv.id)
-    return {"started": True, "turn_id": tid, "spec": spec}
+    auth = authorize_turn_run(ctx, {"id": tid, "investigation_id": inv.id}, run)
+    return {"started": True, "turn_id": tid, "spec": spec, **({"authorization": auth} if auth else {})}
+
+
+# ---------------------------------------------------------------------------------------------
+# Decision authorization (F5, ADR 0017 addendum "Turn and slot authorization"). Two durable, monotonic records,
+# both read and written under the turn row lock:
+#   * ``turn_authorization`` (per turn): the TurnWorkflow run that owns the turn and its generation. begin_turn sets
+#     it; a resume by another run increments the generation, and every decision step of an earlier run is refused.
+#   * ``decision_attempt`` (per turn slot): the execution and attempt that may decide the slot, and its epoch.
+#     begin_decision advances it only for a newer attempt of the owning run (never back to an older attempt).
+# A decision is executed only after a ``decision_handoff`` committed by the owning run (execute_decision's first
+# step). An accepted decision that was never handed off before its run lost the turn is revoked: it never reached
+# execution, and its acceptance may have committed after its workflow was terminated.
+# ---------------------------------------------------------------------------------------------
+
+def _run_of(execution: str) -> str:
+    return str(execution or "").split("/", 1)[0]
+
+
+def authorize_turn_run(ctx: Ctx, turn: dict, run: str) -> dict | None:
+    """Make ``run`` the owner of ``turn`` (caller holds the turn row lock). Callers without a run id (tests, tools)
+    leave the authorization unchanged."""
+    if not run:
+        return None
+    rec = ctx.tx.get_record("turn_authorization", turn["id"], lock=True)
+    if rec is not None and rec.body.get("run") == run:
+        return dict(rec.body)
+    prev = dict(rec.body) if rec is not None else None
+    body = {"turn_id": turn["id"], "run": run, "generation": int((prev or {}).get("generation") or 0) + 1,
+            "previous_run": (prev or {}).get("run")}
+    ctx.tx.put_record("turn_authorization", turn["id"], ctx.project_id, body, created_by=ctx.principal.id,
+                      status="active")
+    if prev is not None:
+        revoked = _revoke_unhanded_decisions(ctx, turn, run)
+        ctx.event("turn.resumed", turn["id"], {"generation": body["generation"], "revoked_decisions": revoked},
+                  investigation_id=turn["investigation_id"])
+    return body
+
+
+def _execution_refused(ctx: Ctx, turn: dict, execution: str) -> str | None:
+    """Why a decision step of ``execution`` may not act on ``turn``, or None. The caller holds the turn row lock."""
+    if not execution:
+        return None  # callers that do not identify themselves are checked as before (epoch, attempt)
+    rec = ctx.tx.get_record("turn_authorization", turn["id"])
+    if rec is None or not rec.body.get("run"):
+        return None  # a turn begun without a run id (tests, tools): no owner to check against
+    return None if _run_of(execution) == rec.body["run"] else "superseded-execution"
+
+
+def _handed_off(ctx: Ctx, decision_id: str) -> bool:
+    return ctx.tx.get_record("decision_handoff", decision_id) is not None
+
+
+def _revoke_unhanded_decisions(ctx: Ctx, turn: dict, owner: str) -> list[str]:
+    """Revoke the turn's accepted decisions that an earlier run accepted but never handed off (C1)."""
+    out = []
+    for d in ctx.tx.decisions(turn["id"]):
+        if not d["accepted"] or decision_revoked(ctx, d["id"]) or _handed_off(ctx, d["id"]) \
+                or ctx.tx.get_record("decision_receipts", d["id"]) is not None:
+            continue
+        origin = (d["body"] or {}).get("attempt") or {}
+        if not origin.get("execution") or _run_of(origin["execution"]) == owner:
+            continue
+        _revoke(ctx, turn, d["id"], int(d["slot"]), "superseded-execution", origin,
+                {"run": owner})
+        out.append(d["id"])
+    return out
+
+
+def _revoke(ctx: Ctx, turn: dict, decision_id: str, slot: int, reason: str, origin: dict, by: dict) -> None:
+    ctx.tx.put_record("decision_revocation", decision_id, ctx.project_id,
+                      {"turn_id": turn["id"], "slot": slot, "reason": reason, "accepted_by": origin,
+                       "revoked_by": by}, created_by=ctx.principal.id, status="revoked", parent_id=turn["id"])
+    ctx.event("decision.revoked", decision_id, {"turn_id": turn["id"], "slot": slot, "reason": reason},
+              investigation_id=turn["investigation_id"])
+
+
+@command("hand_off_decision", "turn")
+def hand_off_decision(ctx: Ctx, p: dict) -> dict:
+    """The first step of executing an accepted decision (F5, C1): under the turn row lock, the owning run records
+    that the decision reached execution. A run that no longer owns the turn, a revoked decision or a closed turn is
+    refused (``handed_off`` false) and nothing is executed. Idempotent: an existing handoff is returned."""
+    dec = ctx.tx.get_decision(p["decision_id"])
+    if not dec or not dec["accepted"]:
+        raise Invalid("only an accepted decision can be handed off")
+    turn = _turn(ctx, dec["turn_id"], lock=True)
+    refused = _execution_refused(ctx, turn, str(p.get("execution") or ""))
+    if refused:  # first: a run that lost the turn executes nothing, even a decision it had handed off (its retry)
+        return {"decision_id": dec["id"], "handed_off": False, "reason": refused}
+    if decision_revoked(ctx, dec["id"]):
+        return {"decision_id": dec["id"], "handed_off": False, "reason": "decision-revoked"}
+    existing = ctx.tx.get_record("decision_handoff", dec["id"])
+    if existing is not None:  # idempotent; the owner of a resumed turn continues a handed-off decision (recovery)
+        return {"decision_id": dec["id"], "handed_off": True, "by": existing.body.get("run")}
+    if turn["status"] != "open":
+        return {"decision_id": dec["id"], "handed_off": False, "reason": f"turn-{turn['status']}"}
+    ctx.tx.put_record("decision_handoff", dec["id"], ctx.project_id,
+                      {"turn_id": turn["id"], "slot": dec["slot"], "run": _run_of(str(p.get("execution") or ""))},
+                      created_by=ctx.principal.id, status="handed-off", parent_id=turn["id"])
+    return {"decision_id": dec["id"], "handed_off": True, "by": _run_of(str(p.get("execution") or ""))}
 
 
 @command("record_turn_context", "turn")
@@ -360,6 +469,16 @@ def begin_decision(ctx: Ctx, p: dict) -> dict:
     execution, attempt = str(p.get("execution") or ""), int(p.get("attempt") or 0)
     rid = f"{turn['id']}:{slot}"
     rec = ctx.tx.get_record("decision_attempt", rid, lock=True)
+    # F5 (C1): a run that no longer owns the turn (it was resumed by another) begins nothing.
+    refused = _execution_refused(ctx, turn, execution)
+    if refused:
+        return {"turn_id": turn["id"], "slot": slot, "superseded": refused}
+    # F5 (C3): the slot's authorization never moves back. A delayed begin of an EARLIER attempt of the same execution
+    # (Temporal already gave up on it and started a later one) changes nothing and is told it is stale.
+    if rec is not None and execution and rec.body.get("execution") == execution \
+            and int(rec.body.get("attempt") or 0) > attempt:
+        return {"turn_id": turn["id"], "slot": slot, "superseded": "stale-attempt",
+                "current_attempt": int(rec.body.get("attempt") or 0)}
     epoch = int((rec.body if rec else {}).get("epoch") or 0) + 1
     ctx.tx.put_record("decision_attempt", rid, ctx.project_id,
                       {"turn_id": turn["id"], "slot": slot, "attempt": attempt, "execution": execution, "epoch": epoch,
@@ -371,15 +490,17 @@ def begin_decision(ctx: Ctx, p: dict) -> dict:
     if decision_revoked(ctx, existing["id"]):
         return {**out, "revoked": existing["id"]}
     origin = (existing["body"] or {}).get("attempt") or {}
-    executed = ctx.tx.get_record("decision_receipts", existing["id"]) is not None  # never revoke what has run
+    # never revoke what has run or was handed to execution (F5): that run may have committed effects
+    executed = ctx.tx.get_record("decision_receipts", existing["id"]) is not None or _handed_off(ctx, existing["id"])
     if execution and origin.get("execution") == execution and int(origin.get("attempt") or 0) < attempt \
             and not executed:
-        ctx.tx.put_record("decision_revocation", existing["id"], ctx.project_id,
-                          {"turn_id": turn["id"], "slot": slot, "reason": "attempt-failed",
-                           "accepted_by": origin, "revoked_by": {"execution": execution, "attempt": attempt}},
-                          created_by=ctx.principal.id, status="revoked", parent_id=turn["id"])
-        ctx.event("decision.revoked", existing["id"], {"turn_id": turn["id"], "slot": slot, "reason": "attempt-failed"},
-                  investigation_id=turn["investigation_id"])
+        _revoke(ctx, turn, existing["id"], slot, "attempt-failed", origin, {"execution": execution, "attempt": attempt})
+        return {**out, "revoked": existing["id"]}
+    if execution and origin.get("execution") and _run_of(origin["execution"]) != _run_of(execution) \
+            and not executed and ctx.tx.get_record("turn_authorization", turn["id"]) is not None:
+        # F5 (C1): accepted by a run that lost the turn before handing it off: it never reached execution (its
+        # acceptance may have committed after that workflow was terminated). Revoked, never recovered.
+        _revoke(ctx, turn, existing["id"], slot, "superseded-execution", origin, {"execution": execution})
         return {**out, "revoked": existing["id"]}
     return {**out, "decision": {"id": existing["id"], "calls": existing["body"]["calls"],
                                 "control": existing["body"].get("control")}}
@@ -415,7 +536,8 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
     if turn["status"] != "open":
         ctx.tx.insert_decision(did, turn["id"], slot, False, {"proposal": p.get("proposal"), "reason": "turn-closed"})
         return {"accepted": False, "decision_id": did, "reason": "turn-closed"}
-    late = _late_decision(ctx, turn, inv, slot, p.get("attempt"), p.get("epoch"))
+    late = _execution_refused(ctx, turn, str(p.get("execution") or "")) if inv.status == "active" else None
+    late = late or _late_decision(ctx, turn, inv, slot, p.get("attempt"), p.get("epoch"))
     if late:  # ADR 0017: a decision from a stopped investigation or a cancelled request is never applied
         ctx.tx.insert_decision(did, turn["id"], slot, False, {"proposal": p.get("proposal"), "reason": late})
         ctx.event("decision.unapplied", did, {"reason": late}, investigation_id=inv.id)
@@ -671,7 +793,15 @@ def reserve_model_budget(ctx: Ctx, p: dict) -> dict:
     turn = _turn(ctx, p["turn_id"], lock=True)
     scope = inv_scope(turn["investigation_id"])
     budgets = ctx.tx.budgets(scope)
-    ref = f"model:{p['turn_id']}:{p.get('slot')}:{p.get('attempt')}"
+    # F5 (C2): the reservation ref carries the slot epoch, unique per begin_decision across executions (a resumed
+    # turn's execution starts again at attempt 1), so reconciliation and late settlements never touch another
+    # execution's reservation. Callers without begin_decision keep the attempt-only ref.
+    ref = f"model:{p['turn_id']}:{p.get('slot')}:{p.get('attempt')}" + (
+        f":e{int(p['epoch'])}" if p.get("epoch") is not None else "")
+    refused = _execution_refused(ctx, turn, str(p.get("execution") or ""))
+    if refused:  # F5 (C1): a run that lost the turn reserves nothing
+        raise Invalid("superseded decision execution: the turn was resumed by another run",
+                      details={"reason": refused})
     if p.get("epoch") is not None:  # F2c: a superseded attempt (a later one began) reserves nothing
         rec = ctx.tx.get_record("decision_attempt", f"{turn['id']}:{int(p.get('slot') or 0)}")
         if rec is None or int(rec.body.get("epoch") or 0) != int(p["epoch"]):
@@ -688,7 +818,7 @@ def reserve_model_budget(ctx: Ctx, p: dict) -> dict:
         if dim in ("model_tokens", "model_usd") and dim in budgets and float(amount) > 0:
             ctx.tx.reserve(scope, dim, float(amount), ref)
             out[dim] = float(amount)
-    return {"reserved": out, "reservation_ref": f"model:{p['turn_id']}:{p.get('slot')}:{p.get('attempt')}"}
+    return {"reserved": out, "reservation_ref": ref}
 
 
 def release_turn_model_reservations(ctx: Ctx, turn: dict) -> dict:
@@ -723,6 +853,9 @@ def complete_turn(ctx: Ctx, p: dict) -> dict:
     turn = _turn(ctx, p["turn_id"], lock=True)
     if turn["status"] != "open":
         return {"turn_id": turn["id"], "status": turn["status"], "already_closed": True}
+    refused = _execution_refused(ctx, turn, str(p.get("execution") or ""))
+    if refused:  # F5 (C1): a run that lost the turn to a resuming run never closes it under the new owner
+        return {"turn_id": turn["id"], "status": turn["status"], "superseded": refused}
     return _close_turn(ctx, turn, p)
 
 

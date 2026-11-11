@@ -277,3 +277,89 @@ predate this ADR; this ADR's guarantees depended on them.
 - Findings 2 and 3: `tests/integration/test_uncertain_model_usage.py` checks exact ledger amounts.
   `tests/integration/test_decision_abort_slow_provider.py` now asserts the abandoned request's uncertain amount.
   `tests/integration/test_turn_recovery.py` was updated for provisional reconciliation.
+
+## Addendum: review F5 (turn and slot authorization)
+
+The third review of 7516e2c found three ways a decision step from an execution that had lost its authority could
+still act. All three come down to one gap: the authority to decide a slot was tracked per slot (the epoch), but not
+per turn, and the execution step was not tied to it.
+
+1. **Late acceptance after termination (C1).** An old `accept_decision` committed after its workflow was terminated,
+   leaving the turn open. A new workflow resumed the turn. `begin_decision` recovered the decision because it came
+   from a different execution, and the decision could then be executed although it had never been delivered.
+2. **Reservation refs collided across executions (C2).** A resumed turn starts again at attempt 1, so two executions
+   both reserved `model:<turn>:<slot>:1`. Reconciliation and late-settlement corrections could then erase the other
+   execution's uncertain charge.
+3. **A delayed older `begin_decision` superseded a newer attempt (C3).** Attempt 1, delayed until after attempt 2
+   began, bumped the epoch unconditionally.
+
+### Model: one monotonic, durable authorization per turn slot
+
+Two records, both read and written only under the **turn row lock**, which every decision step takes:
+
+- `turn_authorization` (one per turn): `{run, generation, previous_run}`. `run` is the TurnWorkflow run that owns the
+  turn. Its activities identify themselves by `activity.info().workflow_run_id`, and the decide activity's
+  `execution` is `<run>/<activity id>`.
+- `decision_attempt` (one per turn slot, since F2c): `{execution, attempt, epoch}`.
+
+A third record marks the boundary between deciding and executing:
+
+- `decision_handoff` (one per accepted decision): written by `hand_off_decision`, the first step of
+  `execute_decision`, by the run that owns the turn.
+
+**Guaranteed states and transitions**
+
+| step | allowed when (under the turn lock) | effect |
+|---|---|---|
+| `begin_turn(run)`, new turn | investigation active | owner = `run`, generation 1 |
+| `begin_turn(run)`, open turn, `run` ≠ owner (resume) | investigation active | owner = `run`, generation + 1; every accepted decision of an earlier run that was neither handed off nor executed is revoked (`decision.revoked`, reason `superseded-execution`); event `turn.resumed` |
+| `begin_decision(execution, attempt)` | `run(execution)` = owner, and not an earlier attempt of the slot's current execution | epoch + 1; a decision accepted by an earlier attempt of the same execution, or by another run, that was not handed off is revoked; a handed-off or executed decision is recovered |
+| `begin_decision`, refused | otherwise | nothing changes; `{"superseded": "superseded-execution" \| "stale-attempt"}` |
+| `reserve_model_budget(execution, epoch)` | owner and current epoch | reservation under `model:<turn>:<slot>:<attempt>:e<epoch>`; other open reservations of the slot are charged as provisional uncertain usage under their own refs |
+| `accept_decision(execution, epoch)` | owner, current epoch, turn open, investigation active | accepted; otherwise stored unapplied with the reason |
+| `hand_off_decision(execution)` | owner, decision accepted and not revoked, turn open | the decision may be executed; idempotent |
+| `complete_turn(execution)` | owner (or no run identity) | the turn closes and settles; a non-owner gets `superseded` and the turn stays open |
+
+The run's authority never moves back: a resume always moves it to the newer run, and the epoch only moves forward,
+for the owner's newest attempt. A decision is executed only if its handoff committed while its run owned the turn.
+So every interleaving of a late step with a resume is ordered by the turn row lock:
+
+- **Before the resume.** If the step was the acceptance, the resume revokes the decision unless it was handed off.
+  If it was the handoff, the new run recovers the decision. It may have been executed partially, and its calls carry
+  their recorded command keys.
+- **After the resume.** The step is refused.
+
+`begin_turn` now locks an open turn's row before the investigation row, the F2b lock order.
+
+The idempotency keys of `begin_turn`, `complete_turn` and the handoff include the run (the handoff's also the
+activity attempt, so a retry is re-checked), so a refused step's receipt is
+never replayed to the owner. Callers that do not identify themselves (no `run_id` or `execution`: tools and older
+tests) are not checked against the owner. They are checked as before, by epoch and attempt.
+
+**C2.** The reservation ref and the returned `reservation_ref` carry the slot epoch, which is unique per
+`begin_decision` across executions. The settlement paths (`record_model_usage`, reconciliation, `complete_turn`) match
+exact refs, so one execution's late settlement replaces only its own provisional charge. A caller without an epoch
+keeps the attempt-only ref.
+
+**Tests.**
+- `tests/integration/test_f5_turn_authorization.py`: termination during acceptance followed by a new execution, in
+  both commit orders; handoff before the resume; refused completion and reservation; two executions both at
+  attempt 1 with closure and a late settlement from one; the delayed older `begin_decision`.
+- `tests/integration/test_cancel_through_acceptance.py`: recovery now needs a handoff, otherwise the decision is
+  revoked.
+
+**Known limitations**
+
+- A decision handed off by the old run and recovered by the new run can be executed by both at once, if the old
+  run's `execute_decision` activity was already past its handoff when the resume committed and is still running
+  after its workflow was terminated. A retry of that activity is refused, since the handoff check comes first.
+  Every call carries the same recorded command key, so each effect is admitted once. Fencing the running old
+  activity itself would need a Temporal-level redesign, which is not done here.
+- A resumed turn loses the slot of a revoked decision. The slot keeps its revoked decision (F2c: one accepted
+  decision per slot), so the new run's decide returns `attempt-revoked` and the turn moves on to its next slot. A
+  turn with a single model call then ends without a decision, and the coordinator starts the next turn.
+- `record_decision_receipts` and `record_model_usage` are not checked against the owner. They record what already
+  happened (audit, late settlement) and must be accepted from any run.
+- Not run against the Temporal dev server in this session (no Temporal CLI on this machine). The workflow tests
+  (`tests/integration/test_workflows.py`, `test_failed_turn_*`) were skipped, and the run identities in tests come
+  from `ActivityEnvironment`.

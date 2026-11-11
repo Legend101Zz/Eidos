@@ -83,6 +83,8 @@ class FakeWorkflowClient:
             return {"result": {"reserved": True, "reservation_ref": "res_1"}}
         if name == "accept_decision":
             return {"result": self.w.accept_result}
+        if name == "hand_off_decision":  # F5 (C1): this run owns the turn
+            return {"result": {"decision_id": (payload or {}).get("decision_id"), "handed_off": True}}
         return {"result": {}}
 
     def query(self, name: str, params: dict | None = None, *, project: str | None = None) -> Any:
@@ -377,7 +379,7 @@ def test_execute_decision_executes_the_calls_when_the_turn_is_open(world, acts):
     out = acts.execute_decision(dict(EXEC_ARGS))
     assert "skipped" not in out
     assert out["summary"] == [{"tool": "run_component", "ok": True, "replayed": False, "code": None}]
-    assert world.log == ["run_component", "record_decision_receipts"]
+    assert world.log == ["hand_off_decision", "run_component", "record_decision_receipts"]
     assert world.payloads["run_component"][0] == {**args, "investigation_id": INV}
     assert world.keys["run_component"] == [command_key(P, TURN, "dec_1", 0)]
     receipts = world.payloads["record_decision_receipts"][0]

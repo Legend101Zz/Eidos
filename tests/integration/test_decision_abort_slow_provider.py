@@ -160,7 +160,7 @@ def _assert_charged_at_the_abandoned_requests_worst_case(budget, entries, usage,
     # The usage carries the same estimate (no price is configured, so no dollars); the lab charged exactly that.
     assert usage["in_flight_estimate"] == {"input_tokens": abandoned["input_estimate"],
                                            "output_tokens": abandoned["output_cap"], "basis": "admitted-worst-case"}
-    ref = f"model:{turn_id}:0:1"
+    ref = f"model:{turn_id}:0:1:e1"  # F5 (C2): the first begin_decision epoch is part of the ref
     assert [(e["kind"], float(e["amount"])) for e in entries if e["ref"] == ref] == [
         ("reserve", RESERVED), ("possible-usage", worst), ("release", RESERVED - worst)]
     assert budget == {"limit_amount": 1e6, "reserved": 0, "used": worst, "uncertain": worst}
@@ -191,7 +191,7 @@ def test_stop_abandons_the_in_flight_request_and_applies_nothing(lab, provider):
     budget, entries = _model_tokens(lab, pid, inv)
     assert budget["reserved"] == 0, budget
     kinds = {(e["kind"], e["ref"]) for e in entries}
-    ref = f"model:{base['turn_id']}:0:1"
+    ref = f"model:{base['turn_id']}:0:1:e1"  # F5 (C2): with the slot epoch
     assert ("reserve", ref) in kinds and ("possible-usage", ref) in kinds and ("release", ref) in kinds
     # ... and the amounts: the possible usage is the abandoned request's admitted worst case, not zero, and it is all
     # the budget's uncertain total.

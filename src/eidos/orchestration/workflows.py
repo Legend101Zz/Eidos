@@ -343,6 +343,12 @@ class TurnWorkflow:
                             stop = "invalid-proposals"  # waits like other wait reasons; no hot loop
                             break
                         continue  # the next slot sees why the proposal was refused
+                    if str(d.get("reason") or "").startswith("superseded:"):
+                        # F5 (ADR 0017 addendum): this run lost the turn to a resuming run, or the attempt is stale;
+                        # it stops without effects (the lab refuses its completion too). Older histories never
+                        # carry this reason.
+                        stop = "cancelled"
+                        break
                     if d.get("reason") == "attempt-revoked":
                         # F2c: the slot's decision came from a failed attempt and was revoked, never executed; the next
                         # slot decides afresh. Older histories never carry this reason.
