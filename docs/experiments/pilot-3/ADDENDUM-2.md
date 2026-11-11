@@ -1,6 +1,6 @@
 # Development pilot 3, addendum 2: an arm-4 behavioural stop was mislabelled as a provider incident
 
-Written on 11 November 2026 at about 19:50 IST, after block N01-r2 finished and before it was graded or re-run. No arm, prompt, envelope, success rule, card or Eidos source changed.
+Written on 11 November 2026 at about 19:40 IST, after block N01-r2 finished and before it was graded or re-run. No arm, prompt, envelope, success rule, card or Eidos source changed.
 
 ## What happened
 - **The investigation:** in N01-r2, arm 4's investigation hit a MiniMax rate limit early (error 2062, HTTP 429; receipts 3–5 of 23) and recovered. It then made 17 more successful model calls over 8 completed turns.
