@@ -243,7 +243,7 @@ class Sklearn:
         try:
             from sklearn import ensemble, svm
         except ImportError:
-            raise SystemExit("family %s needs scikit-learn, which this interpreter does not have" % family)
+            raise SystemExit("family %s needs scikit-learn, which this interpreter does not have" % family) from None
         seed = int(rng.integers(0, 2 ** 31 - 1))
         self.cap, self.rng = int(settings.get("max_rows", 5000)), rng
         if family == "svm":
