@@ -1,21 +1,20 @@
-# Development pilot 3, addendum 6: prospective overnight incident-resumption window
+# Development pilot 3, addendum 6 — prospective overnight incident resumption
 
-Recorded 11 November 2026, approximately 22:18 IST, before any overnight replacement is launched. This is a controller-only amendment. The existing assigned roster, block order, concurrency, model, resource envelope, frozen Eidos build and scoring rules remain fixed.
+Recorded on 11 November 2026 before any overnight replacement. The assigned roster, randomized block order, concurrency, model, resource envelope, frozen Eidos build and scoring rules remain fixed.
 
-## Authorized continuation
+The Astra handoff authorizes incident replacements through 03:00 IST on 12 November if the original controller stops at its 23:30 waiting cutoff. The continuation uses the absolute cutoff `2026-11-12T03:00:00+05:30` (21:30 UTC on 11 November). Admitted blocks finish under their original envelope.
 
-The Astra handoff authorizes continuing unresolved incident blocks until 03:00 IST on 12 November if the original controller stops at its 23:30 waiting cutoff. This addendum records that prospective window. It permits whole-block replacement of provider/infrastructure incidents only. Ordinary crashes, timeouts, token-budget stops and invalid model outputs are never re-run.
+## Dispatch and grading
 
-The original controller compares `date +%H%M` numerically with `STOP_AT`. Consequently, setting `STOP_AT=0300` before midnight would treat 23:30 as already beyond the next morning's cutoff. The prepared `study/controllers/drive_p3_resume.sh` uses the absolute instant `2026-11-12T03:00:00+05:30` for both replacement-pass admission and quota waiting. An already admitted block is allowed its original envelope; the clock cutoff is not an extra per-run limit.
+- The continuation refuses an active original or continuation controller and surviving listeners on the four pilot service ports. Both original completion logs must be present. It starts the existing pilot lab after checking that an eligible incident remains and at least 12.5 GiB is free internally. Bulk output remains on the external SSD.
+- The dispatcher checks the original design file against SHA-256 `f44a174c5bdcd3e1595ae61894b9cee215a37de38b3a25e67ef1d79d3dce5903` and reads its 48 assignments in the existing randomized order. It admits only complete current incident records with matching assignment and attempt identity. Missing or incomplete blocks and ordinary failures are outside this replacement window.
+- The dispatcher keeps at most two paired blocks in flight and checks the current attempt identity, disk headroom and absolute cutoff when a slot becomes available. An already admitted block finishes even if the cutoff passes. Each admitted replacement uses the original launcher to archive the incident attempt and run all four assigned arms again. The continuation retains the previous four-pass cap and checks provider availability before each pass.
+- Before dispatch, the dispatcher archives any stale hosted submission marker with the old block start time and block-record hash. The continuation sweep can then submit the replacement candidate. If the final admission check fails, the marker is restored. Existing completed blocks keep their markers.
+- The continuation companion owns grading. It checks the current block status after local grading and performs a final pass after observing the driver's completion. Hosted completion requires grade evidence. A dispatch marker alone records an attempt.
+- The driver stops the lab after admitted replacements settle and publishes its completion log. Analysis follows only after both the driver and the companion finish, using independent reconciliation of the current local and hosted evidence.
 
-## Controller boundaries
+Continuation logs are `pilot-3/drive-astra-resume.log` and `pilot-3/sweep-astra-resume.log`. Prior continuation logs and replaced dispatch markers are retained under `pilot-3/controller-history/`. The driver records the tooling commit and initial eligible incident list.
 
-- The original live controller and sweep are not modified or stopped. The replacement refuses to overlap their PIDs, requires their clean completion, and refuses to take over surviving listeners on the pilot's four service ports.
-- The replacement uses the same launcher, design and `--replace-incident` rule. The launcher archives each replaced block before running all four arms again. Original logs, artifacts and outcomes remain available.
-- Only `study/controllers/sweep_p3_resume.sh` grades locally during this continuation. The driver's grading function is disabled, and it retains the driver markers rather than reopening simultaneous grading. The sweep uses distinct continuation logs and a distinct completion check.
-- The independent reconciliation step verifies current block identity, candidate hashes, local/hosted receipts, missing grades and any failed hosted dispatch. A dispatch marker alone is never completion evidence.
-- Internal-disk admission requires at least 12.5 GiB free. Bulk outputs remain on the external SSD. The frozen arm implementation is not changed.
+## Offline validation
 
-Continuation logs are `pilot-3/drive-astra-resume.log` and `pilot-3/sweep-astra-resume.log`; prior continuation logs are preserved under `pilot-3/controller-history/` before another invocation. The actual start, exact tooling commit and open incident list must be recorded in the controller log. If no eligible incidents remain, no continuation is launched.
-
-Validation before commit: both scripts pass `bash -n`. Invoking the replacement while the original controller is active exits with code 2 before any lab start, launcher or provider probe. The absolute cutoff is independently checked as 21:30 UTC on 11 November. Live continuation has not yet run at the time of this addendum.
+The dispatcher tests use a fake launcher. They check cutoff at entry, cutoff while both paired slots are occupied, cutoff during marker archival, exclusion of missing or incomplete blocks and ordinary outcomes, attempt changes before dispatch, the two-slot limit, and the frozen design hash. Both shell scripts pass `bash -n`. This validation does not launch the lab, call the provider or run a replacement.
