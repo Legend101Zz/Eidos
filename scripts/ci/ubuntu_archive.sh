@@ -18,15 +18,37 @@ if [ -z "${http_proxy:-}" ] && [ -n "${HTTP_PROXY:-}" ]; then export http_proxy=
 if [ -z "${https_proxy:-}" ] && [ -n "${HTTPS_PROXY:-}" ]; then export https_proxy="$HTTPS_PROXY"; fi
 if [ -z "${no_proxy:-}" ] && [ -n "${NO_PROXY:-}" ]; then export no_proxy="$NO_PROXY"; fi
 if [ "$#" -gt 0 ]; then
-  # Diagnose DNS under both identities without exposing proxy values or runner credentials.
-  echo "CI apt DNS preflight (root): archive.ubuntu.com"
-  getent ahostsv4 archive.ubuntu.com >/dev/null || { echo "root cannot resolve the Ubuntu archive" >&2; exit 1; }
-  if id _apt >/dev/null 2>&1; then
-    echo "CI apt DNS preflight (_apt): archive.ubuntu.com"
-    runuser -u _apt -- getent ahostsv4 archive.ubuntu.com >/dev/null || {
-      echo "apt's download identity cannot resolve the Ubuntu archive" >&2; exit 1;
-    }
-  fi
+  # Some runners cannot use system DNS even as root. Bootstrap only the public Ubuntu repository
+  # names through TLS-verified DNS over HTTPS; package signatures and the _apt identity stay intact.
+  eidos_dns_json=$(mktemp)
+  trap 'rm -f "$eidos_dns_json"' EXIT
+  for eidos_dns_host in archive.ubuntu.com security.ubuntu.com; do
+    if ! getent ahostsv4 "$eidos_dns_host" >/dev/null; then
+      echo "Bootstrapping CI DNS for $eidos_dns_host"
+      curl --fail --silent --show-error --connect-timeout 10 --max-time 20 \
+        --resolve cloudflare-dns.com:443:1.1.1.1 -H 'accept: application/dns-json' \
+        "https://cloudflare-dns.com/dns-query?name=$eidos_dns_host&type=A" -o "$eidos_dns_json"
+      python3 - "$eidos_dns_host" "$eidos_dns_json" <<'PYDNS' >> /etc/hosts
+import ipaddress
+import json
+import sys
+
+with open(sys.argv[2]) as stream:
+    response = json.load(stream)
+if response.get("Status") != 0:
+    raise SystemExit("Ubuntu DNS bootstrap failed")
+addresses = [str(ipaddress.IPv4Address(item["data"])) for item in response.get("Answer", [])
+             if item.get("type") == 1]
+if not addresses:
+    raise SystemExit("Ubuntu DNS bootstrap returned no IPv4 addresses")
+print()
+for address in addresses:
+    print(address, sys.argv[1])
+PYDNS
+    fi
+  done
+  getent ahostsv4 archive.ubuntu.com >/dev/null
+  if id _apt >/dev/null 2>&1; then runuser -u _apt -- getent ahostsv4 archive.ubuntu.com >/dev/null; fi
   apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=30 update -qq
   apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=30 install -y -qq "$@"
 fi
