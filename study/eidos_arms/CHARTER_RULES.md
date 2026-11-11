@@ -123,3 +123,15 @@ Source references: `src/eidos/domain/charter.py` (rule types),
 `components/eidos.assessors.paired-ci/paired_ci/assess.py` (supported metrics),
 `src/eidos/orchestration/activities.py` (evidence collection),
 `docs/dev-runs/e2e-journey.md` and `docs/release/evidence/a8-sonnet-*.json`.
+
+## Pilot 2
+D03 and D06 use classification-report/1:accuracy with eidos.task.paired-classification-report and paired-ci@1.2.0, at 0.01 and 0.30. The CI lower bound must reach the card bar. D04 and D05 require baseline RMSE minus candidate RMSE >= 0.5, including fresh seeds. No built-in assessor supports RMSE reduction (paired-ci supports classification and paired reports). Their charters remain exploration-only; local and GitHub evaluators enforce RMSE and reproduction. No classification surrogate is substituted. This is a material arm-4 capability gap.
+
+P2S adds `pilot_2_setup` to the generated D03–D06 lab charters before model work.
+It pins research-interpreter parity across selectable environments, the shared
+METHOD text and no-source baseline note, final-outcome run classification, and
+arm-4 setup outside the timer with separately reported `setup_wall_s`. The same
+policy must be recorded in the forthcoming pilot-2 study charter; this tooling
+ticket does not authorize a pilot run. Pilot-1 charters, records and grades are
+unchanged. The assessor/grader gaps above remain as documented; P2S changes no
+scientific success rule or arm-4 answer-status mapping.

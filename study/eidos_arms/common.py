@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import os
+import re
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -72,11 +72,12 @@ def prepare(c, run_dir, arm):
     imported.update(commit(c, project, imported['task_id'], run_dir))
     for directory in builtin_component_dirs():
         if directory.name in ('eidos.project.command', 'eidos.task.score-classification',
-                              'eidos.search.recipe-sweep'):
+                              'eidos.search.recipe-sweep') or (
+                imported['task_id'] in ('D03', 'D06') and directory.name == 'eidos.task.paired-classification-report'):
             r = install_component(c, project, directory, 'default', True)
             if 'component_ref' not in r or r.get('validation') == 'failed':
                 raise RuntimeError(f'component installation failed: {r}')
-    if imported['task_id'] != 'D01':
+    if imported['task_id'] not in ('D01', 'D04', 'D05'):
         from .protocols import prepare as prepare_protocols
         prepare_protocols(c, project, run_dir)
     write_json(run_dir / 'lab_import.json', {'project': project, **imported})
@@ -196,20 +197,23 @@ def classify(shown, receipts, models, timed_out=False, answer_valid=True):
     text = json.dumps(failures)
     if len(models) > 1:
         return 'incident', 'model id changed: ' + ', '.join(models)
-    import re
     # Addendum 2: classify only error strings and HTTP status codes with the same rule as arms 1-3
     # (study/run_arm.py incident_text). The old search over the whole failure JSON matched token
     # counts such as "output_tokens": 541 as a 5xx status. A request timeout without a provider
     # status is the system's own behaviour, not an incident.
-    if failures and any(_provider_incident(r, timed_out) for r in failures):
-        return 'incident', 'provider/infrastructure failure: ' + text[:1800]
+    # Pilot-2 addendum 1 (symmetric with arms 1-3): a recovered provider failure never decides the run.
+    # A concluded investigation with a valid answer is ok; a provider failure is an incident only if the
+    # investigation ended without concluding (timeouts and budget stops keep their own status).
+    provider_failure = bool(failures) and any(_provider_incident(r, timed_out) for r in failures)
     if timed_out:
         return 'timeout', None
     if any(t.get('stop_reason') == 'budget-exhausted' for t in shown.get('turns', [])) or (
             'budget-exhausted' in str(shown.get('needs_input', ''))):
         return 'token_budget', None
-    if failures or shown.get('needs_input') or any(t.get('stop_reason') == 'error' for t in shown.get('turns', [])):
-        return 'crash', 'investigator failed or requires operator input: ' + text[:1800]
-    if not answer_valid:
-        return 'invalid_output', None
-    return 'ok', None
+    # Scientific completion is determined by the final state and exported answer,
+    # not by recovered request/turn errors. A controller fallback alone is not a conclusion.
+    if shown.get('status') == 'concluded':
+        return ('ok' if answer_valid else 'invalid_output'), None
+    if provider_failure:
+        return 'incident', 'provider/infrastructure failure: ' + text[:1800]
+    return 'crash', 'investigator ended without a conclusion or requires operator input: ' + text[:1800]

@@ -73,7 +73,9 @@ def equal_predictions(left, right):
         ai, bi = np.argsort(a["ids"]), np.argsort(b["ids"])
         return bool(
             np.array_equal(a["ids"][ai], b["ids"][bi])
-            and np.array_equal(a["predictions"][ai], b["predictions"][bi])
+            and (np.allclose(a["predictions"][ai], b["predictions"][bi], rtol=1e-5, atol=1e-6)
+                 if a["predictions"].dtype.kind == b["predictions"].dtype.kind == "f"
+                 else np.array_equal(a["predictions"][ai], b["predictions"][bi]))
         )
 
 

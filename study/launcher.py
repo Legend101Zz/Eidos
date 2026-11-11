@@ -31,8 +31,8 @@ from study.common import (
 from study.run_arm import stop_process_tree, utc_now
 
 
-def plan(seed):
-    blocks = [(card, index) for card in FAMILIES for index in (1, 2, 3)]
+def plan(seed, cards=None, runs=3):
+    blocks = [(card, index) for card in (cards if cards is not None else ("D01", "D02", "D12")) for index in range(1, runs + 1)]
     random.Random(seed).shuffle(blocks)
     return [
         dict(
@@ -40,7 +40,7 @@ def plan(seed):
             task=card,
             run=index,
             arm=arm,
-            primary_eligible=card == "D02",
+            primary_eligible=card in {"D02","D03","D04","D05","D06"},
             block_id=f"{card}-r{index}",
             block_order=order,
             randomization_seed=seed,
@@ -50,11 +50,18 @@ def plan(seed):
     ]
 
 
+# Pilot-2 addendum 3: Claude Code labels messages it generates itself (for example a surfaced API error) with the
+# model id "<synthetic>". That is not a served model, so it never counts as a model change or a returned model id.
+CLIENT_PLACEHOLDER_MODELS = frozenset({"<synthetic>"})
+
+
 def version_guard(records):
-    models = set(model for record in records for model in record.get("model_ids_seen", []))
+    def served(record):
+        return [m for m in record.get("model_ids_seen", []) if m not in CLIENT_PLACEHOLDER_MODELS]
+    models = set(model for record in records for model in served(record))
     if len(models) != 1:
         return "block must contain exactly one returned model id; saw " + repr(sorted(models))
-    if any(not record.get("model_ids_seen") for record in records):
+    if any(not served(record) for record in records):
         return "one or more runs did not record a returned model id"
     return None
 
@@ -78,6 +85,9 @@ def archive_block(block_dir, reason):
 
 
 def prepare(row, run_dir):
+    free = int(subprocess.check_output(["df", "-k", "/"], text=True).splitlines()[1].split()[3])
+    if free < int(12.5 * 1024 * 1024):  # pilot-2 addendum 2: owner floor 12 GiB (+0.5 margin)
+        raise RuntimeError("STOP: less than 12.5 GiB free")
     run_dir.mkdir(parents=True, exist_ok=True)
     dev_command("package_task.py", "--task", row["task"], "--out", run_dir / "task")
     # The common structural interface contains no graders, labels or references.
@@ -98,9 +108,20 @@ def prepare(row, run_dir):
             charter_sha=hashlib.sha256(charter.read_bytes()).hexdigest(),
             charter_amendment_commit=os.environ["EIDOS_PILOT_CHARTER_COMMIT"],
             charter_amendment_sha256=hashlib.sha256(
-                (ROOT / "docs/experiments/pilot-1/CHARTER.md").read_bytes()).hexdigest(),
+                (ROOT / os.environ.get("EIDOS_PILOT_CHARTER_PATH", "docs/experiments/pilot-1/CHARTER.md")).read_bytes()).hexdigest(),
+            charter_amendment_path=os.environ.get("EIDOS_PILOT_CHARTER_PATH", "docs/experiments/pilot-1/CHARTER.md"),
         ),
     )
+
+
+def outer_deadline(run_dir, arm, deadline, *, stub=False):
+    """Arm 4's setup finishes before its search clock; retain the 60 s teardown allowance."""
+    if arm != 4 or stub:
+        return deadline
+    setup = Path(run_dir) / 'setup.json'
+    if not setup.exists():
+        return None  # The adapter's bounded infrastructure calls are still preparing the project.
+    return deadline + read_json(setup)['setup_wall_s']
 
 
 def run_block(rows, runs_root, stub=False, replace_incident=False):
@@ -152,11 +173,10 @@ def run_block(rows, runs_root, stub=False, replace_incident=False):
             )
         deadline = time.monotonic() + ENVELOPE["wall_s"] + 60
         while any(process.poll() is None for process in processes):
-            if time.monotonic() > deadline:
-                for process in processes:
-                    if process.poll() is None:
-                        stop_process_tree(process)
-                break
+            for row, process in zip(rows, processes, strict=True):
+                limit = outer_deadline(run_dirs[str(row['arm'])], row['arm'], deadline, stub=stub)
+                if process.poll() is None and limit is not None and time.monotonic() > limit:
+                    stop_process_tree(process)
             time.sleep(0.2)
         records = []
         for row in rows:
@@ -229,9 +249,12 @@ def main():
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
     planning = sub.add_parser("plan")
+    planning.add_argument("--cards", help="comma-separated card IDs")
+    planning.add_argument("--runs", type=int, default=3)
     planning.add_argument("--seed", required=True, type=int)
     planning.add_argument("--out", required=True, type=Path)
     running = sub.add_parser("run")
+    running.add_argument("--concurrency", type=int, default=1, choices=(1,2))
     running.add_argument("--design", required=True, type=Path)
     running.add_argument("--runs-root", required=True, type=Path)
     running.add_argument("--block", help="1-based randomized block order, or stable ID such as D02-r1")
@@ -243,8 +266,12 @@ def main():
     )
     args = parser.parse_args()
     if args.command == "plan":
-        write_json(args.out, plan(args.seed))
-        print("Planned 9 randomized paired blocks, 36 assignments.")
+        cards = args.cards.split(",") if args.cards else None
+        if args.runs < 1 or (cards and (len(set(cards)) != len(cards) or any(c not in FAMILIES for c in cards))):
+            parser.error("invalid cards or runs")
+        design = plan(args.seed, cards, args.runs)
+        write_json(args.out, design)
+        print(f"Planned {len(design)//4} randomized paired blocks, {len(design)} assignments.")
         return
     design = read_json(args.design)
     blocks = {}
@@ -257,13 +284,21 @@ def main():
             if args.block.isdecimal() and 1 <= int(args.block) <= len(blocks)
             else [args.block]
         )
+    from concurrent.futures import ThreadPoolExecutor
+    jobs = []
+    pool = ThreadPoolExecutor(max_workers=args.concurrency)
     for block_id in selected:
         if block_id not in blocks:
             parser.error(f"unknown block {block_id}")
         rows = blocks[block_id]
         if sorted(r["arm"] for r in rows) != [1, 2, 3, 4]:
             parser.error("each block must contain exactly four arms")
-        run_block(rows, args.runs_root, args.stub, args.replace_incident)
+        jobs.append(pool.submit(run_block, rows, args.runs_root, args.stub, args.replace_incident))
+    try:
+        for job in jobs:
+            job.result()
+    finally:
+        pool.shutdown(wait=True)
 
 
 if __name__ == "__main__":

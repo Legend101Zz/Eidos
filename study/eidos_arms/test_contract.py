@@ -29,12 +29,17 @@ class Receipts(unittest.TestCase):
         self.assertEqual(len(receipts), 2)
 
     def test_incidents_take_precedence_over_timeout(self):
-        self.assertEqual(classify({}, [{'failed_request': {'status_code': 529}}], [], True)[0], 'incident')
+        # Pilot-2 addendum 1: a timeout keeps its status (symmetric with arms 1-3); a provider failure is an
+        # incident only when the investigation ended without concluding; a concluded run with a valid answer is ok.
+        self.assertEqual(classify({}, [{'failed_request': {'status_code': 529}}], [], True)[0], 'timeout')
+        self.assertEqual(classify({'status': 'stopped'}, [{'failed_request': {'status_code': 529}}], [], False)[0], 'incident')
+        self.assertEqual(classify({'status': 'concluded'}, [{'failed_request': {'status_code': 429}}], [], False)[0], 'ok')
+        self.assertEqual(classify({'status': 'concluded'}, [{'error': 'ModelHTTPError: status_code: 429, rate_limit'}], [], False, answer_valid=False)[0], 'invalid_output')
         self.assertEqual(classify({}, [], ['a', 'b'])[0], 'incident')
         self.assertEqual(classify({}, [], [], True)[0], 'timeout')
         self.assertEqual(classify({'needs_input': {'reason': 'budget-exhausted'}}, [], [])[0], 'token_budget')
         self.assertEqual(classify({'needs_input': {'reason': 'invalid proposals'}}, [], [])[0], 'crash')
-        self.assertEqual(classify({}, [], [], answer_valid=False)[0], 'invalid_output')
+        self.assertEqual(classify({'status': 'concluded'}, [], [], answer_valid=False)[0], 'invalid_output')
 
 
 class Selection(unittest.TestCase):

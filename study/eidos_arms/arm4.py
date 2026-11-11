@@ -69,6 +69,7 @@ def stop_investigation(c, project, inv):
 
 
 def run(run_dir, meta):
+    setup_started_at, setup_begin = utc(), time.monotonic()
     lab.start()
     c = lab.client()
     inv = None
@@ -83,9 +84,13 @@ def run(run_dir, meta):
         files = {p.relative_to(run_dir / 'task').as_posix(): p.read_text()
                  for p in sorted((run_dir / 'task').rglob('*'))
                  if p.is_file() and p.suffix in ('.py', '.md', '.json', '.lock', '.txt')}
+        files['METHOD.md'] = (ROOT / 'study/METHOD.md').read_text()
         question = prompt(4, run_dir) + '\n\nPackaged task files:\n' + json.dumps(files, ensure_ascii=False)
         begin = time.monotonic()
         began_at = utc()
+        write_json(run_dir / 'setup.json', {'setup_started_at': setup_started_at,
+                   'setup_ended_at': began_at, 'setup_wall_s': round(begin - setup_begin, 3),
+                   'setup_complete': True})
         deadline_utc = time.time() + wall
         from .provider_bridge import start as start_bridge
         bridge, bridge_receipt = start_bridge(run_dir, investigator['settings']['base_url'],

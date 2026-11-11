@@ -48,8 +48,9 @@ scientific functions. Partial stream events supply usage omitted from native
 assistant events, including on runs killed before a final Claude result.
 
 Arm 4 reuses installed `import_bundle` and the built-in project-command and
-classification-score components. Only text files from `run_dir/task` are embedded
-beside the common prompt; input arrays are lab artifacts. This also works with
+classification-score components. Text files from `run_dir/task` and the same
+`study/METHOD.md` supplied to arms 2/3 are embedded beside the common prompt;
+input arrays are lab artifacts. This also works with
 ADR 0016 JSON mode's read requests. No references, grader data or test
 inputs are supplied. Its model-token budget is 8,000,000; turns, trials and compute
 are deliberately generous. The run directory can lower limits for non-study smoke.
@@ -95,7 +96,27 @@ so their cached input stays in `input`; `total` still comes from ledger receipts
 Costs remain null unless recorded. Provider 429/5xx/quota failures, infrastructure
 failures and multiple served model IDs are incidents; an expired wall is a timeout,
 model budget exhaustion is `token_budget`, malformed investigator proposals are
-`crash`, and an invalid submission is `invalid_output`.
+`crash` when no conclusion follows, and an invalid concluded submission is
+`invalid_output`. Recovered request/turn errors do not override a concluded,
+valid answer. Arms 1–3 likewise use their final result event and answer validation.
+
+For pilot 2, every selectable environment (including `lab`, used for protocol
+controls) uses the research interpreter and its inspected package lock. The lab
+service still runs with its separate fixed installation. No research packages
+are added to that service installation.
+
+Arm 4 records `setup_started_at`, `setup_ended_at`, `setup_wall_s` and
+`setup_complete` in `setup.json` and `run_record.json`. Setup starts at adapter
+entry and includes lab startup, project import, the charter, component installation,
+qualification controls and prompt assembly. Its duration is measured with the
+monotonic clock. The investigation timer starts after setup; provider bridge
+startup and subsequent investigation/export/accounting retain their existing
+timing. `wall_s` starts at that investigation boundary, while `adapter_wall_s`
+includes the whole worker invocation. A failure before that boundary records
+elapsed preparation time with `setup_complete=false`. The launcher waits for
+the setup receipt before applying arm 4's outer deadline, adds `setup_wall_s`,
+and retains the 60-second teardown allowance. Arms 1–3 and stub deadlines are
+unchanged. See [../P2S_REPORT.md](../P2S_REPORT.md) for model-free qualification.
 
 For pre-merge smoke only, `EIDOS_STUDY_LANE_A_ROOT` lets the operator import lane
 A's public runner helpers and method without copying/modifying those files. It is
