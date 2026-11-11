@@ -119,6 +119,7 @@ def replay_slot(slot):
     ("N01-r2", "N01-r2"),
     ("N01-r2-aborted-addendum1", "N01-r2"),
     ("N03-r1", "N03-r1"),
+    ("N03-r3", "N03-r3"),
     ("N04-r2", "N04-r2"),
 ])
 async def test_recorded_failure_tail_reaches_controller_abstention(env, lab, monkeypatch, fixture_name, block):  # noqa: F811

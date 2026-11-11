@@ -1,0 +1,1236 @@
+{
+  "schema_version": "eidos-deadline-tail/1",
+  "source": {
+    "block_id": "N03-r3",
+    "card": "N03",
+    "arm": 4,
+    "eidos_commit_sha": "257792ab56b6b984e807fe284a22fc5d31c4dd8b",
+    "transcript_sha256": "d2026851ba9035d4b12966d7f795da3b56956125f43df0068b921cc85436c72e",
+    "attempt_path": "runs/N03-r3",
+    "block_started_at": "2026-11-11T20:02:18.985490+00:00",
+    "block_record_sha256": "7d44396453a79bf057a860c255cc087ee9d2c7934d53b21cb92861688343622b",
+    "run_started_at": "2026-11-11T20:02:37.119634+00:00",
+    "run_ended_at": "2026-11-11T20:21:36.452355+00:00",
+    "run_record_sha256": "f722542470d26e542c31186790eb5656947a0bdf39540bfbd9d565544af195ae",
+    "investigation_latest_sha256": "cf8c062a7d5c07bb0560fb48a55750921f7bb8c1ea268ec8251142c30f2594f2",
+    "usage_receipts_sha256": "e4f73dee36dd7808dc51eb5881244bbe81fbea3d91bc8a5223fad55a311e47a2"
+  },
+  "recorded_outcome": "crash",
+  "recorded_needs_input": {
+    "code": "refused-proposals",
+    "since": "2026-11-11T20:21:35.250663+00:00",
+    "cursor": 9521,
+    "reason": "repeated refused proposals after bounded retries",
+    "details": {},
+    "refused_turns": 3
+  },
+  "slots": [
+    {
+      "turn": 10,
+      "slot": 0,
+      "decision": {
+        "id": "dec_294f067794d94d4e",
+        "turn_id": "turn_inv_2a0ff7689321_10",
+        "slot": 0,
+        "accepted": false,
+        "body": {
+          "error": {
+            "code": "INVALID",
+            "details": {
+              "control": "wait_for_jobs",
+              "outstanding": 0
+            },
+            "message": "nothing to wait for: no jobs or evidence plans are outstanding for this investigation; run something, request input, or conclude",
+            "next_action": "Correct the request and retry with a new command key."
+          },
+          "reason": "invalid",
+          "proposal": {
+            "calls": [],
+            "control": {
+              "action": "wait_for_jobs",
+              "summary": "decision-deadline",
+              "bounded_outcome": "decision-deadline"
+            },
+            "rationale": "no usable decision (decision-deadline); no effects proposed"
+          }
+        },
+        "created_at": "2026-11-12 01:51:12.167701+05:30"
+      },
+      "recorded_effect_receipts": [],
+      "original_response_artifact_id": "art_454e1d3f55c44510",
+      "original_response_sha256": "9c5fb327ce77253d3d86fd0a47855c8a2248cad933d90c66a7465ecc1f95b27d",
+      "replies": [
+        {
+          "timing": {
+            "index": 23,
+            "artifact_id": "art_454e1d3f55c44510",
+            "message_index": 1,
+            "turn_id": "turn_inv_2a0ff7689321_10",
+            "provider_response_id": "07440131f58bdcb7bb8ccf4869934612",
+            "started_unix": 1794428464.466555,
+            "ended_unix": 1794428472.149728,
+            "elapsed_s": 7.683173,
+            "remaining_s": 687.655934,
+            "decision_remaining_s": 238.917688,
+            "finish_reason": "stop"
+          },
+          "response": {
+            "canonical_system": "openai",
+            "conversation_id": "01a1cc45-6d51-7073-80c7-abaa7c6591ca",
+            "failed_attempts": null,
+            "finish_reason": "stop",
+            "history_digest": null,
+            "kind": "response",
+            "metadata": null,
+            "model_id": "openai:MiniMax-M3.1-Flash",
+            "model_name": "MiniMax-M3.1-Flash",
+            "parts": [
+              {
+                "content": "We need act as investigator. Need understand state, limited 688s wall, 8 requests including reads and final. We need likely improve candidate. We have baseline RMSE 10.943. Candidate current incumbent SVM? job_ebe validation 1.218. Latest sweep best 1.195 but not locked and need inspect recipe/evidence. Need score under selection rule and lock if beats incumbent. Need reproduce incumbent fresh seeds and baseline same seeds perhaps. Practical bar baseline improvement >=0.552; already huge. Need eventually conclude candidate with answer scope details. Need use selection rule fixed. Current lock job_ebe first-lock no evidence apparently perhaps selection rule recorded. Pinned selection rule truncated but likely note. Need inspect latest sweep best recipe and evidence table, perhaps incumbent source. Also current source art_f42... perhaps infer method. Need read artifacts. Max 4 reads. We need know exact recipe and potentially source content. inspect_evidence on best recipe, evidence table, source snapshot art? Artifacts created are source bundles; inspect perhaps manifest. Also perhaps selection rule note inaccessible directly? Pinned partial. We have enough? Need exact command and scorer likely eidos.task.score-classification (misnamed generic) or project receipt validation_rmse. Selection rule says scorer \"<component whose receipt scores a candidate>\". The sweep uses objective receipt validation_rmse and projects embed labels, but user explicitly says use eidos.task.score-classification for visible validation scoring. Pinned baseline scored by job_0ba diagnosis, but lock first maybe rule scorer likely eidos.task.score-regression? Need inspect components / note maybe get_job current incumbent. Let's use 4 reads: latest best recipe, evidence table, source artifact, describe scorer component perhaps search. We can issue read JSON.",
+                "id": "reasoning_content",
+                "part_kind": "thinking",
+                "provider_details": null,
+                "provider_name": "openai",
+                "signature": null
+              },
+              {
+                "citations": null,
+                "content": "{\"rationale\":\"I need to identify the best validated recipe from the latest sweep, verify the incumbent's source and scoring status, and confirm the registered visible-validation scorer before locking any challenger. These reads are the minimum evidence needed to avoid locking an unscored or non-reproducible recipe.\",\"read\":[{\"tool\":\"inspect_evidence\",\"args\":{\"artifact_id\":\"art_a97a3afee99d4923_best_recipe\",\"max_bytes\":16384}},{\"tool\":\"inspect_evidence\",\"args\":{\"artifact_id\":\"art_a97a3afee99d4923_evidence_table\",\"max_bytes\":16384}},{\"tool\":\"inspect_evidence\",\"args\":{\"artifact_id\":\"art_f42f9b8c95dc4d99\",\"max_bytes\":16384}},{\"tool\":\"get_job\",\"args\":{\"job_id\":\"job_ebe8d1a32ae04296\"}}]}",
+                "id": null,
+                "part_kind": "text",
+                "provider_details": null,
+                "provider_name": null
+              }
+            ],
+            "provider_details": {
+              "finish_reason": "stop",
+              "timestamp": "2026-11-11T20:21:06Z"
+            },
+            "provider_name": "openai",
+            "provider_response_id": "07440131f58bdcb7bb8ccf4869934612",
+            "provider_url": "http://127.0.0.1:49348/v1/",
+            "run_id": "01a1cc45-6d51-7073-80c7-aba99d29aac6",
+            "state": "complete",
+            "timestamp": "2026-11-11T20:21:12.149728Z",
+            "usage": {
+              "audio_seconds": 0.0,
+              "cache_audio_read_tokens": 0,
+              "cache_read_tokens": 1536,
+              "cache_write_1h_tokens": 0,
+              "cache_write_tokens": 0,
+              "cost": null,
+              "details": {
+                "reasoning_tokens": 358,
+                "total_characters": 0
+              },
+              "input_audio_tokens": 0,
+              "input_tokens": 19589,
+              "output_audio_tokens": 0,
+              "output_reasoning_tokens": 358,
+              "output_tokens": 539
+            },
+            "workspace_ref": null
+          }
+        }
+      ],
+      "usage_receipt": {
+        "seq": 9494,
+        "project_id": "pilot-a4-36bcd43cc41d4a7b",
+        "investigation_id": "inv_2a0ff7689321",
+        "type": "model.usage",
+        "subject": "turn_inv_2a0ff7689321_10",
+        "body": {
+          "usage": {
+            "calls": 1,
+            "model": "openai-compatible:MiniMax-M3.1-Flash",
+            "attempt": 1,
+            "provider": "openai-compatible",
+            "per_request": [
+              {
+                "model": "MiniMax-M3.1-Flash",
+                "input_tokens": 19589,
+                "finish_reason": "stop",
+                "output_tokens": 539,
+                "reasoning_tokens": 358
+              }
+            ],
+            "request_ids": [
+              "07440131f58bdcb7bb8ccf4869934612"
+            ],
+            "input_tokens": 19589,
+            "limit_reached": "a further request (timeout 300s) could outlive the decision deadline (239s)",
+            "output_tokens": 539,
+            "served_models": [
+              "MiniMax-M3.1-Flash"
+            ],
+            "elapsed_seconds": 7.709,
+            "reasoning_tokens": 358,
+            "structured_output": {
+              "mode": "json",
+              "reads": [
+                {
+                  "args": {
+                    "max_bytes": 16384,
+                    "artifact_id": "art_a97a3afee99d4923_best_recipe"
+                  },
+                  "tool": "inspect_evidence",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                },
+                {
+                  "args": {
+                    "max_bytes": 16384,
+                    "artifact_id": "art_a97a3afee99d4923_evidence_table"
+                  },
+                  "tool": "inspect_evidence",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                },
+                {
+                  "args": {
+                    "max_bytes": 16384,
+                    "artifact_id": "art_f42f9b8c95dc4d99"
+                  },
+                  "tool": "inspect_evidence",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                },
+                {
+                  "args": {
+                    "job_id": "job_ebe8d1a32ae04296"
+                  },
+                  "tool": "get_job",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                }
+              ],
+              "valid": false,
+              "errors": [],
+              "reasks": 0,
+              "repairs": [],
+              "runaway": [],
+              "json_mode": true,
+              "fresh_state": [],
+              "read_requests": 1,
+              "runaway_reasks": 0,
+              "fresh_state_repairs": 0
+            },
+            "reasoning_accounting": "included-in-output"
+          }
+        },
+        "command_id": 15902,
+        "created_at": "2026-11-12 01:51:12.159848+05:30"
+      }
+    },
+    {
+      "turn": 10,
+      "slot": 1,
+      "decision": {
+        "id": "dec_edbfc57a5a034aee",
+        "turn_id": "turn_inv_2a0ff7689321_10",
+        "slot": 1,
+        "accepted": false,
+        "body": {
+          "error": {
+            "code": "INVALID",
+            "details": {
+              "control": "wait_for_jobs",
+              "outstanding": 0
+            },
+            "message": "nothing to wait for: no jobs or evidence plans are outstanding for this investigation; run something, request input, or conclude",
+            "next_action": "Correct the request and retry with a new command key."
+          },
+          "reason": "invalid",
+          "proposal": {
+            "calls": [],
+            "control": {
+              "action": "wait_for_jobs",
+              "summary": "decision-deadline",
+              "bounded_outcome": "decision-deadline"
+            },
+            "rationale": "no usable decision (decision-deadline); no effects proposed"
+          }
+        },
+        "created_at": "2026-11-12 01:51:15.680596+05:30"
+      },
+      "recorded_effect_receipts": [],
+      "original_response_artifact_id": "art_ad6859a5a12b4830",
+      "original_response_sha256": "b33e332720482bb34b6dbfff46cb2f71275774f64771b34239d428aa39cdc8f5",
+      "replies": [
+        {
+          "timing": {
+            "index": 24,
+            "artifact_id": "art_ad6859a5a12b4830",
+            "message_index": 1,
+            "turn_id": "turn_inv_2a0ff7689321_10",
+            "provider_response_id": "07440138658b138ab09406679487c1d8",
+            "started_unix": 1794428472.196565,
+            "ended_unix": 1794428475.630788,
+            "elapsed_s": 3.434223,
+            "remaining_s": 679.925924,
+            "decision_remaining_s": 231.187678,
+            "finish_reason": "stop"
+          },
+          "response": {
+            "canonical_system": "openai",
+            "conversation_id": "01a1cc45-8b83-75a9-8f26-abf13c059654",
+            "failed_attempts": null,
+            "finish_reason": "stop",
+            "history_digest": null,
+            "kind": "response",
+            "metadata": null,
+            "model_id": "openai:MiniMax-M3.1-Flash",
+            "model_name": "MiniMax-M3.1-Flash",
+            "parts": [
+              {
+                "content": "We need act. Need parse state, time 688 sec, exploration allowance 239 sec, held back 269 sec. Current incumbent lock job_ebe8... rmse 1.218394, no selection evidence maybe selection rule exists note id db...? Pinned says selection rule truncated but likely recorded. Recent sweep best 1.195227 from a97... Need inspect evidence table and best recipe, source artifact content perhaps authored source unavailable via inspect? inspect evidence of source bundle maybe. Need decide targeted challenger then lock if better, reproduce. We only have 8 requests, reserve last. Need likely run command(s), perhaps sweep already identified best recipe but needs explicit project command scorer. Need understand source candidate and parameters. We can inspect evidence artifacts best recipe/table, source snapshot? artifact source bundle maybe inspect_evidence. Up to 4 reads. Let's request evidence table/best recipe/source artifact and maybe job details for current/source.",
+                "id": "reasoning_content",
+                "part_kind": "thinking",
+                "provider_details": null,
+                "provider_name": "openai",
+                "signature": null
+              },
+              {
+                "citations": null,
+                "content": "{\"rationale\":\"The incumbent is locked but has no recorded selection receipt, and the latest sweep found a lower validation RMSE (1.195227 versus 1.218394) without yet providing a lockable training job. I need the exact winning parameters, scored evidence, and current candidate source before running a targeted challenger and deciding whether it can replace the incumbent under the fixed selection rule.\",\"read\":[{\"tool\":\"inspect_evidence\",\"args\":{\"artifact_id\":\"art_a97a3afee99d4923_best_recipe\",\"max_bytes\":16384}},{\"tool\":\"inspect_evidence\",\"args\":{\"artifact_id\":\"art_a97a3afee99d4923_evidence_table\",\"max_bytes\":16384}},{\"tool\":\"inspect_evidence\",\"args\":{\"artifact_id\":\"art_f42f9b8c95dc4d99\",\"max_bytes\":16384}},{\"tool\":\"get_job\",\"args\":{\"job_id\":\"job_a97a3afee99d4923\"}}]}",
+                "id": null,
+                "part_kind": "text",
+                "provider_details": null,
+                "provider_name": null
+              }
+            ],
+            "provider_details": {
+              "finish_reason": "stop",
+              "timestamp": "2026-11-11T20:21:12Z"
+            },
+            "provider_name": "openai",
+            "provider_response_id": "07440138658b138ab09406679487c1d8",
+            "provider_url": "http://127.0.0.1:49348/v1/",
+            "run_id": "01a1cc45-8b83-75a9-8f26-abf0260b14f1",
+            "state": "complete",
+            "timestamp": "2026-11-11T20:21:15.630788Z",
+            "usage": {
+              "audio_seconds": 0.0,
+              "cache_audio_read_tokens": 0,
+              "cache_read_tokens": 188,
+              "cache_write_1h_tokens": 0,
+              "cache_write_tokens": 0,
+              "cost": null,
+              "details": {
+                "reasoning_tokens": 190,
+                "total_characters": 0
+              },
+              "input_audio_tokens": 0,
+              "input_tokens": 19674,
+              "output_audio_tokens": 0,
+              "output_reasoning_tokens": 190,
+              "output_tokens": 391
+            },
+            "workspace_ref": null
+          }
+        }
+      ],
+      "usage_receipt": {
+        "seq": 9502,
+        "project_id": "pilot-a4-36bcd43cc41d4a7b",
+        "investigation_id": "inv_2a0ff7689321",
+        "type": "model.usage",
+        "subject": "turn_inv_2a0ff7689321_10",
+        "body": {
+          "usage": {
+            "calls": 1,
+            "model": "openai-compatible:MiniMax-M3.1-Flash",
+            "attempt": 1,
+            "provider": "openai-compatible",
+            "per_request": [
+              {
+                "model": "MiniMax-M3.1-Flash",
+                "input_tokens": 19674,
+                "finish_reason": "stop",
+                "output_tokens": 391,
+                "reasoning_tokens": 190
+              }
+            ],
+            "request_ids": [
+              "07440138658b138ab09406679487c1d8"
+            ],
+            "input_tokens": 19674,
+            "limit_reached": "a further request (timeout 300s) could outlive the decision deadline (239s)",
+            "output_tokens": 391,
+            "served_models": [
+              "MiniMax-M3.1-Flash"
+            ],
+            "elapsed_seconds": 3.479,
+            "reasoning_tokens": 190,
+            "structured_output": {
+              "mode": "json",
+              "reads": [
+                {
+                  "args": {
+                    "max_bytes": 16384,
+                    "artifact_id": "art_a97a3afee99d4923_best_recipe"
+                  },
+                  "tool": "inspect_evidence",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                },
+                {
+                  "args": {
+                    "max_bytes": 16384,
+                    "artifact_id": "art_a97a3afee99d4923_evidence_table"
+                  },
+                  "tool": "inspect_evidence",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                },
+                {
+                  "args": {
+                    "max_bytes": 16384,
+                    "artifact_id": "art_f42f9b8c95dc4d99"
+                  },
+                  "tool": "inspect_evidence",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                },
+                {
+                  "args": {
+                    "job_id": "job_a97a3afee99d4923"
+                  },
+                  "tool": "get_job",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                }
+              ],
+              "valid": false,
+              "errors": [],
+              "reasks": 0,
+              "repairs": [],
+              "runaway": [],
+              "json_mode": true,
+              "fresh_state": [],
+              "read_requests": 1,
+              "runaway_reasks": 0,
+              "fresh_state_repairs": 0
+            },
+            "reasoning_accounting": "included-in-output"
+          }
+        },
+        "command_id": 15916,
+        "created_at": "2026-11-12 01:51:15.663452+05:30"
+      }
+    },
+    {
+      "turn": 11,
+      "slot": 0,
+      "decision": {
+        "id": "dec_98a7063d6c584bbc",
+        "turn_id": "turn_inv_2a0ff7689321_11",
+        "slot": 0,
+        "accepted": false,
+        "body": {
+          "error": {
+            "code": "INVALID",
+            "details": {
+              "control": "wait_for_jobs",
+              "outstanding": 0
+            },
+            "message": "nothing to wait for: no jobs or evidence plans are outstanding for this investigation; run something, request input, or conclude",
+            "next_action": "Correct the request and retry with a new command key."
+          },
+          "reason": "invalid",
+          "proposal": {
+            "calls": [],
+            "control": {
+              "action": "wait_for_jobs",
+              "summary": "decision-deadline",
+              "bounded_outcome": "decision-deadline"
+            },
+            "rationale": "no usable decision (decision-deadline); no effects proposed"
+          }
+        },
+        "created_at": "2026-11-12 01:51:22.334063+05:30"
+      },
+      "recorded_effect_receipts": [],
+      "original_response_artifact_id": "art_3b982affdc924571",
+      "original_response_sha256": "ba009cbff63fb2de58c9af09229e11436155ec5a6102f0314a2b2925543b5697",
+      "replies": [
+        {
+          "timing": {
+            "index": 25,
+            "artifact_id": "art_3b982affdc924571",
+            "message_index": 1,
+            "turn_id": "turn_inv_2a0ff7689321_11",
+            "provider_response_id": "0744013c8c64dae61b6e1d55b7211f67",
+            "started_unix": 1794428475.849754,
+            "ended_unix": 1794428482.293343,
+            "elapsed_s": 6.443589,
+            "remaining_s": 676.272735,
+            "decision_remaining_s": 226.908195,
+            "finish_reason": "stop"
+          },
+          "response": {
+            "canonical_system": "openai",
+            "conversation_id": "01a1cc45-99c8-7298-8705-746d6a0abfdc",
+            "failed_attempts": null,
+            "finish_reason": "stop",
+            "history_digest": null,
+            "kind": "response",
+            "metadata": null,
+            "model_id": "openai:MiniMax-M3.1-Flash",
+            "model_name": "MiniMax-M3.1-Flash",
+            "parts": [
+              {
+                "content": "We need continue investigation. Need understand current state, selection rule truncated in pinned facts. Need inspect evidence best recipe/table and perhaps source artifact to know exact code, selection rule details, get jobs. We have only 676 sec wall, allowance 228 compute before conclusion reserve. Need optimize. Need submit exactly one locked candidate or abstention. Existing incumbent v1 job ebe gamma .03 alpha .01 rmse 1.21839. New sweep best 1.195227 maybe candidate. Need inspect best recipe/evidence tables and source code perhaps artifact. Also selection rule likely authored note and truncated. Need perhaps get note? No read tool for notes. Pinned selection rule starts command argv and grid. Need reconstruct exact parameter space maybe inspect sweep best recipe/table. We can read artifacts. We need score incumbent under rule's scorer before relock. Incumbent selected by recipe sweep objective itself; selection rule says scorer likely eidos.search.recipe-sweep@1.0.0? But \"Incumbent v1: no recorded selection evidence (score it with rule's scorer before any re-lock)\" Perhaps lock first-lock without evidence was not sufficient. Need run recipe sweep? The selection rule's scorer likely eidos.search.recipe-sweep@1.0.0, data inputs train validation and config command. Need score candidate and incumbent perhaps could use job receipt metrics directly if scorer same sweep? Yet lab says no recorded selection evidence and score it with rule's scorer. To re-lock challenger must both scored by rule scorer, challenger after rule. Existing sweeps are scorer jobs likely evidence. Incumbent from sweep 2e. New sweep a97 also scorer. Pinned says incumbent no recorded selection evidence likely need perhaps run one recipe sweep focused? But relock requires challenger run after rule and both scored. We need understand.\n\nLet's read best recipes and evidence tables, plus source artifact to understand candidate. Four reads max. Use inspect 4: best recipe 2e, best recipe a97, table a97, source art_f42. Could also table 2e but candidate metrics known. Need inspect.",
+                "id": "reasoning_content",
+                "part_kind": "thinking",
+                "provider_details": null,
+                "provider_name": "openai",
+                "signature": null
+              },
+              {
+                "citations": null,
+                "content": "{\"rationale\":\"I need the exact incumbent and challenger recipes, their multi-seed selection evidence, and the authored training source before spending the remaining exploration allowance. This will reveal whether the latest sweep produced a re-lockable improvement and how to reproduce it.\",\"read\":[{\"tool\":\"inspect_evidence\",\"args\":{\"artifact_id\":\"art_2e272d4196d34611_best_recipe\",\"max_bytes\":12000}},{\"tool\":\"inspect_evidence\",\"args\":{\"artifact_id\":\"art_a97a3afee99d4923_best_recipe\",\"max_bytes\":12000}},{\"tool\":\"inspect_evidence\",\"args\":{\"artifact_id\":\"art_a97a3afee99d4923_evidence_table\",\"max_bytes\":16000}},{\"tool\":\"inspect_evidence\",\"args\":{\"artifact_id\":\"art_f42f9b8c95dc4d99\",\"max_bytes\":16000}}]}",
+                "id": null,
+                "part_kind": "text",
+                "provider_details": null,
+                "provider_name": null
+              }
+            ],
+            "provider_details": {
+              "finish_reason": "stop",
+              "timestamp": "2026-11-11T20:21:16Z"
+            },
+            "provider_name": "openai",
+            "provider_response_id": "0744013c8c64dae61b6e1d55b7211f67",
+            "provider_url": "http://127.0.0.1:49348/v1/",
+            "run_id": "01a1cc45-99c8-7298-8705-746cb2caa53c",
+            "state": "complete",
+            "timestamp": "2026-11-11T20:21:22.293343Z",
+            "usage": {
+              "audio_seconds": 0.0,
+              "cache_audio_read_tokens": 0,
+              "cache_read_tokens": 1536,
+              "cache_write_1h_tokens": 0,
+              "cache_write_tokens": 0,
+              "cost": null,
+              "details": {
+                "reasoning_tokens": 427,
+                "total_characters": 0
+              },
+              "input_audio_tokens": 0,
+              "input_tokens": 19589,
+              "output_audio_tokens": 0,
+              "output_reasoning_tokens": 427,
+              "output_tokens": 610
+            },
+            "workspace_ref": null
+          }
+        }
+      ],
+      "usage_receipt": {
+        "seq": 9508,
+        "project_id": "pilot-a4-36bcd43cc41d4a7b",
+        "investigation_id": "inv_2a0ff7689321",
+        "type": "model.usage",
+        "subject": "turn_inv_2a0ff7689321_11",
+        "body": {
+          "usage": {
+            "calls": 1,
+            "model": "openai-compatible:MiniMax-M3.1-Flash",
+            "attempt": 1,
+            "provider": "openai-compatible",
+            "per_request": [
+              {
+                "model": "MiniMax-M3.1-Flash",
+                "input_tokens": 19589,
+                "finish_reason": "stop",
+                "output_tokens": 610,
+                "reasoning_tokens": 427
+              }
+            ],
+            "request_ids": [
+              "0744013c8c64dae61b6e1d55b7211f67"
+            ],
+            "input_tokens": 19589,
+            "limit_reached": "a further request (timeout 300s) could outlive the decision deadline (227s)",
+            "output_tokens": 610,
+            "served_models": [
+              "MiniMax-M3.1-Flash"
+            ],
+            "elapsed_seconds": 6.487,
+            "reasoning_tokens": 427,
+            "structured_output": {
+              "mode": "json",
+              "reads": [
+                {
+                  "args": {
+                    "max_bytes": 12000,
+                    "artifact_id": "art_2e272d4196d34611_best_recipe"
+                  },
+                  "tool": "inspect_evidence",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                },
+                {
+                  "args": {
+                    "max_bytes": 12000,
+                    "artifact_id": "art_a97a3afee99d4923_best_recipe"
+                  },
+                  "tool": "inspect_evidence",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                },
+                {
+                  "args": {
+                    "max_bytes": 16000,
+                    "artifact_id": "art_a97a3afee99d4923_evidence_table"
+                  },
+                  "tool": "inspect_evidence",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                },
+                {
+                  "args": {
+                    "max_bytes": 16000,
+                    "artifact_id": "art_f42f9b8c95dc4d99"
+                  },
+                  "tool": "inspect_evidence",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                }
+              ],
+              "valid": false,
+              "errors": [],
+              "reasks": 0,
+              "repairs": [],
+              "runaway": [],
+              "json_mode": true,
+              "fresh_state": [],
+              "read_requests": 1,
+              "runaway_reasks": 0,
+              "fresh_state_repairs": 0
+            },
+            "reasoning_accounting": "included-in-output"
+          }
+        },
+        "command_id": 15929,
+        "created_at": "2026-11-12 01:51:22.320587+05:30"
+      }
+    },
+    {
+      "turn": 11,
+      "slot": 1,
+      "decision": {
+        "id": "dec_3ce0ffa8ae664226",
+        "turn_id": "turn_inv_2a0ff7689321_11",
+        "slot": 1,
+        "accepted": false,
+        "body": {
+          "error": {
+            "code": "INVALID",
+            "details": {
+              "control": "wait_for_jobs",
+              "outstanding": 0
+            },
+            "message": "nothing to wait for: no jobs or evidence plans are outstanding for this investigation; run something, request input, or conclude",
+            "next_action": "Correct the request and retry with a new command key."
+          },
+          "reason": "invalid",
+          "proposal": {
+            "calls": [],
+            "control": {
+              "action": "wait_for_jobs",
+              "summary": "decision-deadline",
+              "bounded_outcome": "decision-deadline"
+            },
+            "rationale": "no usable decision (decision-deadline); no effects proposed"
+          }
+        },
+        "created_at": "2026-11-12 01:51:27.425265+05:30"
+      },
+      "recorded_effect_receipts": [],
+      "original_response_artifact_id": "art_854a1066843a4f42",
+      "original_response_sha256": "8e4a1afb0235168292b9319c1acfdce084dbcbf82536d3d6035426a4d8375f35",
+      "replies": [
+        {
+          "timing": {
+            "index": 26,
+            "artifact_id": "art_854a1066843a4f42",
+            "message_index": 1,
+            "turn_id": "turn_inv_2a0ff7689321_11",
+            "provider_response_id": "07440143b244eddc3fd5ad913f3e778e",
+            "started_unix": 1794428482.396835,
+            "ended_unix": 1794428487.384843,
+            "elapsed_s": 4.988008,
+            "remaining_s": 669.725654,
+            "decision_remaining_s": 220.361114,
+            "finish_reason": "stop"
+          },
+          "response": {
+            "canonical_system": "openai",
+            "conversation_id": "01a1cc45-b35c-745c-8e9b-0c8dcebfa6da",
+            "failed_attempts": null,
+            "finish_reason": "stop",
+            "history_digest": null,
+            "kind": "response",
+            "metadata": null,
+            "model_id": "openai:MiniMax-M3.1-Flash",
+            "model_name": "MiniMax-M3.1-Flash",
+            "parts": [
+              {
+                "content": "We need continue investigation. Need parse state, time remaining 676 sec, but from 179 sec left no new compute. We need likely inspect latest sweep evidence table to identify best recipe and perhaps challenger/reproduce. Current incumbent v1 job_ebe... RMSE 1.218394, no recorded selection evidence; latest sweep job_a97... best objective 1.195227 likely better. Need inspect evidence tables and maybe source artifact to know candidate command/params. We have up to 8 model requests, reserve final. We can do read up to 4 artifacts per request. Need use tools available in actual response: read-only inspect_evidence etc. We need likely inspect latest sweep evidence table, best recipe, source artifact, perhaps diagnosis report. Then decide actions. Important: pinned facts say selection rule already recorded (truncated), current lock incumbent v1 no evidence. Latest sweep exploratory. Need score candidate under selection rule, likely run command candidate with fresh seeds? Need understand source artifact content. Let's inspect four artifacts: art_a97... evidence table, best recipe, source art_f42..., perhaps job_a97. We can request max bytes.",
+                "id": "reasoning_content",
+                "part_kind": "thinking",
+                "provider_details": null,
+                "provider_name": "openai",
+                "signature": null
+              },
+              {
+                "citations": null,
+                "content": "{\"rationale\":\"I need to inspect the latest successful sweep's ranked evidence, its reproducible best recipe, and the authored source artifact before choosing or running a challenger. The pinned facts show a current incumbent at validation RMSE 1.218394 and a later sweep reporting 1.195227, but the exact parameters and whether they beat the fixed selection rule must be verified.\",\"read\":[{\"tool\":\"inspect_evidence\",\"args\":{\"artifact_id\":\"art_a97a3afee99d4923_evidence_table\",\"max_bytes\":16384}},{\"tool\":\"inspect_evidence\",\"args\":{\"artifact_id\":\"art_a97a3afee99d4923_best_recipe\",\"max_bytes\":12000}},{\"tool\":\"inspect_evidence\",\"args\":{\"artifact_id\":\"art_f42f9b8c95dc4d99\",\"max_bytes\":16384}},{\"tool\":\"get_job\",\"args\":{\"job_id\":\"job_a97a3afee99d4923\"}}]}",
+                "id": null,
+                "part_kind": "text",
+                "provider_details": null,
+                "provider_name": null
+              }
+            ],
+            "provider_details": {
+              "finish_reason": "stop",
+              "timestamp": "2026-11-11T20:21:24Z"
+            },
+            "provider_name": "openai",
+            "provider_response_id": "07440143b244eddc3fd5ad913f3e778e",
+            "provider_url": "http://127.0.0.1:49348/v1/",
+            "run_id": "01a1cc45-b35b-71ac-a1db-3ecdf807757a",
+            "state": "complete",
+            "timestamp": "2026-11-11T20:21:27.384843Z",
+            "usage": {
+              "audio_seconds": 0.0,
+              "cache_audio_read_tokens": 0,
+              "cache_read_tokens": 18944,
+              "cache_write_1h_tokens": 0,
+              "cache_write_tokens": 0,
+              "cost": null,
+              "details": {
+                "reasoning_tokens": 233,
+                "total_characters": 0
+              },
+              "input_audio_tokens": 0,
+              "input_tokens": 19674,
+              "output_audio_tokens": 0,
+              "output_reasoning_tokens": 233,
+              "output_tokens": 431
+            },
+            "workspace_ref": null
+          }
+        }
+      ],
+      "usage_receipt": {
+        "seq": 9510,
+        "project_id": "pilot-a4-36bcd43cc41d4a7b",
+        "investigation_id": "inv_2a0ff7689321",
+        "type": "model.usage",
+        "subject": "turn_inv_2a0ff7689321_11",
+        "body": {
+          "usage": {
+            "calls": 1,
+            "model": "openai-compatible:MiniMax-M3.1-Flash",
+            "attempt": 1,
+            "provider": "openai-compatible",
+            "per_request": [
+              {
+                "model": "MiniMax-M3.1-Flash",
+                "input_tokens": 19674,
+                "finish_reason": "stop",
+                "output_tokens": 431,
+                "reasoning_tokens": 233
+              }
+            ],
+            "request_ids": [
+              "07440143b244eddc3fd5ad913f3e778e"
+            ],
+            "input_tokens": 19674,
+            "limit_reached": "a further request (timeout 300s) could outlive the decision deadline (227s)",
+            "output_tokens": 431,
+            "served_models": [
+              "MiniMax-M3.1-Flash"
+            ],
+            "elapsed_seconds": 5.031,
+            "reasoning_tokens": 233,
+            "structured_output": {
+              "mode": "json",
+              "reads": [
+                {
+                  "args": {
+                    "max_bytes": 16384,
+                    "artifact_id": "art_a97a3afee99d4923_evidence_table"
+                  },
+                  "tool": "inspect_evidence",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                },
+                {
+                  "args": {
+                    "max_bytes": 12000,
+                    "artifact_id": "art_a97a3afee99d4923_best_recipe"
+                  },
+                  "tool": "inspect_evidence",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                },
+                {
+                  "args": {
+                    "max_bytes": 16384,
+                    "artifact_id": "art_f42f9b8c95dc4d99"
+                  },
+                  "tool": "inspect_evidence",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                },
+                {
+                  "args": {
+                    "job_id": "job_a97a3afee99d4923"
+                  },
+                  "tool": "get_job",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                }
+              ],
+              "valid": false,
+              "errors": [],
+              "reasks": 0,
+              "repairs": [],
+              "runaway": [],
+              "json_mode": true,
+              "fresh_state": [],
+              "read_requests": 1,
+              "runaway_reasks": 0,
+              "fresh_state_repairs": 0
+            },
+            "reasoning_accounting": "included-in-output"
+          }
+        },
+        "command_id": 15934,
+        "created_at": "2026-11-12 01:51:27.413736+05:30"
+      }
+    },
+    {
+      "turn": 12,
+      "slot": 0,
+      "decision": {
+        "id": "dec_28404fea58ec439f",
+        "turn_id": "turn_inv_2a0ff7689321_12",
+        "slot": 0,
+        "accepted": false,
+        "body": {
+          "error": {
+            "code": "INVALID",
+            "details": {
+              "control": "wait_for_jobs",
+              "outstanding": 0
+            },
+            "message": "nothing to wait for: no jobs or evidence plans are outstanding for this investigation; run something, request input, or conclude",
+            "next_action": "Correct the request and retry with a new command key."
+          },
+          "reason": "invalid",
+          "proposal": {
+            "calls": [],
+            "control": {
+              "action": "wait_for_jobs",
+              "summary": "decision-deadline",
+              "bounded_outcome": "decision-deadline"
+            },
+            "rationale": "no usable decision (decision-deadline); no effects proposed"
+          }
+        },
+        "created_at": "2026-11-12 01:51:30.910558+05:30"
+      },
+      "recorded_effect_receipts": [],
+      "original_response_artifact_id": "art_bc78320d015d4fb7",
+      "original_response_sha256": "1e91146e8077cb30ff751ed24d806ae82b26ec6a4979f8e00fb243b308e7f6d3",
+      "replies": [
+        {
+          "timing": {
+            "index": 27,
+            "artifact_id": "art_bc78320d015d4fb7",
+            "message_index": 1,
+            "turn_id": "turn_inv_2a0ff7689321_12",
+            "provider_response_id": "0744014737d92231cfdf00084206b911",
+            "started_unix": 1794428487.574457,
+            "ended_unix": 1794428490.874345,
+            "elapsed_s": 3.299888,
+            "remaining_s": 664.548032,
+            "decision_remaining_s": 214.922327,
+            "finish_reason": "stop"
+          },
+          "response": {
+            "canonical_system": "openai",
+            "conversation_id": "01a1cc45-c795-7051-a320-f543860e6dd8",
+            "failed_attempts": null,
+            "finish_reason": "stop",
+            "history_digest": null,
+            "kind": "response",
+            "metadata": null,
+            "model_id": "openai:MiniMax-M3.1-Flash",
+            "model_name": "MiniMax-M3.1-Flash",
+            "parts": [
+              {
+                "content": "We need continue investigation. Need obey one JSON object. We have 665 sec remain, 8 requests total decision? It says decision budget at most 8 model requests including reads and possible correction. We have 11 turns used, but 8 requests for this decision likely now. Need strategically inspect latest sweep evidence to identify best recipe, current incumbent score 1.218, latest sweep best 1.195. Need challenger round and re-lock if beats incumbent, then reproduce. We need read evidence. We can issue read request for latest best_recipe/evidence_table, perhaps source artifact preview to understand code. We need source currently art_f42... Need inspect. Use at most 4 reads. Let's inspect latest evidence table, best recipe, source snapshot, maybe prior table/incumbent. Read output JSON only.",
+                "id": "reasoning_content",
+                "part_kind": "thinking",
+                "provider_details": null,
+                "provider_name": "openai",
+                "signature": null
+              },
+              {
+                "citations": null,
+                "content": "{\"rationale\":\"The latest sweep found a validation RMSE of 1.195227 versus the locked incumbent's 1.218394, but I need the exact winning hyperparameters, seed-level evidence, and current source implementation before deciding whether this is a valid challenger and how to reproduce it. I will inspect the latest sweep artifacts and the authored source bundle.\",\"read\":[{\"tool\":\"inspect_evidence\",\"args\":{\"artifact_id\":\"art_a97a3afee99d4923_best_recipe\",\"max_bytes\":16384}},{\"tool\":\"inspect_evidence\",\"args\":{\"artifact_id\":\"art_a97a3afee99d4923_evidence_table\",\"max_bytes\":16384}},{\"tool\":\"inspect_evidence\",\"args\":{\"artifact_id\":\"art_f42f9b8c95dc4d99\",\"max_bytes\":16384}},{\"tool\":\"get_job\",\"args\":{\"job_id\":\"job_ebe8d1a32ae04296\"}}]}",
+                "id": null,
+                "part_kind": "text",
+                "provider_details": null,
+                "provider_name": null
+              }
+            ],
+            "provider_details": {
+              "finish_reason": "stop",
+              "timestamp": "2026-11-11T20:21:28Z"
+            },
+            "provider_name": "openai",
+            "provider_response_id": "0744014737d92231cfdf00084206b911",
+            "provider_url": "http://127.0.0.1:49348/v1/",
+            "run_id": "01a1cc45-c795-7051-a320-f54283642ae4",
+            "state": "complete",
+            "timestamp": "2026-11-11T20:21:30.874345Z",
+            "usage": {
+              "audio_seconds": 0.0,
+              "cache_audio_read_tokens": 0,
+              "cache_read_tokens": 1536,
+              "cache_write_1h_tokens": 0,
+              "cache_write_tokens": 0,
+              "cost": null,
+              "details": {
+                "reasoning_tokens": 166,
+                "total_characters": 0
+              },
+              "input_audio_tokens": 0,
+              "input_tokens": 19589,
+              "output_audio_tokens": 0,
+              "output_reasoning_tokens": 166,
+              "output_tokens": 360
+            },
+            "workspace_ref": null
+          }
+        }
+      ],
+      "usage_receipt": {
+        "seq": 9516,
+        "project_id": "pilot-a4-36bcd43cc41d4a7b",
+        "investigation_id": "inv_2a0ff7689321",
+        "type": "model.usage",
+        "subject": "turn_inv_2a0ff7689321_12",
+        "body": {
+          "usage": {
+            "calls": 1,
+            "model": "openai-compatible:MiniMax-M3.1-Flash",
+            "attempt": 1,
+            "provider": "openai-compatible",
+            "per_request": [
+              {
+                "model": "MiniMax-M3.1-Flash",
+                "input_tokens": 19589,
+                "finish_reason": "stop",
+                "output_tokens": 360,
+                "reasoning_tokens": 166
+              }
+            ],
+            "request_ids": [
+              "0744014737d92231cfdf00084206b911"
+            ],
+            "input_tokens": 19589,
+            "limit_reached": "a further request (timeout 300s) could outlive the decision deadline (215s)",
+            "output_tokens": 360,
+            "served_models": [
+              "MiniMax-M3.1-Flash"
+            ],
+            "elapsed_seconds": 3.336,
+            "reasoning_tokens": 166,
+            "structured_output": {
+              "mode": "json",
+              "reads": [
+                {
+                  "args": {
+                    "max_bytes": 16384,
+                    "artifact_id": "art_a97a3afee99d4923_best_recipe"
+                  },
+                  "tool": "inspect_evidence",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                },
+                {
+                  "args": {
+                    "max_bytes": 16384,
+                    "artifact_id": "art_a97a3afee99d4923_evidence_table"
+                  },
+                  "tool": "inspect_evidence",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                },
+                {
+                  "args": {
+                    "max_bytes": 16384,
+                    "artifact_id": "art_f42f9b8c95dc4d99"
+                  },
+                  "tool": "inspect_evidence",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                },
+                {
+                  "args": {
+                    "job_id": "job_ebe8d1a32ae04296"
+                  },
+                  "tool": "get_job",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                }
+              ],
+              "valid": false,
+              "errors": [],
+              "reasks": 0,
+              "repairs": [],
+              "runaway": [],
+              "json_mode": true,
+              "fresh_state": [],
+              "read_requests": 1,
+              "runaway_reasks": 0,
+              "fresh_state_repairs": 0
+            },
+            "reasoning_accounting": "included-in-output"
+          }
+        },
+        "command_id": 15944,
+        "created_at": "2026-11-12 01:51:30.897892+05:30"
+      }
+    },
+    {
+      "turn": 12,
+      "slot": 1,
+      "decision": {
+        "id": "dec_6396a552d0414bd4",
+        "turn_id": "turn_inv_2a0ff7689321_12",
+        "slot": 1,
+        "accepted": false,
+        "body": {
+          "error": {
+            "code": "INVALID",
+            "details": {
+              "control": "wait_for_jobs",
+              "outstanding": 0
+            },
+            "message": "nothing to wait for: no jobs or evidence plans are outstanding for this investigation; run something, request input, or conclude",
+            "next_action": "Correct the request and retry with a new command key."
+          },
+          "reason": "invalid",
+          "proposal": {
+            "calls": [],
+            "control": {
+              "action": "wait_for_jobs",
+              "summary": "decision-deadline",
+              "bounded_outcome": "decision-deadline"
+            },
+            "rationale": "no usable decision (decision-deadline); no effects proposed"
+          }
+        },
+        "created_at": "2026-11-12 01:51:35.208892+05:30"
+      },
+      "recorded_effect_receipts": [],
+      "original_response_artifact_id": "art_48fbb0a822c64d53",
+      "original_response_sha256": "18f94061ff416bf8fdb4665d2b758e4910e512c21f166ba195b07d44949d077e",
+      "replies": [
+        {
+          "timing": {
+            "index": 28,
+            "artifact_id": "art_48fbb0a822c64d53",
+            "message_index": 1,
+            "turn_id": "turn_inv_2a0ff7689321_12",
+            "provider_response_id": "0744014b0ba5ac7c81951b480a3090a5",
+            "started_unix": 1794428490.946364,
+            "ended_unix": 1794428495.167819,
+            "elapsed_s": 4.221455,
+            "remaining_s": 661.176125,
+            "decision_remaining_s": 211.55042,
+            "finish_reason": "stop"
+          },
+          "response": {
+            "canonical_system": "openai",
+            "conversation_id": "01a1cc45-d4c1-70f1-825d-8f244115ecee",
+            "failed_attempts": null,
+            "finish_reason": "stop",
+            "history_digest": null,
+            "kind": "response",
+            "metadata": null,
+            "model_id": "openai:MiniMax-M3.1-Flash",
+            "model_name": "MiniMax-M3.1-Flash",
+            "parts": [
+              {
+                "content": "We need continue investigation from context. Need output exactly JSON object, likely need inspect evidence perhaps source artifact/project code and sweep evidence tables. Time 665 sec, allowed exploration 216 sec and 1? They say 0 challenger rounds, incumbent v1 no recorded selection evidence, score it with rule's scorer before any re-lock. Need understand current source art_f42..., selection rule truncated in pinned facts. Need inspect evidence artifacts best recipe/evidence table and source. We have read tools only inspect evidence, but source artifact maybe inspect_evidence? It might show files? Could inspect best recipe artifact and evidence table and source snapshot perhaps. We need decide next. Likely need score incumbent with rule's scorer—perhaps eidos.task.score-regression or score-classification instruction says score-classification even though regression weird? User explicitly \"Use ... eidos.task.score-classification for visible validation scoring.\" Could be component typo but catalog. Need search component catalog for score regression/classification and perhaps source inspection. We have up to 4 reads this request, model requests budget 8 but likely enough. Must reserve last for decision; reads count, one decision maybe 2 read requests + final decision. Need inspect source artifact and latest sweep table/best recipe. Could use inspect_evidence for art_f42 source bundle? max bytes. And art_a97 table/best. Also inspect incumbent receipt/job perhaps get_job. Let's request reads 4.",
+                "id": "reasoning_content",
+                "part_kind": "thinking",
+                "provider_details": null,
+                "provider_name": "openai",
+                "signature": null
+              },
+              {
+                "citations": null,
+                "content": "{\"rationale\":\"I need to recover the exact authored training recipe, the latest sweep winner and its full evidence table, and the incumbent job/receipt details before spending the remaining compute allowance. This will identify the current recipe's parameter grid, confirm how the incumbent must be scored under the locked selection rule, and reveal whether a targeted challenger or reproduction should come next.\",\"read\":[{\"tool\":\"inspect_evidence\",\"args\":{\"artifact_id\":\"art_f42f9b8c95dc4d99\",\"max_bytes\":16384}},{\"tool\":\"inspect_evidence\",\"args\":{\"artifact_id\":\"art_a97a3afee99d4923_best_recipe\",\"max_bytes\":16384}},{\"tool\":\"inspect_evidence\",\"args\":{\"artifact_id\":\"art_a97a3afee99d4923_evidence_table\",\"max_bytes\":16384}},{\"tool\":\"get_job\",\"args\":{\"job_id\":\"job_ebe8d1a32ae04296\"}}]}",
+                "id": null,
+                "part_kind": "text",
+                "provider_details": null,
+                "provider_name": null
+              }
+            ],
+            "provider_details": {
+              "finish_reason": "stop",
+              "timestamp": "2026-11-11T20:21:31Z"
+            },
+            "provider_name": "openai",
+            "provider_response_id": "0744014b0ba5ac7c81951b480a3090a5",
+            "provider_url": "http://127.0.0.1:49348/v1/",
+            "run_id": "01a1cc45-d4c1-70f1-825d-8f2390b494fe",
+            "state": "complete",
+            "timestamp": "2026-11-11T20:21:35.167819Z",
+            "usage": {
+              "audio_seconds": 0.0,
+              "cache_audio_read_tokens": 0,
+              "cache_read_tokens": 128,
+              "cache_write_1h_tokens": 0,
+              "cache_write_tokens": 0,
+              "cost": null,
+              "details": {
+                "reasoning_tokens": 289,
+                "total_characters": 0
+              },
+              "input_audio_tokens": 0,
+              "input_tokens": 19674,
+              "output_audio_tokens": 0,
+              "output_reasoning_tokens": 289,
+              "output_tokens": 485
+            },
+            "workspace_ref": null
+          }
+        }
+      ],
+      "usage_receipt": {
+        "seq": 9518,
+        "project_id": "pilot-a4-36bcd43cc41d4a7b",
+        "investigation_id": "inv_2a0ff7689321",
+        "type": "model.usage",
+        "subject": "turn_inv_2a0ff7689321_12",
+        "body": {
+          "usage": {
+            "calls": 1,
+            "model": "openai-compatible:MiniMax-M3.1-Flash",
+            "attempt": 1,
+            "provider": "openai-compatible",
+            "per_request": [
+              {
+                "model": "MiniMax-M3.1-Flash",
+                "input_tokens": 19674,
+                "finish_reason": "stop",
+                "output_tokens": 485,
+                "reasoning_tokens": 289
+              }
+            ],
+            "request_ids": [
+              "0744014b0ba5ac7c81951b480a3090a5"
+            ],
+            "input_tokens": 19674,
+            "limit_reached": "a further request (timeout 300s) could outlive the decision deadline (215s)",
+            "output_tokens": 485,
+            "served_models": [
+              "MiniMax-M3.1-Flash"
+            ],
+            "elapsed_seconds": 4.265,
+            "reasoning_tokens": 289,
+            "structured_output": {
+              "mode": "json",
+              "reads": [
+                {
+                  "args": {
+                    "max_bytes": 16384,
+                    "artifact_id": "art_f42f9b8c95dc4d99"
+                  },
+                  "tool": "inspect_evidence",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                },
+                {
+                  "args": {
+                    "max_bytes": 16384,
+                    "artifact_id": "art_a97a3afee99d4923_best_recipe"
+                  },
+                  "tool": "inspect_evidence",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                },
+                {
+                  "args": {
+                    "max_bytes": 16384,
+                    "artifact_id": "art_a97a3afee99d4923_evidence_table"
+                  },
+                  "tool": "inspect_evidence",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                },
+                {
+                  "args": {
+                    "job_id": "job_ebe8d1a32ae04296"
+                  },
+                  "tool": "get_job",
+                  "request": 1,
+                  "executed": true,
+                  "available": true
+                }
+              ],
+              "valid": false,
+              "errors": [],
+              "reasks": 0,
+              "repairs": [],
+              "runaway": [],
+              "json_mode": true,
+              "fresh_state": [],
+              "read_requests": 1,
+              "runaway_reasks": 0,
+              "fresh_state_repairs": 0
+            },
+            "reasoning_accounting": "included-in-output"
+          }
+        },
+        "command_id": 15949,
+        "created_at": "2026-11-12 01:51:35.195394+05:30"
+      }
+    }
+  ]
+}
