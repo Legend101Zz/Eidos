@@ -353,3 +353,95 @@ def test_a_plan_draft_over_selection_data_is_drafted_but_never_frozen(scene):
         scene.cmd("freeze_evidence_plan", {"plan_id": plan["plan_id"]})
     assert "selection" in err.value.message and err.value.details["data_provenance"] == {"split": "selection"}
     assert scene.record("evidence_plan", plan["plan_id"])["status"] == "draft"  # still a draft: nothing was frozen
+
+
+# =====================================================================================================================
+# 8. eidos.project.command publishes prediction-array/1 and task-array/1: typed references to the same bytes
+def test_prediction_array_outputs_reach_a_verdict_through_typed_references(scene):
+    from test_classification_accuracy_e2e import TRAIN_CODE, TRAIN_MANIFEST
+    from test_command_path import _publish
+
+    flow = scene.flow
+    manifest = {**TRAIN_MANIFEST, "id": "proj.array-centroid", "output": {"predictions": "prediction-array/1"}}
+    code = TRAIN_CODE.replace('schema="class-predictions/1"', 'schema="prediction-array/1"')
+    ref = _publish(scene.lab, scene.pid, manifest, {"m.py": code})["component_ref"]
+
+    def train(recipe: dict) -> str:
+        job_id = scene.cmd("run_component", {"component_ref": ref, "environment": "lab", "isolation_profile": "dev:same-user",
+                                             "config": {**recipe, "data_seed": 7, "n_heldout": N_HELDOUT}})["job_id"]
+        assert flow.run(job_id)["status"] == "succeeded"
+        return job_id
+
+    labels = flow.artifact(flow.labels(), "task-array/1")
+    assert scene.q("get_artifact", {"artifact_id": labels})["digest"] == scene.digest  # the attested bytes
+    baseline, candidate = train(BASELINE_RECIPE), train(CANDIDATE_RECIPE)
+    receipt = scene.assess_candidate(scene.request(baseline, candidate, labels=labels))
+    assert receipt["status"] == "launched", receipt
+
+    arm = next(a for a in scene.record("evidence_plan", receipt["plan_id"])["body"]["arms"] if a["id"] == "candidate")
+    inputs = arm["runs"][0]["jobs"][0]["inputs"]
+    typed = scene.q("get_artifact", {"artifact_id": inputs["labels"]})
+    assert typed["schema"] == "class-labels/1" and typed["digest"] == scene.digest and inputs["labels"] != labels
+    assert scene.q("get_artifact", {"artifact_id": inputs["candidate"]})["schema"] == "class-predictions/1"
+    assert scene.run_and_assess(receipt)["outcome"] == "protocol-passed"
+
+
+# =====================================================================================================================
+# 9. the train/evaluate path (paired-report metrics)
+EVALUATION = {"split": "heldout", "data_seed": 180, "pairs": 100}
+TRAIN_EVALUATE = {"seeds": [1, 2, 3], "baseline": {"train": {"epochs": 1}}, "candidate": {"train": {"epochs": 2}},
+                  "evaluation": EVALUATION}
+
+
+def _paired_charter(s, splits: list[str]) -> str:
+    charter = copy.deepcopy(CHARTER)
+    charter["study_id"] = f"paired-{len(splits)}"
+    charter["metrics"]["accuracy"]["identity"] = "paired-report/1:both-correct-rate"
+    charter["held_out"] = {"splits": splits}
+    s.cmd("commit_study_charter", {"charter": charter})
+    return f"charter:{charter['study_id']}"
+
+
+def _install_pytorch_components(s) -> None:
+    from test_classification_accuracy_e2e import _builtin
+    from test_command_path import _publish
+
+    for name in ("eidos.pytorch.train", "eidos.pytorch.evaluate"):
+        manifest, files = _builtin(name)
+        _publish(s.lab, s.pid, manifest, files)
+
+
+def _paired_request(s, charter_id: str, spec) -> dict:
+    return {"success_rule_id": RULE_ID, "charter_id": charter_id, "claim": CLAIM, "data_provenance": HELD_OUT,
+            "required_isolation": ISOLATION, **({"train_evaluate": spec} if spec is not None else {})}
+
+
+@pytest.mark.parametrize("spec, code, splits", [
+    pytest.param(None, "request-invalid", ["heldout"], id="no-spec"),
+    pytest.param({**TRAIN_EVALUATE, "parent": {"checkpoint_ref": "art_x"}}, "not-fresh-initialization", ["heldout"], id="parent"),
+    pytest.param({**TRAIN_EVALUATE, "seeds": []}, "seed-pairing", ["heldout"], id="no-seeds"),
+    pytest.param({**TRAIN_EVALUATE, "seeds": [1, 1]}, "seed-pairing", ["heldout"], id="repeated-seed"),
+    pytest.param({**TRAIN_EVALUATE, "evaluation": {"data_seed": 1}}, "output-schema", ["heldout"], id="no-split"),
+    pytest.param(TRAIN_EVALUATE, "held-out-unattested", ["other"], id="split-unattested"),
+])
+def test_the_train_evaluate_path_refuses_an_invalid_request(scene, spec, code, splits):
+    _install_pytorch_components(scene)
+    claims = scene.claims()
+    receipt = scene.assess_candidate(_paired_request(scene, _paired_charter(scene, splits), spec))
+    scene.assert_refused(receipt, code, claims=claims)
+
+
+def test_the_train_evaluate_path_refuses_when_its_components_are_not_installed(scene):
+    claims = scene.claims()
+    receipt = scene.assess_candidate(_paired_request(scene, _paired_charter(scene, ["heldout"]), TRAIN_EVALUATE))
+    scene.assert_refused(receipt, "output-schema", claims=claims)
+
+
+def test_a_step_refused_at_launch_rolls_the_whole_pipeline_back(scene):
+    """A valid train/evaluate request reaches launch; the project has no model adapter, so admission of the first
+    step is refused. Nothing is left behind: no plan, no new claim, and the reason is recorded."""
+    _install_pytorch_components(scene)
+    claims = scene.claims()
+    receipt = scene.assess_candidate(_paired_request(scene, _paired_charter(scene, ["heldout"]), TRAIN_EVALUATE))
+    scene.assert_refused(receipt, "step-blocked", claims=claims)
+    assert "blocked" in receipt["reasons"][0]["details"]
