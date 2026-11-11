@@ -25,6 +25,7 @@ from temporalio.exceptions import (
     RetryState,
 )
 
+from eidos.domain.turns import WALL_REACHED, turn_boundary
 from eidos.orchestration.names import ASSESSOR_QUEUE, INVESTIGATOR_QUEUE, WORKFLOW_QUEUE
 
 NON_RETRYABLE = ["PAYLOAD_TOO_LARGE", "FORBIDDEN", "INVALID", "NonRetryable"]
@@ -46,7 +47,7 @@ MAX_FAILED_TURN_RETRIES = 2
 FAILED_TURN_BACKOFF_SECONDS = 60
 MAX_FAILED_TURN_BACKOFF_SECONDS = 900
 TERMINAL_REASONS = ("concluded", "budget-exhausted", "max-turns-reached", "stopped", "investigation is stopped",
-                    "investigation is concluded")
+                    "investigation is concluded", WALL_REACHED)
 
 
 def turn_failure(exc: ActivityError) -> dict[str, Any]:
@@ -86,6 +87,14 @@ class InvestigationWorkflow:
         await workflow.wait_condition(
             lambda: self._wakes > seen or workflow.info().get_current_history_length() > history_limit,
             timeout=timedelta(seconds=idle))
+
+    @staticmethod
+    def _wall_idle(idle: int, completion: dict[str, Any]) -> int:
+        """The poll interval, shortened so that a quiet wait ends when the conclusion's reserve begins (ADR 0020)."""
+        if not completion:
+            return idle
+        until = float(completion["deadline_unix"]) - float(completion["conclude_threshold_seconds"]) - workflow.now().timestamp()
+        return max(1, min(idle, int(until) + 1))
 
     async def _wait_for_operator(self, a: dict, inv: str, history_limit: int, idle: int,
                                  status: str = "needs operator input (repeated refused proposals)") -> None:
@@ -155,6 +164,9 @@ class InvestigationWorkflow:
         if retryable and failed_turns <= MAX_FAILED_TURN_RETRIES:
             base = float(a.get("failed_turn_backoff_seconds", FAILED_TURN_BACKOFF_SECONDS))
             delay = min(base * 2 ** (failed_turns - 1), float(MAX_FAILED_TURN_BACKOFF_SECONDS))
+            completion = res.get("completion") or {}
+            if completion:  # ADR 0020: a retry's backoff never outlives the wall time
+                delay = max(0.0, min(delay, float(completion["deadline_unix"]) - workflow.now().timestamp()))
             self._status = f"retrying after a failed turn ({failed_turns}/{MAX_FAILED_TURN_RETRIES}) in {delay:g}s"
             await workflow.execute_activity(
                 "record_turn_retry", {"investigation_id": inv, "project_id": a["project_id"], "turn_counter": counter,
@@ -258,7 +270,7 @@ class InvestigationWorkflow:
             reason = res.get("stop_reason") or res.get("reason") or ""
             if reason in TERMINAL_REASONS or reason.startswith("investigation is stopped") or reason == "max-turns-reached":
                 self._status = "finished"
-                if reason in ("budget-exhausted", "max-turns-reached"):
+                if reason in ("budget-exhausted", "max-turns-reached", WALL_REACHED):
                     await self._surface_end(a, inv, counter, reason)
                 return {"status": "finished", "reason": reason, "turn_counter": counter}
             if reason != "error":
@@ -294,6 +306,20 @@ class InvestigationWorkflow:
                 a = {k: v for k, v in a.items() if k != "operator_cursor"}
                 if cursor:
                     a["operator_cursor"] = int(cursor)
+            completion = res.get("completion") or {}
+            if completion and reason == "deadline":
+                # A retry that would have crossed the boundary ended a little before it: the fresh turn starts there.
+                left = float(completion["deadline_unix"]) - float(completion["conclude_threshold_seconds"]) - workflow.now().timestamp()
+                if left > 0:
+                    await workflow.sleep(left)
+                self._status = "concluding (wall time reserved for the conclusion)"
+                continue
+            if completion and reason != "error" and float(completion["deadline_unix"]) - float(
+                    completion["conclude_threshold_seconds"]) <= workflow.now().timestamp():
+                # ADR 0020: inside the conclusion's reserve there is nothing to wait for. Start the next turn at once;
+                # it is told to conclude, and begin_turn ends the investigation at the wall deadline.
+                self._status = "concluding (wall time reserved for the conclusion)"
+                continue
             if not res.get("started") or reason in WAIT_REASONS or reason == "error":
                 self._status = "needs operator input (repeated refused proposals)" if needs_input else f"waiting ({reason})"
                 waited_since = workflow.now()
@@ -303,7 +329,7 @@ class InvestigationWorkflow:
                     try:
                         # Signals add history while waiting; leave the wait (and roll over at the loop
                         # top) once the history crosses its limit, so a wake storm cannot grow it.
-                        await self._wait_for_wake_or_full(seen, history_limit, idle)
+                        await self._wait_for_wake_or_full(seen, history_limit, self._wall_idle(idle, completion))
                         if not needs_input or workflow.info().get_current_history_length() > history_limit:
                             break
                         seen = self._wakes  # job/evidence wakes do not end a needs-input wait; operator news does
@@ -311,6 +337,9 @@ class InvestigationWorkflow:
                         pass
                     if not workflow.patched("idle-poll-needs-news-v1"):
                         break  # histories recorded before this change started a turn on every timeout
+                    if completion and float(completion["deadline_unix"]) - float(
+                            completion["conclude_threshold_seconds"]) <= workflow.now().timestamp():
+                        break  # ADR 0020: the conclusion's reserve has begun; the next turn concludes
                     # A quiet poll costs no model call: start a turn only if something happened.
                     news = await workflow.execute_activity(
                         "check_news", {"investigation_id": inv, "project_id": a["project_id"],
@@ -350,14 +379,26 @@ class TurnWorkflow:
         failure: dict[str, Any] = {}
         invalid_run = 0
         failed_waits = 0  # accepted waits whose calls left nothing outstanding
+        # ADR 0020 addendum R10: everything in this turn, every retry included, ends at its boundary. A schedule-to-close
+        # timeout covers all attempts of one activity; the check before each slot covers the slots between them.
+        boundary = turn_boundary(b["completion"]) if b.get("completion") else None
+
+        def bounded() -> dict[str, Any]:
+            if boundary is None:
+                return {}
+            return {"schedule_to_close_timeout": timedelta(seconds=max(1.0, boundary - workflow.now().timestamp()))}
+
         try:
             await workflow.execute_activity("build_context", base, task_queue=INVESTIGATOR_QUEUE,
                                             start_to_close_timeout=timedelta(seconds=120),
-                                            heartbeat_timeout=HB, retry_policy=SHORT)
+                                            heartbeat_timeout=HB, retry_policy=SHORT, **bounded())
             for slot in range(int(b.get("max_model_calls", 4))):
+                if boundary is not None and workflow.now().timestamp() >= boundary:
+                    stop = "deadline"
+                    break
                 d = await workflow.execute_activity("decide", {**base, "slot": slot}, task_queue=INVESTIGATOR_QUEUE,
                                                     start_to_close_timeout=timedelta(seconds=int(b.get("model_timeout", 300))),
-                                                    heartbeat_timeout=HB, retry_policy=MODEL)
+                                                    heartbeat_timeout=HB, retry_policy=MODEL, **bounded())
                 if not d.get("accepted"):
                     # Versioned change: histories recorded before it ended the turn on any rejection.
                     if d.get("reason") == "invalid" and workflow.patched("invalid-proposal-feedback-v1"):
@@ -387,7 +428,7 @@ class TurnWorkflow:
                     r = await workflow.execute_activity("execute_decision", {**base, "decision_id": d["decision_id"]},
                                                         task_queue=INVESTIGATOR_QUEUE,
                                                         start_to_close_timeout=timedelta(seconds=600),
-                                                        heartbeat_timeout=HB, retry_policy=SHORT)
+                                                        heartbeat_timeout=HB, retry_policy=SHORT, **bounded())
                     receipts.append({"decision_id": d["decision_id"], "summary": r.get("summary")})
                     if (r.get("stopped") or r.get("skipped")) and workflow.patched("refused-execution-cancels-v1"):
                         # F5d (review R9): execution refused (a stop, pause, turn closure or a run that lost the turn
@@ -427,6 +468,11 @@ class TurnWorkflow:
         except ActivityError as exc:
             cause = exc.cause
             stop = "budget-exhausted" if isinstance(cause, ApplicationError) and cause.type == "BUDGET_EXHAUSTED" else "error"
+            if stop == "error" and boundary is not None and (
+                    exc.retry_state == RetryState.TIMEOUT or workflow.now().timestamp() >= boundary):
+                # ADR 0020 addendum R10: the boundary ended this activity (a retry that would cross it counts). That is
+                # not a failed turn: the coordinator starts a fresh one, which sees the wall time then left.
+                stop = "deadline"
             if stop == "error":
                 failure = turn_failure(exc)
         finally:
@@ -442,7 +488,8 @@ class TurnWorkflow:
                 # the conclusion and closed the turn as cancelled, and the coordinator sees the same.
                 stop = "cancelled"
         return {"started": True, "turn_id": tid, "stop_reason": stop, "control": control,
-                **({"failure": failure} if failure else {})}
+                **({"failure": failure} if failure else {}),
+                **({"completion": b["completion"]} if b.get("completion") else {})}
 
 
 @workflow.defn(name="JobWorkflow")

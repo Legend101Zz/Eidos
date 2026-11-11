@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 from typing import Any
 
@@ -9,9 +10,9 @@ from eidos.application.handlers.components import catalog, env_for
 from eidos.application.handlers.investigations import check_exploration_allowed, inv_scope
 from eidos.application.handlers.projects import get_profile
 from eidos.application.service import Ctx, command
-from eidos.domain import branching
+from eidos.domain import branching, environments
 from eidos.domain import resolver as res
-from eidos.domain.errors import Invalid, NotFound
+from eidos.domain.errors import ConcludeRequired, Invalid, NotFound, PreflightRefused
 from eidos.domain.isolation import PROFILES
 
 DEFAULT_WALL_SECONDS = 900
@@ -28,6 +29,7 @@ def admit_job(ctx: Ctx, *, kind: str, lock: dict, investigation_id: str | None, 
     if charter_check:
         check_exploration_allowed(ctx, investigation_id)
     jid = job_id or f"job_{uuid.uuid4().hex[:16]}"
+    wall_seconds = _fit_wall(ctx, investigation_id, purpose, wall_seconds)
     lock = {**lock, "limits": {"wall_seconds": wall_seconds, "max_output_bytes": int(lock.get("max_output_bytes", 512 << 20)),
                                **(lock.get("limits") or {})}, "job_id": jid, "project_id": ctx.project_id}
     from eidos_wire import canonical_json, sha256_bytes
@@ -46,6 +48,27 @@ def admit_job(ctx: Ctx, *, kind: str, lock: dict, investigation_id: str | None, 
                     investigation_id=investigation_id)
     ctx.tx.enqueue("job.dispatch", f"dispatch:{jid}", {"job_id": jid, "project_id": ctx.project_id}, seq)
     return jid
+
+
+def _fit_wall(ctx: Ctx, investigation_id: str | None, purpose: str, wall_seconds: int) -> int:
+    """ADR 0020: a job of an investigation with a wall limit must end before the conclusion's reserve begins. A longer
+    limit is reduced (the lock records the limit the job ran with); once the reserve has begun no work is admitted.
+    The independent assessment of a frozen plan is exempt: the reserve never cuts off an assessor."""
+    if not investigation_id or purpose == "assessment":
+        return wall_seconds
+    inv = ctx.tx.get_record("investigation", investigation_id)
+    wall = (inv.body.get("wall") or {}) if inv else {}
+    deadline = wall.get("deadline_unix")
+    if deadline is None:
+        return wall_seconds
+    available = float(deadline) - time.time() - float(wall["conclude_threshold_seconds"])
+    if available < 1:
+        raise ConcludeRequired(
+            "no compute can be admitted: the investigation's remaining wall time is reserved for its conclusion",
+            details={"remaining_seconds": round(float(deadline) - time.time(), 1),
+                     "conclude_threshold_seconds": wall["conclude_threshold_seconds"]},
+            next_action="Conclude with the best scoped result the recorded evidence supports.")
+    return min(int(wall_seconds), int(available))
 
 
 def _inputs(ctx: Ctx, ids: dict[str, str]) -> dict[str, dict[str, Any]]:
@@ -100,6 +123,49 @@ def choose_profile(ctx: Ctx, requested: str | None, waiver: str | None) -> dict:
     return {"profile": profile, "requested": requested, "strongest_available": strongest, "explicit": bool(requested),
             "waiver": str(waiver)[:500] if weaker else None, "requested_by": ctx.principal.id,
             "note": None if strongest != "dev:same-user" else "no sealed profile on this platform; same-user is the strongest"}
+
+
+def _source_requirements(ctx: Ctx, artifact_id: str) -> list[str]:
+    """What a candidate source bundle declares in its own requirements file (a bundle that cannot be read declares
+    nothing here: its problems are reported when it is used)."""
+    from eidos.application.handlers.components import read_bundle
+    try:
+        _art, bundle = read_bundle(ctx, artifact_id)
+        files = bundle.get("files") or {}
+        text = files.get("requirements.txt")
+    except Exception:  # noqa: BLE001 - preflight must not turn an unreadable bundle into a different failure
+        return []
+
+    def include(path: str) -> str | None:
+        body = files.get(path)
+        return body if isinstance(body, str) else None
+
+    return environments.parse_requirements(text, include=include) if isinstance(text, str) else []
+
+
+def _preflight(ctx: Ctx, p: dict, target: dict, env: dict) -> list[dict[str, Any]]:
+    """ADR 0020: refuse a job whose component or project declares what this environment measurably lacks. Returns what
+    could not be decided, for the job's lock."""
+    man = target["manifest"]
+    needs = {target["ref"]: list(man.get("dependencies") or [])}
+    if man.get("implements") == environments.PROJECT_CODE_CAPABILITY:
+        declared = list(env.get("requirements") or [])
+        if (p.get("inputs") or {}).get("source"):
+            declared += _source_requirements(ctx, p["inputs"]["source"])
+        needs["the project"] = declared
+    verdict = environments.assess(needs, env)
+    problems = verdict["problems"]
+    if not problems:
+        return verdict["inconclusive"]
+    prof = get_profile(ctx).body.get("environments") or {}
+    raise PreflightRefused(
+        f"environment {env['name']!r} cannot run {target['ref']}: missing or incompatible "
+        f"{environments.describe_problems(problems)}",
+        details={"component": target["ref"], "environment": env["name"], "investigation_id": p.get("investigation_id"),
+                 "interpreter_digest": (env.get("capabilities") or {}).get("interpreter_digest"),
+                 "problems": problems[:environments.MAX_REPORTED], "available_environments": sorted(prof)},
+        next_action="Run it in an environment that has these packages (see the capabilities of each registered "
+                    "environment); if the environment changed since it was probed, register it again.")
 
 
 def _bind_extensions(ctx: Ctx, lock: dict, env: dict) -> None:
@@ -173,6 +239,7 @@ def resolve_lock(ctx: Ctx, p: dict, *, extra_config: dict | None = None) -> dict
         target = {**target, "manifest": man}
     env_name = p.get("environment") or target["environment"]["name"]
     env = env_for(ctx, env_name)
+    undecided = _preflight(ctx, p, target, env)
     missing_adapter = [c for c in env_caps if c.startswith("pytorch.adapter/")
                        and not (env.get("adapter") or (p.get("config") or {}).get("adapter"))]
     if missing_adapter:
@@ -196,6 +263,8 @@ def resolve_lock(ctx: Ctx, p: dict, *, extra_config: dict | None = None) -> dict
     lock["inputs"] = {k: {**lock["inputs"][k], "media_type": v["media_type"], "size": v["size"], "role": v["role"]}
                       for k, v in inputs.items()}
     lock["environment"] = env
+    if undecided:  # only when there is something to record, so other locks keep their digests
+        lock["preflight_inconclusive"] = undecided[:environments.MAX_REPORTED]
     choice = choose_profile(ctx, p.get("isolation_profile"), p.get("isolation_waiver"))
     profile_name = choice["profile"]
     lock["isolation_profile"] = profile_name

@@ -35,13 +35,22 @@ def classify(exc: BaseException) -> str:
     return "user-code"
 
 
+def _line_tail(text: str, chars: int) -> str:
+    """The end of ``text`` from a line boundary: the lab redacts what is stored, and a cut mid-line could separate a
+    secret from the name that identifies it."""
+    if len(text) <= chars:
+        return text
+    tail = text[-chars:]
+    return tail.split("\n", 1)[-1] if "\n" in tail else tail
+
+
 def error_record(exc: BaseException) -> Dict[str, Any]:
     tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
     return {
         "category": classify(exc),
         "type": f"{type(exc).__module__}.{type(exc).__qualname__}",
         "message": str(exc)[:MESSAGE_CHARS],
-        "traceback_tail": tb[-TRACEBACK_TAIL_CHARS:],
+        "traceback_tail": _line_tail(tb, TRACEBACK_TAIL_CHARS),
     }
 
 

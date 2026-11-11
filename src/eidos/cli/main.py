@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 import time
 import uuid
@@ -132,28 +131,11 @@ def component_builtins():
 
 
 def _register_lab_env(c: LabClient, project: str) -> None:
-    c.command("register_environment", {"name": "lab", "python_executable": sys.executable, "project_root": str(Path.cwd()),
-                                       "python_version": sys.version.split()[0], "installed": {},
-                                       "notes": "the lab's own interpreter; runs lab-environment components"},
-              project=project, key=f"lab-env:{project}:{sys.executable}")
-
-
-INSPECT = r"""
-import json, sys, platform
-from importlib import metadata
-inst = {}
-for d in metadata.distributions():
-    n = d.metadata.get("Name")
-    if n: inst[n.lower().replace("_", "-")] = d.version
-dev = {"cpu": True}
-try:
-    import torch
-    dev["cuda"] = torch.cuda.is_available(); dev["mps"] = bool(getattr(torch.backends, "mps", None) and torch.backends.mps.is_available())
-except Exception:
-    pass
-print(json.dumps({"python_version": platform.python_version(), "installed": inst, "devices": dev,
-                  "platform": platform.platform()}))
-"""
+    from eidos.runtime.env_probe import probe_environment, registration_key
+    payload = {"name": "lab", "python_executable": sys.executable, "project_root": str(Path.cwd()),
+               "python_version": sys.version.split()[0],
+               "notes": "the lab's own interpreter; runs lab-environment components", **probe_environment(sys.executable)}
+    c.command("register_environment", payload, project=project, key=registration_key(f"lab-env:{project}", payload))
 
 
 @project_app.command("register-env")
@@ -161,17 +143,15 @@ def register_env(project: str, python: str = typer.Option(..., help="the project
                  root: Path = typer.Option(..., help="project root (adapter importable from here)"),
                  name: str = "default", adapter: str = typer.Option(None, help="module:ATTR of the model adapter")):
     """Record an existing project environment without changing any of its packages."""
-    r = subprocess.run(env=_job_env(), args=[python, "-c", INSPECT], capture_output=True, text=True, cwd=root)
-    if r.returncode != 0:
-        typer.echo(r.stderr, err=True)
+    from eidos.runtime.env_probe import probe_environment, registration_key
+    info = probe_environment(python, project_root=root)
+    if info["capabilities"]["status"] != "ok":
+        typer.echo(f"cannot probe {python}: {info['capabilities'].get('error')}", err=True)
         raise typer.Exit(2)
-    info = json.loads(r.stdout)
-    import hashlib
-    lock = hashlib.sha256(json.dumps(info["installed"], sort_keys=True).encode()).hexdigest()
+    payload = {"name": name, "python_executable": python, "project_root": str(root.resolve()), "adapter": adapter, **info}
     try:
-        out(client().command("register_environment", {"name": name, "python_executable": python,
-                             "project_root": str(root.resolve()), "adapter": adapter, "lock_digest": "sha256:" + lock, **info},
-                             project=project, key=f"env:{project}:{name}:{lock}"))
+        out(client().command("register_environment", payload, project=project,
+                             key=registration_key(f"env:{project}:{name}", payload)))
     except LabError as exc:
         fail(exc)
 

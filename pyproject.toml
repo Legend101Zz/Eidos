@@ -30,6 +30,7 @@ dependencies = [
     "rich>=13,<16",
     "mcp>=2.0,<3",
     "pydantic-ai-slim[anthropic,openai]>=2.60,<3",
+    "packaging>=24",
 ]
 
 [project.scripts]

@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from eidos.application.ports import ArtifactStore, Ledger, LedgerTx, Notifier, Principal
-from eidos.domain.errors import CommandConflict, Forbidden, Invalid, NotFound
+from eidos.domain.errors import CommandConflict, Forbidden, Invalid, NotFound, PreflightRefused
 from eidos_wire import fingerprint
 
 log = logging.getLogger("eidos.commands")
@@ -128,6 +128,8 @@ class CommandService:
             except Exception as exc:  # noqa: BLE001 - only transient serialization failures are retried
                 state = getattr(getattr(exc, "orig", None), "sqlstate", None) or getattr(exc, "sqlstate", None)
                 if state not in ("40P01", "40001") or attempt == 3:
+                    if isinstance(exc, PreflightRefused):
+                        self._record_refusal(principal, pid, command_key, name, exc)
                     raise
                 log.warning("command retried after transient database conflict",
                             extra={"command": name, "sqlstate": state, "attempt": attempt + 1})
@@ -143,6 +145,20 @@ class CommandService:
         if self.notifier is not None:
             self.notifier.notify()
         return receipt
+
+    def _record_refusal(self, principal: Principal, pid: str, command_key: str, name: str, exc: PreflightRefused) -> None:
+        """ADR 0020: a preflight refusal leaves a ledger event, although its command's transaction rolled back, so the
+        investigator's later turns and the operator can see it. Best effort: it must not replace the refusal."""
+        d = exc.details
+        try:
+            with self.ledger.transaction() as tx:
+                tx.project_id = pid
+                tx.append_event(pid, "admission.refused", d.get("component"),
+                                {"command": name, "command_key": command_key, "by": principal.id, "reason": exc.message[:500],
+                                 "environment": d.get("environment"), "problems": d.get("problems")},
+                                d.get("investigation_id"))
+        except Exception:  # noqa: BLE001
+            log.warning("could not record an admission refusal", extra={"command": name, "project": pid})
 
     def _execute_once(self, spec: Spec, principal: Principal, name: str, pid: str, command_key: str,
                       payload: dict[str, Any], payload_hash: str, expected_revision: int | None,

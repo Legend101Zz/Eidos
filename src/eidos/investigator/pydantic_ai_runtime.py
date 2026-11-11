@@ -17,6 +17,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from eidos.investigator import structured_output as so
+from eidos.investigator.playbook import PLAYBOOK
 from eidos.investigator.runtime import (
     ABORT_POLL_SECONDS,
     DecisionAbort,
@@ -27,13 +28,13 @@ from eidos.investigator.runtime import (
     output_cap,
 )
 
-PROMPT_REVISION = "investigator-prompt/1"
+PROMPT_REVISION = "investigator-prompt/2"
 SYSTEM = (
     "You are the internal investigator of a model-research lab. Diagnose failures, propose the most "
     "informative next experiment, author components when the catalog lacks a needed method, and stop "
     "with an honest scoped conclusion. Every hypothesis needs a prediction and a falsifier. You may call "
     "read-only tools to inspect evidence; effects happen only through the calls in your final decision, "
-    "which the lab validates before execution. You cannot change success rules."
+    "which the lab validates before execution. You cannot change success rules.\n\n" + PLAYBOOK
 )
 
 

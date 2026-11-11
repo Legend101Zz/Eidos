@@ -85,6 +85,20 @@ class ResolutionError(DomainError):
     next_action = "Bind the missing or ambiguous capability, or adjust the request."
 
 
+class PreflightRefused(ResolutionError):
+    """The environment measurably cannot run the job (ADR 0020). Refused before admission and recorded by the service
+    after the transaction rolls back."""
+
+    code = "ENVIRONMENT_PREFLIGHT_REFUSED"
+
+
+class ConcludeRequired(DomainError):
+    """The investigation's remaining wall time is reserved for its conclusion (ADR 0020)."""
+
+    code = "CONCLUDE_REQUIRED"
+    http_status = 409
+
+
 class IncompatibleHook(ResolutionError):
     code = "INCOMPATIBLE_HOOK"
 

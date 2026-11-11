@@ -8,6 +8,7 @@ from typing import Any
 
 from eidos.application.scopes import scopes_for
 from eidos.application.service import Ctx, command
+from eidos.domain.environments import CAPABILITIES_SCHEMA
 from eidos.domain.errors import Invalid
 
 _PID = re.compile(r"^[a-z0-9][a-z0-9_\-]{1,62}$")
@@ -93,6 +94,15 @@ def register_environment(ctx: Ctx, p: dict) -> dict:
     body = {k: p.get(k) for k in ("python_executable", "project_root", "python_version", "installed",
                                   "lock_digest", "platform", "devices", "adapter", "isolation_profiles", "notes")}
     body["installed"] = {k.lower().replace("_", "-"): v for k, v in (p.get("installed") or {}).items()}
+    # ADR 0020. Measured by the registering client, on the host that holds the interpreter; absent when not probed,
+    # so locks of environments without a probe keep their digests.
+    caps = p.get("capabilities")
+    if caps is not None:
+        if not isinstance(caps, dict) or caps.get("schema") != CAPABILITIES_SCHEMA or caps.get("status") not in ("ok", "failed"):
+            raise Invalid(f"capabilities must be a {CAPABILITIES_SCHEMA} record with status ok or failed")
+        body["capabilities"] = caps
+    if p.get("requirements"):
+        body["requirements"] = sorted({str(r) for r in p["requirements"]})
     rec = ctx.tx.put_record("environment", env_id, ctx.project_id, body, created_by=ctx.principal.id, status="active")
     prof = get_profile(ctx, lock=True)
     nb = dict(prof.body)
