@@ -181,7 +181,8 @@ async def test_retryable_failure_records_a_retry_then_the_next_turn_runs(env):
     (retry,) = fake.retries
     assert retry["investigation_id"] == wid and retry["project_id"] == "p"
     assert retry["turn_counter"] == 1 and retry["failed_turn_id"] == "t1"
-    assert retry["attempt"] == 1 and retry["max_attempts"] == 2 and retry["delay_seconds"] == 1.0
+    assert retry["attempt"] == 1 and retry["max_attempts"] == 2
+    assert 1.0 <= retry["delay_seconds"] <= 1.2  # ADR 0023: up to 20 % deterministic jitter
     assert_failure(retry["failure"], retryable=True, retry_state="MAXIMUM_ATTEMPTS_REACHED")
     # The turn's own record was closed with the failure; the retry turn was an ordinary turn without one.
     c1, c2 = fake.completed_turn(1), fake.completed_turn(2)
@@ -227,7 +228,8 @@ async def test_persistent_retryable_failure_retries_twice_then_needs_the_operato
         await until(lambda: fake.turn_failed_marks, 60, "the turn-failed mark after the retries")
         assert [r["attempt"] for r in fake.retries] == [1, 2]
         assert [r["max_attempts"] for r in fake.retries] == [2, 2]
-        assert [r["delay_seconds"] for r in fake.retries] == [1.0, 2.0]  # base 1 s, doubling
+        d1, d2 = (r["delay_seconds"] for r in fake.retries)  # base 1 s, doubling, up to 20 % jitter (ADR 0023)
+        assert 1.0 <= d1 <= 1.2 and 2.0 <= d2 <= 2.4
         assert [r["turn_counter"] for r in fake.retries] == [1, 2]
         assert [r["failed_turn_id"] for r in fake.retries] == ["t1", "t2"]
         (mark,) = fake.turn_failed_marks

@@ -9,6 +9,7 @@ recorded call.
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -93,12 +94,95 @@ class DecisionResult:
 
 
 class ModelCallFailed(Exception):
-    """A provider call failed. ``possible_usage`` is recorded as uncertain spend."""
+    """A provider call failed. ``possible_usage`` is recorded as uncertain spend. ``failure`` (ADR 0023) classifies it:
+    ``{"kind": "transient"|"quota-exhausted"|"permanent", "status": int|None, "retry_after_seconds": float|None}``."""
 
-    def __init__(self, message: str, *, possible_usage: dict[str, Any] | None = None, retryable: bool = True):
+    def __init__(self, message: str, *, possible_usage: dict[str, Any] | None = None, retryable: bool = True,
+                 failure: dict[str, Any] | None = None):
         super().__init__(message)
         self.possible_usage = possible_usage or {}
-        self.retryable = retryable
+        self.failure = failure or {"kind": "transient" if retryable else "permanent", "status": None,
+                                   "retry_after_seconds": None}
+        self.retryable = retryable and self.failure.get("kind") != "quota-exhausted"
+
+
+# -- provider failures (ADR 0023, recommendation 6) -------------------------------------------------------------------
+# Quota exhaustion is not overload: retrying cannot succeed until the quota returns, so it stops at once and is recorded
+# as provider-unavailable. MiniMax reports it as HTTP 429 with error 2056 ("usage limit exceeded"); other providers say
+# "insufficient_quota", "exceeded your current quota" or "credit balance is too low".
+QUOTA_EXHAUSTED = re.compile(r"\b2056\b|usage limit (?:exceeded|reached)|insufficient[_ ]quota|quota (?:has been |is )?(?:exceeded|exhausted)"
+                             r"|exceeded your current quota|credit balance is too low|out of credits|billing hard limit",
+                             re.IGNORECASE)
+MAX_RETRY_AFTER_SECONDS = 600.0  # a Retry-After beyond this is not waited for within a turn
+
+
+def _chain(exc: BaseException) -> list[BaseException]:
+    out: list[BaseException] = []
+    cur: BaseException | None = exc
+    while cur is not None and cur not in out and len(out) < 8:
+        out.append(cur)
+        cur = cur.__cause__ or cur.__context__
+    return out
+
+
+def _headers(exc: BaseException) -> Any:
+    for e in _chain(exc):
+        response = getattr(e, "response", None)
+        headers = getattr(response, "headers", None) or getattr(e, "headers", None)
+        if headers is not None and hasattr(headers, "get"):
+            return headers
+    return None
+
+
+def retry_after_seconds(exc: BaseException, *, now: float | None = None) -> float | None:
+    """The provider's Retry-After for a failed request (``retry-after-ms``, or ``retry-after`` in seconds or as an HTTP
+    date), from the exception or the SDK error it wraps; None when absent or unreadable."""
+    headers = _headers(exc)
+    if headers is None:
+        return None
+    try:
+        ms = headers.get("retry-after-ms")
+        if ms is not None and float(ms) == float(ms):
+            return min(max(0.0, float(ms) / 1000.0), MAX_RETRY_AFTER_SECONDS)
+        value = headers.get("retry-after")
+    except Exception:  # noqa: BLE001 - an unusual header container: no hint
+        return None
+    if value is None:
+        return None
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        seconds = None
+    if seconds is not None:
+        return min(max(0.0, seconds), MAX_RETRY_AFTER_SECONDS) if seconds == seconds else None  # NaN: no hint
+    from email.utils import parsedate_to_datetime
+    try:
+        when = parsedate_to_datetime(str(value)).timestamp()
+    except (TypeError, ValueError, IndexError):
+        return None
+    return min(max(0.0, when - (time.time() if now is None else now)), MAX_RETRY_AFTER_SECONDS)
+
+
+def _status(exc: BaseException) -> int | None:
+    for e in _chain(exc):
+        for v in (getattr(e, "status_code", None), getattr(getattr(e, "response", None), "status_code", None)):
+            if isinstance(v, int):
+                return v
+    return None
+
+
+def provider_failure(exc: BaseException, retryable: bool) -> dict[str, Any]:
+    """Classify a failed provider request: quota exhaustion (never retried), transient (retried, honouring the
+    provider's Retry-After) or permanent. ``retryable`` is the transport classification of the error."""
+    chain = _chain(exc)
+    text = " ".join(f"{e} {getattr(e, 'body', '') or ''} {getattr(e, 'message', '') or ''}" for e in chain)
+    status = _status(exc)
+    # the runtime's own request/token limits (pydantic-ai UsageLimitExceeded) are never a provider's quota
+    local_limit = any(type(e).__name__ == "UsageLimitExceeded" for e in chain)
+    quota = not local_limit and bool(QUOTA_EXHAUSTED.search(text))
+    kind = "quota-exhausted" if quota else ("transient" if retryable else "permanent")
+    return {"kind": kind, "status": status, "retry_after_seconds": retry_after_seconds(exc),
+            "error": type(exc).__name__}
 
 
 class DecisionAborted(ModelCallFailed):

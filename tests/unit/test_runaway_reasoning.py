@@ -402,7 +402,7 @@ def test_a_truncated_answer_is_not_a_runaway_it_is_a_malformed_reply(kind):
 def test_a_truncated_answer_twice_is_the_structured_output_outcome_not_the_runaway_one():
     truncated = completion({"role": "assistant", "content": '{"rationale": "cut'}, finish="length", prompt=3000,
                            out=CAP, reasoning=None)
-    res = wire_runtime(Wire(truncated)).decide(request())
+    res = wire_runtime(Wire(truncated), fresh_state_repairs=0).decide(request())
     assert res.proposal["control"]["bounded_outcome"] == "structured-output-invalid"
     assert res.usage["structured_output"]["runaway"] == [] and res.usage["calls"] == 2
 
@@ -641,7 +641,7 @@ def test_a_tool_call_cut_off_by_the_output_cap_is_not_a_runaway_it_fails_as_befo
                           prompt=3000, out=CAP, reasoning=None)
     wire = Wire(cut)
     with pytest.raises(ModelCallFailed) as exc:
-        wire_runtime(wire, "tool").decide(request())
+        wire_runtime(wire, "tool", fresh_state_repairs=0).decide(request())
     assert len(wire.requests) == 2 and exc.value.possible_usage["calls"] == 2  # pydantic-ai's one output retry
     assert "runaway" not in exc.value.possible_usage.get("structured_output", {})
 
@@ -747,7 +747,7 @@ def test_a_runaway_then_a_malformed_reply_then_a_decision_uses_both_reasks():
 
 def test_a_runaway_then_two_malformed_replies_is_bounded_invalid_not_runaway():
     script = scripted(runaway_response(), "not json at all")
-    res = fn_runtime(script).decide(request())
+    res = fn_runtime(script, fresh_state_repairs=0).decide(request())
     assert len(script.seen) == 3 and res.proposal["control"]["bounded_outcome"] == "structured-output-invalid"
     assert res.usage["calls"] == 3 and res.usage["output_tokens"] == CAP + 40
 

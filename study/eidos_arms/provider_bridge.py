@@ -48,6 +48,9 @@ def serve(upstream, deadline, timeout, state):
                                            content=body, headers=headers)
                 self.send_response(response.status_code)
                 self.send_header('Content-Type', response.headers.get('Content-Type', 'application/json'))
+                for name in ('Retry-After', 'Retry-After-Ms'):  # ADR 0023: the provider's backoff hint reaches the runtime
+                    if response.headers.get(name) is not None:
+                        self.send_header(name, response.headers[name])
                 self.send_header('Content-Length', str(len(response.content)))
                 self.end_headers()
                 self.wfile.write(response.content)

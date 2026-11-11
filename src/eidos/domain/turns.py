@@ -88,9 +88,14 @@ def turn_seconds(configured: int, completion: dict[str, Any]) -> int:
 
 def turn_boundary(completion: dict[str, Any]) -> float:
     """When a turn must be over, retries and execution included: where the conclusion's reserve begins, or for the concluding
-    turn the wall deadline itself."""
+    turn the wall deadline itself. An exploratory turn (R14 #4, #5: ``exploration_deadline_unix``, set by begin_turn)
+    ends where the reproduction hold-back begins, so neither its activities nor their retries can spend it."""
     deadline = float(completion["deadline_unix"])
-    return deadline if completion["conclude_now"] else deadline - float(completion["conclude_threshold_seconds"])
+    if completion["conclude_now"]:
+        return deadline
+    if completion.get("exploration_deadline_unix") is not None:
+        return min(float(completion["exploration_deadline_unix"]), deadline - float(completion["conclude_threshold_seconds"]))
+    return deadline - float(completion["conclude_threshold_seconds"])
 
 
 # ADR 0022: dependent batches. One accepted decision may name an earlier call's result in a later call's arguments as

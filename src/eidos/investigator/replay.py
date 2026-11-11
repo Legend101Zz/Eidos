@@ -19,7 +19,7 @@ from collections.abc import Callable
 from typing import Any
 
 from eidos.domain.turns import validate_decision
-from eidos.investigator.context import POLICY_ID, POLICY_V1, pack
+from eidos.investigator.context import POLICY_ID, POLICY_V1, POLICY_V2, pack
 from eidos.investigator.runtime import DecisionRequest, InvestigatorRuntime
 
 ContextPolicy = Callable[[dict[str, Any], list[dict[str, Any]]], dict[str, Any]]
@@ -38,7 +38,11 @@ def _policy_v1(view: dict, catalog: list[dict]) -> dict:
     return pack(view, catalog, policy=POLICY_V1)
 
 
-CONTEXT_POLICIES: dict[str, ContextPolicy] = {POLICY_ID: pack, POLICY_V1: _policy_v1,
+def _policy_v2(view: dict, catalog: list[dict]) -> dict:
+    return pack(view, catalog, policy=POLICY_V2)
+
+
+CONTEXT_POLICIES: dict[str, ContextPolicy] = {POLICY_ID: pack, POLICY_V2: _policy_v2, POLICY_V1: _policy_v1,
                                               "context-policy/minimal-1": minimal_policy}
 
 

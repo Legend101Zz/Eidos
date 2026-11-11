@@ -45,6 +45,8 @@ def _terminal(ctx: Ctx, job: dict, status: str, info: dict) -> None:
         info = {**info, "error": redact_value(info["error"])}
     ctx.tx.update_job(job["id"], status=status, terminal=info)
     _release_job_budget(ctx, job)
+    from eidos.application.handlers.exploration import record_baseline
+    record_baseline(ctx, job, status, info)  # ADR 0023: the investigation's baseline and its scorer, recorded once
     if job["trial_id"]:
         tr = ctx.tx.get_record("trial", job["trial_id"])
         if tr:

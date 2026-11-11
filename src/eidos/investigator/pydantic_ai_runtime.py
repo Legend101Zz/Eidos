@@ -26,9 +26,10 @@ from eidos.investigator.runtime import (
     DecisionResult,
     ModelCallFailed,
     output_cap,
+    provider_failure,
 )
 
-PROMPT_REVISION = "investigator-prompt/2"
+PROMPT_REVISION = "investigator-prompt/3"  # ADR 0023: investigator-playbook/2
 SYSTEM = (
     "You are the internal investigator of a model-research lab. Diagnose failures, propose the most "
     "informative next experiment, author components when the catalog lacks a needed method, and stop "
@@ -152,6 +153,26 @@ def classify_failure(exc: BaseException) -> bool:
     if isinstance(status, int):
         return status in RETRYABLE_STATUS or status >= 500
     return True
+
+
+def model_call_failed(exc: BaseException, usage: dict[str, Any]) -> ModelCallFailed:
+    """The failure of a provider request (ADR 0023): classified (quota exhaustion, transient with the provider's
+    Retry-After, permanent) and recorded with the usage that may have been billed."""
+    retryable = classify_failure(exc)
+    failure = provider_failure(exc, retryable)
+    usage["failed_request"] = {"error": type(exc).__name__, "status_code": getattr(exc, "status_code", None),
+                               "kind": failure["kind"], "retry_after_seconds": failure["retry_after_seconds"]}
+    return ModelCallFailed(f"{type(exc).__name__}: {exc}"[:500], retryable=retryable, possible_usage=usage,
+                           failure=failure)
+
+
+# ADR 0023: a reply that stays malformed after the schema-guided re-ask is not answered with an empty wait (which the lab
+# refuses when nothing is outstanding). The runtime asks again from a fresh state: the original context alone, without
+# the malformed replies, with a short note of what was wrong. Bounded (``fresh_state_repairs``, default 1), counted
+# against the decision's requests and token envelope, and recorded in ``usage.structured_output.fresh_state``.
+DEFAULT_FRESH_STATE_REPAIRS = 1
+FRESH_STATE_NOTE = ("## Correction\nAn earlier reply to this context could not be used ({error}). This is a fresh "
+                    "request: that reply is not shown. Reply with ONLY your decision in the required shape.")
 
 
 def _reasoning_tokens(response: Any) -> int | None:
@@ -556,7 +577,8 @@ class PydanticAIRuntime:
             settings["extra_body"] = extra
         report: dict[str, Any] = {"mode": mode, "json_mode": bool(extra), "repairs": [], "reasks": 0,
                                   "errors": [], "valid": False, "read_requests": 0, "reads": [], "runaway": [],
-                                  "runaway_reasks": 0}
+                                  "runaway_reasks": 0, "fresh_state_repairs": 0, "fresh_state": []}
+        fresh_left = int(self.config.get("fresh_state_repairs", DEFAULT_FRESH_STATE_REPAIRS))
         self._report = report
         shape = so.JSON_SHAPE + ("\n\n" + so.read_shape(reads_allowed) if reads_allowed else "")
         instructions = SYSTEM + "\n\n" + shape
@@ -564,6 +586,7 @@ class PydanticAIRuntime:
         message = (req.context + "\n\n## This turn so far\n" + json.dumps(req.turn_so_far, default=str)[:20000]
                    + f"\n\n## Decision budget\nYou may make at most {max_requests} model requests for this decision, "
                    "including read requests and one possible correction of a malformed reply.\n\n" + shape)
+        fresh_message = message  # ADR 0023: the original request, for a fresh-state repair
 
         def parse(text: str, decision_only: bool = False) -> tuple[list[Any] | None, dict[str, Any] | None]:
             obj, repairs = so.extract_json(text)
@@ -602,6 +625,7 @@ class PydanticAIRuntime:
         # a runaway reply, which carries no answer; its tokens and its request still count.
         billed: list = []
         reask_pending = False  # counted only once the re-ask request is actually made
+        fresh_pending: dict[str, Any] | None = None  # likewise for a fresh-state repair (ADR 0023)
         runaway_pending = False  # likewise for the runaway re-ask
         while True:
             used = len(billed)
@@ -618,6 +642,10 @@ class PydanticAIRuntime:
             runaway_now, runaway_pending = runaway_pending, False
             if runaway_now:
                 report["runaway_reasks"] += 1
+            fresh_now, fresh_pending = fresh_pending, None
+            if fresh_now is not None:
+                report["fresh_state_repairs"] += 1
+                report["fresh_state"].append(fresh_now)
             with capture_run_messages() as captured:
                 try:
                     run = agent.run_sync(
@@ -628,6 +656,9 @@ class PydanticAIRuntime:
                 except EnvelopeRefused as exc:  # not started: nothing billed, a re-ask that was not sent is not counted
                     report["reasks"] -= int(reask_now)
                     report["runaway_reasks"] -= int(runaway_now)
+                    if fresh_now is not None:  # a fresh-state repair that was not sent is not counted
+                        report["fresh_state_repairs"] -= 1
+                        report["fresh_state"].pop()
                     outcome = "reasoning-runaway" if runaway_now else (
                         "structured-output-invalid" if report["errors"] and not report["valid"]
                         else "request-budget-exhausted")
@@ -650,12 +681,9 @@ class PydanticAIRuntime:
                         runaway_pending = True  # same history, same message, concise and decision-only
                         continue
                     usage = self._usage(billed)
-                    usage["failed_request"] = {"error": type(exc).__name__,
-                                               "status_code": getattr(exc, "status_code", None)}
                     report["repairs"] = sorted(set(report["repairs"]))
                     usage["structured_output"] = report
-                    raise ModelCallFailed(f"{type(exc).__name__}: {exc}"[:500], retryable=classify_failure(exc),
-                                          possible_usage=usage) from exc
+                    raise model_call_failed(exc, usage) from exc
             new_responses = [m for m in run.new_messages() if isinstance(m, ModelResponse)]
             billed += new_responses
             if new_responses and is_runaway(new_responses[-1]):
@@ -672,7 +700,15 @@ class PydanticAIRuntime:
             except (so.StructuredOutputError, ValidationError, ValueError) as exc:
                 msg = so.validation_message(exc)
                 report["errors"].append(msg)
-                if report["reasks"] >= 1 or used >= max_requests:  # at most one schema-guided re-ask
+                if (report["reasks"] >= 1 or report["fresh_state_repairs"]) and fresh_left > 0 and used < max_requests:
+                    # ADR 0023: still malformed after the re-ask: ask again from a fresh state (bounded, recorded)
+                    fresh_left -= 1
+                    fresh_pending = {"request": used + 1, "after_error": msg[:300]}  # counted once it is sent
+                    history = []
+                    message = fresh_message + "\n\n" + FRESH_STATE_NOTE.format(error=msg[:300])
+                    continue
+                if report["reasks"] >= 1 or report["fresh_state_repairs"] or used >= max_requests:
+                    # at most one schema-guided re-ask and the bounded fresh-state repairs
                     return self._bounded(history, model, max_requests, msg, "structured-output-invalid", report,
                                          billed)
                 reask_pending = True
@@ -818,11 +854,11 @@ class PydanticAIRuntime:
                 responses = [m for m in messages if isinstance(m, ModelResponse)]
                 if isinstance(exc, UnexpectedModelBehavior) and responses and is_runaway(responses[-1]):
                     return self._tool_runaway(req, list(messages), responses[-1], max_requests, settings)
-                usage = self._usage(messages)
-                usage["failed_request"] = {"error": type(exc).__name__,
-                                           "status_code": getattr(exc, "status_code", None)}
-                raise ModelCallFailed(f"{type(exc).__name__}: {exc}"[:500], retryable=classify_failure(exc),
-                                      possible_usage=usage) from exc
+                if isinstance(exc, UnexpectedModelBehavior) and responses \
+                        and int(self.config.get("fresh_state_repairs", DEFAULT_FRESH_STATE_REPAIRS)) > 0:
+                    # ADR 0023: the output stayed invalid through the output retries: one fresh-state request
+                    return self._tool_fresh_state(req, prompt, list(messages), exc, max_requests, settings)
+                raise model_call_failed(exc, self._usage(messages)) from exc
         usage = self._usage(result.all_messages())
         raw = json.loads(result.all_messages_json())
         return DecisionResult(to_proposal(result.output), usage, raw, self._settings(usage, max_requests),
@@ -893,11 +929,8 @@ class PydanticAIRuntime:
                     return bounded(f"reasoning runaway: output cap {output_cap(self.config)} reached twice without "
                                    "an answer", kept)
                 usage = self._usage(billed)
-                usage["failed_request"] = {"error": type(exc).__name__,
-                                           "status_code": getattr(exc, "status_code", None)}
                 usage["structured_output"] = report
-                raise ModelCallFailed(f"{type(exc).__name__}: {exc}"[:500], retryable=classify_failure(exc),
-                                      possible_usage=usage) from exc
+                raise model_call_failed(exc, usage) from exc
         new_messages = list(result.new_messages())
         billed.extend(m for m in new_messages if isinstance(m, ModelResponse))
         usage = self._usage(billed)
@@ -905,11 +938,69 @@ class PydanticAIRuntime:
         return DecisionResult(to_proposal(result.output), usage, json.loads(_messages_json(kept + new_messages)),
                               self._settings(usage, max_requests), PROMPT_REVISION)
 
+    def _tool_fresh_state(self, req: DecisionRequest, prompt: str, messages: list, error: BaseException,
+                          max_requests: int, settings: dict[str, Any]) -> DecisionResult:
+        """Tool mode (ADR 0023): the decision output stayed invalid through the output retries. One fresh-state run:
+        the original prompt and a note of the error, no earlier replies, no read tools, within the requests left. A
+        reply still invalid ends in the bounded no-effect ``structured-output-invalid``; every request is billed."""
+        from pydantic_ai import capture_run_messages
+        from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
+        from pydantic_ai.messages import ModelResponse
+        from pydantic_ai.usage import UsageLimits
+        billed = [m for m in messages if isinstance(m, ModelResponse)]
+        msg = str(error)[:300]
+        report: dict[str, Any] = {"mode": "tool", "errors": [msg], "fresh_state_repairs": 0, "fresh_state": [],
+                                  "valid": False}
+        self._report = report
+
+        def bounded(reason: str, history: list) -> DecisionResult:
+            usage = self._usage(billed)
+            usage["limit_reached"] = reason[:300]
+            usage["structured_output"] = report
+            return DecisionResult(no_effect_proposal("structured-output-invalid"), usage,
+                                  json.loads(_messages_json(history)), self._settings(usage, max_requests),
+                                  PROMPT_REVISION)
+
+        left = max_requests - len(billed)
+        if left < 1:
+            return bounded(f"structured output invalid in the last of {max_requests} requests: {msg}", messages)
+        report["fresh_state_repairs"] = 1
+        report["fresh_state"].append({"request": len(billed) + 1, "after_error": msg})
+        agent = self._agent(req, with_tools=False)
+        with capture_run_messages() as fresh:
+            try:
+                result = agent.run_sync(prompt + "\n\n" + FRESH_STATE_NOTE.format(error=msg),
+                                        usage_limits=UsageLimits(request_limit=min(left, 1 + int(
+                                            self.config.get("output_retries", 1)))), model_settings=settings or None)
+            except EnvelopeRefused as exc:  # not started: nothing billed
+                report["fresh_state_repairs"] = 0
+                report["fresh_state"] = []
+                return bounded(f"decision token envelope: {exc}", messages)
+            except (DecisionAborted, ModelCallFailed):
+                raise
+            except Exception as exc:  # noqa: BLE001
+                billed.extend(m for m in fresh if isinstance(m, ModelResponse) and m not in billed)
+                if isinstance(exc, (UnexpectedModelBehavior, UsageLimitExceeded)):  # invalid within the requests left
+                    report["errors"].append(str(exc)[:300])
+                    return bounded(f"structured output invalid after a fresh-state repair: {str(exc)[:200]}",
+                                   messages + list(fresh))
+                usage = self._usage(billed)
+                usage["structured_output"] = report
+                raise model_call_failed(exc, usage) from exc
+        new_messages = list(result.new_messages())
+        billed.extend(m for m in new_messages if isinstance(m, ModelResponse))
+        report["valid"] = True
+        usage = self._usage(billed)
+        usage["structured_output"] = report
+        return DecisionResult(to_proposal(result.output), usage, json.loads(_messages_json(messages + new_messages)),
+                              self._settings(usage, max_requests), PROMPT_REVISION)
+
     def _settings(self, usage: dict, max_requests: int) -> dict[str, Any]:
         return {"runtime": "pydantic-ai", "model": self.config.get("model"), "served_models": usage.get("served_models"),
                 "max_output_tokens": output_cap(self.config), "temperature": "provider default",
                 "max_requests_per_decision": max_requests, "output_retries": int(self.config.get("output_retries", 1)),
                 "transport_retries": 0, "args_encoding": "json-string",
+                "fresh_state_repairs": int(self.config.get("fresh_state_repairs", DEFAULT_FRESH_STATE_REPAIRS)),
                 "output_mode": self.config.get("output_mode", "tool"),
                 **({"runaway_reasoning_effort": self.config["runaway_reasoning_effort"]}
                    if self.config.get("runaway_reasoning_effort") else {}),

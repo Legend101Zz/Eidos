@@ -37,7 +37,7 @@ def test_reads_tool_then_returns_valid_decision():
     rt = PydanticAIRuntime({"_model_object": FunctionModel(fn), "model": "function:test"})
     res = rt.decide(req(tools))
     assert seen == ["pair"]
-    assert res.usage["calls"] == 2 and res.prompt_revision == "investigator-prompt/2"
+    assert res.usage["calls"] == 2 and res.prompt_revision == "investigator-prompt/3"
     assert res.model_settings["transport_retries"] == 0
     d = validate_decision(res.proposal, max_calls=4)
     assert d["calls"][0]["tool"] == "run_component" and d["calls"][0]["args"]["component_ref"] == "a@1.0.0"
@@ -59,11 +59,27 @@ def test_invalid_output_is_repaired_within_bound_and_counted():
     assert res.proposal["rationale"] == "fixed" and res.usage["calls"] == 2
 
 
-def test_repeated_invalid_output_fails_without_unbounded_retries():
+def test_repeated_invalid_output_ends_bounded_after_one_fresh_state_repair():
+    # ADR 0023: invalid through the output retries -> one fresh-state run -> still invalid -> a bounded no-effect outcome
+    seen = []
+
     def fn(messages, info: AgentInfo):
+        seen.append(messages)
         return ModelResponse(parts=[TextPart("I refuse to use the schema")])
 
     rt = PydanticAIRuntime({"_model_object": FunctionModel(fn), "model": "function:test", "output_retries": 1})
+    res = rt.decide(req())
+    assert res.proposal["control"]["bounded_outcome"] == "structured-output-invalid"
+    assert res.usage["structured_output"]["fresh_state_repairs"] == 1 and res.usage["calls"] == len(seen) == 4
+    assert len(seen[2]) == 1  # the fresh-state run starts from the original prompt alone, not the malformed history
+
+
+def test_repeated_invalid_output_fails_without_unbounded_retries_when_fresh_state_repair_is_off():
+    def fn(messages, info: AgentInfo):
+        return ModelResponse(parts=[TextPart("I refuse to use the schema")])
+
+    rt = PydanticAIRuntime({"_model_object": FunctionModel(fn), "model": "function:test", "output_retries": 1,
+                            "fresh_state_repairs": 0})
     with pytest.raises(ModelCallFailed):
         rt.decide(req())
 
