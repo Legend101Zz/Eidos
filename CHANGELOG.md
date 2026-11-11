@@ -8,6 +8,8 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 - **Bounded autonomous finalization (ADR 0027).** Default autonomous policy admits one read-only conclude/stop turn after repeated refusals, runtime exhaustion or exploration completion, inside the original wall/token envelope and separately accounted. It reports the fixed incumbent and evidence limitations, or abstains; failures retain structured input-needed and export receipts. Operator policy remains available.
 - **Prospective rule preflight and diagnostics.** Scorer-port bindings are validated before a selection rule becomes immutable. Classification/reference and reproduction-seed examples explain correct contracts. Refused decisions retain raw response artifact references.
 
+- **CI package availability.** Ubuntu package jobs use the official archive when the runner image points at the Azure mirror, whose repeated DNS failures blocked verification. Signed-package checks and all test jobs remain required.
+
 ## Unreleased: 1.3.0
 
 ### Incumbent and challengers, baseline identity, fresh-state repair, provider resilience (ADR 0023, G1)

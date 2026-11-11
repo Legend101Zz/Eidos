@@ -10,7 +10,10 @@ SRC="${1:?usage: separate_identity_setup.sh <dir holding the worker SDK (repo ch
 PYVER="${EIDOS_CANDIDATE_PYVER:-3.12}"
 VENV="${EIDOS_CANDIDATE_VENV:-/opt/eidos/envs/sealed-py312}"
 [ "$(id -u)" = 0 ] || { echo "must run as root" >&2; exit 2; }
-command -v bwrap >/dev/null || { apt-get update -qq && apt-get install -y -qq bubblewrap; }
+command -v bwrap >/dev/null || {
+  bash "$(dirname "${BASH_SOURCE[0]}")/ubuntu_archive.sh"
+  apt-get update -qq && apt-get install -y -qq bubblewrap
+}
 if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
   sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 fi
