@@ -49,6 +49,7 @@ def admit_job(ctx: Ctx, *, kind: str, lock: dict, investigation_id: str | None, 
                        "lock_digest": digest, "created_by": ctx.principal.id})
     for port, inp in (lock.get("inputs") or {}).items():
         ctx.tx.add_lineage(ctx.project_id, inp["artifact_id"], jid, f"input:{port}")
+    exploration.record_admission(ctx, investigation_id, purpose, jid)  # the shared round history (H2, R17 #1)
     seq = ctx.event("job.admitted", jid, {"kind": kind, "component": lock.get("component", {}).get("ref"),
                                           "purpose": purpose, "lock_digest": digest},
                     investigation_id=investigation_id)

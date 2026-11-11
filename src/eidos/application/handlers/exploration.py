@@ -52,6 +52,7 @@ def _notes(ctx: Ctx, inv_id: str) -> list[dict[str, Any]]:
 
 
 MCP_BATCH_KIND = "mcp-batch"  # the prospective record ``run_batch`` writes before any of its calls (ADR 0025)
+ADMISSION_KIND = "round_admission"  # a challenger admitted outside a decision, with its MCP batch if any (H2, R17 #1)
 
 
 def _batch_notes(ctx: Ctx, inv_id: str) -> list[dict[str, Any]]:
@@ -75,11 +76,15 @@ def turn_log(ctx: Ctx, inv_id: str, jobs: list[dict[str, Any]] | None = None
     stopping rules (``max_rounds``, patience, ceiling) hold on both paths:
 
     * an investigator turn: the jobs and notes its accepted decisions recorded;
-    * an MCP ``run_batch``: its ``mcp-batch`` record opens an entry, and the jobs admitted outside a decision after it
-      belong to it (``batch``: its command key), however many calls or resumptions it takes;
+    * an MCP ``run_batch``: its ``mcp-batch`` record opens an entry, and the challengers its calls admitted (recorded
+      at admission, ``round_admission``) belong to it (``batch``: its command key), however many calls or resumptions
+      it takes;
+    * a challenger admitted outside a decision and outside a batch (a direct call) is its own entry: reading an output
+      of an earlier round never hides a new challenger in it (scoring a pending one stays admitted, R14 #6);
     * a ``candidate_lock`` or ``selection_rule`` note recorded outside a decision (``submit_candidate``,
       ``record_note``) is its own entry, so the rounds after the first lock count from it;
-    * any other job admitted outside a decision joins the entry before it, or opens one after such a note.
+    * any other job admitted outside a decision (never a challenger checked at admission) joins the round of what it
+      reads, else the entry before it.
 
     Entries are numbered from 1 in ledger order (``turn``); a decision's turn keeps its place among them."""
     events: list[tuple[tuple[int, Any], int, str, Any]] = []
@@ -107,32 +112,72 @@ def turn_log(ctx: Ctx, inv_id: str, jobs: list[dict[str, Any]] | None = None
     for n in _notes(ctx, inv_id):
         if n.get("kind") in ("candidate_lock", "selection_rule") and str(n["id"]) not in decided_notes:
             events.append((_at(n.get("created_at")), 1, "note", n))
-    for j in jobs if jobs is not None else _jobs(ctx, inv_id):
+    all_jobs = jobs if jobs is not None else _jobs(ctx, inv_id)
+    for j in all_jobs:
         if str(j["id"]) not in decided_jobs:
             events.append((_at(j.get("created_at")), 2, "job", j))
+    admitted = {r.id: r.body.get("batch") for r in ctx.tx.list_records(ctx.project_id, ADMISSION_KIND, parent_id=inv_id,
+                                                                         limit=100000)}
     events.sort(key=lambda e: (e[0], e[1]))
     log: list[dict[str, Any]] = []
     note_turns: dict[str, int] = {}
+    batches: dict[str, dict[str, Any]] = {}
+    produced_in: dict[str, dict[str, Any]] = {}  # artifact id -> the entry whose job produced it
     current: dict[str, Any] | None = None
+    by_id = {str(j["id"]): j for j in all_jobs}
+
+    def place(entry: dict[str, Any], job_ids: list[str]) -> None:
+        for jid in job_ids:
+            for o in (by_id.get(jid) or {}).get("outputs") or []:
+                produced_in.setdefault(str(o.get("artifact_id")), entry)
+
+    def new_entry(**kw: Any) -> dict[str, Any]:
+        e: dict[str, Any] = {"turn": len(log) + 1, "jobs": [], **kw}
+        log.append(e)
+        return e
+
     for _, _, what, item in events:
         if what == "job":
-            if current is None or current.get("note"):
-                current = {"turn": len(log) + 1, "jobs": [], "source": "direct"}
-                log.append(current)
-            current["jobs"].append(str(item["id"]))
+            jid = str(item["id"])
+            parent = next((produced_in[str(a)] for a in (item.get("inputs") or {}).values() if str(a) in produced_in),
+                          None)
+            key = admitted.get(jid)
+            if jid in admitted:  # a challenger admitted outside a decision (H2): its batch, or its own round
+                entry = (batches.get(key) if key else None) or new_entry(source="direct")
+            else:
+                entry = parent or (current if current is not None and not current.get("note") else None) \
+                    or new_entry(source="direct")
+            entry["jobs"].append(jid)
+            place(entry, [jid])
             continue
-        current = {"turn": len(log) + 1, "jobs": list(item["jobs"]) if what == "turn" else []}
-        log.append(current)
         if what == "turn":
-            current.update(source="turn", seq=item["seq"])
+            current = new_entry(source="turn", seq=item["seq"])
+            current["jobs"].extend(item["jobs"])
+            place(current, item["jobs"])
             for nid in item["notes"]:
                 note_turns[nid] = current["turn"]
         elif what == "batch":
-            current.update(source="batch", batch=item["key"])
+            current = new_entry(source="batch", batch=item["key"])
+            if item["key"]:
+                batches.setdefault(item["key"], current)
         else:
-            current.update(source="note", note=str(item["id"]))
+            current = new_entry(source="note", note=str(item["id"]))
             note_turns[str(item["id"])] = current["turn"]
     return log, note_turns
+
+
+def record_admission(ctx: Ctx, inv_id: str | None, purpose: str, job_id: str) -> None:
+    """Record a challenger admitted outside a decision in the shared round history (H2, R17 #1), with the MCP batch
+    whose call admitted it, if any. A decision's jobs are recorded by its receipts instead."""
+    if not inv_id or ctx.admission or purpose not in rules.CHALLENGER_PURPOSES:
+        return
+    batch = _batch_key(ctx)
+    if batch is not None and not any(b["key"] == batch for b in _batch_notes(ctx, inv_id)):
+        batch = None
+    ctx.tx.put_record(ADMISSION_KIND, job_id, ctx.project_id,
+                      {"investigation_id": inv_id, "job_id": job_id, "purpose": purpose, "batch": batch,
+                       "command_key": ctx.command_key}, created_by=ctx.principal.id, status="recorded",
+                      parent_id=inv_id)
 
 
 def frozen(ctx: Ctx, inv_id: str) -> bool:

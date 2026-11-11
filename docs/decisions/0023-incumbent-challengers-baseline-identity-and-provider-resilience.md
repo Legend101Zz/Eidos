@@ -151,3 +151,34 @@ exploration spend the reproduction hold-back. Each is closed as follows.
    and `context-policy/3` no longer guesses one.
 
 `exploration-policy/2` identifies these rules in the turn spec.
+
+## Addendum H2 (review R17 findings 1–3): one round history, every challenger purpose, a bounded pre-lock phase
+
+**1. One round history for both paths.** The challenger rounds and the turn of the first lock were built only from
+accepted investigator decisions, so a lock recorded by MCP `submit_candidate` had no turn and `run_batch` jobs belonged
+to no round: an MCP investigation never reached `max_rounds` or patience. The lab now derives one **shared round
+history** from the ledger, in ledger order (`exploration.turn_log`): an investigator turn (the jobs and notes its
+accepted decisions recorded); an MCP batch (opened by the `mcp-batch` record `run_batch` writes before any call, holding
+the challengers its calls admitted, however many calls or resumptions it takes); a challenger admitted by a direct call
+outside a batch (always its own round: reading an earlier round's outputs never hides a new challenger in it); a
+`candidate_lock` or `selection_rule` note recorded outside a decision (its own entry, so rounds count from an MCP lock).
+Every challenger admitted outside a decision is recorded at admission (`round_admission`: the job, its purpose and its
+batch's command key); other jobs outside a decision join the round of what they read, else the entry before them. The domain rules (`rounds`, `state`) are unchanged and see
+entries numbered from 1. A call of an MCP batch is checked against the state **as its batch began** (its own jobs not
+yet counted), as a decision's effects are checked against the state when it was accepted: one batch is one round, and
+`max_rounds`, patience and the ceiling stop the next round on either path. Scoring the batch's own pending challengers
+remains admitted.
+
+**2. `measurement-development` is gated.** `REFUSED_WHEN_FINALIZING` is now every challenger purpose
+(`open-search`, `hypothesis-test`, `measurement-development`), on the decision path and at admission. The only allowance
+is unchanged and narrow: a job that reads an output of a pending challenger (or of what already read one) finishes an
+already admitted round (R14 #6).
+
+**3. The hold-back is protected before the first lock.** With no incumbent the state used to return `baseline` before
+any hold-back check, so a long baseline, diagnosis or sweep could spend the time and tokens kept for reproduction,
+export and the conclusion. The wall and token hold-back now apply in the pre-lock phase too: the exploration deadline
+caps a `baseline` turn and its admissions (`EXPLORING_PHASES`), the live check between decisions and the token
+reservation check apply to it, and when the allowance is spent the phase is `finalize` with `candidate: "none"`. The
+finalization path reports honestly: new exploratory work is refused with a message that no candidate was locked; the
+investigator may still lock an already scored candidate (no compute) or conclude stating that no candidate was found
+within the allowance. Nothing is invented to submit.
