@@ -4,6 +4,10 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.4.0
 
+- Preserve ordinary finalization's reproduction/export/confirmation under the default policy; admit conclude-only recovery separately and handle disabled operator admission without deadline loops (R18).
+- Isolate direct and derived held-out evidence in finalization reads and packed context using durable allowlists and project-wide provenance; reconcile failed/timed-out recovery children with structured receipts before retry or restart.
+- Replay the six verified historical N01-r2 responses and usage receipts through the coordinator.
+
 - **Deadline admission (ADR 0026).** Valid read follow-ups can use the actual remaining decision/turn time with a durable-write margin; HTTP and total request timeouts fit that boundary. Runtime deadline exhaustion is explicit telemetry/control, never a fabricated model wait. The exploration boundary transitions to finalization without sleeping through hold-back.
 - **Bounded autonomous finalization (ADR 0027).** Default autonomous policy admits one read-only conclude/stop turn after repeated refusals, runtime exhaustion or exploration completion, inside the original wall/token envelope and separately accounted. It reports the fixed incumbent and evidence limitations, or abstains; failures retain structured input-needed and export receipts. Operator policy remains available.
 - **Prospective rule preflight and diagnostics.** Scorer-port bindings are validated before a selection rule becomes immutable. Classification/reference and reproduction-seed examples explain correct contracts. Refused decisions retain raw response artifact references.

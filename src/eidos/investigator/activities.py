@@ -305,8 +305,9 @@ class InvestigatorActivities:
         turn = self.wf.query("get_turn", {"turn_id": a["turn_id"]}, project=p)
         if turn.get("context"):
             return {"context_artifact_id": turn["context"]["context_artifact_id"], "reused": True}
-        view = self.inv.query("investigation_view", {"investigation_id": a["investigation_id"], "horizon": turn["horizon"]},
-                              project=p)
+        view = self.inv.query("finalization_view", {"turn_id": a["turn_id"]}, project=p) \
+            if turn["spec"].get("evidence_allowlist") is not None else self.inv.query(
+                "investigation_view", {"investigation_id": a["investigation_id"], "horizon": turn["horizon"]}, project=p)
         view["budgets"] = turn["spec"].get("budgets")  # immutable snapshot taken at begin_turn
         if turn["spec"].get("completion"):
             view["completion"] = turn["spec"]["completion"]  # likewise (ADR 0020)
@@ -315,6 +316,8 @@ class InvestigatorActivities:
         if turn["spec"].get("finalization"):
             view["finalization"] = turn["spec"]["finalization"]  # likewise (ADR 0023)
         catalog = self.inv.query("search_components", {"limit": 100, "as_of_horizon": turn["horizon"]}, project=p)["components"]
+        if turn["spec"].get("evidence_allowlist") is not None:
+            catalog = [c for c in catalog if c["ref"] in turn["spec"]["evidence_allowlist"].get("components", [])]
         packed = pack(view, catalog, policy=turn["spec"].get("context_policy") or POLICY_V1)
         if turn["spec"].get("finalization"):
             # Exact recovery evidence is supplied independently of context-policy windowing.
@@ -437,7 +440,8 @@ class InvestigatorActivities:
         abort = DecisionAbort(decision_deadline(started, float(limits.get("deadline_seconds") or 0)))
         req = DecisionRequest(turn_id=a["turn_id"], slot=a["slot"], context=context_text,
                               turn_so_far=self._turn_so_far(p, turn), limits=limits, settings=cfg,
-                              read_tools=self._read_tools(p, finalization=bool(turn["spec"].get("finalization"))), view=view, abort=abort)
+                              read_tools=self._read_tools(p, finalization=({"turn_id": turn["id"]} if turn["spec"].get("evidence_allowlist") is not None else None),
+                                                          conclude_only=bool(turn["spec"].get("finalization"))), view=view, abort=abort)
 
         def aborted() -> dict:
             if abort.reason == "activity-cancelled" or _activity_cancelled():
@@ -513,17 +517,18 @@ class InvestigatorActivities:
         status = self.wf.query("get_record", {"kind": "investigation", "id": investigation_id}, project=p).get("status")
         return None if status in (None, "active") else f"investigation-{status}"
 
-    def _read_tools(self, p: str, *, finalization: bool = False) -> dict:
+    def _read_tools(self, p: str, *, finalization: dict | None = None, conclude_only: bool = False) -> dict:
+        isolation = {"finalization_turn_id": finalization["turn_id"]} if finalization else {}
         tools: dict[str, Any] = {
             "inspect_evidence": lambda artifact_id, max_bytes=8192: self.inv.query(
-                "artifact_preview", {"artifact_id": artifact_id, "max_bytes": max_bytes}, project=p),
+                "artifact_preview", {"artifact_id": artifact_id, "max_bytes": max_bytes, **isolation}, project=p),
             "search_components": lambda text="", capability=None: self.inv.query(
                 "search_components", {"text": text, "capability": capability, "limit": 20}, project=p),
             "describe_component": lambda component_ref: self.inv.query(
-                "describe_component", {"component_ref": component_ref}, project=p),
-            "get_job": lambda job_id: redact_value(self.inv.query("get_job", {"job_id": job_id, "include_lock": False}, project=p)),
+                "describe_component", {"component_ref": component_ref, **isolation}, project=p),
+            "get_job": lambda job_id: redact_value(self.inv.query("get_job", {"job_id": job_id, "include_lock": False, **isolation}, project=p)),
         }
-        return {k: v for k, v in tools.items() if not finalization or k != "search_components"}
+        return {k: v for k, v in tools.items() if not conclude_only or k != "search_components"}
 
     # -- effects (ADR 0022: a decision's calls run in order; dependent calls wait for what they name) ----------
     @activity.defn(name="execute_decision")
@@ -696,7 +701,13 @@ class InvestigatorActivities:
     def enter_finalization(self, a: dict) -> dict:
         result = self.wf.command("enter_finalization", a, project=a["project_id"],
                                  key=f"finalize:{a['investigation_id']}:{a.get('turn_counter')}")["result"]
-        return {k: result.get(k) for k in ("enabled", "status", "reason")}
+        return {k: result.get(k) for k in ("enabled", "mode", "status", "reason")}
+
+    @activity.defn(name="reconcile_finalization")
+    def reconcile_finalization(self, a: dict) -> dict:
+        return self.wf.command("reconcile_finalization", a, project=a["project_id"],
+                               key=f"reconcile-final:{a['investigation_id']}:{a.get('turn_counter')}:"
+                                   f"{activity.info().workflow_run_id}")["result"]
 
     @activity.defn(name="record_turn_retry")
     def record_turn_retry(self, a: dict) -> dict:

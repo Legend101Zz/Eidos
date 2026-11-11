@@ -1,6 +1,6 @@
 # ADR 0026: Deadline admission and runtime bounded outcomes
 
-Status: accepted (prospective; no pilot records changed)
+Status: accepted (prospective; amended after R18; no pilot records changed)
 
 D3 found six valid N01-r2 read responses stranded with 221–249 seconds left because follow-up admission required the full configured 300-second request timeout. The runtime fabricated empty waits, correctly refused by the no-outstanding-work validator. Runtime inability was misclassified as model proposal behavior.
 
@@ -8,6 +8,6 @@ Every provider request, including native tool follow-ups, now uses the smaller o
 
 Insufficient time or abandonment at that boundary returns `DecisionResult.runtime_outcome = deadline-exhausted`, with no proposal. Usage, uncertainty and admitted in-flight estimates are settled as before. A separate `runtime_outcome` record and `decision.runtime_bounded` event retain the raw response reference. Runtime bounds never become invalid model decisions or exempt empty waits from validation. Other malformed proposal refusals remain model-origin errors.
 
-At the true exploration boundary, the coordinator immediately commits a finalization transition rather than sleeping through reproduction/export hold-back. Before the boundary, an exhausted decision gets the single bounded recovery of ADR 0027. Operator policy surfaces input without looping. All time and tokens remain inside the original envelope.
+At the true exploration boundary, the coordinator immediately commits the ordinary finalization phase while reproduction/export/confirmation time remains. That durable phase retains the existing effect permissions and the separate conclusion reserve. Only a runtime outcome leaving no usable decision, repeated refused proposals, or arrival after the ordinary finalization time has gone can admit the single conclude-only recovery of ADR 0027. Operator policy may enter ordinary finalization; a disabled recovery admission explicitly waits for operator input without repeated deadline turns. Child failure/timeout reconciliation closes an active recovery and writes its structured receipt before any ordinary retry. All time and tokens remain inside the original envelope.
 
-Validation: fake-provider N01-r2 fixture reproduces all six terminal read-request slots, preserving the D3 receipt shape, timeout and 249/233/221-second windows. Each read can now be followed by a decision. Margin exhaustion yields no wait; cancellation and uncertain usage retain their existing tests. This changes prospective system behavior and supplies no evidence of counterfactual pilot success.
+Validation: the N01-r2 fixture contains exact assistant text extracted from six SHA-256-verified historical response blobs, the matching original usage receipts, transcript line citations and per-turn 249/233/221-second limits. The coordinator replay preserves turns 10–12 and slots 0–1 in order; every historical read response gets its formerly blocked follow-up, with usage and elapsed time checked. Follow-up decisions are explicitly synthetic because the historical runtime never admitted them. Margin exhaustion yields no wait; cancellation and uncertain usage retain their existing tests. This changes prospective system behavior and supplies no evidence of counterfactual pilot success.

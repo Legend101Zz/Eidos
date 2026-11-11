@@ -83,6 +83,10 @@ class FakeInvestigator:
     async def enter_finalization(self, a: dict) -> dict:
         return {"enabled": False}  # historical tests exercise operator policy
 
+    @activity.defn(name="reconcile_finalization")
+    async def reconcile_finalization(self, a: dict) -> dict:
+        return {"finalization": False}
+
     @activity.defn(name="record_turn_retry")
     async def record_turn_retry(self, a: dict) -> dict:
         self.retries = [*getattr(self, "retries", []), a]
@@ -90,7 +94,7 @@ class FakeInvestigator:
 
     def acts(self):
         return [self.begin_turn, self.build_context, self.decide, self.execute_decision, self.complete_turn, self.enter_finalization,
-                self.check_news, self.mark_needs_input, self.record_turn_retry]
+                self.reconcile_finalization, self.check_news, self.mark_needs_input, self.record_turn_retry]
 
 
 async def test_coordinator_rolls_over_and_carries_counters(env):
@@ -196,7 +200,7 @@ async def test_stress_many_turns_bounded_histories_and_oversized_results(env):
 
         def acts(self):
             return [self.begin_turn, self.build_context, self.decide, self.execute_decision, self.complete_turn, self.enter_finalization,
-                    self.check_news, self.mark_needs_input, self.record_turn_retry]
+                    self.reconcile_finalization, self.check_news, self.mark_needs_input, self.record_turn_retry]
 
     fake = Big(stop_after=int(os.environ.get("EIDOS_STRESS_TURNS", "16")))
     wid = f"inv-stress-{uuid.uuid4().hex[:6]}"

@@ -123,7 +123,7 @@ def run_investigator_worker(cfg: LabConfig) -> None:
                 logging.getLogger("eidos.llm_broker").error("LLM broker not started: %s", exc)
     _worker(cfg, INVESTIGATOR_QUEUE, activities=[acts.begin_turn, acts.build_context, acts.decide,
                                                  acts.execute_decision, acts.complete_turn, acts.check_news,
-                                                 acts.mark_needs_input, acts.record_turn_retry, acts.enter_finalization])
+                                                 acts.mark_needs_input, acts.record_turn_retry, acts.enter_finalization, acts.reconcile_finalization])
 
 
 def _runner(cfg: LabConfig, principal: str, profiles: tuple[str, ...]):

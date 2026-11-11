@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from eidos.application.handlers import finalization_evidence
 from eidos.application.handlers.assessment import conclusion_claim_state
 from eidos.application.handlers.components import catalog
 from eidos.application.handlers.investigations import confirm_scope, inv_scope
@@ -113,6 +114,7 @@ def list_events(ctx: Ctx, p: dict) -> dict:
 
 @query("get_job")
 def get_job(ctx: Ctx, p: dict) -> dict:
+    finalization_evidence.check_read(ctx, p, "jobs", p["job_id"])
     job = ctx.tx.get_job(p["job_id"])
     if not job or job["project_id"] != ctx.project_id:
         raise NotFound(f"job {p['job_id']} not found")
@@ -149,6 +151,7 @@ def get_artifact(ctx: Ctx, p: dict) -> dict:
 @query("artifact_preview", "artifact:read")
 def artifact_preview(ctx: Ctx, p: dict) -> dict:
     """A bounded preview: the first bytes of text/JSON/CSV content, never arbitrary paths."""
+    finalization_evidence.check_read(ctx, p, "artifacts", p["artifact_id"])
     art = _artifact(ctx, p["artifact_id"])
     limit = min(int(p.get("max_bytes", PREVIEW_BYTES)), 65_536)
     if not ctx.store.has(art["digest"], art["size"]):
@@ -232,6 +235,7 @@ def catalog_row(ref: str, m: dict, status: str, qualification: Any = None, *, ca
 
 @query("describe_component")
 def describe_component(ctx: Ctx, p: dict) -> dict:
+    finalization_evidence.check_read(ctx, p, "components", p["component_ref"])
     rec = ctx.tx.require("component_release", p["component_ref"])
     approvals = [a.view() for a in ctx.tx.list_records(ctx.project_id, "approval") if a.body["release_ref"] == rec.id]
     quals = [q.view() for q in ctx.tx.list_records(ctx.project_id, "qualification", parent_id=rec.id)]
@@ -388,6 +392,20 @@ def assessment_inputs(ctx: Ctx, p: dict) -> dict:
     return {"plan_id": plan.id, "plan_digest": plan.digest, "plan": plan.body, "arms": arms}
 
 
+@query("finalization_view")
+def finalization_view(ctx: Ctx, p: dict) -> dict:
+    turn = ctx.tx.get_turn(p["turn_id"])
+    if not turn or turn["project_id"] != ctx.project_id or not turn["spec"].get("evidence_allowlist"):
+        raise Forbidden("finalization context requires its admitted turn")
+    inv = ctx.tx.require("investigation", turn["investigation_id"])
+    blocked = finalization_evidence.excluded(ctx, inv)
+    allowed = {k: [v for v in values if v not in blocked]
+               for k, values in turn["spec"]["evidence_allowlist"].items()}
+    view = investigation_view(ctx, {"investigation_id": inv.id, "horizon": turn["horizon"],
+                                    "finalization_allowlist": allowed})
+    return finalization_evidence.safe_view(view, allowed, blocked=blocked)
+
+
 @query("investigation_view")
 def investigation_view(ctx: Ctx, p: dict) -> dict:
     """Authorized source view at a ledger horizon, used by the context builder. Nothing after the
@@ -410,6 +428,8 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
             inv_body = h["body"]
     jobs = []
     for j in ctx.tx.list_jobs(ctx.project_id, investigation_id=inv.id):
+        if p.get("finalization_allowlist") is not None and j["id"] not in p["finalization_allowlist"].get("jobs", []):
+            continue
         if cutoff_ts is not None and j["created_at"] > cutoff_ts:
             continue
         terminal_visible = j["id"] in finished
@@ -431,7 +451,7 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
     turns = [t for t in ctx.tx.list_turns(inv.id) if t["horizon"] <= horizon]
     claims = [c for c in ctx.tx.list_records(ctx.project_id, "claim") if c.body.get("investigation_id") == inv.id
               and (cutoff_ts is None or c.created_at <= cutoff_ts)]
-    for c in claims:
+    for c in claims if p.get("finalization_allowlist") is None else []:
         _expose_record(ctx, c)
     environments, environment_details = _environments_at(ctx, cutoff_ts)
     refusals = [{"component": e["subject"], **{k: (e["body"] or {}).get(k) for k in ("environment", "problems", "command_key")}}
@@ -466,7 +486,7 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
     plans = []
     assessments = {a.body.get("plan_id"): a for a in ctx.tx.list_records(ctx.project_id, "assessment", limit=100000)
                    if cutoff_ts is None or a.created_at <= cutoff_ts}
-    for pl in ctx.tx.list_records(ctx.project_id, "evidence_plan", limit=100000):
+    for pl in ctx.tx.list_records(ctx.project_id, "evidence_plan", limit=100000) if p.get("finalization_allowlist") is None else []:
         if pl.body.get("investigation_id") != inv.id or (cutoff_ts is not None and pl.created_at > cutoff_ts):
             continue
         _expose_record(ctx, pl)

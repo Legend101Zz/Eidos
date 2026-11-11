@@ -4,6 +4,7 @@ Fixture shape follows D3's terminal usage receipts; no pilot files or provider a
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -24,6 +25,8 @@ def test_n01_r2_six_read_responses_admit_followup_decisions():
 
 
 def _exercise_slot(item, fixtures):
+    assert hashlib.sha256(item['response_text'].encode()).hexdigest() == item['response_text_sha256']
+    assert item['receipt']['calls'] == 1 and item['receipt']['structured_output']['read_requests'] == 1
     now = [0.0]
     settings = []
     time_notes = []
@@ -34,34 +37,38 @@ def _exercise_slot(item, fixtures):
         time_notes.append(info.instructions)
         if len(settings) == 1:
             now[0] += item['read_elapsed_seconds']
-            reply = fixtures['read_response']
+            reply = json.loads(item['response_text'])
         else:
             reply = {'rationale': 'report incumbent from receipts', 'calls': [],
                      'control': {'action': 'conclude', 'summary': 'Locked candidate; validation only.'}}
-        return ModelResponse(parts=[TextPart(json.dumps(reply))],
-                             usage=RequestUsage(input_tokens=111, output_tokens=22))
+        return ModelResponse(parts=[TextPart(item['response_text'] if len(settings) == 1 else json.dumps(reply))],
+                             usage=RequestUsage(input_tokens=item['receipt']['input_tokens'] if len(settings) == 1 else 111,
+                                                output_tokens=item['receipt']['output_tokens'] if len(settings) == 1 else 22))
 
     runtime = PydanticAIRuntime({'_model_object': FunctionModel(provider), 'model': 'openai-compatible:fake',
                                 'output_mode': 'json', 'request_timeout': 300, 'max_requests_per_decision': 8})
     abort = DecisionAbort(deadline=item['deadline_seconds'], clock=lambda: now[0])
     request = DecisionRequest('turn_inv_06e6e82552e9_' + str(item['turn']), item['slot'], 'existing evidence', [],
                               {'deadline_seconds': item['deadline_seconds']}, abort=abort,
-                              read_tools={'get_job': lambda job_id: reads.append(job_id) or {'id': job_id},
-                                          'inspect_evidence': lambda artifact_id, max_bytes=8192: {'artifact_id': artifact_id}})
+                              read_tools={'get_job': lambda job_id: reads.append({'tool': 'get_job', 'args': {'job_id': job_id}}) or {'id': job_id},
+                                          'inspect_evidence': lambda artifact_id, max_bytes=8192: reads.append(
+                                              {'tool': 'inspect_evidence', 'args': {'artifact_id': artifact_id, 'max_bytes': max_bytes}}) or {'artifact_id': artifact_id}})
     result = runtime.decide(request)
     assert result.runtime_outcome is None
     assert "Runtime time left:" in time_notes[0] and "usable request budget:" in time_notes[1]
     assert time_notes[0] != time_notes[1]
     assert result.proposal['control']['action'] == 'conclude'
     assert len(settings) == result.usage['calls'] == 2
-    assert reads == ['job_1b0fc88b1f454622']
+    assert reads == json.loads(item['response_text'])['read']
     assert 0 < settings[1]['timeout'] < settings[0]['timeout'] < 300
     assert settings[1]['timeout'] == pytest.approx(item['deadline_seconds'] - item['read_elapsed_seconds']
                                                   - DURABLE_WRITE_MARGIN_SECONDS)
     report = result.usage['structured_output']
     assert report['read_requests'] == 1 and report['errors'] == [] and report['repairs'] == []
     assert all(r['executed'] and r['available'] for r in report['reads'])
-    assert result.usage['input_tokens'] == 222 and result.usage['output_tokens'] == 44
+    assert result.usage['input_tokens'] == item['receipt']['input_tokens'] + 111
+    assert result.usage['output_tokens'] == item['receipt']['output_tokens'] + 22
+    return result
 
 @pytest.mark.fixture_llm
 def test_deadline_margin_returns_runtime_outcome_without_empty_wait_or_provider_call():

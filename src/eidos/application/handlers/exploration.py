@@ -251,6 +251,9 @@ def exploration_state(ctx: Ctx, inv: Any, *, completion: dict[str, Any] | None =
                      wall_seconds=(inv.body.get("wall") or {}).get("wall_seconds"), budgets=budgets,
                      frozen=frozen(ctx, inv.id), config=inv.body.get("investigator"), held_out=held,
                      decision_tokens=decision_tokens(inv))
+    ordinary = ctx.tx.get_record("investigation_finalization_phase", inv.id)
+    if ordinary:
+        st.update(phase="finalize", stop=ordinary.body["trigger"])
     if st.get("pending_challengers"):
         st["pending_outputs"] = rules.pending_outputs(jobs, st["pending_challengers"])
     return st

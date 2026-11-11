@@ -251,6 +251,15 @@ class InvestigationWorkflow:
         consecutive_errors = 0
         invalid_turns = int(a.get("invalid_turns", 0))  # consecutive turns ended on the invalid-proposal limit
         failed_turns = int(a.get("failed_turns", 0))  # consecutive failed turns (ADR 0019)
+        if workflow.patched("finalization-child-recovery-v2"):
+            recovered = await workflow.execute_activity(
+                "reconcile_finalization", {"investigation_id": inv, "project_id": a["project_id"],
+                                            "turn_counter": counter},
+                task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
+            if recovered.get("finalization"):
+                return {"status": "finished" if recovered.get("investigator_concluded") else "needs_input",
+                        "reason": "concluded" if recovered.get("investigator_concluded") else "finalization-failed",
+                        "turn_counter": counter}
         while True:
             if a.get("needs_operator") == "turn-failed" and self._turns == 0:
                 # A rollover while a failed turn waits for the operator (ADR 0019): keep waiting, no turn without news.
@@ -309,6 +318,15 @@ class InvestigationWorkflow:
                     self._status = "failed"
                     await self._surface_end(a, inv, counter, "three consecutive turn failures")
                     return {"status": "failed", "reason": "three consecutive turn failures", "turn_counter": counter}
+            if res.get("stop_reason") == "error" and workflow.patched("finalization-child-recovery-v2"):
+                # The child may have failed before returning its finalization flag. Read the durable admission,
+                # close any abandoned recovery turn and its export receipt before the generic retry policy.
+                recovered = await workflow.execute_activity(
+                    "reconcile_finalization", {"investigation_id": inv, "project_id": a["project_id"],
+                                                "turn_counter": counter, "failure": res.get("failure")},
+                    task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
+                if recovered.get("finalization"):
+                    res["finalization"] = True
             reason = res.get("stop_reason") or res.get("reason") or ""
             if res.get("finalization") and reason not in ("concluded", "cancelled"):
                 self._status = "needs operator input (finalization failed)"
@@ -378,11 +396,21 @@ class InvestigationWorkflow:
                 left = turn_boundary(completion) - workflow.now().timestamp()
                 if left > 0:
                     await workflow.sleep(left)
-                await workflow.execute_activity(
+                final = await workflow.execute_activity(
                     "enter_finalization", {"investigation_id": inv, "project_id": a["project_id"],
                                            "turn_counter": counter, "trigger": "exploration-boundary"},
                     task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
-                self._status = "finalizing"
+                if final.get("enabled") or not workflow.patched("ordinary-finalization-v2"):
+                    self._status = "finalizing"
+                    continue
+                marked = await workflow.execute_activity(
+                    "mark_needs_input", {"investigation_id": inv, "project_id": a["project_id"],
+                                         "turn_counter": counter, "code": "runtime-bounded",
+                                         "reason": "exploration boundary reached; autonomous recovery disabled"},
+                    task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
+                await self._wait_for_operator({**a, "turn_counter": counter, "needs_operator": "turn-failed",
+                                              **({"operator_cursor": marked["cursor"]} if marked.get("cursor") else {})},
+                                             inv, history_limit, idle, "needs operator input (exploration boundary)")
                 continue
             if completion and reason == "deadline":
                 # A retry that would have crossed the boundary ended a little before it: the fresh turn starts there.

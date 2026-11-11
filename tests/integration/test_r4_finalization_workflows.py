@@ -5,11 +5,15 @@ Scripted activities only. Temporal is test-owned; no provider or lab endpoint is
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import uuid
+from datetime import timedelta
+from pathlib import Path
 
 import pytest
-from temporalio import activity
+from temporalio import activity, workflow
+from temporalio.exceptions import ApplicationError
 from temporalio.worker import Worker
 from test_workflows import FakeInvestigator, env  # noqa: F401 - fixture
 
@@ -143,3 +147,87 @@ async def test_operator_runtime_outcome_waits_without_a_hot_loop(env, mode):  # 
             assert fake.turns == len(fake.transitions) == 1
         finally:
             await handle.terminate()
+
+
+@workflow.defn(name='TurnWorkflow', sandboxed=False)
+class FailingFinalizationChild:
+    @workflow.run
+    async def run(self, a: dict) -> dict:
+        begun = await workflow.execute_activity('begin_turn', a, task_queue=INVESTIGATOR_QUEUE,
+                                                 start_to_close_timeout=timedelta(seconds=5))
+        if not begun.get('finalization'):
+            return {'started': True, 'stop_reason': 'runtime-bounded', 'runtime_outcome': 'deadline-exhausted'}
+        if 'timeout' in a['investigation_id']:
+            await workflow.sleep(100)
+        raise ApplicationError('finalization child failed', non_retryable=True)
+
+
+@pytest.mark.parametrize('mode', ['failure', 'timeout'])
+async def test_child_failure_reconciles_active_finalization_before_ordinary_retry(env, mode):  # noqa: F811
+    class Abandoned(Recovery):
+        def __init__(self):
+            super().__init__('runtime')
+            self.running = False
+            self.reconciled = []
+
+        @activity.defn(name='begin_turn')
+        async def begin_turn(self, a):
+            r = await super().begin_turn(a)
+            self.running = self.final
+            return r
+
+        @activity.defn(name='reconcile_finalization')
+        async def reconcile_finalization(self, a):
+            self.reconciled.append(a)
+            return {'finalization': self.running, 'investigator_concluded': False}
+
+    fake = Abandoned()
+    wid = f'inv-r4-child-{mode}-' + uuid.uuid4().hex
+    workflows = [w for w in ALL_WORKFLOWS if w.__name__ != 'TurnWorkflow'] + [FailingFinalizationChild]
+    async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=workflows), \
+            Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=fake.acts()):
+        result = await asyncio.wait_for(env.client.execute_workflow(InvestigationWorkflow.run,
+            {'investigation_id': wid, 'project_id': 'p', 'turn_timeout_seconds': 1},
+            id=wid, task_queue=WORKFLOW_QUEUE), timeout=20)
+    assert result['reason'] == 'finalization-failed' and fake.turns == 2
+    assert len(fake.reconciled) == 2 and fake.reconciled[-1]['failure']['error_type'] == 'turn-workflow-failed'
+    assert not getattr(fake, 'retries', [])
+    assert fake.marks[0]['details']['export_receipt']['id'] == wid
+
+
+async def test_verified_historical_six_slots_replay_through_coordinator(env):  # noqa: F811
+    # Each real historical read reply gets its formerly blocked follow-up. Deliberately refused synthetic
+    # follow-ups preserve the historical 10/0,10/1,11/0,11/1,12/0,12/1 progression, then one recovery turn.
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location('historical_deadline', Path(__file__).parents[1] / 'unit/test_deadline_admission_r4.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _exercise_slot = module._exercise_slot
+
+    fixture = json.loads((Path(__file__).parents[1] / 'fixtures/deadline/n01-r2-d3.json').read_text())
+
+    class Historical(Recovery):
+        def __init__(self):
+            super().__init__('invalid')
+            self.sequence = []
+
+        @activity.defn(name='decide')
+        async def decide(self, a):
+            if not self.final:
+                item = fixture['slots'][len(self.sequence)]
+                assert a['turn_id'] == f"t{item['turn'] - 9}" and a['slot'] == item['slot']
+                result = await asyncio.to_thread(_exercise_slot, item, fixture)
+                assert result.runtime_outcome is None
+                self.sequence.append((item['turn'], item['slot'], result.usage['calls']))
+            return await super().decide(a)
+
+    fake = Historical()
+    wid = 'inv-r4-historical-' + uuid.uuid4().hex
+    async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
+            Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=fake.acts()):
+        result = await asyncio.wait_for(env.client.execute_workflow(InvestigationWorkflow.run,
+            {'investigation_id': wid, 'project_id': 'p'}, id=wid, task_queue=WORKFLOW_QUEUE), timeout=30)
+    assert result['reason'] == 'concluded' and result['turn_counter'] == 4
+    assert fake.sequence == [(10, 0, 2), (10, 1, 2), (11, 0, 2), (11, 1, 2), (12, 0, 2), (12, 1, 2)]
+    assert len(fake.transitions) == 1

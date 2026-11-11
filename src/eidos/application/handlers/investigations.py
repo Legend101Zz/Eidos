@@ -271,6 +271,27 @@ def mark_needs_input(ctx: Ctx, p: dict) -> dict:
     return {"investigation_id": inv.id, "needs_input": mark, "already": False, "cursor": seq}
 
 
+@command("reconcile_finalization", "turn")
+def reconcile_finalization(ctx: Ctx, p: dict) -> dict:
+    """Recover an abandoned conclude-only child before ordinary retry/resumption (including a new coordinator).
+
+    Pending recovery has no child to abandon. Running recovery is closed through the same atomic turn/receipt
+    transaction as a normal failure. Finished recovery is returned idempotently after an activity/worker restart.
+    """
+    final = ctx.tx.get_record(FINALIZATION_KIND, p["investigation_id"])
+    if final is None or not final.body.get("turn_id"):
+        return {"finalization": False}
+    turn = _turn(ctx, final.body["turn_id"], lock=True)
+    if turn["status"] == "open":
+        failure = p.get("failure") or {"error_type": "coordinator-restarted", "retryable": False,
+                                       "message": "active finalization child was abandoned"}
+        close_abandoned_turn(ctx, p["investigation_id"], failure)
+    receipt = ctx.tx.get_record("finalization_export_receipt", p["investigation_id"])
+    return {"finalization": True, "turn_id": turn["id"],
+            "investigator_concluded": bool(receipt and receipt.body.get("investigator_concluded")),
+            "export_receipt": {"kind": "finalization_export_receipt", "id": p["investigation_id"]}}
+
+
 @command("record_turn_retry", "turn")
 def record_turn_retry(ctx: Ctx, p: dict) -> dict:
     """The coordinator schedules a bounded automatic retry after a turn failed with a retryable error (ADR 0019):
@@ -302,6 +323,7 @@ def stop_investigation(ctx: Ctx, p: dict) -> dict:
 # ---------------------------------------------------------------------------------------------
 
 FINALIZATION_KIND = "investigation_finalization"
+ORDINARY_FINALIZATION_KIND = "investigation_finalization_phase"
 
 
 def _enter_finalization(ctx: Ctx, inv, trigger: str, runtime_outcome: Any = None) -> dict:
@@ -314,10 +336,21 @@ def _enter_finalization(ctx: Ctx, inv, trigger: str, runtime_outcome: Any = None
                  "response_artifact_id": d["body"].get("response_artifact_id")}
                 for t in ctx.tx.list_turns(inv.id) for d in ctx.tx.decisions(t["id"])
                 if not d["accepted"] and d["body"].get("reason") == "invalid"]
-    body = {"enabled": True, "trigger": trigger, "runtime_outcome": runtime_outcome,
+    body = {"enabled": True, "mode": "conclude-only", "trigger": trigger, "runtime_outcome": runtime_outcome,
             "refusals": refusals, "turn_id": None, "status": "pending"}
     ctx.tx.put_record(FINALIZATION_KIND, inv.id, ctx.project_id, body, created_by=ctx.principal.id, status="pending")
     ctx.event("investigation.finalization_started", inv.id, body, investigation_id=inv.id)
+    return body
+
+
+def _ordinary_finalization(ctx: Ctx, inv, trigger: str) -> dict:
+    prior = ctx.tx.get_record(ORDINARY_FINALIZATION_KIND, inv.id)
+    if prior:
+        return dict(prior.body)
+    body = {"enabled": True, "mode": "ordinary", "trigger": trigger}
+    ctx.tx.put_record(ORDINARY_FINALIZATION_KIND, inv.id, ctx.project_id, body,
+                      created_by=ctx.principal.id, status="active")
+    ctx.event("investigation.finalization_phase_started", inv.id, body, investigation_id=inv.id)
     return body
 
 
@@ -327,7 +360,14 @@ def enter_finalization(ctx: Ctx, p: dict) -> dict:
     inv = ctx.tx.require("investigation", p["investigation_id"], lock=True)
     if inv.status != "active":
         return {"enabled": False, "reason": f"investigation is {inv.status}"}
-    return _enter_finalization(ctx, inv, str(p.get("trigger") or "runtime-outcome"), p.get("runtime_outcome"))
+    trigger = str(p.get("trigger") or "runtime-outcome")
+    if trigger == "exploration-boundary":
+        wall = inv.body.get("wall")
+        completion = turn_rules.completion_state(wall["deadline_unix"], time.time(), wall["conclude_threshold_seconds"]) \
+            if wall else None
+        if not (completion or {}).get("conclude_now"):
+            return _ordinary_finalization(ctx, inv, trigger)
+    return _enter_finalization(ctx, inv, trigger, p.get("runtime_outcome"))
 
 
 def _fail_pending_finalization(ctx: Ctx, inv, reason: str) -> None:
@@ -359,11 +399,16 @@ def _finalization_context(ctx: Ctx, inv, state: dict, finalization: dict) -> dic
         locked = ctx.tx.get_job(job_id)
         if locked and locked["project_id"] == ctx.project_id:
             jobs.append(exploration.view_job(locked, ctx.tx.publications(job_id)))
-    held = exploration.held_out_artifacts(ctx, inv, jobs)
-    jobs = [j for j in jobs if not (set(j["inputs"].values()) & held)]
+    from eidos.application.handlers import finalization_evidence
+    evidence = finalization_evidence.allowlist(ctx, inv, jobs)
+    jobs = [j for j in jobs if j["id"] in evidence["jobs"]]
     candidate = next((j for j in jobs if j["id"] == job_id), None)
-    return {**finalization, "locked_candidate": candidate, "incumbent": incumbent,
-            "selection_rule": state.get("rule"),
+    blocked = finalization_evidence.excluded(ctx, inv)
+    incumbent = finalization_evidence.sanitize(incumbent, blocked)
+    selection_rule = finalization_evidence.sanitize(state.get("rule"), blocked)
+    finalization = {**finalization, "refusals": finalization_evidence.sanitize(finalization.get("refusals") or [], blocked)}
+    return {**finalization, "evidence_allowlist": evidence, "locked_candidate": candidate, "incumbent": incumbent,
+            "selection_rule": selection_rule,
             "metrics": [{"job_id": j["id"], "component": j["component"], "inputs": j["inputs"],
                          "config": j["config"], "receipt": j["receipt"], "outputs": j["outputs"]}
                         for j in jobs if j.get("receipt")],
@@ -439,8 +484,10 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
         spec["limits"]["deadline_seconds"] = turn_rules.turn_seconds(spec["limits"]["deadline_seconds"], completion)
     # ADR 0023: the incumbent, challenger rounds and the exploration allowance, as of the turn's start (immutable)
     state = exploration.exploration_state(ctx, inv, completion=completion, budgets=budgets)
-    if state.get("phase") == "finalize" or (completion or {}).get("conclude_now"):
-        _enter_finalization(ctx, inv, str(state.get("stop") or "exploration-ended"))
+    if state.get("phase") == "finalize":
+        spec["finalization_phase"] = _ordinary_finalization(ctx, inv, str(state.get("stop") or "exploration-ended"))
+    if (completion or {}).get("conclude_now"):
+        _enter_finalization(ctx, inv, "ordinary-finalization-time-exhausted")
     finalization = ctx.tx.get_record(FINALIZATION_KIND, inv.id)
     if finalization:
         final = {**finalization.body, "turn_id": tid, "status": "running"}
@@ -454,6 +501,11 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
             spec["limits"]["deadline_seconds"] = max(1, min(
                 int(cfg.get("turn_deadline_seconds", 600)), int(completion["remaining_seconds"])))
     spec["exploration"] = exploration_rules.compact(state)
+    if finalization or spec.get("finalization_phase"):
+        from eidos.application.handlers import finalization_evidence
+        spec["evidence_allowlist"] = (spec.get("finalization") or {}).get("evidence_allowlist") or \
+            finalization_evidence.allowlist(ctx, inv, exploration._jobs(ctx, inv.id))
+        spec["exploration"] = finalization_evidence.sanitize(spec["exploration"], finalization_evidence.excluded(ctx, inv))
     # R14 #4, #5: an exploratory turn ends where the hold-back begins, its decisions, retries and activities included,
     # so an open turn cannot spend the time kept for reproduction and export.
     until = exploration_rules.exploration_deadline_unix(state, completion)

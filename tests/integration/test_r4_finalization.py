@@ -121,7 +121,7 @@ def test_finalization_cannot_run_jobs_author_relock_or_change_rules(scene, call)
     assert scene.locked_job(inv) == job and len(scene.notes(inv, 'selection_rule')) == 1
     with pytest.raises(Invalid, match='finalization fixes'):
         scene.lock(inv, job)
-    assert set(InvestigatorActivities(None, None)._read_tools('p', finalization=True)) == {
+    assert set(InvestigatorActivities(None, None)._read_tools('p', conclude_only=True)) == {
         'get_job', 'inspect_evidence', 'describe_component'}
 
 
@@ -169,7 +169,7 @@ def test_exploration_boundary_begins_one_finalization_with_holdback_available(sc
     assert turn['spec']['exploration']['incumbent']['job_id'] == job
     assert turn['spec']['limits']['max_calls'] > 0
     assert turn['spec']['completion']['remaining_seconds'] == 400
-    assert turn['spec']['limits']['deadline_seconds'] == 400
+    assert turn['spec']['limits']['deadline_seconds'] == 220
     assert 'exploration_deadline_unix' not in turn['spec']['completion']
 
 
@@ -287,7 +287,8 @@ def test_abandoned_finalization_is_closed_durably_before_retry_or_restart(scene,
     assert scene.q('get_investigation', {'investigation_id': inv})['finalization_export_receipt'] == receipt
 
 
-def test_finalization_denies_direct_and_transitively_derived_held_out_reads_and_context(lab):
+@pytest.mark.parametrize('recovery', [True, False])
+def test_finalization_denies_direct_and_transitively_derived_held_out_reads_and_context(lab, recovery):
     import hashlib
 
     from eidos.client import LabError
@@ -302,11 +303,14 @@ def test_finalization_denies_direct_and_transitively_derived_held_out_reads_and_
     derived = sc.job(inv, ref=sc.infer, inputs={'predictions': sc.output(direct)}, metrics={'secret-derived': 1})
     # The provenance chain can cross the investigation boundary.
     outside = sc.job(None, ref=sc.infer, inputs={'predictions': sc.output(derived)})
-    _entered(sc, inv)
+    if recovery:
+        _entered(sc, inv)
+    else:
+        sc.cmd('enter_finalization', {'investigation_id': inv, 'trigger': 'exploration-boundary'})
     turn = sc.begin(inv)
     principal = lab.principal(f'inv-{sc.pid}', ['investigator'], [sc.pid])
     acts = InvestigatorActivities(ShimClient(lab, principal), ShimClient(lab, sc.wf))
-    tools = acts._read_tools(sc.pid, finalization=turn['spec']['finalization'])
+    tools = acts._read_tools(sc.pid, finalization={'turn_id': turn['turn_id']}, conclude_only=recovery)
     assert tools['get_job'](safe)['id'] == safe
     assert tools['inspect_evidence'](sc.output(safe))['available']
     for aid in [held, sc.output(direct), sc.output(derived), sc.output(outside)]:

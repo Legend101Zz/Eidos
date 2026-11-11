@@ -170,3 +170,5 @@ All gates must pass on the same commit. Evidence files are in `docs/release/evid
 | Wrong scorer ports are refused before rule recording; recorded rules stay immutable | `tests/integration/test_r4_finalization.py`, `test_r14_selection_e2e.py` |
 
 Policy and limits: ADRs 0026 and 0027. All new model behavior tests use fake providers; no pilot records are changed.
+
+R18 finalization corrections: default-policy incumbent/challenger reproduction and confirmation; ordinary/recovery durable phase separation; both-policy real boundary admission; disabled operator wait; direct and derived held-out read/context exclusion; child failure, timeout and coordinator restart receipts; SHA-verified N01-r2 six-slot coordinator replay (`test_r4_finalization.py`, `test_r4_finalization_workflows.py`, `test_finalization_evidence.py`).
