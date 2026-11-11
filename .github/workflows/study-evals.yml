@@ -70,6 +70,15 @@ jobs:
           export EIDOS_STUDY_TEMPORAL_SOURCE="$TEMPORAL_SOURCE"
           study/evals/build_lab.sh HEAD ci-evals
           source "$eval_root/evals-labs/ci-evals/env.sh"
+          "$EIDOS_RESEARCH_PYTHON" - "$(git rev-parse HEAD)" <<'PY'
+          import os
+          import sys
+          from study.evals.mini_eval import configure_lab
+          from study.evals.provenance import controller_record
+          from study.common import ROOT
+          controller_record(ROOT, live=True)
+          configure_lab(os.environ["EIDOS_STUDY_HOME"], os.environ["EIDOS_STUDY_PYTHON"], False, sys.argv[1])
+          PY
           "$EIDOS_RESEARCH_PYTHON" -m study.evals.mini_eval \
             --cards N01,N03 --arms 4 --seed-index 1 \
             --out "$eval_root/tmp/mini-eval-cli" \

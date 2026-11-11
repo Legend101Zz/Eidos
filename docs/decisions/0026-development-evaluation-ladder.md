@@ -15,3 +15,13 @@ Frozen build wheels, environments, lab homes and local caches live on the SSD. E
 ## Verification
 
 `study/tests/test_evals.py` exercises a two-card stub eval with optional arm 2, injected regressions and extraction from reconstructed real-record blobs. `study/evals/README.md` documents commands, schema and the development-data scope.
+
+## Tier 1 comparison contract
+
+Baseline and candidate use the same controller and hash-pinned reference snapshot. A new scorecard
+uses prospective zero tolerance per assignment and in aggregate. Verified native-unit test gain
+remains comparable when a coding-arm reference is missing. Missing invariant coverage blocks Tier 1.
+The arm-4 eval bridge records identifier matches and hashes from outbound provider requests, and
+the independent scan retains its limits for derived information. Controller abstention remains
+distinct from investigator conclusions. Each attempt preserves separate controller and verified
+frozen-build provenance, including source archive, wheel and installed-payload identity.

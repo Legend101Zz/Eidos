@@ -57,35 +57,63 @@ The following command spends model quota and requires authorization for live eva
 "$EIDOS_RESEARCH_PYTHON" -m study.evals.mini_eval \
   --cards N01,N02,N03,N04,D02,D03,D04 --arms 4 --seed-index 1 \
   --out '/Volumes/Mrigesh SSD/eidos-v1/tmp/eval-candidate-a' \
-  --lab-home "$EIDOS_STUDY_HOME" --lab-python "$EIDOS_STUDY_PYTHON"
+  --lab-home "$EIDOS_STUDY_HOME" --lab-python "$EIDOS_STUDY_PYTHON" \
+  --expected-build-sha "$FROZEN_BUILD_SHA" \
+  --reference-path "$FROZEN_REFERENCES" --reference-sha256 "$REFERENCE_SHA"
 ```
 
 Use `--arms 2,4` to add the coding reference arm. `--seed-index` selects the pilot block index 1, 2 or 3. Training seeds and reproduction rules follow the pilot adapters and grader. Blocks run at concurrency 2. Each requested arm receives 1800 seconds, 8,000,000 processed tokens and one CPU thread. Arm-4 setup and teardown accounting follow the pilot launcher. Each block is graded after the runs finish. Each output directory must start empty.
 
-Outputs include `design.json`, `runs/`, `grading/`, `results.json`, `scorecard.json` and `scorecard.md`. Live scorecards are also stored at `evals/history/<controller-git-sha>.json` in the checkout. Repeated live evals of the same SHA replace that history entry, with individual output directories retaining each scorecard.
+Outputs include `design.json`, `runs/`, `grading/`, `results.json`, `scorecard.json` and `scorecard.md`.
+Gain ratio uses the median verified gain of coding arms 1–3. Unverified runs contribute zero to the
+ratio and retain their measured gain separately. A missing or nonpositive reference produces a null
+ratio. Each scorecard records the reference snapshot hash, controller commit, frozen build receipt and
+per-run evidence hashes.
 
-Each run records completion, verified success, measured test gain, verified test gain, gain ratio, tokens, wall time, unused time at conclusion, failure classes and invariant evidence. Arm 4 requires a recorded conclusion. Arm 2 and stubs use a successful final answer as completion. Unused time uses the conclusion ledger timestamp when available, otherwise final wall time. A run without a conclusion has null unused time.
-
-Gain ratio divides verified gain by the median verified gain of coding arms 1–3. Unverified runs contribute zero to the ratio, retaining their measured gain separately. Missing or nonpositive reference medians produce null ratios. Aggregate counts cover completion, verification, crashes, timeouts, token budgets, incidents, invalid output and invariant flags. `by_arm` provides the same counts separately. Provenance includes the controller git SHA and dirty flag, full build receipt, its SHA-256, and the reference snapshot SHA-256.
-
-Invariant observations detect a locked candidate ending with `needs_input`, runtime deadline-limit usage receipts, fabricated empty waits, and known held-out IDs/digests in recorded model-facing contexts, replies and read receipts. Held-out scanning is best effort. Its coverage, missing blobs and matches are recorded, and derived information can evade this scan.
-
-## Reference snapshots
+Compare attempts with:
 
 ```bash
-"$EIDOS_RESEARCH_PYTHON" -m study.evals.regenerate_references
+"$EIDOS_RESEARCH_PYTHON" -m study.evals.compare "$BASELINE_SCORECARD" "$CANDIDATE_SCORECARD"
 ```
 
-The generator reads pilot-3 local `grading/N0*-r*/arm[123]/grade.json` and pilot-2 `regrade-addendum4/results-corrected.json`. It pools verified numeric test gains over coding arms and runs, storing per-card median, min/max, sample count and individual samples, plus source-file hashes. Pilot 3 is still finishing, so the committed snapshot is partial and reproducible from those hashes. Refresh it as local grades arrive.
+The comparison prints per-assignment and aggregate changes, blockers and both scorecard hashes.
+Exit zero for live scorecards requires the gate to pass. A stub comparison remains diagnostic.
 
-The specified pilot-2 corrected file has D03–D06 rows and contains no D02 rows. D02's reference median and range are null, with a missing-source reason. Its run and local grade remain available. To compare build quality, use the same reference snapshot for both scorecards.
+## Evidence and readiness controls
 
-## Regression comparison
+For both builds use the same clean controller commit, model-facing identifier audit and hash-pinned
+reference file. Freeze the file once from the complete Pilot 3 verdict-of-record package and corrected
+Pilot 2 source.
 
 ```bash
-"$EIDOS_RESEARCH_PYTHON" -m study.evals.compare previous/scorecard.json candidate/scorecard.json --tolerance 0.05
+"$EIDOS_RESEARCH_PYTHON" -m study.evals.regenerate_references \
+  --pilot3-package "$PILOT3_FINAL_PACKAGE" --out "$FROZEN_REFERENCES"
+REFERENCE_SHA=$(shasum -a 256 "$FROZEN_REFERENCES" | cut -d' ' -f1)
 ```
 
-The command exits 0 for a passing comparison, 1 for a regression and 2 for incompatible inputs. The tolerance permits an absolute median gain-ratio decrease of 0.05 ratio points by default. Completion or verification decreases, increases in dead ends or other failure counts, and median gain-ratio decreases exceeding tolerance fail the comparison. Per-card completion losses and new dead ends also fail when aggregate counts balance. Cards, arms, seed index, envelope, stub mode, reference snapshot and ratio coverage must match.
+Pass `--reference-path "$FROZEN_REFERENCES" --reference-sha256 "$REFERENCE_SHA"` and an independently
+selected `--expected-build-sha <full-commit>` to each live run. The same arguments with `--preflight`
+verify provenance without starting a lab. Preflight checks the dedicated home, interpreter, source archive,
+wheel hashes, installed wheel payload and install origins, and configured ports. Checks run before
+execution and disk admission checks recur before build phases, launch and independent grading.
 
-Tier 1 requires arm 4 to conclude on all seven development cards, zero dead ends and a passing comparison against the previous build. The scorecard records completion and dead-end checks. Run the comparator to establish the regression check.
+Each live attempt allocates its own output and history path
+`evals-history/<frozen-build-sha>/<controller-sha>-seed<index>-<attempt-id>/` on the SSD. An admission
+receipt preserves the path and build/reference provenance even when the attempt ends without a scorecard.
+
+Arm 4's opt-in bridge scans each outgoing provider payload for known evaluator identifiers before
+forwarding. It stores request hashes and matched identifiers without retaining bodies or headers.
+The scorecard also scans registered packed contexts, replies and read receipts. Stored internal provenance
+manifests are outside the model-facing scan. Unavailable coverage is unknown and blocks the gate.
+The audit has limited coverage of derived information. Core Tier-0 boundary tests remain the primary
+isolation check. The optional coding arm's private provider context is unavailable to this audit and a
+comparison including that arm remains diagnostic.
+
+Tier 1 uses a prospective tolerance of zero, with an absolute `1e-12` floating-point epsilon. Check
+every card and arm for a lost investigator conclusion, verified outcome, verified native-unit gain, or
+gain ratio where a reference exists. Candidate dead ends, fabricated waits and held-out identifier
+matches block the gate. Investigator reasoned abstention and controller fallback are reported
+separately, and controller fallback contributes zero investigator conclusions. Deadline receipts
+remain diagnostic. Receipt counts accompany token and wall-time totals. Missing D02 references remain
+null and its native-unit verified gain remains part of comparison. One seed gives descriptive
+development evidence.

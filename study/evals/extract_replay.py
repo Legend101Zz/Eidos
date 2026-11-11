@@ -182,7 +182,7 @@ def extract(run_dir, lab_home=None):
         run_record=record,
     )
     if SECRET.search(json.dumps(fixture)):
-        raise ValueError("Credential-shaped value found in fixture. Inspect the source before publishing")
+        raise ValueError("credential-shaped value found in fixture; inspect source before publishing")
     return fixture
 
 

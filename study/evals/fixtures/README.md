@@ -24,3 +24,8 @@ Use `--lab-home PATH` when the read-only artifact store has moved. The default c
 The coordinator replay test belongs in Eidos core's test suite. It loads the JSON fixture, feeds response messages in `requests` order to the scripted fake provider, scales recorded durations to its fake clock and supplies the recorded receipts/state through its test harness. It asserts the corrected conclusion or explicit reasoned abstention and the relevant invariant on the build under test. The fixture captures the historical failure for that assertion. Core replay tests should verify fixture schema versions and consume artifact/message references directly.
 
 The portable study extractor test reconstructs an arm-4 export and content-addressed blob store from N01-r1's real fixture, verifies original blob hashes, then exercises the extractor CLI. This keeps the study tests runnable independently of local pilot directories.
+
+`controller_abstention.json` records the payload and event emitted by the actual G4c
+`_record_controller_abstention` handler at the named source commit. A fake state sink
+and event receiver captured the schema offline with a synthetic incumbent. The Tier-1
+test keeps this delivery separate from an investigator conclusion.

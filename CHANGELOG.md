@@ -6,7 +6,7 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ### Development evaluation ladder (ADR 0026, T1)
 
-- Tier-1 mini-evals reuse pilot adapters and local grading for arm 4 with optional arm 2, with scorecards, invariant observations, frozen-build provenance and regression comparison.
+- Tier-1 mini-evals reuse pilot adapters and local grading for arm 4 with optional arm 2, with per-card zero-tolerance comparison, model-facing identifier coverage, verified frozen-build provenance, and separate history for each attempt.
 - Tier-0 extraction preserves all registered model-response artifacts, request timings and terminal state. Four real pilot-3 failure fixtures support core coordinator replay tests.
 - Reference regeneration records source hashes and missing data. Frozen eval labs use SSD storage and dedicated ports. Baseline-stub CI exercises the study suite without model calls. The loopback provider bridge binds with a local server name so reverse DNS cannot delay startup.
 

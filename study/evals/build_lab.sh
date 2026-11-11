@@ -23,19 +23,34 @@ export TMPDIR="$ssd_root/tmp"
 export XDG_CACHE_HOME="$ssd_root/tmp/xdg"
 export PYTHONPYCACHEPREFIX="$ssd_root/tmp/pycache"
 export PYTHONNOUSERSITE=1
+disk_guard() {
+  python3 - <<'PYDISK'
+import shutil
+if shutil.disk_usage('/').free < 12.5 * 1024**3:
+    raise SystemExit('STOP: internal disk has less than 12.5 GiB free')
+PYDISK
+}
+disk_guard
 mkdir -p "$TMPDIR" "$ssd_root/evals-labs"
 sha=$(git -C "$repo" rev-parse --verify "$ref^{commit}")
 # mkdir is the exclusive allocation. A previous build is never replaced.
 mkdir "$lab_root"
 mkdir "$lab_root/source" "$lab_root/wheels"
-git -C "$repo" archive "$sha" | tar -x -C "$lab_root/source"
+git -C "$repo" archive "$sha" > "$lab_root/source.tar"
+source_sha=$(shasum -a 256 "$lab_root/source.tar" | cut -d' ' -f1)
+tar -xf "$lab_root/source.tar" -C "$lab_root/source"
+rm "$lab_root/source.tar"
+disk_guard
 (
   cd "$lab_root/source"
   uv build --all-packages -o "$lab_root/wheels"
 )
+disk_guard
 uv venv --python 3.12 "$lab_root/venv"
+disk_guard
 uv pip install --python "$lab_root/venv/bin/python" "$lab_root/wheels"/*.whl
-"$lab_root/venv/bin/python" - "$lab_root" "$sha" <<'PY'
+disk_guard
+"$lab_root/venv/bin/python" - "$lab_root" "$sha" "$source_sha" <<'PY'
 import fcntl
 import hashlib
 import importlib.metadata
@@ -46,7 +61,8 @@ import sys
 from pathlib import Path
 
 root = Path(sys.argv[1])
-record = dict(eidos_commit_sha=sys.argv[2], python=str(root / 'venv/bin/python'),
+record = dict(eidos_commit_sha=sys.argv[2], source_archive_sha256=sys.argv[3],
+              python=str(root / 'venv/bin/python'),
               wheels={p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted((root / 'wheels').glob('*.whl'))},
               packages={n: importlib.metadata.version(n) for n in ('eidos-lab', 'eidos-wire', 'eidos-worker-sdk', 'eidos-pytorch')})
 (root / 'venv/pilot-build.json').write_text(json.dumps(record, indent=2) + '\n')
@@ -106,5 +122,7 @@ init_args=(init --home "$EIDOS_STUDY_HOME" --api-port "$api_port" --pg-port "$pg
 if [ -n "${EIDOS_STUDY_TEMPORAL_SOURCE:-}" ]; then
   init_args+=(--temporal-source "$EIDOS_STUDY_TEMPORAL_SOURCE")
 fi
+disk_guard
 "$lab_root/venv/bin/lab" "${init_args[@]}"
+disk_guard
 echo "Eval lab initialized. Load $lab_root/env.sh before a live mini-eval."
