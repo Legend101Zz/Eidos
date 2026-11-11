@@ -98,18 +98,31 @@ def replay_slot(slot):
         assert result.proposal["calls"]
     else:
         historical_control = slot["decision"]["body"]["proposal"]["control"]
-        assert historical_control["action"] == "wait_for_jobs" and historical_control["bounded_outcome"] == "decision-deadline"
-        assert len(requests) == len(original) + 1
-        assert result.runtime_outcome is None and result.proposal["control"]["action"] == "request_input"
+        assert historical_control["action"] == "wait_for_jobs"
+        assert result.runtime_outcome is None
+        if historical_control.get("bounded_outcome") == "decision-deadline":
+            assert len(requests) == len(original) + 1
+            assert result.proposal["control"]["action"] == "request_input"
+        else:
+            # This historical reply proposed the wait itself. There is no missing
+            # follow-up to synthesize, and the coordinator preserves its refusal.
+            assert len(requests) == len(original)
+            assert result.proposal["control"]["action"] == "wait_for_jobs"
     return len(original)
 
 
 @pytest.mark.pg
 @pytest.mark.temporal
 @pytest.mark.fixture_llm
-@pytest.mark.parametrize("block", ["N01-r1", "N01-r2", "N03-r1", "N04-r2"])
-async def test_recorded_failure_tail_reaches_controller_abstention(env, lab, monkeypatch, block):  # noqa: F811
-    fixture = json.loads((FIXTURES / f"{block}.json").read_text())
+@pytest.mark.parametrize(("fixture_name", "block"), [
+    ("N01-r1", "N01-r1"),
+    ("N01-r2", "N01-r2"),
+    ("N01-r2-aborted-addendum1", "N01-r2"),
+    ("N03-r1", "N03-r1"),
+    ("N04-r2", "N04-r2"),
+])
+async def test_recorded_failure_tail_reaches_controller_abstention(env, lab, monkeypatch, fixture_name, block):  # noqa: F811
+    fixture = json.loads((FIXTURES / f"{fixture_name}.json").read_text())
     assert fixture["schema_version"] == "eidos-deadline-tail/1"
     assert fixture["source"]["block_id"] == block and fixture["source"]["arm"] == 4
     assert fixture["recorded_outcome"] == "crash" and fixture["recorded_needs_input"]["code"] == "refused-proposals"
@@ -182,7 +195,7 @@ async def test_recorded_failure_tail_reaches_controller_abstention(env, lab, mon
     async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS),             Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=fake.acts()):
         result = await asyncio.wait_for(env.client.execute_workflow(
             InvestigationWorkflow.run, {"investigation_id": inv, "project_id": scene.pid},
-            id=f"pilot-replay-{block}-{uuid.uuid4().hex}", task_queue=WORKFLOW_QUEUE,
+            id=f"pilot-replay-{fixture_name}-{uuid.uuid4().hex}", task_queue=WORKFLOW_QUEUE,
         ), timeout=30)
     assert result["status"] == "abstained" and result["reason"] == "controller-abstained"
     assert fake.index == len(fixture["slots"])
