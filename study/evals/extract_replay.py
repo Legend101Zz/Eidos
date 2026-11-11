@@ -28,7 +28,7 @@ def read_transcript(run_dir):
     return [json.loads(line) for line in (Path(run_dir) / "transcript.jsonl").read_text().splitlines() if line.strip()]
 
 
-def blob(lab_home, digest):
+def blob_bytes(lab_home, digest):
     digest = digest.removeprefix("sha256:")
     if not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise ValueError("invalid artifact digest")
@@ -41,7 +41,11 @@ def blob(lab_home, digest):
     payload = path.read_bytes()
     if hashlib.sha256(payload).hexdigest() != digest:
         raise ValueError(f"artifact hash mismatch {digest}")
-    return json.loads(payload)
+    return payload
+
+
+def blob(lab_home, digest):
+    return json.loads(blob_bytes(lab_home, digest))
 
 
 def extract(run_dir, lab_home=None):

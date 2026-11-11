@@ -123,6 +123,19 @@ class ReplayExtraction(unittest.TestCase):
             self.assertTrue(observations["invariant_flags"]["dead_end"])
             self.assertTrue(observations["invariant_flags"]["fabricated_empty_wait"])
             self.assertTrue(observations["invariant_flags"]["runtime_deadline_limit"])
+            # Packed contexts are UTF-8 text. Scan them even when they are absent from response exports.
+            frozen = read_json(ROOT / "study/packaging/p3_frozen.json")
+            held_out_digest = next(iter(frozen["N01"]["splits"]["test"]["hashes"].values()))
+            packed = ("Model-facing context containing " + held_out_digest).encode()
+            packed_digest = hashlib.sha256(packed).hexdigest()
+            packed_path = root / "lab/artifacts/blobs/sha256" / packed_digest[:2] / packed_digest
+            packed_path.parent.mkdir(parents=True, exist_ok=True)
+            packed_path.write_bytes(packed)
+            event = dict(type="ledger_event", data=dict(type="artifact.registered", seq=fixture["receipts"][-1]["seq"] + 1, subject="packed-test",
+                         body=dict(schema="packed-context/1", name="packed-test", digest=packed_digest)))
+            with (run / "transcript.jsonl").open("a") as transcript:
+                transcript.write(json.dumps(event) + "\n")
+            self.assertTrue(inspect_run(run)["invariant_flags"]["held_out_reads"])
             artifact = fixture["response_artifacts"][0]
             digest = artifact["sha256"]
             blob = root / "lab/artifacts/blobs/sha256" / digest[:2] / digest

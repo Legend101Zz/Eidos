@@ -36,6 +36,7 @@ git -C "$repo" archive "$sha" | tar -x -C "$lab_root/source"
 uv venv --python 3.12 "$lab_root/venv"
 uv pip install --python "$lab_root/venv/bin/python" "$lab_root/wheels"/*.whl
 "$lab_root/venv/bin/python" - "$lab_root" "$sha" <<'PY'
+import fcntl
 import hashlib
 import importlib.metadata
 import json
@@ -53,43 +54,45 @@ record = dict(eidos_commit_sha=sys.argv[2], python=str(root / 'venv/bin/python')
 from eidos import settings
 block_size = getattr(settings, 'TEMPORAL_PORT_BLOCK', 9)
 max_temporal = getattr(settings, 'TEMPORAL_MAX_PORT', 32767)
-reserved = {28767, 25546, 27635, 28766, 25544, 27633, 28765}
-for path in root.parent.glob('*/ports.json'):
-    sibling = json.loads(path.read_text())
-    reserved.update(sibling.values())
-    reserved.update(range(sibling['temporal'], sibling['temporal'] + block_size))
-ports = {}
-sockets = []
-try:
-    for key in ('temporal', 'api', 'pg', 'mcp'):
-        width = block_size if key == 'temporal' else 1
-        candidates = list(range(30000, max_temporal - width + 2, width)) if key == 'temporal' else list(range(33000, 59000))
-        offset = int(hashlib.sha256((root.name + key).encode()).hexdigest()[:8], 16) % len(candidates)
-        candidates = candidates[offset:] + candidates[:offset]
-        for port in candidates:
-            block = range(port, port + width)
-            if reserved.intersection(block):
-                continue
-            trial = []
-            try:
-                for member in block:
-                    probe = socket.socket()
-                    trial.append(probe)
-                    probe.bind(('127.0.0.1', member))
-            except OSError:
-                for probe in trial:
-                    probe.close()
-                continue
-            ports[key] = port
-            reserved.update(block)
-            sockets.extend(trial)
-            break
-        else:
-            raise RuntimeError(f'could not allocate eval ports for {key}')
-    (root / 'ports.json').write_text(json.dumps(ports, indent=2) + '\n')
-finally:
-    for probe in sockets:
-        probe.close()
+with (root.parent / '.ports.lock').open('a') as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    reserved = {28767, 25546, 27635, 28766, 25544, 27633, 28765}
+    for path in root.parent.glob('*/ports.json'):
+        sibling = json.loads(path.read_text())
+        reserved.update(sibling.values())
+        reserved.update(range(sibling['temporal'], sibling['temporal'] + block_size))
+    ports = {}
+    sockets = []
+    try:
+        for key in ('temporal', 'api', 'pg', 'mcp'):
+            width = block_size if key == 'temporal' else 1
+            candidates = list(range(30000, max_temporal - width + 2, width)) if key == 'temporal' else list(range(33000, 59000))
+            offset = int(hashlib.sha256((root.name + key).encode()).hexdigest()[:8], 16) % len(candidates)
+            candidates = candidates[offset:] + candidates[:offset]
+            for port in candidates:
+                block = range(port, port + width)
+                if reserved.intersection(block):
+                    continue
+                trial = []
+                try:
+                    for member in block:
+                        probe = socket.socket()
+                        trial.append(probe)
+                        probe.bind(('127.0.0.1', member))
+                except OSError:
+                    for probe in trial:
+                        probe.close()
+                    continue
+                ports[key] = port
+                reserved.update(block)
+                sockets.extend(trial)
+                break
+            else:
+                raise RuntimeError(f'could not allocate eval ports for {key}')
+        (root / 'ports.json').write_text(json.dumps(ports, indent=2) + '\n')
+    finally:
+        for probe in sockets:
+            probe.close()
 env = dict(EIDOS_STUDY_ROOT=str(root), EIDOS_STUDY_HOME=str(root / 'home'),
            EIDOS_STUDY_PYTHON=str(root / 'venv/bin/python'), EIDOS_STUDY_MCP_PORT=str(ports['mcp']))
 (root / 'env.sh').write_text(''.join(f'export {key}={shlex.quote(value)}\n' for key, value in env.items()))

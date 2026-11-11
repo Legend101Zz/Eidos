@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from study.common import ENVELOPE, STUDY, read_json
-from study.evals.extract_replay import blob, read_transcript, timestamp
+from study.evals.extract_replay import blob_bytes, read_transcript, timestamp
 
 
 def inspect_run(run_dir):
@@ -94,7 +94,7 @@ def scan_held_out(record, rows, events):
             unavailable.append(event["subject"])
             continue
         try:
-            model_facing.append(blob(record["lab_home"], event["body"]["digest"]))
+            model_facing.append(blob_bytes(record["lab_home"], event["body"]["digest"]).decode("utf-8"))
             scanned += 1
         except (OSError, ValueError) as exc:
             unavailable.append(dict(artifact_id=event["subject"], error=str(exc)))
