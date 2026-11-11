@@ -40,7 +40,6 @@ from eidos.orchestration.names import INVESTIGATOR_QUEUE, WORKFLOW_QUEUE
 from eidos.orchestration.workflows import (
     ALL_WORKFLOWS,
     MAX_FAILED_TURN_RETRIES,
-    MAX_INVALID_RETRY_TURNS,
     InvestigationWorkflow,
 )
 
@@ -360,25 +359,25 @@ async def test_a_repeated_runaway_does_not_stall_the_investigation(env, lab, pro
         view = await until("needs_input after the bounded runaway outcomes",
                            lambda: run.view()["needs_input"] and run.view())
         assert view["status"] == "active"
-        assert view["needs_input"]["code"] == "refused-proposals"  # the existing bounded invalid-turn path
-        assert view["needs_input"]["refused_turns"] == MAX_INVALID_RETRY_TURNS + 1
-        # Every turn ended on refused proposals (the bounded no-effect outcome is a wait on nothing, which the lab
-        # refuses); none of them ended in an error, so no provider failure is reported.
-        assert [t["stop_reason"] for t in view["turns"]] == ["invalid-proposals"] * (MAX_INVALID_RETRY_TURNS + 1)
+        assert view["needs_input"]["code"] == "runtime-bounded"
+        assert view["needs_input"]["details"]["runtime_outcome"] == "reasoning-runaway"
+        assert [t["stop_reason"] for t in view["turns"]] == ["runtime-bounded"]
         assert run.events("investigation.turn_retry_scheduled") == []
         [marked] = run.events("investigation.needs_input")
-        assert marked["body"]["code"] == "refused-proposals"
-        # Each decision made the first request and exactly one re-ask, both counted and recorded.
-        usages = [e["body"]["usage"] for e in run.events("model.usage")]
-        assert usages and all(u["calls"] == 2 for u in usages)
-        for u in usages:
-            assert len(u["structured_output"]["runaway"]) == 2 and u["structured_output"]["runaway_reasks"] == 1
-            assert "reasoning runaway" in u["limit_reached"]
-        assert prov.count == 2 * len(usages)
-        # Nothing was applied from any of those decisions.
-        for t in view["turns"]:
-            turn = run.lab.q(run.lab.admin, "get_turn", {"turn_id": t["id"]}, project=run.pid)
-            assert not any(d["accepted"] for d in turn["decisions"])
+        assert marked["body"]["code"] == "runtime-bounded"
+        [bounded] = run.events("decision.runtime_bounded")
+        assert bounded["body"]["runtime_outcome"] == "reasoning-runaway"
+        assert bounded["body"]["response_artifact_id"]
+        # The initial request and one re-ask were billed, with no provider failure.
+        [usage] = [e["body"]["usage"] for e in run.events("model.usage")]
+        assert usage["calls"] == prov.count == 2
+        assert len(usage["structured_output"]["runaway"]) == 2
+        assert usage["structured_output"]["runaway_reasks"] == 1
+        assert "reasoning runaway" in usage["limit_reached"]
+        assert "failed_request" not in usage
+        [ended] = view["turns"]
+        turn = run.lab.q(run.lab.admin, "get_turn", {"turn_id": ended["id"]}, project=run.pid)
+        assert turn["decisions"] == []
 
 
 # -- E: a retryable failure that persists ---------------------------------------------------------------------
