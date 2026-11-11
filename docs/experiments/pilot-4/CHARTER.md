@@ -8,6 +8,10 @@ Compare the four Pilot 3 arms on the sealed N05–N08 card set, with three runs 
 
 Each arm receives the same seven-file task bundle. Arms 2, 3 and 4 receive the common method guide. The private evaluator seal, test material and canonical baseline predictions are outside the model-facing bundle. The opaque seal digest is registered in the prospective commitments branch. Local grading is a pre-check. The verdict of record requires the hosted private grade plus the recorded run-status gate.
 
+## Exposure history
+
+During pre-run tooling integration, the implementer and reviewer saw exact thresholds derived from the sealed regression baseline metrics. An unpublished local draft briefly carried those values. The corrected prompts and tool-facing charters state the preregistered relative rule, and grading continues to use the original sealed thresholds. No study model received the values. The core, card choice, seal and qualification results were fixed independently of the disclosure. Treat Pilot 4 as exploratory with this recorded builder exposure. The reserve set remains separate.
+
 ## Outcomes
 
 The primary outcome is a verified improvement claim with the assigned scope, a qualifying held-out gain, fresh-seed confirmation and guardrails. The primary contrast is arm 4 minus arm 2 using the existing family-balanced exploratory estimator. Report arm 4 minus arm 3, verified mean gain by arm and card, per-card differences in mean verified gain, resource use, outcomes, incident dispositions, transcript audit and local/hosted agreement. With 12 paired blocks, report intervals as exploratory.
