@@ -341,7 +341,8 @@ def _metrics(out_dir, metrics_file):
 def _evaluate(root, index, seed, fold, n_folds, parameters, cfg, inputs, reader, source_files, timeout, secrets, stop):
     """One recipe x seed x fold. Returns its record; a failure of the project's command is data, not a sweep failure."""
     command = cfg["command"]
-    base = root / ("trial-%04d-s%s-f%d" % (index, seed, fold))
+    label = index if isinstance(index, str) else "%04d" % index  # a template's stages prefix their own labels
+    base = root / ("trial-%s-s%s-f%d" % (label, seed, fold))
     work, out = base / "work", base / "out"
     _prepare_work(work, inputs, reader, command, source_files)
     out.mkdir()
@@ -484,34 +485,21 @@ def _seeds_folds(config, context):
     return seeds, folds
 
 
-def run(inputs, config, *, reader, writer, context):
-    extra = sorted(set(inputs) - set(ALLOWED_INPUTS))
-    if extra:
-        raise SweepConfigError("undeclared input ports %s: only %s are read" % (extra, list(ALLOWED_INPUTS)))
-    objective, stopping = _validated(config)
-    budget = _budget(config, context)
-    candidates, space_size = _candidates(config.get("space") or {}, budget)
-    seeds, folds = _seeds_folds(config, context)
-    source_files = reader.json("source").get("files") if "source" in inputs else None
-    _check_project_files(config["command"], source_files)
-    secrets = _secret_values()
-    root = Path(context.scratch_dir) / "sweep"
-    root.mkdir(parents=True, exist_ok=True)
-    direction, metric = objective["direction"], objective["metric"]
+def _search(candidates, space_size, cfg, *, inputs, reader, source_files, seeds, folds, budget, stopping, context, root,
+            secrets, started, first_index=0, tag=None):
+    """Evaluate recipes in order until the space, the budget, the stopping rule or a stop request ends the search.
+    Returns (rows, stop_reason). ``started`` is the wall-clock start that ``budget.max_seconds`` counts from."""
+    direction, metric = cfg["objective"].get("direction", "maximize"), cfg["objective"]["metric"]
     max_trials, max_seconds = budget.get("max_trials"), budget.get("max_seconds")
-    per_eval = float(config["command"].get("timeout_seconds", 600))
-    try:
-        previous_sigterm = signal.signal(signal.SIGTERM, _on_sigterm)
-    except ValueError:  # not the main thread: only the runner's cooperative stop can reach this search
-        previous_sigterm = None
-    started = time.time()
-    rows, best, stale, stop_reason, index = [], None, 0, "space-exhausted", 0
+    per_eval = float(cfg["command"].get("timeout_seconds", 600))
+    rows, best, stale, stop_reason, count = [], None, 0, "space-exhausted", 0
 
     def remaining():
         return None if max_seconds is None else float(max_seconds) - (time.time() - started)
 
     for parameters in candidates:
-        if max_trials is not None and index >= int(max_trials):
+        index = first_index + count
+        if max_trials is not None and count >= int(max_trials):
             stop_reason = "budget-trials"
             break
         left = remaining()
@@ -528,8 +516,9 @@ def run(inputs, config, *, reader, writer, context):
                 timed_out = True
                 break
             timeout = per_eval if left is None else min(per_eval, left)
-            evaluations.append(_evaluate(root, index, seed, fold, folds, parameters, config, inputs, reader,
-                                         source_files, timeout, secrets, context.stop_requested))
+            evaluations.append(_evaluate(root, index if tag is None else "%s-%04d" % (tag, index), seed, fold, folds,
+                                         parameters, cfg, inputs, reader, source_files, timeout, secrets,
+                                         context.stop_requested))
             if evaluations[-1]["status"] == "cancelled":
                 break
         if timed_out and not evaluations:
@@ -540,7 +529,7 @@ def run(inputs, config, *, reader, writer, context):
             row.update(status="failed", error="budget ended before every seed and fold ran", rank=None, objective=None,
                        metrics={})
         rows.append(row)
-        index += 1
+        count += 1
         if any(e["status"] == "cancelled" for e in evaluations):
             stop_reason = "stop-requested"
             break
@@ -559,36 +548,257 @@ def run(inputs, config, *, reader, writer, context):
             stop_reason = "stopping-patience"
             break
     else:
-        if max_trials is not None and index >= int(max_trials) and (space_size is None or index < space_size):
+        if max_trials is not None and count >= int(max_trials) and (space_size is None or count < space_size):
             stop_reason = "budget-trials"
-    if previous_sigterm is not None:
-        signal.signal(signal.SIGTERM, previous_sigterm)
+    return rows, stop_reason
+
+
+def _install_sigterm():
+    try:
+        return signal.signal(signal.SIGTERM, _on_sigterm)
+    except ValueError:  # not the main thread: only the runner's cooperative stop can reach this search
+        return None
+
+
+DISCLAIMER = ("Exploratory selection on visible validation. No claim is made and no test data was given to the "
+              "evaluations. Lock the winner before independent confirmation.")
+
+
+def _write(writer, context, table, best_doc, ranked, receipt_extra=None):
+    usable = [r for r in ranked if r["status"] == "ok"]
+    winner_id = (best_doc.get("recipe") or {}).get("recipe_id")
+    writer.stage_json("evidence_table", table, schema=TABLE_SCHEMA)
+    writer.stage_json("best_recipe", best_doc, schema=BEST_SCHEMA)
+    digest = _evidence_digest(ranked)
+    receipt_metrics = {"recipes_evaluated": len(ranked), "recipes_usable": len(usable),
+                       "recipes_failed": len(ranked) - len(usable)}
+    if best_doc.get("recipe"):
+        receipt_metrics["best_objective"] = best_doc["recipe"]["objective"]["mean"]
+    context.record("stop_reason", table["stop_reason"])
+    context.record("evidence_digest", digest)
+    return {"metrics": receipt_metrics, "stop_reason": table["stop_reason"], "evidence_digest": digest,
+            "best_recipe_id": winner_id, "exploratory": True, **(receipt_extra or {})}
+
+
+def run(inputs, config, *, reader, writer, context):
+    extra = sorted(set(inputs) - set(ALLOWED_INPUTS))
+    if extra:
+        raise SweepConfigError("undeclared input ports %s: only %s are read" % (extra, list(ALLOWED_INPUTS)))
+    if "template" in config:
+        return _run_template(inputs, config, reader=reader, writer=writer, context=context)
+    objective, stopping = _validated(config)
+    budget = _budget(config, context)
+    candidates, space_size = _candidates(config.get("space") or {}, budget)
+    seeds, folds = _seeds_folds(config, context)
+    source_files = reader.json("source").get("files") if "source" in inputs else None
+    _check_project_files(config["command"], source_files)
+    secrets = _secret_values()
+    root = Path(context.scratch_dir) / "sweep"
+    root.mkdir(parents=True, exist_ok=True)
+    direction = objective["direction"]
+    previous_sigterm = _install_sigterm()
+    started = time.time()
+    try:
+        rows, stop_reason = _search(candidates, space_size, dict(config, objective=objective), inputs=inputs,
+                                    reader=reader, source_files=source_files, seeds=seeds, folds=folds, budget=budget,
+                                    stopping=stopping, context=context, root=root, secrets=secrets, started=started)
+    finally:
+        if previous_sigterm is not None:
+            signal.signal(signal.SIGTERM, previous_sigterm)
     ranked = _ranked(rows, direction)
     usable = [r for r in ranked if r["status"] == "ok"]
     winner = usable[0] if usable else None
-    disclaimer = ("Exploratory selection on visible validation. No claim is made and no test data was given to the "
-                  "evaluations. Lock the winner before independent confirmation.")
     table = {"schema": TABLE_SCHEMA, "exploratory": True, "claim": None, "selection_split": "visible-validation",
-             "disclaimer": disclaimer, "objective": objective, "space": config.get("space"),
+             "disclaimer": DISCLAIMER, "objective": objective, "space": config.get("space"),
              "seed_policy": {"seeds": seeds, "folds": folds}, "budget": budget, "stopping": stopping,
              "stop_reason": stop_reason, "seconds": round(time.time() - started, 3),
              "counts": {"space_size": space_size, "evaluated": len(rows), "usable": len(usable),
                         "failed": len(rows) - len(usable)},
              "recipes": ranked}
     best_doc = {"schema": BEST_SCHEMA, "status": "found" if winner else "none", "exploratory": True, "claim": None,
-                "selection_split": "visible-validation", "lock_required": True, "disclaimer": disclaimer,
+                "selection_split": "visible-validation", "lock_required": True, "disclaimer": DISCLAIMER,
                 "objective": objective, "recipe": None if winner is None else {
                     "recipe_id": winner["recipe_id"], "parameters": winner["parameters"],
                     "objective": winner["objective"], "metrics": winner["metrics"],
                     "evaluations": winner["evaluations"], "command": config["command"],
                     "recipe_template": config.get("recipe")}}
-    writer.stage_json("evidence_table", table, schema=TABLE_SCHEMA)
-    writer.stage_json("best_recipe", best_doc, schema=BEST_SCHEMA)
-    digest = _evidence_digest(ranked)
-    receipt_metrics = {"recipes_evaluated": len(rows), "recipes_usable": len(usable), "recipes_failed": len(rows) - len(usable)}
-    if winner is not None:
-        receipt_metrics["best_objective"] = winner["objective"]["mean"]
-    context.record("stop_reason", stop_reason)
-    context.record("evidence_digest", digest)
-    return {"metrics": receipt_metrics, "stop_reason": stop_reason, "evidence_digest": digest,
-            "best_recipe_id": winner["recipe_id"] if winner else None, "exploratory": True}
+    return _write(writer, context, table, best_doc, ranked)
+
+
+# -- typed templates: preprocessing x model family, screened on validation, finalists cross-validated within train ----
+TEMPLATE_RUNNER = "fit_recipe.py"
+TEMPLATE_PREPROCESS = ("none", "standardize", "per_example_center", "per_example_standardize")
+TEMPLATE_FAMILIES = ("linear", "knn", "kernel", "mlp", "svm", "gbm")
+SKLEARN_FAMILIES = ("svm", "gbm")
+# Settings per family: "quick" is one setting each; "broad" adds a second regularization or size.
+TEMPLATE_SETTINGS = {
+    "quick": {"linear": [{"alpha": 1e-3}], "knn": [{"k": 5}], "kernel": [{"alpha": 1e-2}], "mlp": [{"hidden": 64}],
+              "svm": [{"C": 3.0}], "gbm": [{"lr": 0.1}]},
+    "broad": {"linear": [{"alpha": 1e-4}, {"alpha": 1e-2}], "knn": [{"k": 1}, {"k": 5}, {"k": 15}],
+              "kernel": [{"alpha": 1e-3}, {"alpha": 1e-1}], "mlp": [{"hidden": 64}, {"hidden": 256}],
+              "svm": [{"C": 1.0}, {"C": 10.0}], "gbm": [{"lr": 0.1}, {"lr": 0.03, "max_iter": 400}]},
+}
+TEMPLATE_KEYS = ("name", "task_type", "preprocess", "families", "finalists", "cv_folds", "seeds", "rank_by",
+                 "timeout_seconds", "max_rows")
+TEMPLATE_METRIC = {"classification": ("accuracy", "maximize"), "regression": ("rmse", "minimize")}
+
+
+def _sklearn_available():
+    import importlib.util
+    return importlib.util.find_spec("sklearn") is not None
+
+
+def _template_spec(inputs, config, reader, context):
+    """The typed template, checked: (template, task_type, recipes, skipped families)."""
+    template = config["template"]
+    if not isinstance(template, dict):
+        raise SweepConfigError("template must be an object with at least a name")
+    unknown = sorted(set(template) - set(TEMPLATE_KEYS))
+    if unknown:
+        raise SweepConfigError("unknown template keys %s; allowed %s" % (unknown, list(TEMPLATE_KEYS)))
+    clash = sorted(k for k in ("command", "space", "objective", "recipe") if k in config)
+    if clash:
+        raise SweepConfigError("a template builds its own command, space and objective; remove %s" % clash)
+    if "source" in inputs:
+        raise SweepConfigError("a template runs its own recipe runner: give train and validation, not a source bundle")
+    for port in ("train", "validation"):
+        if port not in inputs:
+            raise SweepConfigError("a template needs the %s port (an NPZ with x and y)" % port)
+    name = template.get("name")
+    if name not in TEMPLATE_SETTINGS:
+        raise SweepConfigError("template.name must be one of %s" % sorted(TEMPLATE_SETTINGS))
+    task_type = template.get("task_type") or (reader.json("task").get("task_type") if "task" in inputs else None)
+    if task_type not in TEMPLATE_METRIC:
+        raise SweepConfigError("template.task_type (or the task input's task_type) must be classification or regression")
+    preprocess = list(template.get("preprocess") or TEMPLATE_PREPROCESS)
+    families = list(template.get("families") or TEMPLATE_FAMILIES)
+    bad = sorted(set(preprocess) - set(TEMPLATE_PREPROCESS)) + sorted(set(families) - set(TEMPLATE_FAMILIES))
+    if bad or not preprocess or not families:
+        raise SweepConfigError("template.preprocess must be drawn from %s and template.families from %s; unknown %s"
+                               % (list(TEMPLATE_PREPROCESS), list(TEMPLATE_FAMILIES), bad))
+    if template.get("rank_by", "validation") not in ("validation", "train-cv"):
+        raise SweepConfigError("template.rank_by must be validation or train-cv")
+    if int(template.get("finalists", 3)) < 0 or int(template.get("cv_folds", 3)) < 2:
+        raise SweepConfigError("template.finalists must be >= 0 and template.cv_folds >= 2")
+    skipped = {}
+    if not _sklearn_available():
+        for family in SKLEARN_FAMILIES:
+            if family in families:
+                families.remove(family)
+                skipped[family] = "scikit-learn is not importable in this environment"
+    if not families:
+        raise SweepConfigError("no template family is available in this environment: %s" % skipped)
+    recipes = []
+    for family in families:  # family-major order: a trials budget still sees every preprocessing of the first families
+        for settings in TEMPLATE_SETTINGS[name][family]:
+            for pre in preprocess:
+                settings_used = dict(settings)
+                if template.get("max_rows") is not None and family in ("kernel", "svm", "gbm"):
+                    settings_used["max_rows"] = int(template["max_rows"])
+                recipes.append({"preprocess": pre, "family": family, "settings": settings_used})
+    return template, task_type, recipes, skipped
+
+
+def _template_command(task_type, mode, timeout):
+    argv = ["python", TEMPLATE_RUNNER, mode, "--out", "{out}", "--seed", "{seed}", "--params", "{params_json}",
+            "--task-type", task_type]
+    if mode == "cv":
+        argv += ["--fold", "{fold}", "--folds", "{folds}"]
+    return {"argv": argv, "files": {"train": "train.npz", "validation": "validation.npz", "task": "task.json"},
+            "timeout_seconds": timeout}
+
+
+def _run_template(inputs, config, *, reader, writer, context):
+    """One call, no authored glue: every preprocessing x family recipe is screened (fit on train, scored on visible
+    validation, every seed), then the best ``finalists`` are cross-validated within train. Every attempted recipe is
+    recorded; the best is chosen by ``rank_by`` among the finalists (validation by default)."""
+    template, task_type, recipes, skipped = _template_spec(inputs, config, reader, context)
+    metric, direction = TEMPLATE_METRIC[task_type]
+    budget = _budget(dict(config, budget=config.get("budget") or {"max_trials": len(recipes)}), context)
+    seeds = template.get("seeds") or [context.seed if context.seed is not None else 0]
+    if not isinstance(seeds, list) or not all(isinstance(s, int) and not isinstance(s, bool) for s in seeds):
+        raise SweepConfigError("template.seeds must be a non-empty list of integers")
+    stopping = dict(config.get("stopping") or {"rule": "none"})
+    if stopping.get("rule", "none") != "none":
+        raise SweepConfigError("a template screens every recipe it can within the budget: stopping.rule must be none")
+    timeout = float(template.get("timeout_seconds", 300))
+    runner = Path(__file__).resolve().parent / "templates" / TEMPLATE_RUNNER
+    source_files = {TEMPLATE_RUNNER: runner.read_text()}
+    secrets = _secret_values()
+    root = Path(context.scratch_dir) / "sweep"
+    root.mkdir(parents=True, exist_ok=True)
+    screen_cfg = {"command": _template_command(task_type, "screen", timeout),
+                  "objective": {"metric": "validation_" + metric, "direction": direction}}
+    cv_metric = "train_cv_" + metric
+    cv_cfg = {"command": _template_command(task_type, "cv", timeout),
+              "objective": {"metric": cv_metric, "direction": direction}}
+    folds, n_finalists = int(template.get("cv_folds", 3)), int(template.get("finalists", 3))
+    previous_sigterm = _install_sigterm()
+    started = time.time()
+    try:
+        rows, stop_reason = _search(iter(recipes), len(recipes), screen_cfg, inputs=inputs, reader=reader,
+                                    source_files=source_files, seeds=seeds, folds=1, budget=budget, stopping=stopping,
+                                    context=context, root=root, secrets=secrets, started=started, tag="screen")
+        screened = _ranked(rows, direction)
+        finalists = [r for r in screened if r["status"] == "ok"][:n_finalists]
+        cv_stop = "not-run"
+        if finalists and stop_reason in ("space-exhausted", "budget-trials"):
+            cv_budget = {k: v for k, v in budget.items() if k == "max_seconds"}
+            cv_budget["max_trials"] = len(finalists)
+            cv_rows, cv_stop = _search(iter([r["parameters"] for r in finalists]), len(finalists), cv_cfg,
+                                       inputs=inputs, reader=reader, source_files=source_files, seeds=seeds,
+                                       folds=folds, budget=cv_budget, stopping={"rule": "none"}, context=context,
+                                       root=root, secrets=secrets, started=started, tag="cv")
+            for finalist, cv_row in zip(finalists, cv_rows):
+                finalist["train_cv"] = {k: cv_row[k] for k in ("status", "objective", "metrics", "evaluations")}
+                if cv_row.get("error"):
+                    finalist["train_cv"]["error"] = cv_row["error"]
+    finally:
+        if previous_sigterm is not None:
+            signal.signal(signal.SIGTERM, previous_sigterm)
+    for row in screened:
+        row["stage"] = "finalist" if "train_cv" in row else "screened"
+    rank_by = template.get("rank_by", "validation")
+    sign = -1.0 if direction == "maximize" else 1.0
+    complete = [r for r in finalists if r.get("train_cv", {}).get("status") == "ok"]
+    if rank_by == "train-cv":
+        ordered = sorted(complete, key=lambda r: (sign * r["train_cv"]["objective"]["mean"], r["rank"]))
+    else:
+        ordered = sorted(complete, key=lambda r: r["rank"])
+    for position, row in enumerate(ordered, 1):
+        row["finalist_rank"] = position
+        cv_mean, val_mean = row["train_cv"]["objective"]["mean"], row["objective"]["mean"]
+        row["transfer_gap"] = (cv_mean - val_mean) if direction == "maximize" else (val_mean - cv_mean)
+    winner = ordered[0] if ordered else None
+    usable = [r for r in screened if r["status"] == "ok"]
+    resolved = {"name": template["name"], "task_type": task_type, "preprocess": sorted({r["preprocess"] for r in recipes}),
+                "families": sorted({r["family"] for r in recipes}), "skipped_families": skipped,
+                "finalists": n_finalists, "cv_folds": folds, "seeds": seeds, "rank_by": rank_by,
+                "runner": {"file": TEMPLATE_RUNNER, "sha256": hashlib.sha256(runner.read_bytes()).hexdigest()},
+                "screen_command": screen_cfg["command"], "cv_command": cv_cfg["command"]}
+    objective = dict(screen_cfg["objective"])
+    table = {"schema": TABLE_SCHEMA, "exploratory": True, "claim": None, "selection_split": "visible-validation",
+             "disclaimer": DISCLAIMER, "objective": objective, "template": resolved,
+             "space": {"mode": "template", "recipes": len(recipes)},
+             "seed_policy": {"seeds": seeds, "folds": 1, "finalist_cv_folds": folds}, "budget": budget,
+             "stopping": stopping, "stop_reason": stop_reason, "finalist_stop_reason": cv_stop,
+             "seconds": round(time.time() - started, 3),
+             "counts": {"space_size": len(recipes), "evaluated": len(screened), "usable": len(usable),
+                        "failed": len(screened) - len(usable), "finalists": len(finalists),
+                        "finalists_cross_validated": len(complete)},
+             "recipes": screened}
+    best_doc = {"schema": BEST_SCHEMA, "status": "found" if winner else "none", "exploratory": True, "claim": None,
+                "selection_split": "visible-validation", "lock_required": True, "disclaimer": DISCLAIMER,
+                "objective": objective, "template": {k: resolved[k] for k in ("name", "task_type", "rank_by", "runner")},
+                "recipe": None if winner is None else {
+                    "recipe_id": winner["recipe_id"], "parameters": winner["parameters"],
+                    "objective": winner["objective"], "metrics": winner["metrics"], "train_cv": winner["train_cv"],
+                    "transfer_gap": winner["transfer_gap"], "evaluations": winner["evaluations"],
+                    "command": screen_cfg["command"],
+                    "reproduce": {"files": [TEMPLATE_RUNNER],
+                                  "argv": ["python", TEMPLATE_RUNNER, "train", "--inputs", ".", "--out", "<out>",
+                                           "--seed", str(seeds[0]), "--params",
+                                           json.dumps(winner["parameters"], sort_keys=True), "--task-type", task_type],
+                                  "note": "the runner is the evidence_table's template.runner; it reads train.npz and "
+                                          "validation.npz from --inputs and writes validation_predictions.npz"}}}
+    return _write(writer, context, table, best_doc, screened, {"template": template["name"], "task_type": task_type})
