@@ -228,7 +228,7 @@ def lock_versions(notes: list[dict[str, Any]], lock_job: Any) -> list[dict[str, 
         job = lock_job(n)
         if job is None or (out and out[-1]["job_id"] == job):
             continue
-        rec = n.get("incumbent") if isinstance(n.get("incumbent"), dict) else {}
+        rec: dict[str, Any] = n["incumbent"] if isinstance(n.get("incumbent"), dict) else {}
         out.append({"version": len(out) + 1, "note_id": n.get("id"), "job_id": job,
                     "evidence": rec.get("evidence"), "basis": rec.get("basis")})
     return out

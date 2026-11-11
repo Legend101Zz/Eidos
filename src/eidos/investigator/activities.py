@@ -15,11 +15,13 @@ import contextvars
 import functools
 import hashlib
 import json
+import random
 import tempfile
 import threading
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
+from datetime import timedelta
 from typing import Any
 
 from temporalio import activity
@@ -145,6 +147,45 @@ def _abort_reason(abort: DecisionAbort) -> str | None:
         abort.trigger("activity-cancelled")
         return "activity-cancelled"
     return abort.reason if abort.reason not in (None, "decision-deadline") else None
+
+
+# ADR 0023: provider resilience refines the one retry owner (Temporal's MODEL retry policy and the coordinator's turn
+# retry); nothing here retries by itself. A transient failure with a provider Retry-After sets the next activity attempt's
+# delay (with jitter), bounded by the exploration time left before the conclusion's reserve; quota exhaustion stops at
+# once (non-retryable ``PROVIDER_QUOTA_EXHAUSTED``) and the coordinator records the provider as unavailable.
+QUOTA_ERROR_TYPE = "PROVIDER_QUOTA_EXHAUSTED"
+RETRY_JITTER_FRACTION = 0.2
+MAX_RETRY_DELAY_SECONDS = 300.0
+
+
+def retry_delay(failure: dict[str, Any], completion: dict[str, Any] | None, *, now: float | None = None,
+                rng: Callable[[], float] = random.random) -> float | None:
+    """The delay before the next attempt of a decision that failed with ``failure``: the provider's Retry-After plus up
+    to ``RETRY_JITTER_FRACTION`` of it as jitter, at most ``MAX_RETRY_DELAY_SECONDS`` and never past the start of the
+    conclusion's reserve (``completion``, ADR 0020); 0 when no time is left there (the turn's schedule-to-close bound
+    then ends it as a deadline). None without a Retry-After: Temporal's own backoff applies."""
+    after = failure.get("retry_after_seconds")
+    if after is None:
+        return None
+    delay = min(float(after) * (1.0 + RETRY_JITTER_FRACTION * rng()), MAX_RETRY_DELAY_SECONDS)
+    if completion:
+        boundary = float(completion["deadline_unix"]) - float(completion["conclude_threshold_seconds"])
+        delay = min(delay, max(0.0, boundary - (time.time() if now is None else now)))
+    return round(delay, 3)
+
+
+def model_failure_error(exc: ModelCallFailed, completion: dict[str, Any] | None) -> ApplicationError:
+    """The activity error for a failed decision (ADR 0023): quota exhaustion is non-retryable and typed
+    ``PROVIDER_QUOTA_EXHAUSTED``; a transient failure carries the provider's Retry-After as the next retry's delay."""
+    failure = dict(exc.failure or {})
+    if failure.get("kind") == "quota-exhausted":
+        return ApplicationError(f"provider quota exhausted: {exc}"[:500], failure, type=QUOTA_ERROR_TYPE,
+                                non_retryable=True)
+    delay = retry_delay(failure, completion) if exc.retryable else None
+    if delay is not None:
+        failure["next_retry_delay_seconds"] = delay
+    return ApplicationError(str(exc), failure, type="MODEL_CALL_FAILED", non_retryable=not exc.retryable,
+                            next_retry_delay=timedelta(seconds=delay) if delay else None)
 
 
 def _attempt_identity() -> tuple[int, str]:
@@ -406,13 +447,20 @@ class InvestigatorActivities:
                     raise ApplicationError(str(exc), type="DECISION_ABORTED", non_retryable=True) from exc
                 return {"accepted": False, "reason": exc.reason, "n_calls": 0}
             except ModelCallFailed as exc:
+                # ADR 0023: every attempt's usage, its uncertainty, its elapsed time and why it failed are recorded
+                error = model_failure_error(exc, turn["spec"].get("completion"))
                 self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": {**exc.possible_usage,
-                                "uncertain": True, "error": str(exc)[:500]}, "reserved": reserved,
-                                "reservation_ref": reservation_ref}, project=p,
+                                "uncertain": True, "error": str(exc)[:500], "attempt": attempt,
+                                "elapsed_seconds": round(time.monotonic() - started, 3),
+                                "failure": error.details[0] if error.details else exc.failure},
+                                "reserved": reserved, "reservation_ref": reservation_ref}, project=p,
                                 key=f"usage-fail:{a['turn_id']}:{a['slot']}:{attempt}:{epoch}")
-                raise ApplicationError(str(exc), type="MODEL_CALL_FAILED", non_retryable=not exc.retryable) from exc
+                raise error from exc
             # Spend is the first durable write: a crash before acceptance must not lose billed requests.
-            self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": res.usage, "reserved": reserved,
+            # ADR 0023: the ledger's entry for this attempt also carries its number and elapsed time (a copy: the
+            # decision's own usage is what the runtime reported)
+            recorded = {**res.usage, "attempt": attempt, "elapsed_seconds": round(time.monotonic() - started, 3)}
+            self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": recorded, "reserved": reserved,
                                                    "reservation_ref": reservation_ref},
                             project=p, key=f"usage:{a['turn_id']}:{a['slot']}:{attempt}:{epoch}")
             if _abort_reason(abort):  # stopped, paused or cancelled after the last response: never proposed (ADR 0017)

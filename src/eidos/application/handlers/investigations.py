@@ -225,7 +225,7 @@ def _clear_needs_input(ctx: Ctx, inv, status: str, action: str) -> None:
                   "was": inv.labels["needs_input"]}, investigation_id=inv.id)
 
 
-NEEDS_INPUT_CODES = ("refused-proposals", "coordinator-stopped", "turn-failed")
+NEEDS_INPUT_CODES = ("refused-proposals", "coordinator-stopped", "turn-failed", "provider-unavailable")
 NEEDS_INPUT_DETAILS_BYTES = 2000
 
 
@@ -248,7 +248,7 @@ def mark_needs_input(ctx: Ctx, p: dict) -> dict:
     code = p.get("code") or ("refused-proposals" if int(p.get("refused_turns", 0) or 0) else "coordinator-stopped")
     if code not in NEEDS_INPUT_CODES:
         raise Invalid(f"code must be one of {NEEDS_INPUT_CODES}")
-    if code == "turn-failed":  # F5 (A2): a turn the failed child left open is closed and settled, never resumed
+    if code in ("turn-failed", "provider-unavailable"):  # F5 (A2): a turn the failed child left open is closed and settled
         close_abandoned_turn(ctx, p["investigation_id"], (p.get("details") or {}).get("failure"))
     inv = ctx.tx.require("investigation", p["investigation_id"], lock=True)
     if (inv.labels or {}).get("needs_input"):
@@ -859,6 +859,9 @@ def _charge_model_usage(ctx: Ctx, inv_id: str, usage: dict, *, ref: str, reserve
     reserved = reserved or {}
     uncertain = bool(usage.get("uncertain"))
     detail = {k: usage.get(k) for k in ("provider", "model", "request_ids", "calls")}
+    for k in ("attempt", "elapsed_seconds", "failure"):  # ADR 0023: each attempt, its time and why it failed
+        if usage.get(k) is not None:
+            detail[k] = usage[k]
     if usage.get("aborted"):  # ADR 0017: why the decision ended and what was abandoned in flight
         detail["aborted"] = usage["aborted"]
     if usage.get("reasoning_tokens") is not None:  # already inside output_tokens (ADR 0016); on the ledger too

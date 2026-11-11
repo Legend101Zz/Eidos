@@ -97,12 +97,12 @@ def check_note(ctx: Ctx, inv_id: str, body: dict[str, Any]) -> dict[str, Any] | 
     existing = rules.rule_from_notes(notes)
     if kind == "selection_rule":
         try:
-            rule = rules.parse_rule(body.get("text"))
+            new_rule = rules.parse_rule(body.get("text"))
         except rules.RuleError as exc:
             raise Invalid(str(exc), details={"kind": kind}) from None
         if existing is not None:
             raise Invalid("the selection rule is fixed once recorded: challengers are judged by the rule recorded "
-                          "before their round", details={"rule": existing[0], "note_id": existing[1], "proposed": rule})
+                          "before their round", details={"rule": existing[0], "note_id": existing[1], "proposed": new_rule})
         return None
     if kind != "candidate_lock":
         return None
@@ -110,7 +110,7 @@ def check_note(ctx: Ctx, inv_id: str, body: dict[str, Any]) -> dict[str, Any] | 
     if job_id is None:  # identifies no job: recorded as before, and assessment refuses it (R13)
         return None
     selection = (rules.note_json(body) or {}).get("selection")
-    rule = existing[0] if existing else None
+    rule: dict[str, Any] | None = existing[0] if existing else None
     if selection is not None:
         try:
             proposed = rules.parse_rule(selection)

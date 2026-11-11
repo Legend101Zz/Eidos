@@ -459,8 +459,8 @@ def test_every_read_tool_is_refused_in_calls(tool):
 def test_a_read_tool_in_calls_twice_ends_in_a_bounded_invalid_decision_without_effects():
     misuse = {**GOOD, "calls": [{"tool": "get_job", "args": {"job_id": "j"}}]}
     script = scripted([json.dumps(misuse)])
-    res = runtime(script).decide(request(read_tools([])))
-    assert len(script.seen) == 2  # never more than one re-ask
+    res = runtime(script, fresh_state_repairs=0).decide(request(read_tools([])))
+    assert len(script.seen) == 2  # never more than one re-ask (no fresh-state repair here)
     assert res.proposal["calls"] == [] and res.proposal["control"]["bounded_outcome"] == "structured-output-invalid"
     rep = res.usage["structured_output"]
     assert len(rep["errors"]) == 2 and not rep["valid"] and rep["reasks"] == 1
@@ -484,7 +484,7 @@ def test_a_read_request_without_read_tools_is_malformed_and_reasked_once():
 
 def test_a_read_request_without_read_tools_twice_is_bounded():
     script = scripted([read_request(("get_job", {"job_id": "j"}))])
-    res = runtime(script).decide(request())
+    res = runtime(script, fresh_state_repairs=0).decide(request())
     assert len(script.seen) == 2 and res.proposal["control"]["bounded_outcome"] == "structured-output-invalid"
 
 

@@ -63,9 +63,28 @@ def turn_failure(exc: ActivityError) -> dict[str, Any]:
     non_retryable = exc.retry_state == RetryState.NON_RETRYABLE_FAILURE or (
         isinstance(cause, ApplicationError) and cause.non_retryable)
     etype = cause.type if isinstance(cause, ApplicationError) and cause.type else type(cause or exc).__name__
-    return {"activity": exc.activity_type, "error_type": etype, "retryable": not non_retryable,
-            "retry_state": exc.retry_state.name if exc.retry_state is not None else None,
-            "message": str(getattr(cause, "message", None) or cause or exc)[:300]}
+    out = {"activity": exc.activity_type, "error_type": etype, "retryable": not non_retryable,
+           "retry_state": exc.retry_state.name if exc.retry_state is not None else None,
+           "message": str(getattr(cause, "message", None) or cause or exc)[:300]}
+    details = cause.details if isinstance(cause, ApplicationError) else ()
+    hint = details[0] if details and isinstance(details[0], dict) else {}
+    if hint.get("kind"):  # ADR 0023: the provider failure's class and its Retry-After, for the turn retry
+        out["provider"] = {k: hint.get(k) for k in ("kind", "status", "retry_after_seconds")}
+    return out
+
+
+def turn_retry_delay(base_delay: float, failure: dict[str, Any], completion: dict[str, Any], now: float,
+                     jitter: float) -> float:
+    """ADR 0023: the backoff before a retry turn. At least the provider's Retry-After (when the failure carried one),
+    with ``jitter`` (a fraction in [0, 1), from the workflow's deterministic random) of up to 20 % added, and never past
+    the start of the conclusion's reserve: the retry spends exploration time only."""
+    after = float(((failure.get("provider") or {}).get("retry_after_seconds")) or 0.0)
+    delay = max(float(base_delay), after) * (1.0 + 0.2 * jitter)
+    delay = min(delay, float(MAX_FAILED_TURN_BACKOFF_SECONDS))
+    if completion:
+        boundary = float(completion["deadline_unix"]) - float(completion["conclude_threshold_seconds"])
+        delay = min(delay, boundary - now)
+    return max(0.0, delay)
 
 
 @workflow.defn(name="InvestigationWorkflow")
@@ -166,11 +185,15 @@ class InvestigationWorkflow:
         return True."""
         failure = dict(res.get("failure") or {"error_type": "unknown", "retryable": True})
         retryable = bool(failure.get("retryable", True))
-        if retryable and failed_turns <= MAX_FAILED_TURN_RETRIES:
+        quota = failure.get("error_type") == "PROVIDER_QUOTA_EXHAUSTED" and workflow.patched("provider-unavailable-v1")
+        if retryable and not quota and failed_turns <= MAX_FAILED_TURN_RETRIES:
             base = float(a.get("failed_turn_backoff_seconds", FAILED_TURN_BACKOFF_SECONDS))
             delay = min(base * 2 ** (failed_turns - 1), float(MAX_FAILED_TURN_BACKOFF_SECONDS))
             completion = res.get("completion") or {}
-            if completion:  # ADR 0020: a retry's backoff never outlives the wall time
+            if workflow.patched("turn-retry-after-v1"):
+                # ADR 0023: honour the provider's Retry-After with jitter, within the exploration time left
+                delay = turn_retry_delay(delay, failure, completion, workflow.now().timestamp(), workflow.random().random())
+            elif completion:  # ADR 0020: a retry's backoff never outlives the wall time
                 delay = max(0.0, min(delay, float(completion["deadline_unix"]) - workflow.now().timestamp()))
             self._status = f"retrying after a failed turn ({failed_turns}/{MAX_FAILED_TURN_RETRIES}) in {delay:g}s"
             await workflow.execute_activity(
@@ -186,14 +209,16 @@ class InvestigationWorkflow:
                 except TimeoutError:
                     pass
             return False
-        why = "non-retryable error" if not retryable else \
+        why = "provider quota exhausted" if quota else "non-retryable error" if not retryable else \
             f"still failing after {MAX_FAILED_TURN_RETRIES} automatic retries"
         details = {"turn_counter": counter, "turn_id": res.get("turn_id"), "failure": failure, "retryable": retryable,
                    "consecutive_failed_turns": failed_turns, "automatic_retries": failed_turns - 1,
                    "max_automatic_retries": MAX_FAILED_TURN_RETRIES}
+        # ADR 0023: an exhausted provider quota is recorded as the provider being unavailable, at once, not retried
+        code = "provider-unavailable" if quota else "turn-failed"
         marked = await workflow.execute_activity(
             "mark_needs_input", {"investigation_id": inv, "project_id": a["project_id"], "turn_counter": counter,
-                                 "code": "turn-failed", "details": details,
+                                 "code": code, "details": details,
                                  "reason": f"turn failed ({why}): {failure.get('error_type')}: "
                                            f"{str(failure.get('message', ''))[:200]}; steer, resume or stop"},
             task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
