@@ -363,3 +363,98 @@ keeps the attempt-only ref.
 - Not run against the Temporal dev server in this session (no Temporal CLI on this machine). The workflow tests
   (`tests/integration/test_workflows.py`, `test_failed_turn_*`) were skipped, and the run identities in tests come
   from `ActivityEnvironment`.
+
+## Addendum: review R8 (F5c: ordered turn tickets, cancellation at every effect)
+
+The fourth review of 117741a found two gaps in the F5 model above.
+
+1. **A delayed `begin_turn` could give the turn back to a terminated run (R8 #1).** `authorize_turn_run` treated any
+   run other than the owner as newer. If run A's `begin_turn` was delayed, A was terminated and run B began or
+   resumed the turn first, A's late `begin_turn` made A the owner again, and B's steps were refused as superseded.
+2. **A handed-off decision could execute after a stop or turn closure (R8 #2).** `hand_off_decision` did not check the
+   investigation, and it returned an existing handoff before checking the turn. Some effects (`file_claim`,
+   `record_note`, `publish_component`, ...) do not check the investigation themselves, so a stop that committed after
+   the handoff did not stop the decision's remaining effects.
+
+### Turn tickets: an ordered generation for turn acquisition
+
+The coordinator (`InvestigationWorkflow`, the only workflow that starts turn workflows, one at a time) gives every
+`TurnWorkflow` it starts a **ticket**: its workflow clock in microseconds when it starts the child (patch
+`turn-ticket-v1`). The ticket is durable (it is in the child's input, in the history; a replay gives the same value)
+and ordered: the coordinator starts a turn workflow only after the previous one ended (completed, failed, timed out
+or terminated), so its workflow clock has moved on. Within one coordinator the ticket is also never below the
+previous ticket + 1 (`last_ticket`, carried through Continue-As-New), so two starts that read the same clock value
+still get ordered tickets. The same holds across Continue-As-New (the new run's clock starts
+after the old run's), a reset of the coordinator (the reset continues at a later time) and a coordinator the
+reconciler starts again (its clock is later; terminating a coordinator also terminates its turn workflow, the
+default parent-close policy).
+
+`begin_turn` carries `{run_id, ticket}`. Under the investigation row lock (which every `begin_turn` takes, after the
+open turn's row) the lab keeps the highest ticket that has begun or resumed a turn of the investigation
+(`turn_ticket` record: `{ticket, run}`) and fences turn acquisition by it:
+
+| `begin_turn(run, ticket)` | result |
+|---|---|
+| `ticket` > held ticket (or none held) | held ticket = `ticket`; the turn is begun or resumed as before (owner = `run`) |
+| `ticket` = held ticket, same run | idempotent (a retried activity) |
+| `ticket` = held ticket, another run | refused, `ticket-held-by-another-run` (only a hand reset of a turn workflow reuses its input) |
+| `ticket` < held ticket | refused, `stale-ticket`: no turn begun or resumed, owner unchanged, no turns budget reserved |
+| no ticket, a ticketed run already began | refused, `unticketed-run` |
+
+A refused `begin_turn` returns `{"started": false, "reason": "superseded-run", "superseded": ...}`. Its run was
+terminated, so nobody waits for it. Since ownership can only move to the run with the highest ticket, every other
+step's owner check (`begin_decision`, `reserve_model_budget`, `accept_decision`, `hand_off_decision`, the effect
+admission, `complete_turn`) inherits the order. Both delivery orders give the same final owner: if A's `begin_turn`
+commits first and B's second, B resumes the turn and A's undelivered decisions are revoked (as in F5). If B's commits
+first, A's is refused.
+
+### Cancellation at the handoff and at every effect's admission
+
+`hand_off_decision` now locks the turn row and then the investigation row (the order of `accept_decision`,
+`complete_turn` and stop/pause/resume) and refuses, in this order: a run that does not own the turn
+(`superseded-execution`), a revoked decision, a closed turn (`turn-<status>`) and an investigation that is not active
+(`investigation-<status>`). Only then does it return an existing handoff or record a new one. A stop or closure that
+commits first therefore always wins, also against a retry of an earlier, granted handoff.
+
+Every effect of a decision is admitted against the decision. `execute_decision` sends each effect command with an
+**admission** `{decision_id, execution}` (a command envelope field, `X-Eidos-Admission` for the artifact upload of
+`author_source`/`author_component`). It is not part of the payload, so the idempotency hash and the recorded command
+keys are unchanged. In the effect's own transaction, before the handler runs, the command service calls
+`admit_decision_effect`, which takes the same two locks and refuses the effect with `EFFECT_NOT_ADMITTED` (nothing is
+written; the key's claim rolls back) unless the decision was handed off, is not revoked, its turn is open, the
+investigation is active and the execution's run still owns the turn. The locks are held until the effect commits,
+so a stop either commits first (every later effect is refused) or waits until the effect has committed (and the stop
+then sees, and applies its running-job policy to, any job the effect admitted). A replay of an effect that already
+committed returns its receipt as before.
+
+When an effect is refused, `execute_decision` stops: the effects before it stand, the remaining ones are not sent.
+For a stop, pause, closed turn or revoked decision it records the receipts (the refused call carries
+`EFFECT_NOT_ADMITTED`) and returns `{"stopped": "<reason>"}`. For `superseded-execution` (another run now owns the
+turn) it records nothing and returns `skipped`: the new owner continues the handed-off decision with the same
+command keys.
+
+This also closes most of the first F5 limitation (a handed-off decision executed by the old and the new run at once):
+once the resume commits, every further effect of the old run's still-running activity is refused at admission.
+
+**Tests.** `tests/integration/test_f5c_ticket_and_handoff.py`: both `begin_turn` delivery orders, a delayed old
+`begin_turn` after the newer run completed its turn, idempotence, unticketed and same-ticket runs; stop and pause
+before the handoff, stop and closure after it (the existing handoff is not returned), the effect admission
+(`file_claim`) refused after a stop with nothing written, replay of a committed effect, and a stop that commits
+between two effects of one decision through `execute_decision`.
+
+**Known limitations**
+
+- **Histories started before `turn-ticket-v1`.** Their turn workflows carry no ticket. Among such runs the F5 rule
+  remains: the last `begin_turn` to commit owns the turn. Once a ticketed run has begun a turn, an unticketed one is
+  refused. This affects only coordinators that were already running when the lab was upgraded, and only until their
+  current turn workflow ends.
+- **The order rests on the Temporal server clock.** A ticket is the workflow time at which the coordinator started the
+  child. Across a coordinator restarted by the reconciler, the order holds unless the server clock moved backwards by
+  more than the time between the two starts. Two runs with the same ticket (a turn workflow reset by hand, which
+  Eidos never does) are not ordered. The second is refused, which is conservative but can stall that turn until the
+  coordinator starts the next one.
+- **An effect admitted just before a stop runs to completion.** Admission is the boundary: a job the effect admitted
+  is then subject to the stop's running-job policy (`drain` keeps it).
+- **Effects sent without an admission.** Operators and tools that call effect commands directly are not decisions and
+  are not checked here; the existing per-command rules apply (for example, run and trial admission refuse a
+  non-active investigation).

@@ -8,6 +8,31 @@ Reasoning models through OpenAI-compatible endpoints (ADR 0016). Measured with M
 its OpenAI-compatible endpoint at 16384 output tokens and a 300 s request timeout: `json` 8/8 (was 5/8 at the 4096
 cap and 6/8 at 16384 tokens / 120 s), `tool` 6/8 (was 4/8); `docs/release/evidence/g4-111-minimax-m31flash-*.json`.
 
+### Review fixes F5c (review R8 of 117741a)
+- **Turn acquisition is fenced by an ordered ticket (ADR 0017 addendum "review R8").** The coordinator gives each
+  turn workflow it starts a ticket (its workflow clock at the start, patch `turn-ticket-v1`), and `begin_turn`
+  refuses a ticket older than the newest one that began or resumed a turn of the investigation (`superseded-run`,
+  `stale-ticket`). Before, a delayed `begin_turn` from a terminated run took the turn back from the newer run, which
+  was then refused as superseded. Turn workflows started before the upgrade carry no ticket and keep the earlier
+  rule among themselves (known limitation).
+- **A stop or a closed turn stops a decision's effects.** `hand_off_decision` checks the locked turn and
+  investigation (stopped, paused, concluded, turn closed) before granting a new handoff or returning an existing one.
+  Every effect of a decision is sent with an `admission` (`{decision_id, execution}`) and checked in its own
+  transaction before the handler runs, `file_claim` included: refused with the new error `EFFECT_NOT_ADMITTED` and
+  nothing written unless the decision is handed off, not revoked, its turn open, the investigation active and the run
+  still the turn's owner. `execute_decision` stops at the first refused effect. This also refuses the remaining
+  effects of a terminated run's still-running activity once another run resumed the turn.
+- **The refused-proposal needs-input wait uses the mark's cursor (ADR 0019).** It discarded the cursor that
+  `mark_needs_input` returns and compared operator events with the last turn's horizon, so an operator event between
+  the two ended the wait at once. The cursor now goes to its `check_news` calls and survives a Continue-As-New.
+- **A collapsed two-way interval never passes under a threshold rule (ADR 0018 section 8).** With the two-way
+  interval, evidence whose interval is unbounded below (too few seeds, collapsed variance) is decided by the
+  interval under every decision standard: failed if the upper bound is below `min_effect`, otherwise inconclusive,
+  never passed. The result carries `unbounded_reason`, `decided_by` and `reason`. Before, a threshold rule compared
+  the point estimate, so the reviewer's three-favourable-seed sample still passed.
+- Tests: `tests/integration/test_f5c_ticket_and_handoff.py`, `tests/integration/test_f5c_refused_wait_cursor.py`,
+  `tests/unit/test_two_way_interval.py` section 11.
+
 ### Large CLI payloads go through `@file`, not argv
 - The e2e journey (`scripts/journeys/e2e_journey.py`) failed at step 3b with `OSError: [Errno 7] Argument list too
   long`: the paired-ci control suite (about 500 KiB) was passed inline to `lab cmd register_control_suite --payload`,

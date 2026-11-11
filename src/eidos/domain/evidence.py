@@ -8,6 +8,7 @@ conformance (conformant, deviated, incomplete) is a third field.
 from __future__ import annotations
 
 import copy
+import math
 from typing import Any
 
 from eidos.domain.charter import charter_digest, find_rule, reject_threshold_overrides
@@ -223,7 +224,10 @@ def evaluate_success_rule(
     # Such evidence is decided by its interval, exactly as under the interval standard: it can fail (the upper bound
     # is below the minimum effect, e.g. identical arms), never pass, and is otherwise inconclusive. The original
     # interval method keeps its recorded behaviour (assessor releases before paired-ci@1.2.0).
-    unbounded = eff.get("unbounded_reason") if interval == INTERVAL_TWO_WAY else None
+    # The variance may also be not estimable at all (one seed when the plan demands seed variance, fewer than two
+    # examples): the interval is then unbounded both ways with no collapse reason, and is treated the same.
+    unbounded = (eff.get("unbounded_reason") or ("variance-not-estimable" if not math.isfinite(eff["ci_low"])
+                                                 else None)) if interval == INTERVAL_TWO_WAY else None
     if std["kind"] == "threshold" and not unbounded:
         outcome = "protocol-passed" if eff["estimate"] >= min_eff else "protocol-failed"
     elif eff["ci_low"] >= min_eff:

@@ -136,6 +136,11 @@ decision, reads included. Instead, within the same decision:
    creating a turn it does not move, so an operator event behind it ended every wait and reset the failure counter.
    An operator action taken before the mark is not taken as the answer to it; the mark is visible, so the operator
    acts after it. The cursor survives a rollover (`operator_cursor` in the carried arguments).
+   F5c (review R8 #3): the same holds for the refused-proposal needs-input wait (`refused-proposals`), which had
+   discarded the cursor: its operator-only `check_news` calls pass the mark's cursor, and the cursor is carried
+   through a Continue-As-New during that wait to the wait that resumes it (`needs-input-survives-rollover-v1`).
+   Every needs-input wait now uses its mark's cursor. Test: `tests/integration/test_f5c_refused_wait_cursor.py`
+   (an operator event between the last turn's horizon and the mark, with and without a rollover).
 2. **An abandoned turn is closed, not resumed, by a retry.** `record_turn_retry` and `mark_needs_input` with code
    `turn-failed` first close the investigation's last turn if it is still open (stop reason `error`,
    `failure.abandoned`), with the same settlement as `complete_turn`: open model reservations charged as uncertain

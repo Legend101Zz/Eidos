@@ -181,7 +181,8 @@ class InvestigationWorkflow:
                                            f"{str(failure.get('message', ''))[:200]}; steer, resume or stop"},
             task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
         cursor = (marked or {}).get("cursor")
-        await self._wait_for_operator({**a, "turn_counter": counter, "needs_operator": "turn-failed",
+        await self._wait_for_operator({**{k: v for k, v in a.items() if k != "operator_cursor"},
+                                       "turn_counter": counter, "needs_operator": "turn-failed",
                                        **({"operator_cursor": int(cursor)} if cursor else {})}, inv,
                                       history_limit, idle, "needs operator input (turn failed)")
         return True
@@ -231,7 +232,11 @@ class InvestigationWorkflow:
                 # started only after the previous one ended, and across Continue-As-New, reset or a restarted
                 # coordinator. A delayed begin_turn of an earlier, terminated turn workflow carries an older ticket,
                 # and the lab never lets it take the turn back from a newer one.
-                child["ticket"] = int(workflow.now().timestamp() * 1_000_000)
+                # Strictly increasing even if two starts read the same clock value: never below the last ticket + 1
+                # (carried through Continue-As-New as ``last_ticket``).
+                ticket = max(int(workflow.now().timestamp() * 1_000_000), int(a.get("last_ticket") or 0) + 1)
+                a = {**a, "last_ticket": ticket}
+                child["ticket"] = ticket
             try:
                 res = await workflow.execute_child_workflow(
                     "TurnWorkflow", child,

@@ -259,6 +259,38 @@ therefore now gives `inconclusive` where it may have given a pass. That is a del
 evidence gives the same results as before. An incomplete arm (a failed report job) still reaches the evaluation
 with its missing clusters, and so does a mismatch, which is inconclusive like the conformance check.
 
+### 8. Review fix F5c (review R8 #4): no decision standard passes on a collapsed interval
+
+Section 7 claimed that a collapsed variance or too few seeds "never passes". That held for the `interval` decision
+standard only. `threshold` is also a supported charter decision standard, and `evaluate_success_rule` decided it on
+the point estimate alone, so the reviewer's three-favourable-seed sample (every difference 1, interval unbounded
+below) still ended `protocol-passed` under a threshold rule with `min_effect` 0.02.
+
+**Decision: B1's guarantee holds for every decision standard.** With the two-way interval
+(`two-way-seed-example-t`, paired-ci@1.2.0), evidence whose interval is unbounded below (`unbounded_reason`:
+`too-few-seed-clusters`, `seed-variance-collapsed` or `variance-collapsed`; or `variance-not-estimable`, the
+interval unbounded both ways because the plan demands seed variance and there is one seed, or there are fewer than
+two examples) is decided by its interval under every
+standard, exactly as under `interval`. It is `protocol-failed` if the upper bound is below `min_effect` (identical
+arms, so the null author controls still fail), otherwise `inconclusive`. It is never `protocol-passed`. A threshold
+rule on evidence with a bounded interval still compares the point estimate, as before. The result surfaces the
+distinction: `unbounded_reason`, `decided_by` (`interval-upper-bound` when it failed, otherwise `none`) and, when
+it is inconclusive, `reason`. Making it `inconclusive` even when the upper bound fails was rejected: the null author
+controls (identical arms) must fail, and the upper bound is the same fail-closed rule the `interval` standard uses.
+
+The original interval method (`seed-clustered-normal`, paired-ci 1.0.0 and 1.1.0) keeps its recorded behaviour under
+`threshold`. B1 does not apply to it: it has no collapse rule.
+
+The residual false-pass rates of section 7 (near-discrete designs with three seeds, 5.5% and 8.4%) concern
+samples whose interval does not collapse. They are unchanged and apply equally to a threshold rule, which passes on
+the point estimate whenever the interval is bounded. A threshold rule is the weaker standard by design: it carries no
+interval requirement for samples that do not collapse.
+
+**Tests.** `tests/unit/test_two_way_interval.py`, section 11: the reviewer's case under `threshold` and `interval`,
+too few seeds, identical arms (failed by the upper bound), a Monte Carlo run of the discrete design under a
+threshold rule (no collapsed sample passes), the scope of the change (a bounded two-way interval and the original
+method keep the point-estimate rule).
+
 ## Qualification
 
 The assessor's author suite gains three literal controls for `accuracy`: planted gain (`protocol-passed`, lower

@@ -1189,3 +1189,340 @@ def test_assessor_paired_report_matched_pairs_have_no_unit_mismatch(run_assessor
     evaluation = res.json("evaluation")
     assert "unit_mismatch" not in evaluation and "reason" not in evaluation
     assert res.receipt["outcome"] == "protocol-passed" and res.receipt["units"] == 300
+
+
+# --------------------------------------------------------------------------------------------------
+# 14. F5c (review R8 #4): a collapsed two-way interval never passes under any decision standard
+# --------------------------------------------------------------------------------------------------
+#
+# Before F5c a ``threshold`` rule compared the POINT ESTIMATE alone, whatever the interval said, so the reviewer's
+# discrete few-seed design (three seeds, each +1 on every example, seed variance exactly zero) still passed a threshold
+# rule although its interval is unbounded below. Now, with ``interval=INTERVAL_TWO_WAY``, a threshold rule whose
+# effect interval carries an ``unbounded_reason`` (collapsed variance, too few seed clusters) is decided by the interval
+# exactly as under the interval standard: never protocol-passed, protocol-failed only when ci_high < min_effect, else
+# inconclusive; the result then reports ``unbounded_reason``, ``decided_by`` and, when inconclusive, a ``reason``.
+# Everything else is unchanged: the original interval method keeps comparing the point estimate (the recorded behaviour
+# of the assessor releases before paired-ci@1.2.0), and so does a non-collapsed two-way interval.
+
+COLLAPSE_REASONS = ("too-few-seed-clusters", "seed-variance-collapsed", "variance-collapsed")
+
+
+def _threshold_plan(kind="threshold", min_effect=0.02, seeds=(11, 12, 13), cluster_by="seed"):
+    """The ordinary accuracy plan with its materialized rule's decision standard swapped (the rule is read straight from
+    the frozen plan by evaluate_success_rule)."""
+    plan = copy.deepcopy(fixtures.accuracy_plan(seeds=seeds, cluster_by=cluster_by))
+    plan["success_rule"]["decision_standard"] = {"kind": kind} if kind == "threshold" else {"kind": kind, "confidence": 0.95}
+    plan["success_rule"]["min_effect"] = min_effect
+    return plan
+
+
+def _per_unit_from_diffs(diffs, seeds, examples):
+    """Per-unit rows for a (diffs, seeds, examples) triple: baseline 0, candidate = the difference. The metric values
+    are arbitrary floats here, only the candidate-minus-baseline differences matter to evaluate_success_rule."""
+    return {
+        "baseline": [{"unit": e, "cluster": s, "accuracy": 0.0} for s, e in zip(seeds, examples, strict=True)],
+        "candidate": [{"unit": e, "cluster": s, "accuracy": d} for d, s, e in zip(diffs, seeds, examples, strict=True)],
+    }
+
+
+def _all_favourable_per_unit(seeds=SEEDS3, n=50):
+    """The reviewer's case: the candidate is right and the baseline wrong on EVERY example in every seed (+1 each)."""
+    return {
+        "baseline": _accuracy_per_unit(lambda s, i: False, seeds, n),
+        "candidate": _accuracy_per_unit(lambda s, i: True, seeds, n),
+    }
+
+
+def _identical_arms_per_unit(seeds=SEEDS3, n=100):
+    rng = random.Random(4)
+    table = [[rng.random() < 0.6 for _ in range(n)] for _ in seeds]
+    return {
+        "baseline": _accuracy_per_unit(lambda s, i: table[s][i], seeds, n),
+        "candidate": _accuracy_per_unit(lambda s, i: table[s][i], seeds, n),
+    }
+
+
+def _two_seed_large_effect_per_unit(n=400):
+    seeds2 = ("0", "1")
+    base, cand = _planted_effect_cells(random.Random(8), seeds2, n, gains=(0.30, 0.40))
+    return {
+        "baseline": _accuracy_per_unit(lambda s, i: base[s][i], seeds2, n),
+        "candidate": _accuracy_per_unit(lambda s, i: cand[s][i], seeds2, n),
+    }
+
+
+def test_reviewers_discrete_three_seed_case_is_inconclusive_under_a_threshold_rule():
+    plan = _threshold_plan()
+    assert plan["cluster_by"] == "seed" and plan["success_rule"]["decision_standard"]["kind"] == "threshold"
+    assert plan["success_rule"]["min_effect"] == 0.02
+    result = evaluate_success_rule(plan, _all_favourable_per_unit(), interval=INTERVAL_TWO_WAY)
+    eff = result["effect"]
+    # the point estimate alone would pass: +1 against a minimum effect of 0.02
+    assert eff["seeds"] == 3 and eff["estimate"] == 1.0 and eff["estimate"] >= result["min_effect"]
+    # ... but the interval is unbounded below because the seed variance estimate collapsed to exactly zero
+    assert eff["ci_low"] == -math.inf and eff["ci_high"] == 1.0 and eff["se"] == 0.0
+    assert eff["unbounded_reason"] == "seed-variance-collapsed" and eff["unbounded_reason"] in COLLAPSE_REASONS
+    assert result["outcome"] == "inconclusive"
+    assert result["outcome"] != "protocol-passed"
+    assert result["unbounded_reason"] == "seed-variance-collapsed"
+    assert result["decided_by"] == "none"
+    assert isinstance(result["reason"], str) and "seed-variance-collapsed" in result["reason"]
+
+
+@pytest.mark.parametrize("n_seeds", [3, 4, 5, 8])
+def test_discrete_all_favourable_seeds_are_never_a_threshold_pass_whatever_the_seed_count(n_seeds):
+    seeds = tuple(str(s) for s in range(n_seeds))
+    result = evaluate_success_rule(
+        _threshold_plan(), _all_favourable_per_unit(seeds), interval=INTERVAL_TWO_WAY
+    )
+    assert result["effect"]["estimate"] == 1.0
+    assert result["outcome"] == "inconclusive" and result["decided_by"] == "none"
+    assert result["unbounded_reason"] == "seed-variance-collapsed"
+
+
+def test_two_seeds_with_a_large_positive_estimate_are_not_a_threshold_pass():
+    plan = _threshold_plan(seeds=(11, 12))
+    result = evaluate_success_rule(plan, _two_seed_large_effect_per_unit(), interval=INTERVAL_TWO_WAY)
+    eff = result["effect"]
+    assert eff["seeds"] == 2 and eff["seed_variance_estimated"] is True
+    assert eff["estimate"] > 0.25  # a large effect: the point estimate would clear min_effect 0.02 many times over
+    assert eff["variance_components"]["seed"] > 0  # not a collapse: just too few seeds to bound the interval
+    assert eff["ci_low"] == -math.inf and eff["ci_high"] > 0.02
+    assert result["outcome"] == "inconclusive" and result["outcome"] != "protocol-passed"
+    assert result["unbounded_reason"] == "too-few-seed-clusters" and eff["unbounded_reason"] == "too-few-seed-clusters"
+    assert result["decided_by"] == "none"
+    assert "too-few-seed-clusters" in result["reason"]
+
+
+@pytest.mark.parametrize(
+    ("label", "seeds", "cluster_by", "reason"),
+    [
+        ("three-seeds", SEEDS3, "seed", "seed-variance-collapsed"),
+        ("two-seeds", ("0", "1"), "seed", "too-few-seed-clusters"),
+        ("one-seed-no-cluster-by", ("11",), None, "variance-collapsed"),
+    ],
+    ids=["three-seeds", "two-seeds", "one-seed-no-cluster-by"],
+)
+def test_identical_arms_under_a_threshold_rule_fail_through_the_upper_bound(label, seeds, cluster_by, reason):
+    plan = _threshold_plan(seeds=tuple(range(len(seeds))), cluster_by=cluster_by)
+    result = evaluate_success_rule(plan, _identical_arms_per_unit(seeds), interval=INTERVAL_TWO_WAY)
+    eff = result["effect"]
+    # With every difference zero the standard error is 0, the t quantile is taken as 0 and ci_high = mean + 0 = 0:
+    # finite, not +inf. Only the lower bound is unbounded (collapse), so ci_high = 0 < min_effect = 0.02 decides it.
+    assert eff["estimate"] == 0.0 and eff["se"] == 0.0 and eff["ci_high"] == 0.0 and eff["ci_low"] == -math.inf
+    assert eff["unbounded_reason"] == reason
+    assert result["outcome"] == "protocol-failed"
+    assert result["unbounded_reason"] == reason
+    assert result["decided_by"] == "interval-upper-bound"
+    assert "reason" not in result  # a reason is only given when the outcome is inconclusive
+
+
+def test_identical_arms_under_a_zero_minimum_effect_are_inconclusive_not_a_threshold_pass():
+    """The upper bound decides a failure only when it is STRICTLY below min_effect. With min_effect 0 the point estimate
+    0 >= 0 used to pass a threshold rule on two identical arms; the collapsed interval (ci_high = 0, not < 0) does not."""
+    plan = _threshold_plan(min_effect=0.0)
+    per_unit = _identical_arms_per_unit()
+    assert evaluate_success_rule(plan, per_unit)["outcome"] == "protocol-passed"  # original method: recorded behaviour
+    result = evaluate_success_rule(plan, per_unit, interval=INTERVAL_TWO_WAY)
+    assert result["outcome"] == "inconclusive" and result["decided_by"] == "none"
+    assert result["unbounded_reason"] == "seed-variance-collapsed" and "reason" in result
+
+
+def test_the_reviewers_case_is_also_inconclusive_under_the_interval_standard():
+    """Parity: the same data under the paired-difference-ci standard is the same result, with the same fields."""
+    interval_plan = _threshold_plan(kind="paired-difference-ci")
+    assert interval_plan["success_rule"]["decision_standard"]["kind"] == "paired-difference-ci"
+    per_unit = _all_favourable_per_unit()
+    by_interval = evaluate_success_rule(interval_plan, per_unit, interval=INTERVAL_TWO_WAY)
+    assert by_interval["outcome"] == "inconclusive" and by_interval["outcome"] != "protocol-passed"
+    assert by_interval["unbounded_reason"] == "seed-variance-collapsed" and by_interval["decided_by"] == "none"
+    assert "reason" in by_interval
+    assert evaluate_success_rule(_threshold_plan(), per_unit, interval=INTERVAL_TWO_WAY) == by_interval
+
+
+@pytest.mark.parametrize(
+    ("name", "make_per_unit", "seeds", "want_outcome", "want_reason", "want_decided_by"),
+    [
+        ("all-favourable", _all_favourable_per_unit, (11, 12, 13), "inconclusive", "seed-variance-collapsed", "none"),
+        (
+            "all-unfavourable",
+            lambda: {
+                "baseline": _accuracy_per_unit(lambda s, i: True, SEEDS3, 50),
+                "candidate": _accuracy_per_unit(lambda s, i: False, SEEDS3, 50),
+            },
+            (11, 12, 13),
+            "protocol-failed",
+            "seed-variance-collapsed",
+            "interval-upper-bound",
+        ),
+        ("identical-arms", _identical_arms_per_unit, (11, 12, 13), "protocol-failed", "seed-variance-collapsed",
+         "interval-upper-bound"),
+        ("two-seeds-large-effect", _two_seed_large_effect_per_unit, (11, 12), "inconclusive", "too-few-seed-clusters",
+         "none"),
+    ],
+)
+def test_a_threshold_rule_and_the_interval_standard_agree_on_collapsed_intervals(
+    name, make_per_unit, seeds, want_outcome, want_reason, want_decided_by
+):
+    per_unit = make_per_unit()
+    by_threshold = evaluate_success_rule(_threshold_plan(seeds=seeds), per_unit, interval=INTERVAL_TWO_WAY)
+    by_interval = evaluate_success_rule(
+        _threshold_plan(kind="paired-difference-ci", seeds=seeds), per_unit, interval=INTERVAL_TWO_WAY
+    )
+    assert by_threshold == by_interval, name
+    assert by_threshold["outcome"] == want_outcome and by_threshold["outcome"] != "protocol-passed"
+    assert by_threshold["unbounded_reason"] == want_reason and by_threshold["decided_by"] == want_decided_by
+
+
+# --- Monte Carlo: the discrete design of ADR 0018 section 7 under a threshold rule -------------------------------------
+
+
+def _threshold_monte_carlo(replicate, rng_seed, replicates=2000, min_effect=0.02, **design):
+    """Run ``replicates`` draws through evaluate_success_rule with the two-way interval under a threshold rule and
+    under the interval standard. Returns rates over the draws plus the exact per-draw invariants that F5c fixes:
+    ``collapsed`` (interval carries an unbounded_reason), ``collapsed_passed`` (must be exactly 0), ``passed``
+    (threshold rule), ``point_estimate_would_pass`` (the pre-F5c rule), ``bounded_disagreements`` (non-collapsed draws
+    whose outcome is not the plain point-estimate rule: must be 0, the change is scoped), ``interval_passed``."""
+    rng = random.Random(rng_seed)
+    threshold_plan, interval_plan = _threshold_plan(min_effect=min_effect), _threshold_plan(
+        kind="paired-difference-ci", min_effect=min_effect
+    )
+    tally = dict.fromkeys(
+        ("collapsed", "collapsed_passed", "passed", "point_estimate_would_pass", "old_false_pass_collapsed",
+         "bounded_disagreements", "interval_passed"),
+        0,
+    )
+    for _ in range(replicates):
+        per_unit = _per_unit_from_diffs(*replicate(rng, **design))
+        got = evaluate_success_rule(threshold_plan, per_unit, interval=INTERVAL_TWO_WAY)
+        by_interval = evaluate_success_rule(interval_plan, per_unit, interval=INTERVAL_TWO_WAY)
+        estimate = got["effect"]["estimate"]
+        collapsed = "unbounded_reason" in got
+        assert collapsed == ("unbounded_reason" in got["effect"])  # the result surfaces exactly the interval's reason
+        passed = got["outcome"] == "protocol-passed"
+        tally["collapsed"] += collapsed
+        tally["collapsed_passed"] += collapsed and passed
+        tally["passed"] += passed
+        tally["point_estimate_would_pass"] += estimate >= min_effect
+        tally["old_false_pass_collapsed"] += collapsed and estimate >= min_effect
+        if not collapsed:  # scoped: a bounded interval is still decided by the point estimate
+            want = "protocol-passed" if estimate >= min_effect else "protocol-failed"
+            tally["bounded_disagreements"] += got["outcome"] != want
+        tally["interval_passed"] += by_interval["outcome"] == "protocol-passed"
+    return {k: v / replicates for k, v in tally.items()} | {"bounded_disagreements": tally["bounded_disagreements"],
+                                                           "collapsed_passed": tally["collapsed_passed"]}
+
+
+def test_monte_carlo_discrete_design_threshold_rule_never_passes_a_collapsed_interval():
+    """Each of three seeds is +1 on every example with p = 0.4 and -1 with p = 0.6: population effect -0.2, so every
+    pass is a false pass. All-same draws (all +1: 0.4**3 = 0.064, all -1: 0.6**3 = 0.216) collapse the seed variance."""
+    res = _threshold_monte_carlo(_discrete_replicate, rng_seed=20260611, n_seeds=3, n_examples=50)
+    print(f"threshold rule, discrete S=3 N=50: {res}")
+    assert res["collapsed"] == pytest.approx(0.4**3 + 0.6**3, abs=0.04) and res["collapsed"] > 0.2
+    assert res["collapsed_passed"] == 0  # exactly: a collapsed interval never passes a threshold rule
+    # before F5c these draws were the false passes: all three seeds favourable, point estimate +1 >= 0.02
+    assert res["old_false_pass_collapsed"] == pytest.approx(0.4**3, abs=0.03) and res["old_false_pass_collapsed"] > 0
+    assert res["bounded_disagreements"] == 0  # every other draw is decided exactly as before, by the point estimate
+    assert res["passed"] == pytest.approx(res["point_estimate_would_pass"] - res["old_false_pass_collapsed"])
+    # Honest residual, NOT a coverage claim: a threshold rule still compares the point estimate on a bounded interval,
+    # so draws with exactly two favourable seeds (mean +1/3, seed variance > 0) pass: 3 * 0.4**2 * 0.6 = 0.288. Only
+    # the interval standard is limited by the documented bound; F5c scopes the threshold change to collapsed intervals.
+    assert res["passed"] == pytest.approx(3 * 0.4**2 * 0.6, abs=0.04)
+    # the interval standard on the very same draws: the documented limitation bound of the near-discrete test above
+    assert res["interval_passed"] <= 0.08  # in fact exactly 0 for the pure discrete design
+
+
+@pytest.mark.parametrize("noise", [0.0, 0.03])
+def test_monte_carlo_near_discrete_design_threshold_rule_never_passes_a_collapsed_interval(noise):
+    """The near-discrete variant (the favourable seed gains on a random 10% of the examples, the others lose on 10%,
+    plus symmetric per-cell noise): true effect -0.02. With noise 0 the seed means of an all-same-sign draw are equal
+    again, so the seed variance collapses; with noise 0.03 collapse is rare and the interval is almost always bounded."""
+    res = _threshold_monte_carlo(_near_discrete_replicate, rng_seed=20260611, n_seeds=3, n_examples=50, noise=noise)
+    print(f"threshold rule, near-discrete S=3 N=50 noise={noise}: {res}")
+    assert res["collapsed_passed"] == 0
+    assert res["bounded_disagreements"] == 0
+    assert res["interval_passed"] <= 0.08  # the documented limitation bound (measured 0 and about 0.03)
+    if noise == 0.0:
+        assert res["collapsed"] > 0.15  # the zero above is not vacuous: about a quarter of the draws collapse
+        assert res["old_false_pass_collapsed"] > 0.02  # and the pre-F5c rule passed some of them
+    # a threshold pass needs at least two favourable seeds (probability 0.352); the point estimate does the rest
+    assert res["passed"] <= 0.352 + 0.04
+
+
+# --- Scope: bounded intervals and the original interval method are unchanged ------------------------------------------
+
+
+def _additive_cells(seed_effects, n_examples=40, example_amp=0.1):
+    """diff = seed effect + example effect, the example effect alternating +/- ``example_amp`` (mean zero). Seeds differ,
+    so the seed variance is positive and the two-way interval is bounded (wide: three seeds, two degrees of freedom)."""
+    diffs, seeds, examples = [], [], []
+    for s, effect in enumerate(seed_effects):
+        for i in range(n_examples):
+            diffs.append(effect + (example_amp if i % 2 else -example_amp))
+            seeds.append(f"s{s}")
+            examples.append(f"e{i}")
+    return diffs, seeds, examples
+
+
+def test_a_non_collapsed_two_way_threshold_still_passes_on_the_point_estimate():
+    per_unit = _per_unit_from_diffs(*_additive_cells((0.12, 0.05, -0.02)))
+    by_threshold = evaluate_success_rule(_threshold_plan(), per_unit, interval=INTERVAL_TWO_WAY)
+    eff = by_threshold["effect"]
+    assert "unbounded_reason" not in eff and eff["seed_variance_estimated"] is True
+    assert eff["estimate"] == pytest.approx(0.05) and eff["ci_low"] < 0.02 < eff["ci_high"]  # a wide, bounded interval
+    assert by_threshold["outcome"] == "protocol-passed"  # estimate >= min_effect although ci_low < min_effect
+    assert not {"unbounded_reason", "decided_by", "reason"} & by_threshold.keys()  # none of the F5c fields appear
+    # the interval standard on the same data does not pass: that is the whole difference between the two standards
+    by_interval = evaluate_success_rule(
+        _threshold_plan(kind="paired-difference-ci"), per_unit, interval=INTERVAL_TWO_WAY
+    )
+    assert by_interval["outcome"] == "inconclusive" and "decided_by" not in by_interval
+    assert by_interval["effect"] == eff
+
+
+def test_a_non_collapsed_two_way_threshold_still_fails_on_the_point_estimate():
+    per_unit = _per_unit_from_diffs(*_additive_cells((0.10, 0.0, -0.10)))
+    result = evaluate_success_rule(_threshold_plan(), per_unit, interval=INTERVAL_TWO_WAY)
+    eff = result["effect"]
+    assert "unbounded_reason" not in eff and eff["estimate"] == pytest.approx(0.0, abs=1e-12)
+    assert eff["ci_high"] > 0.02  # the interval alone would call this inconclusive
+    assert result["outcome"] == "protocol-failed"  # the threshold rule: estimate < min_effect
+    assert not {"unbounded_reason", "decided_by", "reason"} & result.keys()
+
+
+@pytest.mark.parametrize(
+    "interval_kwargs", [{}, {"interval": INTERVAL_SEED_CLUSTERED}], ids=["default", "seed-clustered"]
+)
+def test_the_original_interval_keeps_the_point_estimate_threshold_on_a_collapsed_looking_sample(interval_kwargs):
+    """Recorded behaviour of the assessor releases before paired-ci@1.2.0: a threshold rule compares the point estimate."""
+    # three favourable discrete seeds: the two-way interval would call this collapsed, the original one is not asked
+    result = evaluate_success_rule(_threshold_plan(), _all_favourable_per_unit(), **interval_kwargs)
+    assert result["outcome"] == "protocol-passed"
+    assert result["effect"]["estimate"] == 1.0
+    assert not {"unbounded_reason", "decided_by", "reason"} & result.keys()
+    assert "unbounded_reason" not in result["effect"]  # the original interval has no collapse detection at all
+    # two seeds with a large positive estimate: passed as well
+    result = evaluate_success_rule(_threshold_plan(seeds=(11, 12)), _two_seed_large_effect_per_unit(), **interval_kwargs)
+    assert result["outcome"] == "protocol-passed" and not {"unbounded_reason", "decided_by", "reason"} & result.keys()
+    # identical arms with a zero minimum effect: point estimate 0 >= 0 passes
+    result = evaluate_success_rule(_threshold_plan(min_effect=0.0), _identical_arms_per_unit(), **interval_kwargs)
+    assert result["outcome"] == "protocol-passed"
+    # and an all-unfavourable sample still fails on the point estimate
+    per_unit = {
+        "baseline": _accuracy_per_unit(lambda s, i: True, SEEDS3, 50),
+        "candidate": _accuracy_per_unit(lambda s, i: False, SEEDS3, 50),
+    }
+    assert evaluate_success_rule(_threshold_plan(), per_unit, **interval_kwargs)["outcome"] == "protocol-failed"
+
+
+@pytest.mark.parametrize("kind", ["threshold", "interval"])
+def test_a_non_estimable_variance_is_never_a_threshold_pass(kind):
+    # One seed while the plan demands seed variance (cluster_by): the variance is not estimable (NaN), the interval
+    # is (-inf, inf) with no collapse reason. Before this fix a threshold rule still passed on the point estimate.
+    seeds1 = ("0",)
+    per_unit = {"baseline": _accuracy_per_unit(lambda s, i: False, seeds1, 50),
+                "candidate": _accuracy_per_unit(lambda s, i: True, seeds1, 50)}
+    res = evaluate_success_rule(_threshold_plan(kind=kind, seeds=(11,)), per_unit, interval=INTERVAL_TWO_WAY)
+    assert res["effect"]["ci_low"] == -math.inf and res["effect"]["ci_high"] == math.inf
+    assert res["outcome"] == "inconclusive"
+    assert res["unbounded_reason"] == "variance-not-estimable" and res["decided_by"] == "none" and res["reason"]
