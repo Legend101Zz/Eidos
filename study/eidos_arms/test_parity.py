@@ -147,7 +147,8 @@ class SetupAndInformation(unittest.TestCase):
     def test_method_embedding_and_setup_receipt_at_real_adapter_boundary(self):
         clock = SimpleNamespace(now=100.0)
         imported = dict(charter_id='charter', artifacts={}, task={})
-        shown = dict(status='concluded', turns=[], body={'conclusion': {'summary': 'Fixture result.'}})
+        shown = dict(status='concluded', turns=[], body={'conclusion': {'summary': 'Fixture result.'},
+                                                        'wall': {'deadline_unix': 1426.5}})
         captured = {}
 
         def start():
@@ -203,7 +204,14 @@ class SetupAndInformation(unittest.TestCase):
             self.assertEqual(record['setup_wall_s'], 300.0)
             self.assertTrue(record['setup_complete'])
             self.assertEqual(record['investigation_wall_s'], 5.0)
-            self.assertEqual(json.loads((root / 'investigation.json').read_text())['deadline_unix'], 1430.0)
+            investigation = json.loads((root / 'investigation.json').read_text())
+            self.assertEqual(investigation['deadline_unix'], 1430.0)
+            self.assertEqual(captured['investigator']['wall_deadline_unix'], 1425.0)
+            deadline = investigation['deadline_evidence']
+            self.assertEqual(deadline['start_request_unix'], 1400.0)
+            self.assertEqual(deadline['start_response_unix'], 1402.0)
+            self.assertEqual(deadline['registered_lab_deadline_unix'], 1426.5)
+            self.assertEqual(deadline['registered_margin_s'], 3.5)
             embedded = json.loads(captured['question'].split('Packaged task files:\n', 1)[1])
             self.assertEqual(embedded['METHOD.md'], (arm4.ROOT / 'study/METHOD.md').read_text())
             self.assertEqual(embedded['brief.md'], 'Fixture brief')

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import shutil
 import threading
 import time
@@ -63,6 +64,13 @@ def remaining_wall_seconds(deadline_unix, now=None):
     return max(1.0, deadline_unix - (time.time() if now is None else now) - WATCHDOG_MARGIN_SECONDS)
 
 
+def observed_deadline(outer_deadline, investigation):
+    registered = ((investigation.get('body') or {}).get('wall') or {}).get('deadline_unix')
+    if type(registered) not in (int, float) or not math.isfinite(registered):
+        return {'registered_lab_deadline_unix': None, 'registered_margin_s': None}
+    return {'registered_lab_deadline_unix': registered, 'registered_margin_s': outer_deadline - registered}
+
+
 def stop_investigation(c, project, inv):
     return c.command('stop_investigation', {'investigation_id': inv, 'running_job_policy': 'cancel'},
                      project=project, key='study-outer-stop:' + inv)
@@ -87,17 +95,22 @@ def run(run_dir, meta):
         files['METHOD.md'] = (ROOT / 'study/METHOD.md').read_text()
         question = prompt(4, run_dir) + '\n\nPackaged task files:\n' + json.dumps(files, ensure_ascii=False)
         begin = time.monotonic()
+        wall_start_unix = time.time()
+        deadline_utc = wall_start_unix + wall
         began_at = utc()
         write_json(run_dir / 'setup.json', {'setup_started_at': setup_started_at,
                    'setup_ended_at': began_at, 'setup_wall_s': round(begin - setup_begin, 3),
                    'setup_complete': True})
-        deadline_utc = time.time() + wall
         from .provider_bridge import start as start_bridge
+        bridge_start_unix = time.time()
         bridge, bridge_receipt = start_bridge(run_dir, investigator['settings']['base_url'],
                                               deadline_utc, investigator['settings']['request_timeout'])
+        bridge_ready_unix = time.time()
         investigator['settings']['base_url'] = bridge_receipt['base_url']
         # ADR 0020: completion state, the conclusion's reserve and the "conclude now" turn, inside the watchdog's envelope.
         investigator['wall_seconds'] = remaining_wall_seconds(deadline_utc)
+        investigator['wall_deadline_unix'] = deadline_utc - WATCHDOG_MARGIN_SECONDS
+        start_request_unix = time.time()
         r = c.command('start_investigation', {
             'question': question, 'charter_id': imported['charter_id'], 'environment': 'default',
             'inputs': imported['artifacts'], 'task': imported['task'], 'investigator': investigator,
@@ -106,9 +119,23 @@ def run(run_dir, meta):
             'notes': f'Study deadline unix={deadline_utc}; wall_seconds={wall}. '
                      'Outer controller cancels the investigation and jobs at this deadline.',
         }, project=project)
+        start_response_unix = time.time()
         inv = r['result']['investigation_id']
-        write_json(run_dir / 'investigation.json', {'project': project, 'investigation_id': inv,
-                   'deadline_unix': deadline_utc, 'investigator': investigator, 'started_at': utc()})
+        investigation_path = run_dir / 'investigation.json'
+        deadline_evidence = {
+            'wall_start_unix': wall_start_unix,
+            'outer_deadline_unix': deadline_utc,
+            'requested_lab_deadline_unix': investigator['wall_deadline_unix'],
+            'requested_lab_wall_seconds': investigator['wall_seconds'],
+            'bridge_startup_s': bridge_ready_unix - bridge_start_unix,
+            'start_request_unix': start_request_unix,
+            'start_response_unix': start_response_unix,
+            **observed_deadline(deadline_utc, {}),
+        }
+        investigation_record = {'project': project, 'investigation_id': inv, 'deadline_unix': deadline_utc,
+                                'investigator': investigator, 'started_at': utc(),
+                                'deadline_evidence': deadline_evidence}
+        write_json(investigation_path, investigation_record)
         done, expired = threading.Event(), threading.Event()
         stop_error = []
 
@@ -131,6 +158,9 @@ def run(run_dir, meta):
             while not expired.is_set():
                 lab.guard_disk()
                 shown = c.query('get_investigation', {'investigation_id': inv}, project=project)
+                if not observed:
+                    deadline_evidence.update(observed_deadline(deadline_utc, shown))
+                    write_json(investigation_path, investigation_record)
                 observed = shown
                 write_json(run_dir / 'investigation_latest.json', shown)
                 if shown['status'] != 'active' or shown.get('needs_input'):
@@ -142,6 +172,9 @@ def run(run_dir, meta):
             # A parked investigator must not resume after this run has returned.
             stop_investigation(c, project, inv)
         shown, events, records = ledger(c, project, inv, run_dir / 'transcript.jsonl')
+        if deadline_evidence['registered_lab_deadline_unix'] is None:
+            deadline_evidence.update(observed_deadline(deadline_utc, shown))
+            write_json(investigation_path, investigation_record)
         tokens, models, billed, receipts = usage(events, run_dir / 'transcript.jsonl')
         uncertain = any(r.get('uncertain') for r in receipts) or (
             expired.is_set() and any(t['status'] == 'open' for t in shown['turns']))
@@ -181,7 +214,8 @@ def run(run_dir, meta):
             valid = False
             write_json(run_dir / 'validation_error.json', {'error': str(exc)})
         status, incident = classify(observed or shown, receipts, models, expired.is_set(), valid)
-        return {'status': status, 'incident_reason': incident, 'tokens': tokens, 'billed_usd': billed,
+        controller_abstention = (shown.get('body') or {}).get('controller_abstention')
+        return {'status': status, **({'controller_abstention': controller_abstention} if controller_abstention else {}), 'incident_reason': incident, 'tokens': tokens, 'billed_usd': billed,
                 'started_at': began_at,
                 'model_ids_seen': models, 'agent_claim': agent_claim, 'transcript': 'transcript.jsonl',
                 'project': project, 'investigation_id': inv, 'selected_job': selected,

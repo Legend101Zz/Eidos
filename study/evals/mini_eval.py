@@ -29,6 +29,10 @@ from study.launcher import plan, run_block
 
 SCHEMA = "eidos-mini-eval/2"
 SSD_ROOT = EVAL_ROOT.parent
+ABSOLUTE_LAB_DEADLINE_SUPPORT = {
+    "257792ab56b6b984e807fe284a22fc5d31c4dd8b": False,
+    "12756a3e7fd1414eeaa17bb1400b152c19374186": True,
+}
 FORBIDDEN_PORTS = {28767, 25546, 28766, 25544, 28765} | set(range(27633, 27644))
 
 
@@ -127,6 +131,12 @@ def scorecard(
             record = read_json(run_dir / "run_record.json")
             grade = read_json(out / "grading" / f"{card}-r{seed_index}" / f"arm{arm}/grade.json")
             observations = inspect_run(run_dir, identifiers.get(card, []))
+            investigation = run_dir / "investigation.json"
+            deadline = (
+                read_json(investigation).get("deadline_evidence")
+                if arm == 4 and investigation.is_file()
+                else None
+            )
             gain = (grade.get("numeric") or {}).get("gain")
             verified = grade["verified_success"]
             reference = references["cards"][card]
@@ -164,9 +174,16 @@ def scorecard(
                     tokens=record.get("tokens"),
                     wall_s=record.get("wall_s"),
                     usage_uncertain=record.get("usage_uncertain"),
+                    deadline_evidence=deadline,
                     evidence_sha256={
                         name: digest(run_dir / name)
-                        for name in ("run_record.json", "transcript.jsonl", "eval_provider_audit.jsonl")
+                        for name in (
+                            "run_record.json",
+                            "transcript.jsonl",
+                            "eval_provider_audit.jsonl",
+                            "investigation.json",
+                            "setup.json",
+                        )
                         if (run_dir / name).is_file()
                     },
                     grade_sha256=digest(out / "grading" / f"{card}-r{seed_index}" / f"arm{arm}/grade.json"),
@@ -195,6 +212,7 @@ def scorecard(
             attempt_id=attempt_id,
             design_sha256=digest(out / "design.json"),
             expected_build_sha=None if stub else build["eidos_commit_sha"],
+            build_supports_absolute_lab_deadline=ABSOLUTE_LAB_DEADLINE_SUPPORT.get(build["eidos_commit_sha"]),
             provider_audit_identifiers_sha256=audit_config_sha,
             pilot_build_sha256=hashlib.sha256(build_path.read_bytes()).hexdigest(),
             pilot_build=build,
@@ -216,7 +234,12 @@ def scorecard(
             coverage_complete=all(
                 r["invariant_flags"][flag] is not None for r in required for flag in REQUIRED_INVARIANTS
             ),
-            run_evidence_pass=all(r["status"] == "valid" and r["run_status"] == "ok" for r in arm4),
+            run_evidence_pass=all(
+                r["status"] == "valid"
+                and r["run_status"] == "ok"
+                and (stub or (r["deadline_evidence"] or {}).get("registered_lab_deadline_unix") is not None)
+                for r in arm4
+            ),
             comparison_required=True,
             eligible=not stub,
         ),

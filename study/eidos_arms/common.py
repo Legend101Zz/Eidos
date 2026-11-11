@@ -118,8 +118,19 @@ def ledger(c, project, inv, path):
                         emit('model_response', {'artifact_id': aid, 'response': json.loads(tmp.read_text())})
                     finally:
                         tmp.unlink(missing_ok=True)
+        for event in events:
+            if event.get('type') == 'decision.runtime_bounded':
+                aid = (event.get('body') or {}).get('response_artifact_id')
+                if aid:
+                    tmp = Path(path).parent / ('.runtime-response-' + aid + '.json')
+                    try:
+                        c.download(project, aid, tmp)
+                        emit('runtime_response', {'artifact_id': aid, 'runtime_outcome':
+                            (event.get('body') or {}).get('runtime_outcome'), 'response': json.loads(tmp.read_text())})
+                    finally:
+                        tmp.unlink(missing_ok=True)
         records = {}
-        for kind in ('note', 'claim', 'assessment', 'evidence_plan', 'export'):
+        for kind in ('note', 'claim', 'assessment', 'evidence_plan', 'export', 'finalization_export_receipt'):
             records[kind] = c.query('list_records', {'kind': kind, 'summary': False, 'limit': 1000}, project=project)
             for row in records[kind]:
                 emit(kind, row)
@@ -209,13 +220,25 @@ def classify(shown, receipts, models, timed_out=False, answer_valid=True):
     # Pilot-3 addendum 2: the provider failure must be the terminal event, as for arms 1-3 (whose final
     # result must itself be the API error). An earlier failure the investigator recovered from, followed by
     # successful model calls, never turns a later behavioural stop (e.g. refused proposals) into an incident.
-    last = receipts[-1] if receipts else {}
-    provider_failure = bool(last.get('failed_request') or last.get('error')) and _provider_incident(last, timed_out)
-    if timed_out:
+    # Admission/closure can emit zero-call bookkeeping after the last provider request.
+    last = next((r for r in reversed(receipts) if r.get('calls') or r.get('failed_request') or r.get('error')), {})
+    controller = (shown.get('body') or {}).get('controller_abstention') or {}
+    terminal = controller.get('failure') or {}
+    terminal_cause = terminal.get('error_type') or terminal.get('reason')
+    provider = terminal.get('provider') or {}
+    provider_failure = (
+        controller.get('code') == 'provider-unavailable' or
+        provider.get('status') == 429 or
+        bool(last.get('failed_request') or last.get('error')) and _provider_incident(last, timed_out)
+    )
+    if timed_out or terminal_cause == 'wall-deadline-reached':
         return 'timeout', None
-    if any(t.get('stop_reason') == 'budget-exhausted' for t in shown.get('turns', [])) or (
+    if terminal_cause == 'budget-exhausted' or any(
+            t.get('stop_reason') == 'budget-exhausted' for t in shown.get('turns', [])) or (
             'budget-exhausted' in str(shown.get('needs_input', ''))):
         return 'token_budget', None
+    if terminal_cause in {'max-turns-reached', 'turn-budget-exhausted'}:
+        return 'crash', 'investigation turn limit reached: ' + terminal_cause
     # Scientific completion is determined by the final state and exported answer,
     # not by recovered request/turn errors. A controller fallback alone is not a conclusion.
     if shown.get('status') == 'concluded':

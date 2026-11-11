@@ -162,7 +162,7 @@ def scan_held_out(record, rows, events, run_dir=None, known_identifiers=(), *, c
             or data.get("role") in {"held-out", "heldout", "test"}
         ):
             known.update((event["subject"], data["digest"]))
-    model_facing = [r["data"] for r in rows if r.get("type") == "model_response"]
+    model_facing = [r["data"] for r in rows if r.get("type") in {"model_response", "runtime_response"}]
     reads = [
         e["body"].get("usage", {}).get("structured_output", {}).get("reads", [])
         for e in events

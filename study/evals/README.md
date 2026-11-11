@@ -118,3 +118,10 @@ separately, and controller fallback contributes zero investigator conclusions. D
 remain diagnostic. Receipt counts accompany token and wall-time totals. Missing D02 references remain
 null and its native-unit verified gain remains part of comparison. One seed gives descriptive
 development evidence.
+
+
+The shared arm-4 controller records outer deadline, requested lab deadline, bridge startup and
+start-request timestamps, the server-registered deadline, and the observed margin in
+`investigation.json` and the scorecard. Round 3 registers a relative deadline at server receipt.
+Round 4 honors the absolute deadline. Interpret timing with each run's recorded margin and
+the scorecard's frozen build and controller identities.
