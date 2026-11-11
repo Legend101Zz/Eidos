@@ -1,0 +1,277 @@
+{
+  "$defs": {
+    "ConclusionClaim": {
+      "description": "The claim state of a conclusion: derived from recorded evidence and assessor state (ADR 0021), never from a\nmodel's chosen status. ``confirmed`` is true only with a conformant, healthy assessor pass.",
+      "properties": {
+        "assessment_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Assessment Id"
+        },
+        "assessments_considered": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Assessments Considered",
+          "type": "array"
+        },
+        "claim_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Claim Id"
+        },
+        "claim_revision": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Claim Revision"
+        },
+        "confirmed": {
+          "title": "Confirmed",
+          "type": "boolean"
+        },
+        "downgrade_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Downgrade Reason"
+        },
+        "downgraded_from": {
+          "anyOf": [
+            {
+              "enum": [
+                "confirmed",
+                "candidate",
+                "null",
+                "abstain"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Downgraded From"
+        },
+        "evidence_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "plan_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Plan Id"
+        },
+        "point_estimate": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Point Estimate"
+        },
+        "population": {
+          "default": null,
+          "title": "Population"
+        },
+        "remaining_alternatives": {
+          "items": {},
+          "title": "Remaining Alternatives",
+          "type": "array"
+        },
+        "requested_disposition": {
+          "anyOf": [
+            {
+              "enum": [
+                "confirmed",
+                "candidate",
+                "null",
+                "abstain"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Requested Disposition"
+        },
+        "schema": {
+          "const": "conclusion-claim/1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "scope": {
+          "default": null,
+          "title": "Scope"
+        },
+        "state": {
+          "enum": [
+            "protocol-passed",
+            "candidate-submitted",
+            "not-supported",
+            "abstained",
+            "null-reported",
+            "no-claim"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "statement": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Statement"
+        },
+        "success_rule_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Success Rule Ref"
+        },
+        "uncertainty": {
+          "default": null,
+          "title": "Uncertainty"
+        },
+        "unfulfilled_obligations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Unfulfilled Obligations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema",
+        "state",
+        "confirmed",
+        "label"
+      ],
+      "title": "ConclusionClaim",
+      "type": "object"
+    }
+  },
+  "$id": "urn:eidos:schema:eidos-wire:v1:conclusion",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "An investigation's recorded conclusion. Records from before ADR 0021 have no ``schema`` or ``claim_state``.",
+  "properties": {
+    "action": {
+      "enum": [
+        "conclude",
+        "stop"
+      ],
+      "title": "Action",
+      "type": "string"
+    },
+    "claim_state": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ConclusionClaim"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "schema": {
+      "anyOf": [
+        {
+          "const": "conclusion/2",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Schema"
+    },
+    "scope": {
+      "default": null,
+      "title": "Scope"
+    },
+    "summary": {
+      "title": "Summary",
+      "type": "string"
+    },
+    "turn_id": {
+      "title": "Turn Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "turn_id",
+    "summary",
+    "action"
+  ],
+  "title": "Conclusion",
+  "type": "object",
+  "x-eidos": {
+    "generator": "scripts/dev/gen_wire_schemas.py",
+    "source": "eidos.boundary.wire.Conclusion",
+    "unknown_fields": "accepted and ignored (newer minor versions add optional fields)",
+    "wire": "eidos-wire/1",
+    "wire_major": 1
+  }
+}

@@ -24,12 +24,14 @@ def prepare(c, project, run_dir):
     assessor = "eidos.assessors.paired-ci@1.2.0" if card in ("D03", "D06") else ASSESSOR
     template = "eidos.templates.improves-under-budget@1.2.0" if card in ("D03", "D06") else TEMPLATE
     from eidos.cli.main import builtin_component_dirs, install_component
+    from eidos.runtime.env_probe import registration_key
     from eidos.tasks.bundle import _inspect_env
     python = os.environ['EIDOS_RESEARCH_PYTHON']
-    c.command('register_environment', {'name': 'lab', 'python_executable': python,
-              'project_root': str(run_dir / 'task'), **_inspect_env(python, run_dir / 'task'),
-              'notes': 'Infrastructure controls; same research interpreter as default; task-only project root'},
-              project=project, key='pilot-lab-env:' + project)
+    payload = {'name': 'lab', 'python_executable': python, 'project_root': str(run_dir / 'task'),
+               **_inspect_env(python, run_dir / 'task'),
+               'notes': 'Infrastructure controls; same research interpreter as default; task-only project root'}
+    c.command('register_environment', payload, project=project,
+              key=registration_key('pilot-lab-env:' + project, payload))
     dirs = {p.name: p for p in builtin_component_dirs(lab_env_only=True)}
     for name in ('eidos.assessors.paired-ci', 'eidos.templates.improves-under-budget', 'eidos.qualification-runner'):
         result = install_component(c, project, dirs[name], 'lab', True)

@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 from eidos.application.service import Ctx, command
 from eidos.boundary.wire import WireSchemaError, validate_wire
 from eidos.domain.errors import ContentUnverifiable, Fenced, Invalid, NotFound
+from eidos.domain.redaction import redact_value
 from eidos_wire import OutputManifest, WireError
 
 TERMINAL = ("succeeded", "failed", "cancelled", "pruned")
@@ -40,6 +41,8 @@ def _release_job_budget(ctx: Ctx, job: dict) -> None:
 
 
 def _terminal(ctx: Ctx, job: dict, status: str, info: dict) -> None:
+    if info.get("error"):  # ADR 0020 addendum R10: every failure the ledger stores, whichever path reported it
+        info = {**info, "error": redact_value(info["error"])}
     ctx.tx.update_job(job["id"], status=status, terminal=info)
     _release_job_budget(ctx, job)
     if job["trial_id"]:

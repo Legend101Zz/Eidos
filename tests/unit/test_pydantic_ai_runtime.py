@@ -37,7 +37,7 @@ def test_reads_tool_then_returns_valid_decision():
     rt = PydanticAIRuntime({"_model_object": FunctionModel(fn), "model": "function:test"})
     res = rt.decide(req(tools))
     assert seen == ["pair"]
-    assert res.usage["calls"] == 2 and res.prompt_revision == "investigator-prompt/1"
+    assert res.usage["calls"] == 2 and res.prompt_revision == "investigator-prompt/2"
     assert res.model_settings["transport_retries"] == 0
     d = validate_decision(res.proposal, max_calls=4)
     assert d["calls"][0]["tool"] == "run_component" and d["calls"][0]["args"]["component_ref"] == "a@1.0.0"

@@ -1,0 +1,339 @@
+{
+  "$defs": {
+    "BatchResultRef": {
+      "additionalProperties": false,
+      "description": "A later call's reference to an earlier call of the same decision (ADR 0022), resolved at execution.",
+      "properties": {
+        "$ref": {
+          "description": "'call[<index>].<field>' or 'call[<index>].outputs.<slot>'",
+          "pattern": "^call\\[(0|[1-9][0-9]*)\\]\\.(outputs\\.[A-Za-z0-9_\\-]+|[a-z_]+)(?!\\n)$",
+          "title": "$Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "$ref"
+      ],
+      "title": "BatchResultRef",
+      "type": "object"
+    },
+    "CallArgValue": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BatchResultRef"
+        },
+        {
+          "$ref": "#/$defs/CallArgs"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/CallArgValue"
+          },
+          "type": "array"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "CallArgs": {
+      "additionalProperties": {
+        "$ref": "#/$defs/CallArgValue"
+      },
+      "description": "A call's arguments, or an object nested in them. A ``$ref`` key is only ever a :class:`BatchResultRef`.",
+      "propertyNames": {
+        "not": {
+          "const": "$ref"
+        }
+      },
+      "title": "CallArgs",
+      "type": "object"
+    },
+    "ClaimRequest": {
+      "description": "What a conclusion asks to be recorded (``control.claim``, ADR 0021). The claim state itself is derived from the\nevidence; the lab's validator (``domain.assessment``) checks this block, and unknown keys are ignored like the rest\nof a decision's control.",
+      "properties": {
+        "claim_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Claim Id"
+        },
+        "disposition": {
+          "anyOf": [
+            {
+              "enum": [
+                "confirmed",
+                "candidate",
+                "null",
+                "abstain"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Disposition"
+        },
+        "evidence_refs": {
+          "anyOf": [
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Refs"
+        },
+        "obligations": {
+          "anyOf": [
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Obligations"
+        },
+        "point_estimate": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Point Estimate"
+        },
+        "population": {
+          "default": null,
+          "title": "Population"
+        },
+        "uncertainty": {
+          "default": null,
+          "title": "Uncertainty"
+        }
+      },
+      "title": "ClaimRequest",
+      "type": "object"
+    },
+    "DecisionCall": {
+      "description": "One effect call in order; its receipt, command key and provenance are its own.",
+      "properties": {
+        "args": {
+          "$ref": "#/$defs/CallArgs"
+        },
+        "tool": {
+          "minLength": 1,
+          "title": "Tool",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool",
+        "args"
+      ],
+      "title": "DecisionCall",
+      "type": "object"
+    },
+    "DecisionControl": {
+      "description": "How a decision ends its turn, with every field the investigator runtime writes.",
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "enum": [
+                "wait_for_jobs",
+                "request_input",
+                "conclude",
+                "stop"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Action"
+        },
+        "bounded_outcome": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "why the runtime ended this decision without usable output",
+          "title": "Bounded Outcome"
+        },
+        "claim": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClaimRequest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "what a conclusion asks to record (ADR 0021)"
+        },
+        "claim_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "a claim block the model wrote that is not JSON, as written",
+          "title": "Claim Text"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "the structured scope of a conclusion (for example its answer)",
+          "title": "Scope"
+        },
+        "scope_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "a scope the model wrote that is not a JSON object, as written",
+          "title": "Scope Text"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "title": "DecisionControl",
+      "type": "object"
+    },
+    "ResourcePolicy": {
+      "description": "Concurrency a decision asks for; more than one job at a time needs the project's resource policy too.",
+      "properties": {
+        "max_concurrent_jobs": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Max Concurrent Jobs",
+          "type": "integer"
+        }
+      },
+      "title": "ResourcePolicy",
+      "type": "object"
+    }
+  },
+  "$id": "urn:eidos:schema:eidos-wire:v1:decision-proposal",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A proposed investigator decision. Structural only: the lab's validator (``domain.turns``) adds the rules that need\nthe whole batch (unknown fields of the named tool, out-of-range, forward or self references).",
+  "properties": {
+    "calls": {
+      "items": {
+        "$ref": "#/$defs/DecisionCall"
+      },
+      "title": "Calls",
+      "type": "array"
+    },
+    "control": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DecisionControl"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "hypotheses": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Hypotheses",
+      "type": "array"
+    },
+    "purpose": {
+      "default": "open-search",
+      "title": "Purpose",
+      "type": "string"
+    },
+    "rationale": {
+      "title": "Rationale",
+      "type": "string"
+    },
+    "resource_policy": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ResourcePolicy"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "rationale"
+  ],
+  "title": "DecisionProposal",
+  "type": "object",
+  "x-eidos": {
+    "generator": "scripts/dev/gen_wire_schemas.py",
+    "source": "eidos.boundary.wire.DecisionProposal",
+    "unknown_fields": "accepted and ignored (newer minor versions add optional fields)",
+    "wire": "eidos-wire/1",
+    "wire_major": 1
+  }
+}

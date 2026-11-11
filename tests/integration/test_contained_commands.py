@@ -117,7 +117,7 @@ def test_lab_free_driver_runs_the_d02_baseline_contained(tmp_path):
                            "config": {}})
     assert r["ok"], lab.jobs[-1]
     pred = next(o["artifact_id"] for o in r["outputs"] if "prediction" in o["slot"])
-    s = lab.run_component({"component_ref": "eidos.task.score-classification@1.0.1",
+    s = lab.run_component({"component_ref": "eidos.task.score-classification@1.0.2",
                            "inputs": {"predictions": pred, "reference": "art_validation"}, "config": {}})
     assert s["ok"] and 0.5 < s["metrics"].get("accuracy", 0) <= 1.0, s
     assert {i["profile"] for i in lab.isolation} == {detect_sealed_profile()}

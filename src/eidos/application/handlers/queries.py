@@ -11,7 +11,9 @@ from typing import Any
 from eidos.application.handlers.components import catalog
 from eidos.application.handlers.investigations import confirm_scope, inv_scope
 from eidos.application.service import Ctx, query
+from eidos.domain import assessment as ev_assessment
 from eidos.domain import support
+from eidos.domain.environments import capability_summary
 from eidos.domain.errors import Forbidden, NotFound
 
 PREVIEW_BYTES = 16_384
@@ -117,6 +119,7 @@ def get_job(ctx: Ctx, p: dict) -> dict:
     out = _jsonable(job)
     out["attempts"] = [_jsonable(a) for a in ctx.tx.list_attempts(job["id"])]
     out["outputs"] = [_jsonable(x) for x in ctx.tx.publications(job["id"])]
+    out["environment"] = _job_environment(job)  # kept when the lock is stripped (ADR 0020)
     if not p.get("include_lock", True):
         out.pop("lock", None)
     return out
@@ -125,10 +128,13 @@ def get_job(ctx: Ctx, p: dict) -> dict:
 @query("list_jobs")
 def list_jobs(ctx: Ctx, p: dict) -> list[dict]:
     rows = ctx.tx.list_jobs(ctx.project_id, investigation_id=p.get("investigation_id"), statuses=p.get("statuses"))
+    if p.get("plan_id"):  # the jobs one evidence plan has admitted
+        rows = [j for j in rows if j["lock"].get("plan_id") == p["plan_id"]]
     for j in rows:
         _expose_job(ctx, j)
     return [{"id": j["id"], "kind": j["kind"], "status": j["status"], "purpose": j["purpose"], "epoch": j["epoch"],
              "component": j["lock"].get("component", {}).get("ref"), "trial_id": j["trial_id"],
+             "environment": (j["lock"].get("environment") or {}).get("name"),
              "cancel_requested": j["cancel_requested"], "created_at": str(j["created_at"]),
              "terminal": _jsonable(j["terminal"]) if j["terminal"] else None} for j in rows]
 
@@ -281,7 +287,31 @@ def get_claim(ctx: Ctx, p: dict) -> dict:
                     "health": a.labels.get("health", "intact"), "plan_id": a.body.get("plan_id")}
                    for a in ctx.tx.list_records(ctx.project_id, "assessment", parent_id=claim.id)]
     _expose(ctx, claim.body.get("investigation_id"), f"claim:{claim.id}", {"assessments": [a["id"] for a in assessments]})
-    return {**claim.view(), "assessments": assessments, "support": support.support_status(justs, affected)}
+    return {**claim.view(), "assessments": assessments, "support": support.support_status(justs, affected),
+            "claim_state": _claim_state(ctx, assessments, claim.revision, ctx.tx.list_records(ctx.project_id, "assessment",
+                                                                                             parent_id=claim.id))}
+
+
+def _claim_state(ctx: Ctx, assessments: list[dict], revision: int, records: list) -> dict:
+    """The claim's state from its current revision's assessments (ADR 0021): an intact failure outweighs a pass, and a
+    pass on a plan not verified at freeze (an exploratory or older plan) does not confirm."""
+    rev = {r.id: (r.body.get("claim_ref") or {}).get("revision") for r in records}
+    plan_of = {r.id: r.body.get("plan_id") for r in records}
+
+    def state_of(a: dict) -> str:
+        state = ev_assessment.lifecycle_state(a["outcome"], a["conformance"], a["health"])
+        plan = ctx.tx.get_record("evidence_plan", plan_of[a["id"]]) if state == ev_assessment.PROTOCOL_PASSED else None
+        return ev_assessment.CANDIDATE_SUBMITTED if state == ev_assessment.PROTOCOL_PASSED and not ev_assessment.can_confirm(
+            plan.body if plan else None) else state
+
+    states = [state_of(a) for a in assessments if rev.get(a["id"]) == revision]
+    if ev_assessment.NOT_SUPPORTED in states:
+        state = ev_assessment.NOT_SUPPORTED
+    elif ev_assessment.PROTOCOL_PASSED in states:
+        state = ev_assessment.PROTOCOL_PASSED
+    else:
+        state = ev_assessment.CANDIDATE_SUBMITTED
+    return {"state": state, "confirmed": state == ev_assessment.PROTOCOL_PASSED, "label": ev_assessment.LABELS[state]}
 
 
 @query("get_assessment")
@@ -342,14 +372,15 @@ def budgets(ctx: Ctx, p: dict) -> dict:
 def assessment_inputs(ctx: Ctx, p: dict) -> dict:
     """What the assessor may read: the frozen plan, each arm's receipts and output artifacts."""
     plan = ctx.tx.require("evidence_plan", p["plan_id"])
-    from eidos.application.handlers.evidence import arm_jobs
+    from eidos.application.handlers.evidence import arm_jobs, intermediate_jobs
     arms = {}
+    intermediate = intermediate_jobs(plan.body)
     for arm_id, jids in arm_jobs(plan.body).items():
         jobs = [ctx.tx.get_job(j) for j in jids]
         statuses = [j["status"] for j in jobs]
         arms[arm_id] = {"job_ids": jids, "status": "succeeded" if statuses and all(x == "succeeded" for x in statuses)
                         else "incomplete", "receipts": [(j.get("terminal") or {}).get("receipt", {}) for j in jobs],
-                        "outputs": [_jsonable(o) for j in jids for o in ctx.tx.publications(j)]}
+                        "outputs": [_jsonable(o) for j in jids if j not in intermediate for o in ctx.tx.publications(j)]}
     return {"plan_id": plan.id, "plan_digest": plan.digest, "plan": plan.body, "arms": arms}
 
 
@@ -382,6 +413,7 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
             _expose_job(ctx, j)
         outputs = [o for o in ctx.tx.publications(j["id"]) if cutoff_ts is None or o["created_at"] <= cutoff_ts]
         jobs.append({"id": j["id"], "component": j["lock"].get("component", {}).get("ref"), "purpose": j["purpose"],
+                     "environment": (j["lock"].get("environment") or {}).get("name"),
                      "status": j["status"] if terminal_visible else "running-or-queued",
                      "config": j["lock"].get("config"), "inputs": {k: v["artifact_id"] for k, v in (j["lock"].get("inputs") or {}).items()},
                      "receipt": (j["terminal"] or {}).get("receipt") if terminal_visible else None,
@@ -397,11 +429,15 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
               and (cutoff_ts is None or c.created_at <= cutoff_ts)]
     for c in claims:
         _expose_record(ctx, c)
-    try:
-        from eidos.application.handlers.projects import get_profile
-        environments = sorted(get_profile(ctx).body.get("environments") or {})
-    except Exception:  # noqa: BLE001 - a project without a profile simply has none
-        environments = []
+    environments, environment_details = _environments_at(ctx, cutoff_ts)
+    refusals = [{"component": e["subject"], **{k: (e["body"] or {}).get(k) for k in ("environment", "problems", "command_key")}}
+                for e in ctx.tx.events_after(ctx.project_id, 0, investigation_id=inv.id, upto=horizon, limit=100000,
+                                             types=["admission.refused"]) if e["investigation_id"] == inv.id]
+    pinned_notes = [{"id": n.id, "kind": n.body.get("kind"), "text": n.body.get("text"),
+                     "evidence_refs": n.body.get("evidence_refs")}
+                    for n in ctx.tx.list_records(ctx.project_id, "note", limit=100000)
+                    if n.body.get("investigation_id") == inv.id and n.body.get("kind") in PINNED_NOTE_KINDS
+                    and (cutoff_ts is None or n.created_at <= cutoff_ts)]
     # Artifacts the investigator itself created (e.g. author_source bundles), with whether a job has used them.
     # Their ids otherwise only travel inside events, which the context does not carry (Mac request 11).
     created, call_results = [], []
@@ -421,7 +457,7 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
                 # a later call needs them, and they otherwise travel only inside events (G5 live run).
                 call_results.append({"turn": t["seq"], "tool": r.get("tool"), "ok": bool(r.get("ok")),
                                      **({"result": _compact_result(r.get("result"))} if r.get("ok") else
-                                        {"code": r.get("code"), "error": _compact_result(r.get("error"))})})
+                                        {"code": r.get("code"), "error": _compact_error(r.get("error"))})})
     plans = []
     assessments = {a.body.get("plan_id"): a for a in ctx.tx.list_records(ctx.project_id, "assessment", limit=100000)
                    if cutoff_ts is None or a.created_at <= cutoff_ts}
@@ -436,19 +472,62 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
         plans.append({"plan_id": pl.id, "status": pl.status, "claim": (pl.body.get("claim_ref") or {}).get("id"),
                       "success_rule_ref": pl.body.get("success_rule_ref"), "obligations": pl.body.get("obligations"),
                       "jobs": launch.get("jobs"), "blocked": launch.get("blocked"),
+                      "confirmation": pl.body.get("confirmation"),
                       "assessment": None if asm is None else {"assessment_id": asm.id, "outcome": asm.body.get("outcome"),
-                                                              "conformance": asm.body.get("conformance")}})
+                                                              "conformance": asm.body.get("conformance"),
+                                                              "health": (asm.labels or {}).get("health", "intact")}})
+    requests = [{"request_id": r.id, "status": r.status, "plan_id": r.body.get("plan_id"), "path": r.body.get("path"),
+                 "exploratory": r.body.get("exploratory"), "reasons": r.body.get("reasons")}
+                for r in ctx.tx.list_records(ctx.project_id, "assessment_request", parent_id=inv.id, limit=100000)
+                if cutoff_ts is None or r.created_at <= cutoff_ts]
     approved = sorted({(ap.body["release_ref"], tuple(ap.body.get("scope") or ()))
                        for ap in ctx.tx.list_records(ctx.project_id, "approval", status="active", limit=100000)})
     return {"investigation": {"id": inv.id, "status": inv.status, "body": inv_body}, "horizon": horizon,
-            "environments": environments, "created_artifacts": created[-50:], "call_results": call_results[-30:],
+            "environments": environments, "environment_details": environment_details, "admission_refusals": refusals,
+            "pinned_notes": pinned_notes, "created_artifacts": created[-50:], "call_results": call_results[-30:],
             "evidence_plans": plans[-10:],
+            "assessment_requests": requests[-10:],
             "approved_protocols": [{"release_ref": r, "scope": list(sc)} for r, sc in approved],
             "charter": charter, "jobs": jobs,
             "events": [{"seq": e["seq"], "type": e["type"], "subject": e["subject"]} for e in events[-200:]],
             "turns": [{"id": t["id"], "seq": t["seq"], "status": t["status"], "result": t["result"]} for t in turns],
             "claims": [{"id": c.id, "statement": c.body["statement"], "status": c.status, "labels": c.labels} for c in claims],
             "budgets": ctx.tx.budgets(inv_scope(inv.id))}
+
+
+PINNED_NOTE_KINDS = ("baseline", "candidate_lock", "lock")
+
+
+def _environments_at(ctx: Ctx, cutoff_ts: Any) -> tuple[list[str], dict[str, Any]]:
+    """The environment names and their capabilities as registered at the horizon: a replay must see the same ones."""
+    from eidos.application.handlers.projects import profile_id
+    profile = None
+    for h in ctx.tx.record_history("profile", profile_id(ctx.project_id)):
+        if cutoff_ts is None or h["created_at"] <= cutoff_ts:
+            profile = h["body"]
+    envs = (profile or {}).get("environments") or {}
+    details = {}
+    for name, ref in sorted(envs.items()):
+        rec = ctx.tx.get_record("environment", ref["id"], ref["revision"])
+        details[name] = {"id": ref["id"], "revision": ref["revision"], **capability_summary(rec.body if rec else {})}
+    return sorted(envs), details
+
+
+def _job_environment(job: dict) -> dict | None:
+    env = job["lock"].get("environment") or None
+    if env is None:
+        return None
+    return {"name": env.get("name"), "id": env.get("id"), "revision": env.get("revision"),
+            "interpreter_digest": (env.get("capabilities") or {}).get("interpreter_digest")}
+
+
+def _compact_error(err, limit: int = 600):
+    """A refusal for the context: the message and next action first, the details in what space is left."""
+    if not isinstance(err, dict):
+        return _compact_result(err, limit)
+    head = {k: err[k] for k in ("code", "message", "next_action") if err.get(k)}
+    left = max(0, limit - len(json.dumps(head, default=str)))
+    return {**head, **({"details": _compact_result(err["details"], left)} if err.get("details") else {})}
 
 
 def _compact_result(x, limit: int = 600):

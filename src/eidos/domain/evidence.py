@@ -11,6 +11,7 @@ import copy
 import math
 from typing import Any
 
+from eidos.domain.assessment import CHECKPOINT_SCHEMAS, PROVENANCE_HELD_OUT, RESULT_SCHEMAS, can_confirm
 from eidos.domain.charter import charter_digest, find_rule, reject_threshold_overrides
 from eidos.domain.errors import Invalid, QualificationMissing
 from eidos.domain.stats import paired_difference, two_way_paired_difference
@@ -110,6 +111,8 @@ def compile_plan(
         "alternatives_unresolved": list(draft.get("alternatives_unresolved", [])),
         "disclosures": draft.get("disclosures", {}),
     }
+    if draft.get("data_provenance") is not None:  # ADR 0021: recorded on the plan; absent on older drafts
+        plan["data_provenance"] = copy.deepcopy(draft["data_provenance"])
     ri = plan["required_isolation"]
     if ri is not None and not isinstance(ri, dict):
         raise Invalid("required_isolation must be an object, e.g. {\"sealed\": true} or "
@@ -128,6 +131,86 @@ def check_freezable(plan: dict[str, Any], *, template_approved: bool, assessor_a
         raise QualificationMissing("protocol template is not qualified and approved for this use")
     if not assessor_approved:
         raise QualificationMissing("assessor release is not qualified and approved for this use")
+    if (plan.get("data_provenance") or {}).get("split") == "selection":  # ADR 0021
+        raise Invalid("this plan is over selection data, which stays exploratory: it cannot be frozen as confirmation",
+                      details={"data_provenance": plan["data_provenance"]})
+
+
+def plan_steps(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every step of a plan, as {arm, id, spec}, in either arm shape (``run`` or ``runs[].jobs[]``)."""
+    steps: list[dict[str, Any]] = []
+    for arm in plan.get("arms") or []:
+        if arm.get("run"):
+            steps.append({"arm": arm.get("id"), "id": "run", "spec": arm["run"]})
+        for run in arm.get("runs") or []:
+            steps.extend({"arm": arm.get("id"), "id": job.get("id"), "spec": job} for job in run.get("jobs") or [])
+    return steps
+
+
+def literal_inputs(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    """Step inputs naming an existing artifact, as opposed to an output of another step of this plan."""
+    steps = plan_steps(plan)
+    ids = {s["id"] for s in steps if s["id"]}
+    return [{"arm": s["arm"], "step": s["id"], "port": port, "artifact_id": value} for s in steps
+            for port, value in (s["spec"].get("inputs") or {}).items()
+            if isinstance(value, str) and not any(value.startswith(f"{sid}.") for sid in ids)]
+
+
+def confirmation_status(plan: dict[str, Any], *, charter: dict[str, Any], artifacts: dict[str, dict[str, Any]],
+                        result_digests: set[str]) -> dict[str, Any]:
+    """Decide, at freeze, whether a plan can confirm a claim (ADR 0021, "Prospective confirmation").
+
+    Refused outright: a plan pinning results that already exist (``result_digests`` holds the digests of this project's
+    result artifacts), and a plan that declares held-out data the charter does not attest, on every arm. Anything else
+    that is not verified held-out data run after the freeze can be frozen, but stays exploratory: its assessment can
+    never be ``protocol-passed``. ``artifacts`` maps this plan's literal input ids to their ledger rows."""
+    attested = charter.get("held_out") or {}
+    attested_labels = set(attested.get("labels") or [])
+    attested_splits = set(attested.get("splits") or [])
+    literals = literal_inputs(plan)
+    pinned, reasons = [], []
+    for item in literals:
+        art = artifacts.get(item["artifact_id"]) or {}
+        if art.get("schema") in RESULT_SCHEMAS or art.get("digest") in result_digests:
+            pinned.append(item)
+        elif item["port"] != "parent_checkpoint" and art.get("producer_job") and (
+                item["port"] == "checkpoint" or art.get("schema") in CHECKPOINT_SCHEMAS):
+            reasons.append(f"{item['arm']}/{item['step']}: input {item['port']!r} is a model an earlier job already "
+                           "trained, not a fresh run under this plan")
+    if pinned:
+        raise Invalid("a plan cannot be frozen around results that already exist: its results must not be visible when "
+                      "the plan is frozen. Name recipes and seeds instead, and let the plan run them",
+                      details={"reason_code": "observed-evidence", "inputs": pinned[:10]})
+
+    declared = plan.get("data_provenance")
+    verified: dict[str, Any] = {}
+    data_keys: list[str] = []
+    if not isinstance(declared, dict) or declared.get("split") != PROVENANCE_HELD_OUT:
+        reasons.append("no verified held-out data: the plan declares no held-out data_provenance")
+    else:
+        digests: set[str] = set()
+        splits: set[str] = set()
+        unverified_arms = []
+        for arm in plan.get("arms") or []:
+            arm_id = arm.get("id")
+            arm_digests = {(artifacts.get(i["artifact_id"]) or {}).get("digest") for i in literals
+                           if i["arm"] == arm_id and i["port"] == "labels"}
+            arm_splits = {split for s in plan_steps(plan) if s["arm"] == arm_id
+                          for split in [((s["spec"].get("config") or {}).get("evaluation") or {}).get("split")] if split}
+            verifiable = bool(arm_digests or arm_splits)
+            if not verifiable or not arm_digests <= attested_labels or not arm_splits <= attested_splits:
+                unverified_arms.append(arm_id)
+            digests |= {d for d in arm_digests if d}
+            splits |= {str(s) for s in arm_splits}
+        if unverified_arms:
+            raise Invalid("this plan declares held-out data, but the charter does not attest what its arms evaluate on",
+                          details={"reason_code": "held-out-unattested", "arms": unverified_arms,
+                                   "attested": {"labels": sorted(attested_labels), "splits": sorted(attested_splits)}})
+        verified = {"split": PROVENANCE_HELD_OUT, "attested_by": "charter", "labels_digests": sorted(digests),
+                    "evaluation_splits": sorted(splits)}
+        charter_id = (plan.get("charter_ref") or {}).get("id")
+        data_keys = [*(f"labels:{d}" for d in sorted(digests)), *(f"split:{charter_id}:{s}" for s in sorted(splits))]
+    return {"eligible": not reasons, "reasons": reasons, "verified": verified, "data_keys": data_keys}
 
 
 def check_conformance(plan: dict[str, Any], realized: dict[str, Any]) -> dict[str, Any]:
@@ -273,6 +356,11 @@ def finalize_assessment(
         outcome = "inconclusive"
     if conformance["conformance"] == "incomplete":
         outcome = "inconclusive"
+    findings = list(conformance["findings"])
+    if not can_confirm(plan) and outcome != "inconclusive":  # exploratory: the evaluation stays readable, the verdict does not count
+        findings.append({"finding": "exploratory plan: it was not verified at freeze as running on attested held-out data "
+                                    "after the freeze, so it cannot confirm or refute the claim"})
+        outcome = "inconclusive"
     return {
         "plan_digest": plan_digest,
         "evidence_set_digest": evidence_set_digest,
@@ -280,7 +368,7 @@ def finalize_assessment(
         "charter_ref": plan["charter_ref"],
         "success_rule_ref": plan["success_rule_ref"],
         "conformance": conformance["conformance"],
-        "findings": conformance["findings"],
+        "findings": findings,
         "outcome": outcome,
         "evaluation": evaluation,
         "scope": plan["scope"],

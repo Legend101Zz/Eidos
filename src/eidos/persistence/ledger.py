@@ -361,6 +361,10 @@ class LedgerTx:
                              p=project_id, j=producer_job)
         return self._all("SELECT * FROM artifacts WHERE project_id=:p ORDER BY created_at LIMIT :l", p=project_id, l=limit)
 
+    def artifacts_with_schemas(self, project_id: str, schemas: tuple[str, ...]) -> list[dict]:
+        return self._all("SELECT id, digest, schema FROM artifacts WHERE project_id=:p AND schema = ANY(:s)",
+                         p=project_id, s=list(schemas))
+
     def all_artifact_digests(self) -> list[dict]:
         return self._all("SELECT id, digest, size FROM artifacts")
 

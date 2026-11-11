@@ -4,7 +4,9 @@
     python scripts/dev/emit_wire_fixtures.py --check   # exit 1 if the emitted messages differ
 
 Runs in any environment that has ``eidos-wire`` and ``eidos-worker-sdk`` (Python 3.9+, standard library
-only): the server dev environment and the worker-compat matrix (Python 3.9, pydantic<2) both use it.
+only): the server dev environment and the worker-compat matrix (Python 3.9, pydantic<2) both use it. Only the server
+environment can write the decision-proposal fixtures, from the investigator runtime's own ``to_proposal`` and
+``no_effect_proposal``; a worker environment has no runtime and takes the committed ones as they are.
 
 Valid fixtures come from ``eidos_worker.testing.make_invocation``, ``eidos_worker.run.execute`` and
 ``eidos_wire.load_manifest`` on ``tests/fixtures/wire/component``. ``*-newer-minor`` fixtures add unknown
@@ -83,6 +85,46 @@ def _attempt(entry: str, base: Path) -> dict[str, Any]:
     }
 
 
+DECISION_FIXTURES = ("decision-proposal", "decision-proposal-conclude", "decision-proposal-conclude-scope-text",
+                     "decision-proposal-conclude-claim", "decision-proposal-bounded-outcome")
+
+
+def _runtime_decisions() -> dict[str, Any]:
+    """Decision proposals as the investigator runtime writes them, through its own conversion (ADR 0022, addendum R11)."""
+    try:
+        from eidos.investigator.pydantic_ai_runtime import Call, Control, Decision, no_effect_proposal, to_proposal
+    except ModuleNotFoundError as exc:
+        if exc.name != "eidos":  # the server package is present and broken: never hide that behind the committed files
+            raise
+        return {name: json.loads((OUT / f"{name}.json").read_text()) for name in DECISION_FIXTURES}
+
+    def call(tool: str, args: dict[str, Any]) -> Call:
+        return Call(tool=tool, args_json=json.dumps(args, sort_keys=True))
+
+    batch = Decision(rationale="author, train, then score the checkpoint", purpose="open-search", calls=[
+        call("author_source", {"files": {"project.py": "print('hello')"}}),
+        call("run_component", {"component_ref": "eidos.project.command@1.0.7",
+                               "inputs": {"source": {"$ref": "call[0].artifact_id"}},
+                               "config": {"argv": ["python", "project.py"]}}),
+        call("run_component", {"component_ref": "eidos.task.score-classification@1.0.0",
+                               "inputs": {"predictions": {"$ref": "call[1].outputs.predictions"}}})],
+        control=Control(action="wait_for_jobs", summary="scores arrive when the batch finishes"))
+    conclude = Decision(rationale="the evidence answers the question", control=Control(
+        action="conclude", summary="the answer is B", scope_json=json.dumps({"answer": "B", "model": "candidate"})))
+    conclude_text = Decision(rationale="the scope was not JSON", control=Control(
+        action="conclude", summary="no positive claim", scope_json="only the visible validation split"))
+    conclude_claim = Decision(rationale="a locked candidate, no held-out verdict", control=Control(
+        action="conclude", summary="candidate submitted for confirmation",
+        scope_json=json.dumps({"answer": {"status": "improvement_claimed"}, "split": "validation"}),
+        claim_json=json.dumps({"disposition": "candidate", "point_estimate": {"metric": "accuracy", "value": 0.04,
+                                                                              "direction": "higher_is_better"},
+                               "evidence_refs": ["job_0123"], "obligations": ["independent confirmation"]})))
+    return {"decision-proposal": to_proposal(batch), "decision-proposal-conclude": to_proposal(conclude),
+            "decision-proposal-conclude-claim": to_proposal(conclude_claim),
+            "decision-proposal-conclude-scope-text": to_proposal(conclude_text),
+            "decision-proposal-bounded-outcome": no_effect_proposal("decision-deadline")}
+
+
 GRANT = {"grant_id": "llmg_attempt-test", "token": "grant-token-0123456789abcdef", "socket": "/run/eidos-llm.sock",
          "models": ["fake:echo"], "max_requests": 4, "max_tokens": 2000, "max_usd": None,
          "expires_at": "2026-11-09T16:00:00+00:00"}
@@ -98,6 +140,8 @@ def emit() -> dict[str, Any]:
         shutil.rmtree(work, ignore_errors=True)
     component = load_manifest(COMPONENT / "eidos-component.json").to_dict()
     inv, succeeded = ok["invocation"], ok["manifest"]
+    decisions = _runtime_decisions()
+    decision = decisions["decision-proposal"]
 
     def variant(base: dict[str, Any], change: Any) -> dict[str, Any]:
         data = copy.deepcopy(base)
@@ -133,6 +177,12 @@ def emit() -> dict[str, Any]:
         "invalid-output-manifest-receipt-not-object": variant(succeeded, lambda d: d.update(receipt=["input_rows", 3])),
         "invalid-component-manifest-kind": variant(component, lambda d: d.update(kind="plugin")),
         "invalid-component-manifest-card-type": variant(component, lambda d: d.update(card=42)),
+        **decisions,
+        "decision-proposal-parallel": variant(decision, lambda d: d.update(resource_policy={"max_concurrent_jobs": 2})),
+        "invalid-decision-proposal-ref-malformed": variant(
+            decision, lambda d: d["calls"][1]["args"]["inputs"].update(source={"$ref": "earlier.artifact"})),
+        "invalid-decision-proposal-ref-extra-key": variant(
+            decision, lambda d: d["calls"][1]["args"]["inputs"].update(source={"$ref": "call[0].artifact_id", "x": 1})),
     }
     return fixtures
 

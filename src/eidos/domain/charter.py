@@ -45,6 +45,11 @@ def validate_charter(body: dict[str, Any]) -> dict[str, Any]:
     b.setdefault("exploration_only", False)
     b.setdefault("known_exposures", [])
     b.setdefault("resource_limits", {})
+    held_out = b.get("held_out")  # ADR 0021: operator attestation of held-out labels (by digest) or splits (by name)
+    if held_out is not None and not (isinstance(held_out, dict) and all(
+            isinstance(held_out.get(k, []), list) and all(isinstance(x, str) and x for x in held_out.get(k, []))
+            for k in ("labels", "splits"))):
+        problems.append("'held_out' must be an object with optional string arrays 'labels' (digests) and 'splits' (names)")
     metrics = b.get("metrics") or {}
     if not isinstance(metrics, dict):
         problems.append("'metrics' must map metric identities to definitions")

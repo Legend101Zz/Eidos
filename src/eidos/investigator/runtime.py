@@ -23,7 +23,9 @@ DECISION_SCHEMA = {
         "hypotheses": {"type": "array", "items": {"type": "object"}},
         "calls": {"type": "array", "items": {"type": "object", "properties": {
             "tool": {"type": "string"}, "args": {"type": "object"}}, "required": ["tool", "args"]}},
-        "control": {"type": "object", "properties": {"action": {"type": "string"}, "summary": {"type": "string"}}},
+        "control": {"type": "object", "properties": {"action": {"type": "string"}, "summary": {"type": "string"},
+                                                     "scope": {"type": "object"}, "claim": {"type": "object"}}},
+        "resource_policy": {"type": "object", "properties": {"max_concurrent_jobs": {"type": "integer", "minimum": 1}}},
     },
     "required": ["rationale", "calls"],
 }

@@ -23,6 +23,7 @@ import eidos_worker
 from eidos.boundary.wire import validate_wire
 from eidos.client import LabClient, LabError
 from eidos.domain.isolation import SEALED_PROFILES
+from eidos.domain.redaction import redact_text
 from eidos.runtime.artifacts import LocalArtifactStore, StoreError
 from eidos.runtime.launcher import (
     CANDIDATE_USER,
@@ -65,6 +66,24 @@ def _ts(value) -> float:
         return datetime.fromisoformat(str(value)).timestamp()
     except (TypeError, ValueError):
         return time.time()
+
+
+STDERR_TAIL_CHARS = 3000
+LOG_SCAN_BYTES = 64 << 10
+
+
+def _log_tail(path: Path, chars: int = STDERR_TAIL_CHARS) -> str:
+    """The end of a log, redacted before it is cut (a cut can remove the name that identifies a secret). The scan starts at
+    a line boundary for the same reason, and is wider than the tail."""
+    if not path.exists():
+        return ""
+    with path.open("rb") as f:
+        size = f.seek(0, 2)
+        f.seek(max(0, size - LOG_SCAN_BYTES))
+        data = f.read().decode(errors="replace")
+    if size > LOG_SCAN_BYTES:
+        data = data.split("\n", 1)[-1]
+    return redact_text(data)[-chars:]
 
 
 class RetryableAttemptError(Exception):
@@ -380,7 +399,7 @@ class AttemptRunner:
             validate_wire("output-manifest", raw)
             man = OutputManifest.from_dict(raw)
         except (OSError, ValueError, WireError) as exc:
-            err = (adir / "stderr.log").read_text()[-3000:] if (adir / "stderr.log").exists() else ""
+            err = _log_tail(adir / "stderr.log")
             return self._finish(project, ctx, "failed", {}, {"category": "infrastructure",
                                 "message": f"no valid output manifest ({exc}); exit={h.exit_code()}", "stderr_tail": err})
         code = h.exit_code()
@@ -418,7 +437,11 @@ class AttemptRunner:
         if (ctx.get("stop_requested") or (man.receipt or {}).get("stopped_early")) and man.status == "succeeded":
             receipt = {**(man.receipt or {}), "stopped_by_policy": "checkpoint-and-stop"}
             return self._finish(project, ctx, "cancelled", receipt, None)
-        return self._finish(project, ctx, man.status, man.receipt, man.error, final=man.status == "failed")
+        error = man.error
+        if man.status == "failed" and isinstance(error, dict) and "stderr_tail" not in error:
+            # ADR 0020: the process's own stderr (e.g. a project subprocess's traceback), bounded here and when packed
+            error = {**error, "stderr_tail": _log_tail(adir / "stderr.log")}
+        return self._finish(project, ctx, man.status, man.receipt, error, final=man.status == "failed")
 
     def _publish_verified(self, project: str, ctx: dict, manifest: dict, staging: Path) -> list[dict] | None:
         """Publish; if the lab refuses because staged bytes are missing or changed (storage lag, a damaged
@@ -456,7 +479,7 @@ class AttemptRunner:
             report = json.loads((adir / "stdout.log").read_text().strip().splitlines()[-1])
         except (OSError, ValueError, IndexError):
             report = {"passed": False, "manifest_problems": ["validator produced no report"],
-                      "stderr_tail": (adir / "stderr.log").read_text()[-2000:] if (adir / "stderr.log").exists() else ""}
+                      "stderr_tail": _log_tail(adir / "stderr.log", 2000)}
         report["fixtures_run"] = sum(1 for f in report.get("fixtures", []) if not f.get("skipped"))
         data = json.dumps(report, sort_keys=True).encode()
         digest, size = self.store.put_bytes(data)

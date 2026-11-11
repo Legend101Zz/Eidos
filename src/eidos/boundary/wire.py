@@ -18,8 +18,10 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, RootModel, ValidationError, model_validator
+from typing_extensions import TypeAliasType
 
+from eidos.domain.turns import REF_KEY, REF_PATTERN
 from eidos_wire import WIRE_MAJOR, WIRE_SCHEMA, canonical_json
 from eidos_wire.manifest import _CAPABILITY, _ID, _SEMVER
 
@@ -181,12 +183,146 @@ class ComponentManifest(BaseModel):
     license: str | None = None
 
 
+# -- recorded research records (not worker messages; published alongside them) ------------------------------------
+ClaimState = Literal["protocol-passed", "candidate-submitted", "not-supported", "abstained", "null-reported", "no-claim"]
+Disposition = Literal["confirmed", "candidate", "null", "abstain"]
+
+
+class ConclusionClaim(BaseModel):
+    """The claim state of a conclusion: derived from recorded evidence and assessor state (ADR 0021), never from a
+    model's chosen status. ``confirmed`` is true only with a conformant, healthy assessor pass."""
+
+    model_config = _CONFIG
+
+    schema_: Literal["conclusion-claim/1"] = Field(alias="schema")
+    state: ClaimState
+    confirmed: bool
+    label: str
+    requested_disposition: Disposition | None = None
+    claim_id: str | None = None
+    claim_revision: int | None = None
+    statement: str | None = None
+    assessment_id: str | None = None
+    plan_id: str | None = None
+    success_rule_ref: str | None = None
+    scope: Any = None
+    point_estimate: JsonObject | None = None
+    uncertainty: Any = None
+    population: Any = None
+    unfulfilled_obligations: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    assessments_considered: list[JsonObject] = Field(default_factory=list)
+    downgraded_from: Disposition | None = None
+    downgrade_reason: str | None = None
+    remaining_alternatives: list[Any] = Field(default_factory=list)
+
+
+class Conclusion(BaseModel):
+    """An investigation's recorded conclusion. Records from before ADR 0021 have no ``schema`` or ``claim_state``."""
+
+    model_config = _CONFIG
+
+    schema_: Literal["conclusion/2"] | None = Field(default=None, alias="schema")
+    turn_id: str
+    summary: str
+    scope: Any = None
+    action: Literal["conclude", "stop"]
+    claim_state: ConclusionClaim | None = None
+
+
+class BatchResultRef(BaseModel):
+    """A later call's reference to an earlier call of the same decision (ADR 0022), resolved at execution."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", regex_engine="python-re", populate_by_name=True)
+    ref: Annotated[str, Field(alias=REF_KEY, pattern=REF_PATTERN,
+                              description="'call[<index>].<field>' or 'call[<index>].outputs.<slot>'")]
+
+
+CallArgValue = TypeAliasType("CallArgValue", "BatchResultRef | CallArgs | list[CallArgValue] | str | int | float | bool | None")
+
+
+class CallArgs(RootModel[dict[str, CallArgValue]]):
+    """A call's arguments, or an object nested in them. A ``$ref`` key is only ever a :class:`BatchResultRef`."""
+
+    model_config = ConfigDict(strict=True, json_schema_extra={"propertyNames": {"not": {"const": REF_KEY}}})
+
+    @model_validator(mode="after")
+    def _no_loose_ref(self) -> CallArgs:
+        if REF_KEY in self.root:
+            raise ValueError(f"{REF_KEY} must be exactly {{{REF_KEY!r}: 'call[<index>].<field>'}}")
+        return self
+
+
+
+class DecisionCall(BaseModel):
+    """One effect call in order; its receipt, command key and provenance are its own."""
+
+    model_config = _CONFIG
+    tool: Annotated[str, Field(min_length=1)]
+    args: CallArgs
+
+
+class ResourcePolicy(BaseModel):
+    """Concurrency a decision asks for; more than one job at a time needs the project's resource policy too."""
+
+    model_config = _CONFIG
+    max_concurrent_jobs: Annotated[int, Field(ge=1)] = 1
+
+
+class ClaimRequest(BaseModel):
+    """What a conclusion asks to be recorded (``control.claim``, ADR 0021). The claim state itself is derived from the
+    evidence; the lab's validator (``domain.assessment``) checks this block, and unknown keys are ignored like the rest
+    of a decision's control."""
+
+    model_config = _CONFIG
+    disposition: Disposition | None = None
+    claim_id: str | None = None
+    point_estimate: JsonObject | None = None
+    uncertainty: Any = None
+    population: Any = None
+    evidence_refs: list[Any] | None = None
+    obligations: list[Any] | None = None
+
+
+class DecisionControl(BaseModel):
+    """How a decision ends its turn, with every field the investigator runtime writes."""
+
+    model_config = _CONFIG
+    action: Literal["wait_for_jobs", "request_input", "conclude", "stop"] | None = None
+    summary: str = ""
+    scope: JsonObject | None = Field(default=None, description="the structured scope of a conclusion (for example its answer)")
+    scope_text: str | None = Field(default=None, description="a scope the model wrote that is not a JSON object, as written")
+    claim: ClaimRequest | None = Field(default=None, description="what a conclusion asks to record (ADR 0021)")
+    claim_text: str | None = Field(default=None, description="a claim block the model wrote that is not JSON, as written")
+    bounded_outcome: str | None = Field(default=None, description="why the runtime ended this decision without usable output")
+
+
+class DecisionProposal(BaseModel):
+    """A proposed investigator decision. Structural only: the lab's validator (``domain.turns``) adds the rules that need
+    the whole batch (unknown fields of the named tool, out-of-range, forward or self references)."""
+
+    model_config = _CONFIG
+    rationale: str
+    purpose: str = "open-search"
+    hypotheses: list[JsonObject] = Field(default_factory=list)
+    calls: list[DecisionCall] = Field(default_factory=list)
+    control: DecisionControl | None = None
+    resource_policy: ResourcePolicy | None = None
+
+
 #: Published message and manifest types: schema file stem -> boundary model.
 MESSAGES: dict[str, type[BaseModel]] = {
     "invocation": Invocation,
     "output-manifest": OutputManifest,
     "component-manifest": ComponentManifest,
+    "decision-proposal": DecisionProposal,
 }
+
+
+#: Ledger records published with the wire schemas; not worker messages, so outside ``MESSAGES``.
+RECORDS: dict[str, type[BaseModel]] = {"conclusion": Conclusion}
+#: Every schema file: schema file stem -> boundary model.
+PUBLISHED: dict[str, type[BaseModel]] = {**MESSAGES, **RECORDS}
 
 
 class WireSchemaError(ValueError):
@@ -200,7 +336,7 @@ class WireSchemaError(ValueError):
 
 def schema_document(name: str) -> dict[str, Any]:
     """The JSON Schema (2020-12) for one published message type, with the generator header."""
-    model = MESSAGES[name]
+    model = PUBLISHED[name]
     body = model.model_json_schema(by_alias=True, mode="validation")
     return {
         "$schema": JSON_SCHEMA_DIALECT,
@@ -218,7 +354,7 @@ def schema_document(name: str) -> dict[str, Any]:
 
 def validate_wire(name: str, data: Any) -> None:
     """Raise :class:`WireSchemaError` unless ``data`` (a decoded JSON message) satisfies the schema."""
-    model = MESSAGES[name]
+    model = PUBLISHED[name]
     try:
         text = canonical_json(data)
     except (TypeError, ValueError) as exc:

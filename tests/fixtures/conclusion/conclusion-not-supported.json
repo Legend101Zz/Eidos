@@ -1,0 +1,55 @@
+{
+  "action": "conclude",
+  "claim_state": {
+    "assessment_id": "asm_fixture_0002",
+    "assessments_considered": [
+      {
+        "claim_id": "clm_fixture_0001",
+        "conformance": "conformant",
+        "health": "intact",
+        "id": "asm_fixture_0002",
+        "outcome": "protocol-failed",
+        "plan_id": "plan_fixture_0001"
+      }
+    ],
+    "claim_id": "clm_fixture_0001",
+    "claim_revision": 1,
+    "confirmed": false,
+    "downgrade_reason": "a model cannot claim confirmation without a conformant, healthy assessor pass",
+    "downgraded_from": "confirmed",
+    "evidence_refs": [],
+    "label": "not supported: the pre-registered assessment failed",
+    "plan_id": "plan_fixture_0001",
+    "point_estimate": {
+      "direction": "increase",
+      "metric": "classification-report/1:accuracy",
+      "source": "assessor",
+      "value": -0.004
+    },
+    "population": "held-out examples of toy-3class",
+    "requested_disposition": "confirmed",
+    "schema": "conclusion-claim/1",
+    "scope": {
+      "split": "held-out",
+      "task": "toy-3class"
+    },
+    "state": "not-supported",
+    "statement": "the candidate recipe raises held-out accuracy",
+    "success_rule_ref": "practical-accuracy-gain@1",
+    "uncertainty": {
+      "confidence": 0.95,
+      "high": 0.013,
+      "kind": "confidence-interval",
+      "low": -0.021,
+      "method": "cluster-robust normal",
+      "source": "assessor"
+    },
+    "unfulfilled_obligations": []
+  },
+  "schema": "conclusion/2",
+  "scope": {
+    "task": "toy-3class"
+  },
+  "summary": "The pre-registered assessment failed.",
+  "turn_id": "turn_fixture_0001"
+}

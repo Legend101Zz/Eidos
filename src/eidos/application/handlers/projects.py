@@ -8,6 +8,7 @@ from typing import Any
 
 from eidos.application.scopes import scopes_for
 from eidos.application.service import Ctx, command
+from eidos.domain.environments import CAPABILITIES_SCHEMA
 from eidos.domain.errors import Invalid
 
 _PID = re.compile(r"^[a-z0-9][a-z0-9_\-]{1,62}$")
@@ -19,6 +20,22 @@ def profile_id(project_id: str) -> str:
 
 def get_profile(ctx: Ctx, *, lock: bool = False):
     return ctx.tx.require("profile", profile_id(ctx.project_id), lock=lock)
+
+
+def checked_concurrency(ctx: Ctx, wanted: Any) -> int:
+    """ADR 0022: how many jobs may run at once for work that asked for ``wanted``. One, unless the request is explicit AND
+    the project's policy (``policy.resources.max_concurrent_jobs``, an operator setting) allows that much."""
+    if wanted is None:
+        return 1
+    if not isinstance(wanted, int) or isinstance(wanted, bool) or wanted < 1:
+        raise Invalid("max_concurrent_jobs must be an integer >= 1")
+    if wanted == 1:
+        return 1
+    allowed = int(((get_profile(ctx).body.get("policy") or {}).get("resources") or {}).get("max_concurrent_jobs") or 1)
+    if wanted > allowed:
+        raise Invalid(f"max_concurrent_jobs is {wanted}, but this project's resource policy allows {allowed}: jobs queue "
+                      "sequentially", details={"requested": wanted, "allowed": allowed})
+    return wanted
 
 
 def new_profile_revision(ctx: Ctx, body: dict[str, Any], *, expected_revision: int | None, reason: str):
@@ -93,6 +110,15 @@ def register_environment(ctx: Ctx, p: dict) -> dict:
     body = {k: p.get(k) for k in ("python_executable", "project_root", "python_version", "installed",
                                   "lock_digest", "platform", "devices", "adapter", "isolation_profiles", "notes")}
     body["installed"] = {k.lower().replace("_", "-"): v for k, v in (p.get("installed") or {}).items()}
+    # ADR 0020. Measured by the registering client, on the host that holds the interpreter; absent when not probed,
+    # so locks of environments without a probe keep their digests.
+    caps = p.get("capabilities")
+    if caps is not None:
+        if not isinstance(caps, dict) or caps.get("schema") != CAPABILITIES_SCHEMA or caps.get("status") not in ("ok", "failed"):
+            raise Invalid(f"capabilities must be a {CAPABILITIES_SCHEMA} record with status ok or failed")
+        body["capabilities"] = caps
+    if p.get("requirements"):
+        body["requirements"] = sorted({str(r) for r in p["requirements"]})
     rec = ctx.tx.put_record("environment", env_id, ctx.project_id, body, created_by=ctx.principal.id, status="active")
     prof = get_profile(ctx, lock=True)
     nb = dict(prof.body)
