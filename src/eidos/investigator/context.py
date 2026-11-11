@@ -341,7 +341,7 @@ def _baseline_record_fact(view: dict[str, Any]) -> str | None:
         return noted
     rec = view.get("baseline_record")
     if not isinstance(rec, dict) or not rec.get("job_id"):
-        return _baseline_fact(view)
+        return None  # R14 #7: never guessed from a job's purpose (a reproduction may reproduce a candidate)
     out = (f"- Baseline (recorded): job {rec['job_id']} ({rec.get('component')}, environment {rec.get('environment')}), "
            f"metrics {json.dumps(rec.get('metrics'), sort_keys=True)}")
     scored = rec.get("scored_by")
@@ -370,15 +370,21 @@ def _exploration_facts(view: dict[str, Any]) -> list[str]:
     rule, inc, left = st.get("rule"), st.get("incumbent"), st.get("allowance") or {}
     out = []
     out.append("- Selection rule: " + (json.dumps(rule, sort_keys=True) if rule else
-               'none recorded. Record it with your first lock (record_note kind "candidate_lock", text {"job_id": '
-               '"<job>", "selection": {"metric": "<receipt metric>", "split": "validation"|"training-cv", "direction": '
-               '"higher_is_better"|"lower_is_better"}}) or as a "selection_rule" note; it is fixed once recorded.'))
+               'none recorded. Record it before you lock (a "selection_rule" note, or the "selection" of your first '
+               'lock): {"metric": "<receipt metric>", "split": "validation"|"training-cv", "direction": '
+               '"higher_is_better"|"lower_is_better", "scorer": "<component whose receipt scores>", "data": {"inputs": '
+               '{"<port>": "<selection data artifact>"}, "config": {...}}, "reproduce_within"?: <tolerance>}. A lock '
+               'without it is refused; it is fixed once recorded, and only that scorer on that data is evidence.'))
     if inc:
         ev = inc.get("evidence") or {}
+        rep = inc.get("reproduction") or {}
+        crit = rep.get("criterion") or {}
         out.append(f"- Incumbent v{inc.get('version')}: job {inc.get('job_id')}"
                    + (f", {ev.get('metric')} {ev.get('value')} (scored by {ev.get('scored_by')})" if ev else
-                      ", no recorded selection evidence")
-                   + (f"; reproduced by {inc['reproduced_by']}" if inc.get("reproduced_by") else "; not reproduced yet"))
+                      ", no recorded selection evidence (score it with the rule's scorer before any re-lock)")
+                   + (f"; reproduced by {inc['reproduced_by']}" if inc.get("reproduced_by") else
+                      "; not reproduced yet" + (f" (a reproduction must score within {crit.get('within')} of it under "
+                                                "the rule)" if crit else "")))
     allowance = []
     if left.get("seconds_left") is not None:
         allowance.append(f"{max(float(left['seconds_left']), 0):.0f} s (after {left.get('holdback_seconds'):.0f} s held "

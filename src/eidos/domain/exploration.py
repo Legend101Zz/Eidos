@@ -19,7 +19,7 @@ import json
 import math
 from typing import Any
 
-POLICY_ID = "exploration-policy/1"
+POLICY_ID = "exploration-policy/2"
 SELECTION_SPLITS = ("validation", "training-cv")
 DIRECTIONS = ("higher_is_better", "lower_is_better")
 # Purposes a challenger round uses. Reproduction and confirmation work is finalization, never a challenger.
@@ -38,7 +38,12 @@ DEFAULT_POLICY: dict[str, Any] = {
     "min_holdback_seconds": 120.0,  # ... at least this ...
     "max_holdback_seconds": 900.0,  # ... and at most this
     "holdback_token_fraction": 0.15,  # of the model-token limit
+    # R14 #3: a reproduction reproduces the incumbent when its selection evidence is no worse than the incumbent's by
+    # more than this (absolute, in the metric's units); a rule may declare its own ``reproduce_within``.
+    "reproduction_tolerance": 0.02,
 }
+# Job states after which a job will report nothing more (R14 #6: a round is evaluated only when its challengers are).
+TERMINAL_STATUSES = ("succeeded", "failed", "cancelled", "pruned")
 # The perfect value of common bounded metrics, by direction. A selection rule may declare its own ``ceiling``.
 BOUNDED_METRICS = {
     "higher_is_better": {"accuracy": 1.0, "balanced_accuracy": 1.0, "f1": 1.0, "macro_f1": 1.0, "micro_f1": 1.0,
@@ -91,6 +96,28 @@ def parse_rule(raw: Any) -> dict[str, Any]:
         if not isinstance(raw["max_rounds"], int) or isinstance(raw["max_rounds"], bool) or raw["max_rounds"] < 0:
             raise RuleError("a selection rule's max_rounds is a non-negative integer")
         rule["max_rounds"] = int(raw["max_rounds"])
+    # R14 #2: the evidence's provenance is fixed with the rule, before any result is known: the component whose receipt
+    # scores a candidate, and the selection data that scoring job reads (its inputs and/or configuration).
+    scorer = raw.get("scorer")
+    if not isinstance(scorer, str) or not scorer.strip():
+        raise RuleError('a selection rule names the component whose receipt scores a candidate ("scorer": "<component '
+                        'ref>"), fixed before any result is known')
+    data = raw.get("data")
+    if not isinstance(data, dict) or not set(data) <= {"inputs", "config"} \
+            or not (data.get("inputs") or data.get("config")):
+        raise RuleError('a selection rule names the selection data its scorer reads ("data": {"inputs": {"<port>": '
+                        '"<artifact id>"}, "config": {"<key>": <value>}}, at least one), fixed before any result is known')
+    inputs, cfg = data.get("inputs") or {}, data.get("config") or {}
+    if not isinstance(inputs, dict) or not all(isinstance(k, str) and isinstance(v, str) and v for k, v in inputs.items()):
+        raise RuleError("a selection rule's data.inputs maps input ports to artifact ids")
+    if not isinstance(cfg, dict):
+        raise RuleError("a selection rule's data.config is an object of configuration values")
+    rule["scorer"] = scorer.strip()
+    rule["data"] = {**({"inputs": dict(inputs)} if inputs else {}), **({"config": dict(cfg)} if cfg else {})}
+    if raw.get("reproduce_within") is not None:
+        if not _number(raw["reproduce_within"]) or float(raw["reproduce_within"]) < 0:
+            raise RuleError("a selection rule's reproduce_within is a non-negative number")
+        rule["reproduce_within"] = float(raw["reproduce_within"])
     return rule
 
 
@@ -173,22 +200,38 @@ def scorer(jobs: list[dict[str, Any]], job_id: str, metric: str | None = None) -
     return None
 
 
+def ref_matches(ref: Any, wanted: str) -> bool:
+    """A component ref is the rule's scorer: the same ref, or the same component when the rule names no release."""
+    if not isinstance(ref, str) or not ref:
+        return False
+    return ref == wanted or ("@" not in wanted and ref.split("@", 1)[0] == wanted)
+
+
+def provenance_matches(job: dict[str, Any], rule: dict[str, Any], held_out: set[str] | None = None) -> bool:
+    """Whether ``job``'s receipt is selection evidence under ``rule`` (R14 #2): it ran the rule's scorer on the rule's
+    selection data (every named input and configuration value), and it read no attested held-out data."""
+    if not ref_matches(job.get("component"), str(rule.get("scorer") or "")):
+        return False
+    inputs = {str(k): str(v) for k, v in (job.get("inputs") or {}).items()}
+    if held_out and held_out & set(inputs.values()):
+        return False
+    data = rule.get("data") or {}
+    if any(inputs.get(port) != str(aid) for port, aid in (data.get("inputs") or {}).items()):
+        return False
+    raw = job.get("config")
+    cfg: dict[str, Any] = raw if isinstance(raw, dict) else {}
+    return all(k in cfg and cfg[k] == v for k, v in (data.get("config") or {}).items())
+
+
 def selection_evidence(jobs: list[dict[str, Any]], job_id: str, rule: dict[str, Any],
-                       scored_by: str | None = None) -> dict[str, Any] | None:
-    """The recorded value of the rule's metric for the recipe of ``job_id``: from ``scored_by`` when it is in the job's
-    lineage, else the first scorer of its lineage, else the job's own receipt. Never a number the model typed."""
+                       held_out: set[str] | None = None) -> dict[str, Any] | None:
+    """The recorded value of the rule's metric for the recipe of ``job_id``: from the first succeeded job of its
+    lineage, else the job itself, that ran the rule's scorer on the rule's selection data (R14 #2). Never a number the
+    model typed, never a scorer or data chosen after the results, never held-out data."""
     by_id = {j.get("id"): j for j in jobs}
-    candidates: list[dict[str, Any]] = []
-    chain = lineage(jobs, job_id)
-    if scored_by:
-        named = by_id.get(scored_by)
-        if named is not None and (named in chain or scored_by == job_id):
-            candidates.append(named)
-    candidates += chain
-    if job_id in by_id:
-        candidates.append(by_id[job_id])
+    candidates = lineage(jobs, job_id) + ([by_id[job_id]] if job_id in by_id else [])
     for j in candidates:
-        if j.get("status") != "succeeded":
+        if j.get("status") != "succeeded" or not provenance_matches(j, rule, held_out):
             continue
         v = metric_value(_metrics(j), rule["metric"])
         if v is not None:
@@ -247,20 +290,51 @@ def _seed(job: dict[str, Any]) -> Any:
     return job["config"].get("seed") if isinstance(job.get("config"), dict) else None
 
 
-def reproduced(jobs: list[dict[str, Any]], job_id: str) -> str | None:
-    """A succeeded later job with the incumbent's recipe under a different seed: the incumbent's reproduction. Its id,
-    or None."""
+def tolerance(rule: dict[str, Any], pol: dict[str, Any]) -> float:
+    return float(rule["reproduce_within"]) if rule.get("reproduce_within") is not None \
+        else float(pol.get("reproduction_tolerance", DEFAULT_POLICY["reproduction_tolerance"]))
+
+
+def reproduction(jobs: list[dict[str, Any]], job_id: str, rule: dict[str, Any] | None, pol: dict[str, Any] | None = None,
+                 held_out: set[str] | None = None) -> dict[str, Any] | None:
+    """The evaluation of the incumbent's reproduction against the prospective criterion (R14 #3): later succeeded jobs
+    with its recipe under another seed, each scored under the rule. The incumbent is reproduced (``reproduced_by``) by
+    the first whose selection evidence is no worse than the incumbent's by more than the rule's tolerance; an attempt
+    that is unscored, or that falls short, does not reproduce it. None without a rule or the incumbent."""
     inc = next((j for j in jobs if j.get("id") == job_id), None)
-    if inc is None:
+    if inc is None or rule is None:
         return None
+    tol = tolerance(rule, pol or DEFAULT_POLICY)
+    base = selection_evidence(jobs, job_id, rule, held_out)
+    out: dict[str, Any] = {"criterion": {"metric": rule["metric"], "split": rule["split"], "direction": rule["direction"],
+                                         "within": tol},
+                           "incumbent_value": base["value"] if base else None, "reproduced_by": None, "attempts": []}
     after = False
     for j in jobs:
         if j.get("id") == job_id:
             after = True
             continue
-        if after and j.get("status") == "succeeded" and recipe_key(j) == recipe_key(inc) and _seed(j) != _seed(inc):
-            return str(j["id"])
-    return None
+        if not (after and j.get("status") == "succeeded" and recipe_key(j) == recipe_key(inc) and _seed(j) != _seed(inc)):
+            continue
+        ev = selection_evidence(jobs, str(j["id"]), rule, held_out)
+        if ev is None or base is None:
+            out["attempts"].append({"job_id": j["id"], "status": "unscored" if ev is None else "incumbent-unscored"})
+            continue
+        ok = ev["value"] >= base["value"] - tol if rule["direction"] == "higher_is_better" \
+            else ev["value"] <= base["value"] + tol
+        out["attempts"].append({"job_id": j["id"], "value": ev["value"], "scored_by": ev["scored_by"],
+                                "status": "reproduced" if ok else "not-reproduced"})
+        if ok:
+            out["reproduced_by"] = str(j["id"])
+            break
+    return out
+
+
+def reproduced(jobs: list[dict[str, Any]], job_id: str, rule: dict[str, Any] | None, pol: dict[str, Any] | None = None,
+               held_out: set[str] | None = None) -> str | None:
+    """The job that reproduced the incumbent under the prospective criterion, or None (``reproduction``)."""
+    ev = reproduction(jobs, job_id, rule, pol, held_out)
+    return ev["reproduced_by"] if ev else None
 
 
 def reproduction_jobs(jobs: list[dict[str, Any]], recipes_of: list[str]) -> set[str]:
@@ -276,18 +350,38 @@ def reproduction_jobs(jobs: list[dict[str, Any]], recipes_of: list[str]) -> set[
 
 
 def rounds(round_log: list[dict[str, Any]], jobs: list[dict[str, Any]], first_lock_turn: int | None,
-           last_change_turn: int | None, excluded: set[str] | None = None) -> tuple[list[int], int]:
+           last_change_turn: int | None, excluded: set[str] | None = None, rule: dict[str, Any] | None = None,
+           held_out: set[str] | None = None) -> tuple[list[int], int, list[str]]:
     """(the challenger rounds: turns after the first lock that admitted at least one experiment with a challenger
-    purpose that is not reproduction work (``excluded``), the number of those after the incumbent last changed).
+    purpose that is not reproduction work (``excluded``); the number of those after the incumbent last changed that
+    are **evaluated**; the challenger jobs of rounds still pending). R14 #6: a round counts as unsuccessful only once
+    every challenger it admitted is terminal and, when it succeeded, has selection evidence under ``rule`` (a failed
+    challenger is evaluated: it reports nothing more); a pending round may finish.
     ``round_log`` lists, per turn, the job ids its decisions admitted: ``[{"turn": seq, "jobs": [ids]}]``."""
     if first_lock_turn is None:
-        return [], 0
-    purpose = {j.get("id"): j.get("purpose") for j in jobs}
+        return [], 0, []
+    by_id = {j.get("id"): j for j in jobs}
     skip = excluded or set()
-    turns = sorted({int(r["turn"]) for r in round_log if int(r["turn"]) > first_lock_turn
-                    and any(purpose.get(j) in CHALLENGER_PURPOSES and j not in skip for j in r.get("jobs") or [])})
-    since = [t for t in turns if last_change_turn is None or t > last_change_turn]
-    return turns, len(since)
+    per_turn: dict[int, list[str]] = {}
+    for r in round_log:
+        if int(r["turn"]) <= first_lock_turn:
+            continue
+        ids = [str(j) for j in r.get("jobs") or [] if (by_id.get(j) or {}).get("purpose") in CHALLENGER_PURPOSES
+               and j not in skip]
+        if ids:
+            per_turn.setdefault(int(r["turn"]), []).extend(ids)
+    turns = sorted(per_turn)
+
+    def evaluated(jid: str) -> bool:
+        j = by_id.get(jid) or {}
+        if j.get("status") not in TERMINAL_STATUSES:
+            return False
+        return j.get("status") != "succeeded" or (rule is not None and selection_evidence(jobs, jid, rule, held_out)
+                                                  is not None)
+    pending = [jid for t in turns for jid in per_turn[t] if not evaluated(jid)]
+    since = [t for t in turns if (last_change_turn is None or t > last_change_turn)
+             and all(evaluated(jid) for jid in per_turn[t])]
+    return turns, len(since), pending
 
 
 def holdback_seconds(pol: dict[str, Any], wall_seconds: float | None) -> float:
@@ -319,7 +413,8 @@ def allowance(pol: dict[str, Any], completion: dict[str, Any] | None, wall_secon
 def state(*, notes: list[dict[str, Any]], jobs: list[dict[str, Any]], round_log: list[dict[str, Any]],
           note_turns: dict[str, int], lock_job: Any, completion: dict[str, Any] | None = None,
           wall_seconds: float | None = None, budgets: dict[str, Any] | None = None, frozen: bool = False,
-          config: dict[str, Any] | None = None, baseline_job: str | None = None) -> dict[str, Any]:
+          config: dict[str, Any] | None = None, baseline_job: str | None = None, held_out: set[str] | None = None,
+          decision_tokens: float | None = None) -> dict[str, Any]:
     """Where the investigation stands under the exploration policy (ADR 0023): the selection rule, the incumbent and its
     versions, the challenger rounds, the allowance left, and the phase:
 
@@ -327,7 +422,9 @@ def state(*, notes: list[dict[str, Any]], jobs: list[dict[str, Any]], round_log:
     * ``explore``: run challenger rounds while the allowance remains;
     * ``finalize``: exploration has stopped (``stop`` says why): reproduce the incumbent, export, conclude.
 
-    ``note_turns`` maps a note id to the turn that recorded it."""
+    ``note_turns`` maps a note id to the turn that recorded it; ``held_out`` is the attested held-out artifacts (never
+    selection evidence); ``decision_tokens`` is one decision's model-token envelope: an exploratory decision must fit
+    in what is left before the hold-back (R14 #4)."""
     pol = policy(config)
     found = rule_from_notes(notes)
     rule = found[0] if found else None
@@ -336,20 +433,24 @@ def state(*, notes: list[dict[str, Any]], jobs: list[dict[str, Any]], round_log:
     first_turn = note_turns.get(str(versions[0]["note_id"])) if versions else None
     change_turn = note_turns.get(str(incumbent["note_id"])) if incumbent else None
     reproductions = reproduction_jobs(jobs, [v["job_id"] for v in versions] + ([baseline_job] if baseline_job else []))
-    done, since = rounds(round_log, jobs, first_turn, change_turn, reproductions)
+    done, since, pending = rounds(round_log, jobs, first_turn, change_turn, reproductions, rule, held_out)
     left = allowance(pol, completion, wall_seconds, budgets)
     out: dict[str, Any] = {"policy": POLICY_ID, "rule": rule, "rule_note": found[1] if found else None,
                            "versions": versions, "incumbent": incumbent, "rounds": len(done),
-                           "rounds_without_improvement": since, "allowance": left, "frozen": frozen,
+                           "rounds_without_improvement": since, "pending_challengers": pending,
+                           "allowance": left, "frozen": frozen,
                            "patience_rounds": int(pol["patience_rounds"]), "stop": None, "phase": "baseline"}
     if incumbent is None:
         return out
     if rule is not None and incumbent.get("evidence") is None:
-        incumbent["evidence"] = selection_evidence(jobs, incumbent["job_id"], rule)
-    incumbent["reproduced_by"] = reproduced(jobs, incumbent["job_id"])
+        incumbent["evidence"] = selection_evidence(jobs, incumbent["job_id"], rule, held_out)
+    rep = reproduction(jobs, incumbent["job_id"], rule, pol, held_out)
+    incumbent["reproduction"] = rep
+    incumbent["reproduced_by"] = rep["reproduced_by"] if rep else None
     limit = rule.get("max_rounds") if rule and rule.get("max_rounds") is not None else pol.get("max_rounds")
     out["max_rounds"] = limit
     value = (incumbent.get("evidence") or {}).get("value")
+    tokens_left = left["tokens_left"]
     if frozen:
         out["stop"] = "selection-frozen"
     elif rule is not None and at_ceiling(value, rule):
@@ -360,10 +461,30 @@ def state(*, notes: list[dict[str, Any]], jobs: list[dict[str, Any]], round_log:
         out["stop"] = "search-limit"
     elif left["seconds_left"] is not None and left["seconds_left"] <= 0:
         out["stop"] = "wall-holdback"
-    elif left["tokens_left"] is not None and left["tokens_left"] <= 0:
+    elif tokens_left is not None and (tokens_left <= 0 or (decision_tokens and tokens_left < float(decision_tokens))):
         out["stop"] = "token-holdback"
     out["phase"] = "finalize" if out["stop"] else "explore"
     return out
+
+
+def pending_outputs(jobs: list[dict[str, Any]], pending: list[str]) -> list[str]:
+    """The artifacts of pending challengers and of what already read them: scoring these finishes a pending round."""
+    out: set[str] = set()
+    by_id = {j.get("id"): j for j in jobs}
+    for jid in pending:
+        out |= {str(o.get("artifact_id")) for o in (by_id.get(jid) or {}).get("outputs") or []}
+        for d in lineage(jobs, jid):
+            out |= {str(o.get("artifact_id")) for o in d.get("outputs") or []}
+    return sorted(out)
+
+
+def exploration_deadline_unix(st: dict[str, Any], completion: dict[str, Any] | None) -> float | None:
+    """When exploratory work must be over (R14 #4, #5): the start of the hold-back, before the conclusion's reserve.
+    None when the turn is not exploratory (it may then use the hold-back) or there is no wall limit."""
+    if not completion or st.get("phase") != "explore":
+        return None
+    hold = float((st.get("allowance") or {}).get("holdback_seconds") or 0.0)
+    return float(completion["deadline_unix"]) - float(completion["conclude_threshold_seconds"]) - hold
 
 
 def compact(st: dict[str, Any]) -> dict[str, Any]:
@@ -372,7 +493,11 @@ def compact(st: dict[str, Any]) -> dict[str, Any]:
     return {"policy": st["policy"], "phase": st["phase"], "stop": st["stop"], "rounds": st["rounds"],
             "versions": len(st.get("versions") or []), "max_rounds": st.get("max_rounds"),
             "patience_rounds": st.get("patience_rounds"),
-            "rounds_without_improvement": st["rounds_without_improvement"], "allowance": st["allowance"],
-            "incumbent": {k: inc.get(k) for k in ("version", "job_id", "note_id", "evidence", "basis", "reproduced_by")}
+            "rounds_without_improvement": st["rounds_without_improvement"],
+            "pending_challengers": list(st.get("pending_challengers") or []),
+            **({"pending_outputs": st["pending_outputs"]} if st.get("pending_outputs") else {}),
+            "allowance": st["allowance"],
+            "incumbent": {k: inc.get(k) for k in ("version", "job_id", "note_id", "evidence", "basis", "reproduced_by",
+                                                  "reproduction")}
             if inc else None,
             "rule": st["rule"]}

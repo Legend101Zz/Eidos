@@ -82,7 +82,10 @@ def turn_retry_delay(base_delay: float, failure: dict[str, Any], completion: dic
     delay = max(float(base_delay), after) * (1.0 + 0.2 * jitter)
     delay = min(delay, float(MAX_FAILED_TURN_BACKOFF_SECONDS))
     if completion:
-        boundary = float(completion["deadline_unix"]) - float(completion["conclude_threshold_seconds"])
+        # R14 #5: an exploratory turn's retry never waits into the reproduction hold-back; when the requested delay
+        # cannot fit, the backoff ends at the exploration deadline and the next turn begins in the finalize phase.
+        boundary = float(completion["exploration_deadline_unix"]) if completion.get("exploration_deadline_unix") \
+            is not None else float(completion["deadline_unix"]) - float(completion["conclude_threshold_seconds"])
         delay = min(delay, boundary - now)
     return max(0.0, delay)
 

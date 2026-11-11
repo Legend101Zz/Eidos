@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from typing import Any
@@ -352,8 +353,15 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
     if completion:
         spec["limits"]["deadline_seconds"] = turn_rules.turn_seconds(spec["limits"]["deadline_seconds"], completion)
     # ADR 0023: the incumbent, challenger rounds and the exploration allowance, as of the turn's start (immutable)
-    spec["exploration"] = exploration_rules.compact(exploration.exploration_state(ctx, inv, completion=completion,
-                                                                                  budgets=budgets))
+    state = exploration.exploration_state(ctx, inv, completion=completion, budgets=budgets)
+    spec["exploration"] = exploration_rules.compact(state)
+    # R14 #4, #5: an exploratory turn ends where the hold-back begins, its decisions, retries and activities included,
+    # so an open turn cannot spend the time kept for reproduction and export.
+    until = exploration_rules.exploration_deadline_unix(state, completion)
+    if until is not None:
+        spec["completion"] = {**spec["completion"], "exploration_deadline_unix": round(until, 3)}
+        spec["limits"]["deadline_seconds"] = max(turn_rules.MIN_TURN_SECONDS,
+                                                 min(int(spec["limits"]["deadline_seconds"]), int(until - time.time())))
     horizon = ctx.tx.horizon()
     spec["horizon"] = horizon
     ctx.tx.insert_turn({"id": tid, "investigation_id": inv.id, "project_id": ctx.project_id, "seq": seq,
@@ -656,7 +664,7 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
         decision = turn_rules.validate_decision(proposal, max_calls=turn["spec"]["limits"]["max_calls"])
         _check_component_contracts(ctx, decision["calls"])
         _check_conclusion_due(turn, decision)  # first: "nothing to wait for" would suggest running something
-        _check_exploration_phase(turn, decision)
+        _check_exploration_phase(turn, decision, live_stop=_live_exploration_stop(ctx, inv, turn))
         _check_resource_policy(ctx, decision)
         _check_something_to_wait_for(ctx, inv, decision)
     except Invalid as exc:
@@ -687,16 +695,58 @@ def _check_conclusion_due(turn: dict, decision: dict) -> None:
                       next_action="Propose conclude with the best scoped result the recorded evidence supports.")
 
 
-def _check_exploration_phase(turn: dict, decision: dict) -> None:
-    """ADR 0023: once exploration has stopped (the hold-back is reached, a ceiling or the search limit; recorded in the
-    turn spec at begin_turn), a decision that starts new exploratory compute is refused. Reproducing the incumbent
-    (purpose "reproduction"), confirmation, export and the conclusion remain. A bounded outcome is left to end the turn."""
+def _live_exploration_stop(ctx: Ctx, inv, turn: dict) -> str | None:
+    """R14 #4: the hold-back boundary recomputed between decisions. An exploratory turn (phase ``explore`` at its start)
+    whose wall allowance or model-token allowance has since run out admits no new challengers: the turn's start is not
+    the only time the boundary is checked."""
     state = turn["spec"].get("exploration") or {}
+    if state.get("phase") != "explore":
+        return None
+    until = (turn["spec"].get("completion") or {}).get("exploration_deadline_unix")
+    if until is not None and time.time() >= float(until):
+        return "wall-holdback"
+    tokens = ctx.tx.budgets(inv_scope(inv.id)).get("model_tokens")
+    if isinstance(tokens, dict) and tokens.get("limit_amount") is not None:
+        left = exploration_rules.allowance(exploration_rules.policy(inv.body.get("investigator")), None, None,
+                                           {"model_tokens": tokens})["tokens_left"]
+        if left is not None and left <= 0:
+            return "token-holdback"
+    return None
+
+
+def _finishes_pending_round(call: dict, calls: list[dict], pending: set[str], memo: dict[int, bool]) -> bool:
+    """R14 #6: a job-starting call that reads an output of a pending challenger (or of an earlier call of the same
+    decision that does), e.g. scoring it: it finishes a round that was already admitted, it is not a new challenger."""
+    for v in ((call.get("args") or {}).get("inputs") or {}).values():
+        if isinstance(v, str) and v in pending:
+            return True
+        if isinstance(v, dict) and isinstance(v.get(turn_rules.REF_KEY), str):
+            m = re.match(r"call\[(\d+)\]", v[turn_rules.REF_KEY])
+            i = int(m.group(1)) if m else -1
+            if 0 <= i < len(calls) and calls[i]["tool"] in turn_rules.JOB_TOOLS:
+                if i not in memo:
+                    memo[i] = _finishes_pending_round(calls[i], calls, pending, memo)
+                if memo[i]:
+                    return True
+    return False
+
+
+def _check_exploration_phase(turn: dict, decision: dict, live_stop: str | None = None) -> None:
+    """ADR 0023: once exploration has stopped (the hold-back is reached, a ceiling or the search limit; recorded in the
+    turn spec at begin_turn, or the hold-back reached since: ``live_stop``, R14 #4), a decision that starts new
+    exploratory compute is refused. Reproducing the incumbent (purpose "reproduction"), confirmation, export and the
+    conclusion remain, and so does scoring a pending challenger (R14 #6). A bounded outcome is left to end the turn."""
+    state = dict(turn["spec"].get("exploration") or {})
+    if live_stop and state.get("phase") == "explore":
+        state.update(phase="finalize", stop=live_stop)
     control = decision.get("control") or {}
     if state.get("phase") != "finalize" or control.get("bounded_outcome") \
             or decision.get("purpose", "open-search") not in exploration_rules.REFUSED_WHEN_FINALIZING:
         return
-    starts = [i for i, c in enumerate(decision["calls"]) if c["tool"] in turn_rules.JOB_TOOLS]
+    pending = set(state.get("pending_outputs") or [])
+    memo: dict[int, bool] = {}
+    starts = [i for i, c in enumerate(decision["calls"]) if c["tool"] in turn_rules.JOB_TOOLS
+              and not (pending and _finishes_pending_round(c, decision["calls"], pending, memo))]
     if starts:
         raise Invalid(f"exploration has stopped ({state.get('stop')}): no new challengers. Reproduce the incumbent "
                       "with purpose \"reproduction\", export, assess or conclude",
@@ -979,6 +1029,19 @@ def reserve_model_budget(ctx: Ctx, p: dict) -> dict:
     reconcile_open_model_reservations(ctx, scope, f"model:{p['turn_id']}:{p.get('slot')}:", by=ref, keep=ref)
     if p.get("attempt") is not None and p.get("epoch") is None:  # callers without begin_decision
         _note_attempt(ctx, turn, int(p.get("slot") or 0), int(p["attempt"]))
+    tokens = float((p.get("estimate") or {}).get("model_tokens") or 0)
+    if tokens > 0 and (turn["spec"].get("exploration") or {}).get("phase") == "explore" \
+            and isinstance(budgets.get("model_tokens"), dict):
+        # R14 #4: an exploratory decision's reservation must fit in what is left before the token hold-back, as of now
+        # (other decisions of the turn have reserved and spent since it began); the hold-back is for finalization.
+        inv = ctx.tx.require("investigation", turn["investigation_id"])
+        left = exploration_rules.allowance(exploration_rules.policy(inv.body.get("investigator")), None, None,
+                                           {"model_tokens": budgets["model_tokens"]})["tokens_left"]
+        if left is not None and tokens > left:
+            raise BudgetExhausted("the exploration allowance cannot cover this decision: the rest of the model-token "
+                                  "budget is held back for reproduction, export and the conclusion",
+                                  details={"scope": scope, "reason": "exploration-holdback", "estimate": tokens,
+                                           "tokens_left": left})
     out = {}
     for dim, amount in (p.get("estimate") or {}).items():
         if dim in ("model_tokens", "model_usd") and dim in budgets and float(amount) > 0:
@@ -1082,7 +1145,8 @@ def _close_turn(ctx: Ctx, turn: dict, p: dict) -> dict:
         claim_state = conclusion_claim_state(ctx, inv, control)
         body["conclusion"] = {"schema": CONCLUSION_SCHEMA, "turn_id": turn["id"],
                               "summary": control.get("summary") or result["summary"], "scope": control.get("scope"),
-                              "action": control["action"], "claim_state": claim_state}
+                              "action": control["action"], "claim_state": claim_state,
+                              "incumbent": exploration.final_incumbent(ctx, inv)}
         ctx.event("assessment.claim_state", inv_id, {k: claim_state.get(k) for k in ("state", "confirmed", "claim_id",
                                                                                    "assessment_id", "requested_disposition")},
                   investigation_id=inv_id)
@@ -1168,5 +1232,7 @@ def record_note(ctx: Ctx, p: dict) -> dict:
     ctx.event("note.recorded", nid, {"kind": p.get("kind")}, investigation_id=inv_id)
     if incumbent is not None and inv_id:
         exploration.recorded(ctx, nid, inv_id, incumbent)
+    if inv_id and body.get("kind") == "baseline":  # R14 #7: an explicit baseline designation
+        exploration.designate_baseline(ctx, inv_id, body)
     return {"note_id": nid, **({"incumbent": {k: incumbent.get(k) for k in ("version", "basis", "evidence")}}
                                if incumbent else {})}

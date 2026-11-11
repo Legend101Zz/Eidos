@@ -169,18 +169,38 @@ def retry_delay(failure: dict[str, Any], completion: dict[str, Any] | None, *, n
         return None
     delay = min(float(after) * (1.0 + RETRY_JITTER_FRACTION * rng()), MAX_RETRY_DELAY_SECONDS)
     if completion:
-        boundary = float(completion["deadline_unix"]) - float(completion["conclude_threshold_seconds"])
-        delay = min(delay, max(0.0, boundary - (time.time() if now is None else now)))
+        delay = min(delay, max(0.0, retry_boundary(completion) - (time.time() if now is None else now)))
     return round(delay, 3)
+
+
+def retry_boundary(completion: dict[str, Any]) -> float:
+    """R14 #5: the time a retry may not wait past. For an exploratory turn the start of the reproduction hold-back
+    (``exploration_deadline_unix``, set by begin_turn), else the start of the conclusion's reserve."""
+    if completion.get("exploration_deadline_unix") is not None:
+        return float(completion["exploration_deadline_unix"])
+    return float(completion["deadline_unix"]) - float(completion["conclude_threshold_seconds"])
+
+
+def retry_fits(failure: dict[str, Any], completion: dict[str, Any] | None, *, now: float | None = None) -> bool:
+    """R14 #5: whether the provider's requested delay (Retry-After) fits before the retry boundary. When it does not,
+    retrying sooner than asked is pointless and waiting would spend the hold-back: the retry stops."""
+    after = failure.get("retry_after_seconds")
+    if after is None or not completion:
+        return True
+    return float(after) <= retry_boundary(completion) - (time.time() if now is None else now)
 
 
 def model_failure_error(exc: ModelCallFailed, completion: dict[str, Any] | None) -> ApplicationError:
     """The activity error for a failed decision (ADR 0023): quota exhaustion is non-retryable and typed
-    ``PROVIDER_QUOTA_EXHAUSTED``; a transient failure carries the provider's Retry-After as the next retry's delay."""
+    ``PROVIDER_QUOTA_EXHAUSTED``; a transient failure carries the provider's Retry-After as the next retry's delay, and
+    is not retried when that delay cannot fit before the exploration deadline (R14 #5)."""
     failure = dict(exc.failure or {})
     if failure.get("kind") == "quota-exhausted":
         return ApplicationError(f"provider quota exhausted: {exc}"[:500], failure, type=QUOTA_ERROR_TYPE,
                                 non_retryable=True)
+    if exc.retryable and not retry_fits(failure, completion):
+        failure["retry_stopped"] = "retry-after-exceeds-exploration-time"
+        return ApplicationError(str(exc), failure, type="MODEL_CALL_FAILED", non_retryable=True)
     delay = retry_delay(failure, completion) if exc.retryable else None
     if delay is not None:
         failure["next_retry_delay_seconds"] = delay
