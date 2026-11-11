@@ -33,8 +33,14 @@ def charter(card):
                 'exploration_only': True}
     if card in ('D04', 'D05', 'N02', 'N03'):
         if card.startswith('N'):
-            from study.packaging.p3_data import card_spec
-            rmse_bar = card_spec(card)['min_reference_gain']
+            # Pilot-3 addendum 1: read the frozen bar from JSON. Arms 3 and 4 run in the lab interpreter, which
+            # has no NumPy, so the NumPy-based packaging module must not be imported here.
+            import json as _json
+            from pathlib import Path as _Path
+            frozen = _json.loads((_Path(__file__).resolve().parents[1] / 'packaging' / 'p3_frozen.json').read_text())[card]
+            if not frozen.get('qualified'):
+                raise ValueError(f'{card} dropped by prospective qualification')
+            rmse_bar = frozen['bar']
         else:
             rmse_bar = 0.5
         return {**body, 'question': f'Reduce held-out RMSE by at least {rmse_bar} versus baseline seed 11; reproduce from fresh initialization.', 'exploration_only': True, 'notes': 'No built-in RMSE assessor; see CHARTER_RULES.md. Independent evaluator enforces the practical bar.'}
