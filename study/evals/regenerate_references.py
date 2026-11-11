@@ -58,7 +58,7 @@ def regenerate(pilot3, pilot2):
         schema_version="eidos-reference-gains/1",
         arms=[1, 2, 3],
         statistic="median and min/max of verified numeric test gains, pooled over runs and coding arms",
-        pilot3_snapshot="Partial snapshot of locally completed grades; regenerate as the pilot finishes",
+        pilot3_snapshot="Partial snapshot of locally completed grades. Regenerate as the pilot finishes",
         sources=sources,
         cards=cards,
     )

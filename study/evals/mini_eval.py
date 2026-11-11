@@ -158,7 +158,7 @@ def scorecard(out, cards, arms, seed_index, stub, build, reference_path):
             pilot_build=build,
             reference_gains_sha256=hashlib.sha256(Path(reference_path).read_bytes()).hexdigest(),
         ),
-        gain_ratio_policy="Verified test gain divided by coding-arm median; unverified runs contribute zero; unavailable/nonpositive reference medians yield null",
+        gain_ratio_policy="Verified test gain divided by coding-arm median. Unverified runs contribute zero. Missing or nonpositive reference medians yield null.",
         runs=rows,
         aggregate=summarize(rows),
         by_arm={str(arm): summarize([r for r in rows if r["arm"] == arm]) for arm in arms},
@@ -215,7 +215,7 @@ def run_eval(cards, arms, seed_index, out, lab_home, lab_python, *, stub=False, 
     if not cards or len(set(cards)) != len(cards) or any(c not in CARDS for c in cards):
         raise ValueError("cards must be distinct development card IDs")
     if tuple(arms) not in {(4,), (2, 4)} or seed_index not in (1, 2, 3):
-        raise ValueError("arms must be 4 or 2,4; seed-index must be 1, 2 or 3")
+        raise ValueError("Arms must be 4 or 2,4 and seed-index must be 1, 2 or 3")
     research_python()
     out = writable_path(out)
     if out.exists() and any(out.iterdir()):
@@ -278,7 +278,7 @@ def main():
     parser.add_argument("--lab-home", required=True, type=Path)
     parser.add_argument("--lab-python", required=True, type=Path)
     parser.add_argument(
-        "--stub", action="store_true", help="existing baseline stubs; zero model calls and no lab startup"
+        "--stub", action="store_true", help="Run existing baseline stubs with zero model calls"
     )
     args = parser.parse_args()
     try:

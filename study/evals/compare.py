@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare two Tier-1 scorecards; exit 1 on regression and 2 on incompatible inputs."""
+"""Compare two Tier-1 scorecards and exit 1 on regression or 2 on incompatible inputs."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def compare(before, after, tolerance=0.05):
         if before[field] != after[field]:
             raise ValueError(f"incompatible {field}")
     if before["provenance"]["reference_gains_sha256"] != after["provenance"]["reference_gains_sha256"]:
-        raise ValueError("reference snapshots differ; rescore both builds against the same references")
+        raise ValueError("Reference snapshots differ. Rescore both builds against the same references")
     regressions, changes = [], []
     groups = [("all arms", before["aggregate"], after["aggregate"])]
     groups.extend(

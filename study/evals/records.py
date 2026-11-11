@@ -135,5 +135,5 @@ def scan_held_out(record, rows, events):
         known_identifiers=len(known),
         scanned_blobs=scanned,
         unavailable_blobs=unavailable,
-        limitation="Detects known held-out identifiers and digests in recorded contexts/replies/reads; derived information may evade this scan",
+        limitation="Detects known held-out identifiers and digests in recorded contexts, replies and reads. Derived information may evade this scan",
     )
