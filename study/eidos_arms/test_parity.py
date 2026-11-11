@@ -9,14 +9,14 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from study.common import write_json
 from study.launcher import outer_deadline
 from study.run_arm import run_claude, run_stream
 
-from . import arm4, worker
-from .charters import charter
+from . import arm3, arm4, worker
+from .charters import REPRODUCTION_CONTRACT, charter
 from .common import classify
 
 
@@ -94,10 +94,12 @@ class FinalOutcomes(unittest.TestCase):
                 write_json(root / 'arm.json', dict(arm=arm, card='D03', run_index=1, block_id='fixture'))
                 write_json(root / 'out/answer.json', {})
                 with (patch('study.run_arm.agent_env', return_value=dict(os.environ)),
-                      patch('study.run_arm.sandbox_command', return_value=command),
+                      patch('study.run_arm.sandbox_command', return_value=command) as sandbox,
                       patch('study.run_arm.subprocess.check_output', side_effect=output),
                       patch('study.toolkit.build_toolkit.build_toolkit')):
                     self.assertEqual(run_claude(root, arm)['status'], 'invalid_output')
+                submitted = sandbox.call_args.args[1]
+                self.assertIn(REPRODUCTION_CONTRACT, ' '.join(submitted[submitted.index('-p') + 1].split()))
 
     def test_incident_timeout_and_budget_still_take_precedence(self):
         # Pilot-2 addendum 1 and pilot-3 addendum 2: a provider failure decides a run only when it is the
@@ -127,6 +129,29 @@ class FinalOutcomes(unittest.TestCase):
 
 
 class SetupAndInformation(unittest.TestCase):
+    def test_mcp_arm_sends_the_shared_checkpoint_contract(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            metadata = dict(arm=3, card='N05', run_index=1, block_id='fixture')
+            write_json(root / 'arm.json', metadata)
+            write_json(root / 'lab/config/lab.json', {'api_port': 28767})
+            stream = SimpleNamespace(
+                UsageTracker=Mock(),
+                run_stream=Mock(return_value={'status': 'crash', 'wall_s': 0, 'model_ids_seen': []}),
+            )
+            client = Mock()
+            client.query.return_value = []
+            sandbox = Mock(side_effect=lambda _, cmd: ['-f', str(arm3.ROOT / 'study/sandbox/agent.sb'), *cmd])
+            with (patch.object(arm3, 'lane_a', return_value=(lambda _: {}, sandbox, stream)),
+                  patch.object(arm3, 'prepare', return_value=('fixture', {'artifacts': {}, 'charter_id': 'fixture'})),
+                  patch.object(arm3.lab, 'start'),
+                  patch.object(arm3.lab, 'client', return_value=client),
+                  patch.object(arm3.lab, 'home', return_value=root / 'lab'),
+                  patch.object(arm3.subprocess, 'check_output', return_value='fixture-key')):
+                arm3.run(root, metadata)
+            submitted = stream.run_stream.call_args.args[1]
+            self.assertIn(REPRODUCTION_CONTRACT, ' '.join(submitted[submitted.index('-p') + 1].split()))
+
     def test_setup_failure_still_reports_preparation_duration(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
@@ -213,6 +238,7 @@ class SetupAndInformation(unittest.TestCase):
             self.assertEqual(deadline['registered_lab_deadline_unix'], 1426.5)
             self.assertEqual(deadline['registered_margin_s'], 3.5)
             embedded = json.loads(captured['question'].split('Packaged task files:\n', 1)[1])
+            self.assertIn(REPRODUCTION_CONTRACT, ' '.join(captured['question'].split()))
             self.assertEqual(embedded['METHOD.md'], (arm4.ROOT / 'study/METHOD.md').read_text())
             self.assertEqual(embedded['brief.md'], 'Fixture brief')
 
@@ -240,6 +266,21 @@ class SetupAndInformation(unittest.TestCase):
                 'eidos.project.command already copies the supplied registered project.')
         for arm in (3, 4):
             self.assertIn(note, render_prompt(arm, 'D03'))
+
+    def test_pilot4_charters_keep_the_shared_checkpoint_contract(self):
+        from eidos.domain.charter import validate_charter
+
+        for card in ('N05', 'N06', 'N07', 'N08'):
+            body = validate_charter(charter(card))
+            contract = body['reproduction_contract']
+            self.assertEqual(contract, REPRODUCTION_CONTRACT)
+            self.assertIn('`{out}/<basename of candidate.model_path>`', contract)
+            self.assertIn('compatible formats for the locked and fresh checkpoints', contract)
+            self.assertIn('prospectively sealed development task', body['known_exposures'][0]['description'].lower())
+            self.assertIn('limited pre-run builder exposure', body['known_exposures'][0]['description'])
+        for card in ('D03', 'N01', 'N03'):
+            self.assertEqual(charter(card)['known_exposures'][0]['description'],
+                             'Public development task; no evaluator test data supplied')
 
 
 if __name__ == '__main__':

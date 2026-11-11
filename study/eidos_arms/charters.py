@@ -7,14 +7,25 @@ from .common import write_json
 
 METRIC = 'paired-report/1:reference-accuracy'
 RULE_ID = 'practical-accuracy-gain'
+REPRODUCTION_CONTRACT = (
+    'For every requested seed, `reproduce_command` must write the fresh checkpoint to '
+    '`{out}/<basename of candidate.model_path>`. The evaluator passes that file to your '
+    'infer command. Use compatible formats for the locked and fresh checkpoints.'
+)
 
 
 def charter(card):
     paired = card in ('D03', 'D06', 'N01', 'N04') or card in PRIVATE_CLASSIFICATION
     metric = 'classification-report/1:accuracy' if paired else METRIC
+    exposure = (
+        'Prospectively sealed development task. The bundle supplies training and validation only. '
+        'The Pilot 4 charter records limited pre-run builder exposure.'
+        if card in PRIVATE_CARD_BARS else 'Public development task; no evaluator test data supplied'
+    )
     body = {'study_id': card.lower() + '-pilot-practical',
             'question': 'Reproduce the supplied baseline (seed 11), then evaluate the practical accuracy bar.',
-            'known_exposures': [{'description': 'Public development task; no evaluator test data supplied'}],
+            'known_exposures': [{'description': exposure}],
+            'reproduction_contract': REPRODUCTION_CONTRACT,
             'resource_limits': {'wall_seconds': 1800, 'model_tokens': 8_000_000, 'threads': 1}}
     if card in ('D03', 'D04', 'D05', 'D06', 'N01', 'N02', 'N03', 'N04') or card in PRIVATE_CARD_BARS:
         body['pilot_2_setup'] = {
