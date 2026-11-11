@@ -170,6 +170,7 @@ def replay_slot(slot, *, surrogate_thinking=None):
     ("N01-r2", "N01-r2"),
     ("N01-r2-aborted-addendum1", "N01-r2"),
     ("N01-r3", "N01-r3"),
+    ("N02-r2", "N02-r2"),
     ("N02-r3", "N02-r3"),
     ("N03-r1", "N03-r1"),
     ("N03-r3", "N03-r3"),
