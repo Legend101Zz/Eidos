@@ -7,8 +7,10 @@ import time
 import uuid
 from typing import Any
 
+from eidos.application.handlers import exploration
 from eidos.application.service import EFFECT_ADMISSION, Ctx, command
 from eidos.domain import charter as charter_rules
+from eidos.domain import exploration as exploration_rules
 from eidos.domain import turns as turn_rules
 from eidos.domain.errors import BudgetExhausted, EffectNotAdmitted, Invalid, QuestionRevised, StaleRevision
 from eidos.domain.redaction import redact_value
@@ -43,7 +45,7 @@ def start_investigation(ctx: Ctx, p: dict) -> dict:
     if ctx.tx.get_record("investigation", inv_id):
         raise Invalid(f"investigation {inv_id} already exists")
     limits = dict(p.get("limits") or {})
-    investigator = {"runtime": "fixture", "model": None, "context_policy": "context-policy/2",
+    investigator = {"runtime": "fixture", "model": None, "context_policy": "context-policy/3",
                     "max_calls_per_turn": 6, "max_model_calls_per_turn": 4, "max_turns": 40,
                     **(p.get("investigator") or {})}
     if "model_usd" in limits and investigator.get("runtime") != "fixture" \
@@ -349,6 +351,9 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
     }
     if completion:
         spec["limits"]["deadline_seconds"] = turn_rules.turn_seconds(spec["limits"]["deadline_seconds"], completion)
+    # ADR 0023: the incumbent, challenger rounds and the exploration allowance, as of the turn's start (immutable)
+    spec["exploration"] = exploration_rules.compact(exploration.exploration_state(ctx, inv, completion=completion,
+                                                                                  budgets=budgets))
     horizon = ctx.tx.horizon()
     spec["horizon"] = horizon
     ctx.tx.insert_turn({"id": tid, "investigation_id": inv.id, "project_id": ctx.project_id, "seq": seq,
@@ -651,6 +656,7 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
         decision = turn_rules.validate_decision(proposal, max_calls=turn["spec"]["limits"]["max_calls"])
         _check_component_contracts(ctx, decision["calls"])
         _check_conclusion_due(turn, decision)  # first: "nothing to wait for" would suggest running something
+        _check_exploration_phase(turn, decision)
         _check_resource_policy(ctx, decision)
         _check_something_to_wait_for(ctx, inv, decision)
     except Invalid as exc:
@@ -679,6 +685,24 @@ def _check_conclusion_due(turn: dict, decision: dict) -> None:
         raise Invalid("only the time reserved for the conclusion remains: this decision must conclude (or stop)",
                       details={"remaining_seconds": completion.get("remaining_seconds")},
                       next_action="Propose conclude with the best scoped result the recorded evidence supports.")
+
+
+def _check_exploration_phase(turn: dict, decision: dict) -> None:
+    """ADR 0023: once exploration has stopped (the hold-back is reached, a ceiling or the search limit; recorded in the
+    turn spec at begin_turn), a decision that starts new exploratory compute is refused. Reproducing the incumbent
+    (purpose "reproduction"), confirmation, export and the conclusion remain. A bounded outcome is left to end the turn."""
+    state = turn["spec"].get("exploration") or {}
+    control = decision.get("control") or {}
+    if state.get("phase") != "finalize" or control.get("bounded_outcome") \
+            or decision.get("purpose", "open-search") not in exploration_rules.REFUSED_WHEN_FINALIZING:
+        return
+    starts = [i for i, c in enumerate(decision["calls"]) if c["tool"] in turn_rules.JOB_TOOLS]
+    if starts:
+        raise Invalid(f"exploration has stopped ({state.get('stop')}): no new challengers. Reproduce the incumbent "
+                      "with purpose \"reproduction\", export, assess or conclude",
+                      details={"stop": state.get("stop"), "calls": starts, "purpose": decision.get("purpose"),
+                               "incumbent": state.get("incumbent"), "allowance": state.get("allowance")},
+                      next_action="Propose the incumbent's reproduction (purpose reproduction) or conclude.")
 
 
 def _late_decision(ctx: Ctx, turn: dict, inv, slot: int, attempt: int | None, epoch: int | None = None) -> str | None:
@@ -1131,7 +1155,15 @@ def record_note(ctx: Ctx, p: dict) -> dict:
     body = {k: p.get(k) for k in ("investigation_id", "kind", "text", "hypotheses", "evidence_refs", "prediction",
                                   "falsifier", "status")}
     body["text"] = str(body.get("text") or "")[:4000]
+    incumbent = None
+    if inv_id and body.get("kind") in exploration.NOTE_KINDS:  # ADR 0023: rule fixed, re-lock only on better evidence
+        incumbent = exploration.check_note(ctx, inv_id, body)
+        if incumbent is not None:
+            body["incumbent"] = incumbent
     ctx.tx.put_record("note", nid, ctx.project_id, body, created_by=ctx.principal.id, status=p.get("status") or "open",
                       parent_id=inv_id)
     ctx.event("note.recorded", nid, {"kind": p.get("kind")}, investigation_id=inv_id)
-    return {"note_id": nid}
+    if incumbent is not None and inv_id:
+        exploration.recorded(ctx, nid, inv_id, incumbent)
+    return {"note_id": nid, **({"incumbent": {k: incumbent.get(k) for k in ("version", "basis", "evidence")}}
+                               if incumbent else {})}

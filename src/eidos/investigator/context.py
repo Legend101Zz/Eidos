@@ -1,4 +1,6 @@
-"""Versioned context policies ``context-policy/2`` (current) and ``context-policy/1`` (replay and older turns).
+"""Versioned context policies ``context-policy/3`` (current, ADR 0023), ``context-policy/2`` and ``context-policy/1``
+(replay and older turns). Policy 3 adds the exploration facts (incumbent, challenger rounds, allowance, phase) and reads
+the baseline from its durable record; policy 2 is unchanged, so its recorded turns replay as they were.
 
 Packs an authorized investigation view (taken at the turn's ledger horizon) into a bounded
 prompt and records exactly what was selected, omitted and truncated. The view itself is stored
@@ -16,7 +18,8 @@ from eidos.domain.redaction import redact_text as _redact
 from eidos.domain.turns import CONTROL_TOOLS, EFFECT_TOOLS, MODEL_CONTEXT_CHAR_LIMIT
 from eidos_wire import canonical_json, sha256_bytes
 
-POLICY_ID = "context-policy/2"  # ADR 0020
+POLICY_ID = "context-policy/3"  # ADR 0023
+POLICY_V2 = "context-policy/2"  # ADR 0020
 POLICY_V1 = "context-policy/1"
 MAX_JOBS = 25
 MAX_CATALOG = 30
@@ -78,7 +81,9 @@ Effect tools (executed in order only after the lab accepts your decision):
   export_model {checkpoint_artifact_id, behavior_check_job_id}; record_note {kind, text, evidence_refs}
   To lock a candidate: record_note {kind: "candidate_lock", text: "{\\"job_id\\": \\"<job>\\"}"}, the text being exactly
     that JSON naming the selected training job, or any text with exactly one job in evidence_refs. A lock that names no
-    job cannot be assessed.
+    job cannot be assessed. The text may add "selection": {"metric", "split": "validation"|"training-cv", "direction"}
+    (the selection rule, fixed once recorded) and "scored_by": "<job>". With a rule, a new lock must beat the incumbent
+    on it (recorded receipts decide, refused otherwise); no lock changes after a plan is frozen or an assessment requested.
 Batches: calls run in order, and any argument of a later call can be {"$ref": "call[<i>].<field>"}, an earlier call of
   the SAME decision's result, filled in when the later call runs. So one decision can author, train, infer and score:
   [author_source {files}, run_component {inputs: {source: {"$ref": "call[0].artifact_id"}}, ...}, run_component {inputs:
@@ -109,7 +114,7 @@ def pack(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int
          policy: str = POLICY_ID) -> dict[str, Any]:
     if policy == POLICY_V1:
         return _pack_v1(view, catalog, char_limit=char_limit)
-    return _pack_v2(view, catalog, char_limit=char_limit)
+    return _pack_v2(view, catalog, char_limit=char_limit, v3=policy != POLICY_V2)
 
 
 def _pack_v1(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int) -> dict[str, Any]:
@@ -243,9 +248,9 @@ PINNED_BUDGETS: dict[str, tuple[int, float, int]] = {
     "inputs": (3000, 0.05, 3000), "task": (2000, 0.04, 2000), "notes": (3000, 0.05, 3000), "budget": (1500, 0.03, 1500),
     "wall": (500, 0.06, 500), "baseline": (1200, 0.03, 1200), "lock": (1500, 0.03, 800), "success_rules": (1500, 0.03, 1500),
     "environments": (6000, 0.10, 900), "failures": (6000, 0.10, 400), "assessment": (2400, 0.04, 700), "search": (1500, 0.03, 600),
-    "batches": (1000, 0.02, 500)}
+    "batches": (1000, 0.02, 500), "exploration": (1600, 0.04, 600)}
 HEAD_SECTIONS = ("revision", "model", "charter", "steering", "inputs", "task", "notes", "budget")
-FACT_SECTIONS = ("wall", "baseline", "lock", "assessment", "success_rules", "environments", "search", "batches", "failures")
+FACT_SECTIONS = ("wall", "baseline", "lock", "exploration", "assessment", "success_rules", "environments", "search", "batches", "failures")
 # Dropped first when the sections together do not fit a small limit; the facts are not on this list.
 DROP_ORDER = ("notes", "task", "inputs", "budget", "revision", "model")
 MAX_REFUSED_PACKAGES = 10
@@ -325,6 +330,76 @@ def _baseline_fact(view: dict[str, Any]) -> str | None:
     if scored:
         out += f"; scored by {scored['id']}: {json.dumps(scored['receipt']['metrics'], sort_keys=True)}"
     return out[:1200]
+
+
+def _baseline_record_fact(view: dict[str, Any]) -> str | None:
+    """ADR 0023: the durable baseline identity the lab recorded (the investigation's first baseline job and the job that
+    scored it), overridden only by an explicit baseline note. Never inferred from the recent jobs."""
+    named = [n for n in (view.get("pinned_notes") or []) if n.get("kind") == "baseline"]
+    if named:
+        return _baseline_fact(view)
+    rec = view.get("baseline_record")
+    if not isinstance(rec, dict) or not rec.get("job_id"):
+        return _baseline_fact(view)
+    out = (f"- Baseline (recorded): job {rec['job_id']} ({rec.get('component')}, environment {rec.get('environment')}), "
+           f"metrics {json.dumps(rec.get('metrics'), sort_keys=True)}")
+    scored = rec.get("scored_by")
+    if isinstance(scored, dict):
+        out += f"; scored by {scored.get('job_id')}: {json.dumps(scored.get('metrics'), sort_keys=True)}"
+    else:
+        out += "; not scored yet (score its outputs; the scorer is recorded automatically)"
+    return out[:1200]
+
+
+STOP_TEXT = {
+    "selection-frozen": "the selection is frozen (an evidence plan was frozen or an assessment requested)",
+    "ceiling-perfect-score": "the incumbent has a perfect score on the selection rule",
+    "ceiling-no-improvement": "no challenger improved on the incumbent in {patience} rounds",
+    "search-limit": "the declared search limit of {max_rounds} rounds is reached",
+    "wall-holdback": "the wall time held back for reproduction and export is reached",
+    "token-holdback": "the model tokens held back for reproduction and export are reached",
+}
+
+
+def _exploration_facts(view: dict[str, Any]) -> list[str]:
+    """ADR 0023: the incumbent, the selection rule, challenger rounds and the exploration allowance, from the turn spec."""
+    st = view.get("exploration")
+    if not isinstance(st, dict):
+        return []
+    rule, inc, left = st.get("rule"), st.get("incumbent"), st.get("allowance") or {}
+    out = []
+    out.append("- Selection rule: " + (json.dumps(rule, sort_keys=True) if rule else
+               'none recorded. Record it with your first lock (record_note kind "candidate_lock", text {"job_id": '
+               '"<job>", "selection": {"metric": "<receipt metric>", "split": "validation"|"training-cv", "direction": '
+               '"higher_is_better"|"lower_is_better"}}) or as a "selection_rule" note; it is fixed once recorded.'))
+    if inc:
+        ev = inc.get("evidence") or {}
+        out.append(f"- Incumbent v{inc.get('version')}: job {inc.get('job_id')}"
+                   + (f", {ev.get('metric')} {ev.get('value')} (scored by {ev.get('scored_by')})" if ev else
+                      ", no recorded selection evidence")
+                   + (f"; reproduced by {inc['reproduced_by']}" if inc.get("reproduced_by") else "; not reproduced yet"))
+    allowance = []
+    if left.get("seconds_left") is not None:
+        allowance.append(f"{max(float(left['seconds_left']), 0):.0f} s (after {left.get('holdback_seconds'):.0f} s held "
+                         "back for reproduction and export, before the conclusion's reserve)")
+    if left.get("tokens_left") is not None:
+        allowance.append(f"{max(int(left['tokens_left']), 0)} model tokens (after {left.get('holdback_tokens')} held back)")
+    rounds = (f"{st.get('rounds')} challenger round(s), {st.get('rounds_without_improvement')} without improvement "
+              f"(stop at {st.get('patience_rounds')})" + (f", search limit {st['max_rounds']}" if st.get("max_rounds")
+                                                          is not None else ""))
+    if st.get("phase") == "finalize":
+        why = STOP_TEXT.get(str(st.get("stop")), str(st.get("stop"))).format(
+            patience=st.get("patience_rounds"), max_rounds=st.get("max_rounds"))
+        out.append(f"- Exploration: STOPPED, {why}. No new challengers (refused). Reproduce the incumbent if it is not "
+                   'reproduced (purpose "reproduction"), export, then conclude with it.')
+    elif st.get("phase") == "explore":
+        out.append(f"- Exploration: keep improving. {rounds}. Allowance left: {'; '.join(allowance) or 'no limit'}. "
+                   "Run a challenger round (a batch of alternatives), score each on the selection rule, and re-lock "
+                   "only a challenger that beats the incumbent; the lab refuses any other re-lock.")
+    else:
+        out.append("- Exploration: no incumbent yet. Beat the baseline, then lock your best candidate with the "
+                   f"selection rule. Allowance left: {'; '.join(allowance) or 'no limit'}.")
+    return out
 
 
 def _lock_fact(view: dict[str, Any]) -> list[str]:
@@ -445,7 +520,7 @@ def _pinned_section(name: str, lines: list[str], char_limit: int, omitted: list[
     return list(reversed(kept)) if newest_first else kept
 
 
-def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int) -> dict[str, Any]:
+def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int, v3: bool = False) -> dict[str, Any]:
     inv = view["investigation"]["body"]
     sel: dict[str, list] = {"jobs": [], "claims": [], "catalog": []}
     omitted: dict[str, list] = {"jobs": [], "claims": [], "catalog": [], "known_failures": [], "sections": []}
@@ -477,8 +552,9 @@ def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
         raw["model"] = [f"Model artifact: {inv['model_artifact_id']}  environment: {inv.get('environment')}"]
 
     wall = _wall_fact(view)
-    baseline = _baseline_fact(view)
+    baseline = _baseline_record_fact(view) if v3 else _baseline_fact(view)
     raw["wall"] = [wall] if wall else []
+    raw["exploration"] = _exploration_facts(view) if v3 else []
     raw["baseline"] = [baseline or "- Baseline: none recorded yet (reproduce it first)."]
     raw["lock"] = _lock_fact(view)
     raw["assessment"] = _assessment_facts(view)
@@ -510,7 +586,8 @@ def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
 
     def assemble_facts() -> list[str]:
         out = ["## Pinned facts (always present; they survive truncation and the job window)"]
-        for name in ("wall", "baseline", "lock", "assessment", "success_rules", "environments", "search", "batches"):
+        for name in ("wall", "baseline", "lock", "exploration", "assessment", "success_rules", "environments", "search",
+                     "batches"):
             out += pinned.get(name, [])
         if pinned.get("failures"):
             out += ["- Known failures so far (do not repeat one without changing what caused it):", *pinned["failures"]]
@@ -604,7 +681,7 @@ def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
         text = text[:keep] + TRUNCATION_MARK + guide if keep > 0 else text[:char_limit]
     budget_cut = any(omitted[k] for k in ("sections", "known_failures")) or len(sel["jobs"]) < len(job_items) \
         or len(sel["claims"]) < len(claims) or len(sel["catalog"]) < len(shown)
-    return {"policy": POLICY_ID, "text": text, "selections": sel, "omissions": omitted,
+    return {"policy": POLICY_ID if v3 else POLICY_V2, "text": text, "selections": sel, "omissions": omitted,
             "truncations": {"context_truncated": budget_cut, "budget_left": max(room, 0)}, "chars": len(text),
             "source_manifest_digest": "sha256:" + sha256_bytes(canonical_json(view).encode()),
             "known_tools": sorted(EFFECT_TOOLS) + list(CONTROL_TOOLS)}

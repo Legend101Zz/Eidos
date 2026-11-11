@@ -28,7 +28,7 @@ from eidos.investigator.runtime import (
     output_cap,
 )
 
-PROMPT_REVISION = "investigator-prompt/2"
+PROMPT_REVISION = "investigator-prompt/3"  # ADR 0023: investigator-playbook/2
 SYSTEM = (
     "You are the internal investigator of a model-research lab. Diagnose failures, propose the most "
     "informative next experiment, author components when the catalog lacks a needed method, and stop "

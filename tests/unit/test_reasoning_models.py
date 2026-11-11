@@ -826,11 +826,12 @@ def test_the_first_request_is_not_started_when_its_bytes_and_the_cap_exceed_the_
 
 
 def test_the_envelope_counts_separately_billed_reasoning_as_spent():
-    # 10 + 10000 tokens (9000 of them reasoning, inside the output) leave room for the re-ask in 25000; with "separate"
-    # billing the 9000 reasoning tokens are charged on top, and the re-ask's worst case no longer fits
+    # 10 + 10000 tokens (9000 of them reasoning, inside the output) leave room for the re-ask in 30000; with "separate"
+    # billing the 9000 reasoning tokens are charged on top, and the re-ask's worst case no longer fits (the re-ask also
+    # re-sends the system instructions, whose size follows the playbook revision)
     for billing, reasked in (("included", True), ("separate", False)):
         script = scripted(["not json", json.dumps(GOOD)], usages=[usage(10, 10_000, 9_000)])
-        runtime(script, max_output_tokens=200, max_tokens_per_decision=25_000,
+        runtime(script, max_output_tokens=200, max_tokens_per_decision=30_000,
                 reasoning_tokens_billing=billing).decide(request())
         assert len(script.seen) == (2 if reasked else 1), billing
 

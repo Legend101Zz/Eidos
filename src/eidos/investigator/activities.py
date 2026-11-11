@@ -279,6 +279,8 @@ class InvestigatorActivities:
         view["budgets"] = turn["spec"].get("budgets")  # immutable snapshot taken at begin_turn
         if turn["spec"].get("completion"):
             view["completion"] = turn["spec"]["completion"]  # likewise (ADR 0020)
+        if turn["spec"].get("exploration"):
+            view["exploration"] = turn["spec"]["exploration"]  # likewise (ADR 0023)
         catalog = self.inv.query("search_components", {"limit": 100, "as_of_horizon": turn["horizon"]}, project=p)["components"]
         packed = pack(view, catalog, policy=turn["spec"].get("context_policy") or POLICY_V1)
         # The source manifest includes the catalog snapshot so offline replays see exactly what was

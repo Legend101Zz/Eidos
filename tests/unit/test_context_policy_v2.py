@@ -81,9 +81,9 @@ def pinned_notes_lock():
 # -- the policy ids ------------------------------------------------------------------------------------------------------
 
 
-def test_default_policy_is_v2():
+def test_default_policy_is_v3():
     out = pack(make_view(), [])
-    assert out["policy"] == "context-policy/2"
+    assert out["policy"] == "context-policy/3"
     assert "## Pinned facts" in out["text"]
 
 
