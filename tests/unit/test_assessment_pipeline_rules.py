@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from eidos.domain import assessment as A
+from eidos.domain import evidence as ev
 from eidos.domain import turns
 from eidos.domain.charter import validate_charter
 from eidos.domain.errors import Invalid
@@ -82,51 +83,38 @@ def test_the_path_names_are_the_published_constants():
     assert set(A.METRIC_PATHS.values()) == {"classification", "train-evaluate"}
 
 
-# -- check_seed_pairing --------------------------------------------------------------------------------------------
-def test_paired_seeds_are_returned_per_arm_without_problems():
-    arms, problems = A.check_seed_pairing({"11": "job_b11", "12": "job_b12"}, {"12": "job_c12", "11": "job_c11"})
-    assert problems == []
-    assert arms == {"baseline": {"11": "job_b11", "12": "job_b12"}, "candidate": {"11": "job_c11", "12": "job_c12"}}
+# -- check_confirmation_seeds --------------------------------------------------------------------------------------
+def test_confirmation_seeds_are_returned_in_numeric_order_without_problems():
+    keys, problems = A.check_confirmation_seeds([12, "9", "11", 10])
+    assert problems == [] and keys == ["9", "10", "11", "12"]
 
 
-def test_integer_and_padded_text_keys_are_normalized_to_strings():
-    arms, problems = A.check_seed_pairing({11: "a", 12: "b"}, {"11": "c", " 12 ": "d"})
-    assert problems == []
-    assert arms["baseline"] == {"11": "a", "12": "b"} and arms["candidate"] == {"11": "c", "12": "d"}
+def test_integer_and_padded_text_seeds_are_normalized_to_strings():
+    keys, problems = A.check_confirmation_seeds([11, " 12 ", "b"])
+    assert problems == [] and keys == ["11", "12", "b"]
 
 
-def test_unpaired_seeds_are_one_seed_pairing_problem_listing_both_sides():
-    arms, problems = A.check_seed_pairing({"10": "a", "9": "b", "11": "c"}, {"9": "d", "12": "e"})
-    assert codes(problems) == ["seed-pairing"]
-    assert problems[0]["details"] == {"baseline": ["9", "10", "11"], "candidate": ["9", "12"]}  # numeric order
-    assert set(arms) == {"baseline", "candidate"}
+@pytest.mark.parametrize("bad", [1.5, True, None, "", "   ", (1, 2), {"a": 1}])
+def test_a_confirmation_seed_that_is_not_an_integer_or_a_text_is_refused(bad):
+    keys, problems = A.check_confirmation_seeds([1, bad])
+    assert codes(problems) == ["seed-pairing"] and repr(bad) in problems[0]["message"]
+    assert keys == ["1"]
 
 
-@pytest.mark.parametrize("bad", [1.5, True, None, "", "   ", (1, 2)])
-def test_a_seed_that_is_not_an_integer_or_a_text_is_refused(bad):
-    _, problems = A.check_seed_pairing({bad: "a"}, {"1": "b"})
-    assert "seed-pairing" in codes(problems)
-    assert any(repr(bad) in p["message"] and p["message"].startswith("baseline") for p in problems)
+def test_a_confirmation_seed_written_two_ways_is_a_duplicate():
+    keys, problems = A.check_confirmation_seeds([1, " 1", "1", 2])
+    assert codes(problems) == ["seed-pairing", "seed-pairing"] and "appears twice" in problems[0]["message"]
+    assert keys == ["1", "2"]
 
 
-def test_a_seed_written_two_ways_is_a_duplicate():
-    arms, problems = A.check_seed_pairing({"1": "a"}, {1: "b", " 1": "c"})
-    assert codes(problems) == ["seed-pairing"] and "appears twice" in problems[0]["message"]
-    assert arms["candidate"] == {"1": "b"}
+@pytest.mark.parametrize("empty", [[], None, {}, "11", 11, {"11": "job"}])
+def test_confirmation_seeds_that_are_not_a_non_empty_list_are_a_seed_pairing_problem(empty):
+    keys, problems = A.check_confirmation_seeds(empty)
+    assert keys == [] and codes(problems) == ["seed-pairing"] and "non-empty list" in problems[0]["message"]
 
 
-@pytest.mark.parametrize("empty", [{}, None, [], "11"])
-def test_an_empty_or_malformed_arm_is_a_seed_pairing_problem(empty):
-    arms, problems = A.check_seed_pairing(empty, {"11": "c"})
-    assert codes(problems) == ["seed-pairing"] and problems[0]["message"].startswith("baseline must map")
-    assert "baseline" not in arms
-    arms, problems = A.check_seed_pairing({"11": "b"}, empty)
-    assert codes(problems) == ["seed-pairing"] and problems[0]["message"].startswith("candidate must map")
-
-
-def test_both_arms_empty_names_both_roles():
-    arms, problems = A.check_seed_pairing({}, {})
-    assert arms == {} and [p["message"].split(" ")[0] for p in problems] == ["baseline", "candidate"]
+def test_check_seed_pairing_and_classification_draft_are_gone():
+    assert not hasattr(A, "check_seed_pairing") and not hasattr(A, "classification_draft")
 
 
 def test_seed_helpers():
@@ -211,6 +199,150 @@ def test_recipe_identity_ignores_the_seed_but_not_the_recipe():
 
 def test_recipe_identity_of_a_bare_lock():
     assert A.recipe_identity({}) == {"component": None, "inputs": {}, "config": {}}
+
+
+# -- train_recipe_identity and seeds_already_run -------------------------------------------------------------------
+def test_recipe_job_id_accepts_a_job_id_or_an_object_naming_one():
+    assert A.recipe_job_id("job_1") == "job_1" and A.recipe_job_id({"job_id": "job_2"}) == "job_2"
+    assert all(A.recipe_job_id(x) is None for x in (None, "", {}, {"job_id": ""}, {"job_id": 3}, 7, ["job_1"]))
+
+
+def test_train_recipe_identity_merges_the_common_and_arm_config_without_the_seed_or_timeout():
+    spec = {"common_train": {"lr": 0.1, "steps": 45, "seed": 1, "timeout_seconds": 60},
+            "candidate": {"train": {"lr": 0.2, "extensions": ["x"]}}}
+    assert A.train_recipe_identity(spec, "candidate", A.TRAIN) == {
+        "component": A.TRAIN, "inputs": {}, "config": {"lr": 0.2, "steps": 45, "extensions": ["x"]}}
+    assert A.train_recipe_identity(spec, "baseline", A.TRAIN)["config"] == {"lr": 0.1, "steps": 45}
+    assert A.train_recipe_identity({}, "baseline", None) == {"component": None, "inputs": {}, "config": {}}
+
+
+def test_a_seed_an_earlier_lock_of_the_same_recipe_ran_is_reported_in_numeric_order():
+    identity = A.recipe_identity(_lock(11))
+    locks = [_lock(11), _lock(2), _lock(30), _lock(5)]
+    assert A.seeds_already_run(["30", "2", "7", "11"], identity, locks) == ["2", "11", "30"]
+
+
+def test_a_seed_only_another_recipe_ran_is_not_reported():
+    identity = A.recipe_identity(_lock(11))
+    other = [_lock(11, config={"lr": 0.2, "steps": 45, "seed": 11}), _lock(12, component={"ref": "other@1.0.0"}),
+             _lock(13, inputs={"data": {"digest": "sha256:cc"}, "init": None})]
+    assert A.seeds_already_run(["11", "12", "13"], identity, other) == []
+    assert A.seeds_already_run(["11", "12", "13"], identity, [*other, _lock(12)]) == ["12"]
+
+
+def test_seeds_already_run_ignores_locks_without_a_readable_seed_and_empty_histories():
+    identity = A.recipe_identity(_lock(None))
+    assert A.seeds_already_run(["1"], identity, [_lock(None), {"component": {"ref": "x"}}]) == []
+    assert A.seeds_already_run(["1"], identity, []) == []
+
+
+def test_a_train_request_recipe_matches_the_recorded_job_that_ran_it():
+    spec = {"common_train": {"lr": 0.1, "steps": 45}, "baseline": {"train": {}}}
+    lock = {"component": {"ref": A.TRAIN}, "inputs": {}, "config": {"lr": 0.1, "steps": 45, "seed": 3}, "seed": 3}
+    identity = A.train_recipe_identity(spec, "baseline", A.TRAIN)
+    assert identity == A.recipe_identity(lock)
+    assert A.seeds_already_run(["3", "4"], identity, [lock]) == ["3"]
+
+
+# -- recipe_step and fresh_classification_draft --------------------------------------------------------------------
+def test_recipe_step_reruns_a_recorded_recipe_from_the_given_seed_as_an_intermediate_step():
+    lock = {"component": {"ref": "eidos.project.command@1.0.0"},
+            "inputs": {"source": {"artifact_id": "art_src", "digest": "sha256:s"}, "data": {"artifact_id": "art_d"}},
+            "config": {"argv": ["train"], "seed": 11, "timeout_seconds": 300}, "seed": 11}
+    step = A.recipe_step(lock, "candidate.s12.train", "12", environment="default")
+    assert step == {"id": "candidate.s12.train", "component": "eidos.project.command@1.0.0",
+                    "inputs": {"source": "art_src", "data": "art_d"},
+                    "config": {"argv": ["train"], "seed": 12, "timeout_seconds": 300}, "seed": 12,
+                    "environment": "default", "wall_seconds": 300, "intermediate": True}
+    assert lock["config"]["seed"] == 11  # the recorded lock is not modified
+    assert A.recipe_step({}, "x", "abc")["seed"] == "abc" and A.recipe_step({}, "x", "1")["wall_seconds"] == 900
+
+
+def _fresh_request(seeds=("11", "12"), **over):
+    recipes = {"baseline": {"component": {"ref": "eidos.project.command@1.0.0"}, "inputs": {"source": {"artifact_id": "art_b"}},
+                            "config": {"argv": ["train"], "seed": 1, "timeout_seconds": 120}, "seed": 1},
+               "candidate": {"component": {"ref": "eidos.project.command@1.0.0"}, "inputs": {"source": {"artifact_id": "art_c"}},
+                             "config": {"argv": ["train"], "seed": 2}, "seed": 2}}
+    request = {"claim": {"statement": "the candidate raises held-out accuracy"}, "success_rule_id": "practical-accuracy-gain",
+               "assessor": {"ref": A.ASSESSOR_REF}, "required_isolation": {"profile": "dev:same-user"},
+               "classification": {"labels": "art_labels", "seeds": list(seeds), "slot": "predictions", "recipes": recipes,
+                                  "environment": "default", **over.pop("classification", {})}}
+    request.update(over)
+    return request
+
+
+def test_a_fresh_classification_draft_trains_then_reports_for_every_seed_and_role():
+    draft = A.fresh_classification_draft(_fresh_request())
+    assert [arm["role"] for arm in draft["arms"]] == ["baseline", "candidate"]
+    for arm in draft["arms"]:
+        assert [run["seed"] for run in arm["runs"]] == [11, 12]
+        for run in arm["runs"]:
+            seed = run["seed"]
+            train, report = run["jobs"]
+            assert run["cluster"] == str(seed) and train["id"] == f"{arm['role']}.s{seed}.train"
+            assert train["intermediate"] is True and train["config"]["seed"] == seed and train["seed"] == seed
+            assert train["inputs"] == {"source": "art_b" if arm["role"] == "baseline" else "art_c"}
+            assert report["id"] == f"{arm['role']}.s{seed}.report" and report["component"] == A.REPORT_REF
+            assert "intermediate" not in report
+
+
+def test_each_report_step_reads_both_arms_new_training_outputs_and_the_labels():
+    draft = A.fresh_classification_draft(_fresh_request(seeds=["7"]))
+    for arm in draft["arms"]:
+        report = arm["runs"][0]["jobs"][1]
+        assert report["inputs"] == {"baseline": "baseline.s7.train.predictions",
+                                    "candidate": "candidate.s7.train.predictions", "labels": "art_labels"}
+        assert report["input_schemas"] == {"baseline": "class-predictions/1", "candidate": "class-predictions/1"}
+        assert report["config"] == {"role": arm["role"], "cluster": "7"}
+
+
+def test_the_report_step_carries_the_optional_classes_and_id_field_and_the_environment():
+    draft = A.fresh_classification_draft(_fresh_request(seeds=["7"], classification={"classes": ["a", "b"], "id_field": "id"}))
+    report = draft["arms"][0]["runs"][0]["jobs"][1]
+    assert report["config"] == {"role": "baseline", "cluster": "7", "classes": ["a", "b"], "id_field": "id"}
+    assert report["environment"] == "default"
+
+
+def test_a_fresh_classification_draft_pins_only_recipe_inputs_and_labels_so_it_is_not_observed_evidence():
+    draft = A.fresh_classification_draft(_fresh_request())
+    literals = ev.literal_inputs({"arms": draft["arms"]})
+    assert {(i["port"], i["artifact_id"]) for i in literals} == {("source", "art_b"), ("source", "art_c"),
+                                                                 ("labels", "art_labels")}
+    artifacts = {"art_b": {"schema": "source-bundle/1", "digest": "sha256:b"},
+                 "art_c": {"schema": "source-bundle/1", "digest": "sha256:c"},
+                 "art_labels": {"schema": "class-labels/1", "digest": "sha256:attested"}}
+    status = ev.confirmation_status({"arms": draft["arms"], "data_provenance": {"split": "held-out"},
+                                     "charter_ref": {"id": "charter:c"}},
+                                    charter={"held_out": {"labels": ["sha256:attested"]}}, artifacts=artifacts,
+                                    result_digests=set())
+    assert status["eligible"] is True and status["data_keys"] == ["labels:sha256:attested"]
+
+
+def test_a_fresh_classification_draft_freezes_the_seeds_the_rule_and_the_evaluation_labels():
+    draft = A.fresh_classification_draft(_fresh_request())
+    assert draft["success_rule_id"] == "practical-accuracy-gain" and draft["assessor"] == {"ref": A.ASSESSOR_REF}
+    assert draft["analysis_unit"] == "example" and draft["cluster_by"] == "seed"
+    assert draft["seed_policy"]["seeds"] == [11, 12] and draft["seed_policy"]["shared_across_arms"] is True
+    assert draft["splits"]["evaluation"]["labels"] == "art_labels"
+    assert draft["resource_reservation"] == {"matched_budget": {}, "arms": 2, "seeds": 2}
+    assert draft["obligations"] == [] and draft["required_isolation"] == {"profile": "dev:same-user"}
+    assert "frozen before any of this plan's runs existed" in draft["disclosures"]["results_after_freeze"]
+
+
+def test_one_seed_per_arm_is_disclosed_as_an_unestimated_seed_variance():
+    one = A.fresh_classification_draft(_fresh_request(seeds=["7"]))
+    assert one["cluster_by"] is None and one["disclosures"]["seed_variance"].startswith("not estimated")
+    assert any("one training seed per arm" in a for a in one["alternatives_unresolved"])
+    several = A.fresh_classification_draft(_fresh_request())
+    assert several["disclosures"]["seed_variance"] == "clustered by training seed"
+    assert not any("one training seed per arm" in a for a in several["alternatives_unresolved"])
+
+
+def test_a_fresh_classification_draft_no_longer_equals_the_templates_classification_path():
+    assert not hasattr(A, "classification_draft")
+    draft = A.fresh_classification_draft(_fresh_request())
+    assert {job["component"] for arm in draft["arms"] for run in arm["runs"] for job in run["jobs"]} == {
+        "eidos.project.command@1.0.0", A.REPORT_REF}
 
 
 # -- check_provenance ----------------------------------------------------------------------------------------------

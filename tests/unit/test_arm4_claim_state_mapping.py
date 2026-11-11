@@ -1,8 +1,9 @@
 """Study arm 4: the mapping from a conclusion's evidence-derived claim state (ADR 0021) onto the eidos-answer/0.2
 status fields (``study.eidos_arms.arm4.map_claim_state``).
 
-Pure function tests: no lab, no model, no network. The model's own status survives only when the conclusion has no
-claim state; otherwise the recorded evidence decides what the answer claims, and the mapping says so in its deviations.
+Pure function tests: no lab, no model, no network. The model's own status survives when the conclusion has no claim
+state, and an abstention or a null the model reported always survives; otherwise the recorded evidence decides what the
+answer claims, and the mapping says so in its deviations.
 """
 
 from __future__ import annotations
@@ -11,6 +12,8 @@ import sys
 from pathlib import Path
 
 import pytest
+
+from eidos.domain import assessment as A
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -116,6 +119,65 @@ def test_a_model_claiming_an_improvement_cannot_override_these_states(name):
     status, _, _, _ = map_claim_state(state(name, value=0.5), metadata(status="improvement_claimed"), CANDIDATE,
                                       MEASUREMENTS)
     assert status != "improvement_claimed"
+
+
+@pytest.mark.parametrize("model_status", ["abstained", "no_improvement_found"])
+@pytest.mark.parametrize("name", ["candidate-submitted", "protocol-passed"])
+def test_a_model_status_of_abstained_or_no_improvement_found_is_kept_over_any_claim_state(model_status, name):
+    status, claim_type, scope, deviations = map_claim_state(state(name, value=0.08), metadata(status=model_status),
+                                                            CANDIDATE, MEASUREMENTS)
+    assert (status, claim_type, scope) == (model_status, "no_positive_claim", MODEL_SCOPE)
+    assert len(deviations) == 1 and repr(model_status) in deviations[0] and repr(name) in deviations[0]
+    assert "precedence" in deviations[0]
+
+
+@pytest.mark.parametrize("model_status", ["abstained", "no_improvement_found"])
+def test_a_kept_abstention_does_not_claim_an_improvement_even_without_measurements_or_with_a_positive_estimate(model_status):
+    for measurements in ([], None, MEASUREMENTS):
+        status, claim_type, _, _ = map_claim_state(state("candidate-submitted", value=3.0),
+                                                   metadata(status=model_status, claim_type="recipe_improvement"),
+                                                   CANDIDATE, measurements)
+        assert (status, claim_type) == (model_status, "no_positive_claim")
+
+
+@pytest.mark.parametrize("model_status", ["improvement_claimed", "inconclusive"])
+def test_other_model_statuses_still_defer_to_the_claim_state(model_status):
+    status, claim_type, _, _ = map_claim_state(state("candidate-submitted"), metadata(status=model_status), CANDIDATE,
+                                               MEASUREMENTS)
+    assert (status, claim_type) == ("improvement_claimed", "recipe_improvement")
+
+
+# -- the direction of the metric decides whether the answer claims an improvement ----------------------------------------
+def derived_state(point: dict) -> dict:
+    control = {"action": "conclude", "claim": {"disposition": "candidate", "point_estimate": point}}
+    claim = {"id": "clm_0001", "revision": 1, "statement": "the candidate lowers the error", "scope": {}}
+    return A.derive_claim_state(control=control, claims=[claim], assessments=[], plans=[], charter=None)
+
+
+def test_a_worsening_rmse_is_not_an_improvement_claim_and_an_improving_one_is():
+    rmse = [{"metric": "rmse", "baseline": 2.0, "candidate": 1.5, "split": "validation"}]
+    better = derived_state({"metric": "rmse", "baseline": 2.0, "candidate": 1.5})
+    worse = derived_state({"metric": "rmse", "baseline": 1.5, "candidate": 2.0})
+    assert better["point_estimate"]["value"] == pytest.approx(0.5)
+    assert worse["point_estimate"]["value"] == pytest.approx(-0.5)
+    status, claim_type, scope, _ = map_claim_state(better, metadata(), CANDIDATE, rmse)
+    assert (status, claim_type) == ("improvement_claimed", "recipe_improvement") and scope.endswith(CONFIRMATION_PENDING)
+    status, claim_type, scope, deviations = map_claim_state(worse, metadata(), CANDIDATE, rmse)
+    assert status != "improvement_claimed" and (status, claim_type, scope) == ("inconclusive", "no_positive_claim", MODEL_SCOPE)
+    assert any("without a positive point estimate" in d for d in deviations)
+
+
+def test_an_estimate_whose_direction_is_unknown_is_not_an_improvement_claim():
+    unknown = derived_state({"metric": "zorp", "baseline": 1.0, "candidate": 2.0})
+    assert unknown["point_estimate"]["value"] is None
+    status, claim_type, _, _ = map_claim_state(unknown, metadata(), CANDIDATE, MEASUREMENTS)
+    assert (status, claim_type) == ("inconclusive", "no_positive_claim")
+
+
+def test_a_higher_is_better_gain_is_still_an_improvement_claim():
+    status, _, _, _ = map_claim_state(derived_state({"metric": "accuracy", "baseline": 0.5, "candidate": 0.58}),
+                                      metadata(), CANDIDATE, MEASUREMENTS)
+    assert status == "improvement_claimed"
 
 
 # -- no claim state ------------------------------------------------------------------------------------------------

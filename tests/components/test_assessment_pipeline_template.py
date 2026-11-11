@@ -1,9 +1,12 @@
 """Drift guard for assessment by default (ADR 0021).
 
-``eidos.domain.assessment.classification_draft`` and ``train_evaluate_draft`` reproduce the draft expansion of
-``eidos.templates.improves-under-budget`` (its classification and train/evaluate paths) so that ``assess_candidate``
-can answer in one transaction. These tests run the real template through the worker protocol and require the two to
-produce the same draft, key for key, for requests of the shape the domain functions expect. Author tests.
+``eidos.domain.assessment.train_evaluate_draft`` reproduces the draft expansion of
+``eidos.templates.improves-under-budget`` (its train/evaluate path) so that ``assess_candidate`` can answer in one
+transaction. These tests run the real template through the worker protocol and require the two to produce the same
+draft, key for key, for requests of the shape the domain function expects. The classification path is not guarded here:
+the template's classification path pins predictions that already exist, which can no longer confirm anything, and
+``fresh_classification_draft`` deliberately does not reproduce it (its rules are tested in
+``tests/unit/test_assessment_pipeline_rules.py``). Author tests.
 """
 
 from __future__ import annotations
@@ -46,55 +49,6 @@ def _template_draft(lab_run, request: dict[str, Any]) -> dict[str, Any]:
 
 def _manifest(component: str) -> dict[str, Any]:
     return json.loads((COMPONENTS / component / "eidos-component.json").read_text())
-
-
-# -- classification ------------------------------------------------------------------------------------------------
-@pytest.mark.parametrize("fixture", ["classification-three-seeds", "classification-one-seed"])
-def test_the_classification_draft_equals_the_templates(lab_run, fixture):
-    request = _request(fixture)
-    template = _template_draft(lab_run, request)
-    assert A.classification_draft(copy.deepcopy(request)) == template
-    assert template["obligations"] == []  # assessor and required_isolation are present
-
-
-def test_the_classification_draft_equals_the_templates_for_a_fully_specified_request(lab_run):
-    request = _request("classification-three-seeds")
-    request.update({
-        "tuning": {"split": "validation", "used_for": "checkpoint selection"},
-        "budget": {"steps": 45, "wall_seconds": 600},
-        "alternatives_unresolved": ["gain explained by a different data order"],
-        "baseline": {"description": "reference recipe, five-epoch"},
-        "candidate": {"description": "candidate with label smoothing"},
-    })
-    request["classification"]["id_field"] = "uid"
-    template = _template_draft(lab_run, request)
-    assert A.classification_draft(copy.deepcopy(request)) == template
-    assert template["alternatives_unresolved"] == ["gain explained by a different data order"]
-    assert [a["description"] for a in template["arms"]] == ["reference recipe, five-epoch",
-                                                           "candidate with label smoothing"]
-
-
-def test_the_classification_draft_equals_the_templates_for_numeric_and_text_seeds_in_any_key_order(lab_run):
-    request = _request("classification-three-seeds")
-    seeds = ["10", "9", "11", "seed-b", "seed-a"]
-    request["classification"]["predictions"] = {
-        "baseline": {s: f"art_b_{s}" for s in seeds},
-        "candidate": {s: f"art_c_{s}" for s in reversed(seeds)},
-    }
-    template = _template_draft(lab_run, request)
-    assert template["seed_policy"]["seeds"] == [9, 10, 11, "seed-a", "seed-b"]
-    assert A.classification_draft(copy.deepcopy(request)) == template
-
-
-def test_without_an_assessor_or_isolation_the_template_only_adds_obligations(lab_run):
-    """The domain function is called after the command has resolved both; the template records them as obligations."""
-    request = _request("classification-one-seed")
-    request.pop("assessor")
-    request.pop("required_isolation")
-    template = _template_draft(lab_run, request)
-    assert template["obligations"] == ["required_isolation", "assessor"]
-    draft = A.classification_draft(copy.deepcopy(request))
-    assert draft == {**template, "obligations": []}
 
 
 # -- train / evaluate ----------------------------------------------------------------------------------------------
@@ -150,6 +104,16 @@ def test_a_candidate_post_step_chains_from_the_previous_job_in_both(lab_run):
         assert jobs[1]["inputs"] == {"checkpoint": "candidate.s41.train.checkpoint"}
         assert jobs[2]["inputs"] == {"checkpoint": "candidate.s41.post0.checkpoint"}
         assert jobs[2]["config"]["evaluation"]["cluster"] == "41"
+
+
+def test_without_an_assessor_or_isolation_the_template_only_adds_obligations(lab_run):
+    """The domain function is called after the command has resolved both; the template records them as obligations."""
+    request = _train_evaluate_request()
+    request.pop("assessor")
+    request.pop("required_isolation")
+    template = _template_draft(lab_run, request)
+    assert template["obligations"] == ["required_isolation", "assessor"]
+    assert A.train_evaluate_draft(copy.deepcopy(request)) == {**template, "obligations": []}
 
 
 # -- the shared vocabulary -----------------------------------------------------------------------------------------

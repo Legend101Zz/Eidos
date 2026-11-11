@@ -283,15 +283,23 @@ def get_claim(ctx: Ctx, p: dict) -> dict:
                    for a in ctx.tx.list_records(ctx.project_id, "assessment", parent_id=claim.id)]
     _expose(ctx, claim.body.get("investigation_id"), f"claim:{claim.id}", {"assessments": [a["id"] for a in assessments]})
     return {**claim.view(), "assessments": assessments, "support": support.support_status(justs, affected),
-            "claim_state": _claim_state(assessments, claim.revision, ctx.tx.list_records(ctx.project_id, "assessment",
-                                                                                        parent_id=claim.id))}
+            "claim_state": _claim_state(ctx, assessments, claim.revision, ctx.tx.list_records(ctx.project_id, "assessment",
+                                                                                             parent_id=claim.id))}
 
 
-def _claim_state(assessments: list[dict], revision: int, records: list) -> dict:
-    """The claim's state from its current revision's assessments (ADR 0021): an intact failure outweighs a pass."""
+def _claim_state(ctx: Ctx, assessments: list[dict], revision: int, records: list) -> dict:
+    """The claim's state from its current revision's assessments (ADR 0021): an intact failure outweighs a pass, and a
+    pass on a plan not verified at freeze (an exploratory or older plan) does not confirm."""
     rev = {r.id: (r.body.get("claim_ref") or {}).get("revision") for r in records}
-    states = [ev_assessment.lifecycle_state(a["outcome"], a["conformance"], a["health"]) for a in assessments
-              if rev.get(a["id"]) == revision]
+    plan_of = {r.id: r.body.get("plan_id") for r in records}
+
+    def state_of(a: dict) -> str:
+        state = ev_assessment.lifecycle_state(a["outcome"], a["conformance"], a["health"])
+        plan = ctx.tx.get_record("evidence_plan", plan_of[a["id"]]) if state == ev_assessment.PROTOCOL_PASSED else None
+        return ev_assessment.CANDIDATE_SUBMITTED if state == ev_assessment.PROTOCOL_PASSED and not ev_assessment.can_confirm(
+            plan.body if plan else None) else state
+
+    states = [state_of(a) for a in assessments if rev.get(a["id"]) == revision]
     if ev_assessment.NOT_SUPPORTED in states:
         state = ev_assessment.NOT_SUPPORTED
     elif ev_assessment.PROTOCOL_PASSED in states:
@@ -359,14 +367,15 @@ def budgets(ctx: Ctx, p: dict) -> dict:
 def assessment_inputs(ctx: Ctx, p: dict) -> dict:
     """What the assessor may read: the frozen plan, each arm's receipts and output artifacts."""
     plan = ctx.tx.require("evidence_plan", p["plan_id"])
-    from eidos.application.handlers.evidence import arm_jobs
+    from eidos.application.handlers.evidence import arm_jobs, intermediate_jobs
     arms = {}
+    intermediate = intermediate_jobs(plan.body)
     for arm_id, jids in arm_jobs(plan.body).items():
         jobs = [ctx.tx.get_job(j) for j in jids]
         statuses = [j["status"] for j in jobs]
         arms[arm_id] = {"job_ids": jids, "status": "succeeded" if statuses and all(x == "succeeded" for x in statuses)
                         else "incomplete", "receipts": [(j.get("terminal") or {}).get("receipt", {}) for j in jobs],
-                        "outputs": [_jsonable(o) for j in jids for o in ctx.tx.publications(j)]}
+                        "outputs": [_jsonable(o) for j in jids if j not in intermediate for o in ctx.tx.publications(j)]}
     return {"plan_id": plan.id, "plan_digest": plan.digest, "plan": plan.body, "arms": arms}
 
 

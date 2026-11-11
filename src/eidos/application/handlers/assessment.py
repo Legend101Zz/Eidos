@@ -19,13 +19,18 @@ from eidos.application.handlers.evidence import (
     file_claim,
     freeze_evidence_plan,
     launch_evidence_plan,
+    typed_reference,
 )
 from eidos.application.service import Ctx, command
 from eidos.domain import assessment as rules
 from eidos.domain.errors import DomainError, Forbidden, Invalid
 
-REQUEST_FIELDS = ("success_rule_id", "charter_id", "claim_id", "baseline", "candidate", "labels", "predictions_slot",
+REQUEST_FIELDS = ("success_rule_id", "charter_id", "claim_id", "baseline", "candidate", "seeds", "labels", "predictions_slot",
                   "data_provenance", "required_isolation", "environment", "train_evaluate")
+
+
+# A refusal for one of these leaves the candidate exploratory: it is still submitted for confirmation at the conclusion.
+EXPLORATORY_REASONS = ("selection-data", "selection-exposed", "provenance-required", "held-out-unattested")
 
 
 class _StepBlocked(Invalid):
@@ -45,7 +50,7 @@ def _record(ctx: Ctx, rid: str, p: dict, status: str, **fields: Any) -> dict:
 
 
 def _refuse(ctx: Ctx, rid: str, p: dict, reasons: list[dict[str, Any]], **fields: Any) -> dict:
-    exploratory = any(r["code"] in ("selection-data", "selection-exposed") for r in reasons)
+    exploratory = any(r["code"] in EXPLORATORY_REASONS for r in reasons)
     return _record(ctx, rid, p, "refused", reasons=reasons, exploratory=exploratory, **fields)
 
 
@@ -103,47 +108,52 @@ def _candidate_lock(ctx: Ctx, inv_id: str) -> dict[str, Any] | None:
     return None
 
 
-def _prediction_outputs(ctx: Ctx, arms: dict[str, dict[str, Any]], slot: str, inv_id: str | None,
-                        reasons: list[dict[str, Any]]) -> dict[str, dict[str, dict[str, Any]]]:
-    """Check every arm job; return each usable job's predictions output as ``{role: {seed: publication}}``."""
+def _recipe_jobs(ctx: Ctx, p: dict, seeds: list[str], slot: str, inv_id: str | None,
+                 reasons: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """The recorded jobs whose recipes the plan will re-run, ``{role: job}``, after checking each and that the requested
+    seeds are new for that recipe. The jobs themselves are never evidence: their results are already visible."""
     locked = _candidate_lock(ctx, inv_id) if inv_id else None
     if inv_id and locked is None:
         reasons.append(rules.reason("candidate-not-locked", "no candidate_lock note names a job; record_note kind "
                                     "'candidate_lock', text {\"job_id\": \"<selected training job>\"}, before assessing"))
-    outputs: dict[str, dict[str, dict[str, Any]]] = {"baseline": {}, "candidate": {}}
+    recipes: dict[str, dict[str, Any]] = {}
+    known = [j["lock"] for j in ctx.tx.list_jobs(ctx.project_id, limit=100000)]
     for role in rules.ROLES:
-        for seed, job_id in arms.get(role, {}).items():
-            job = ctx.tx.get_job(str(job_id))
-            if not job or job["project_id"] != ctx.project_id:
-                reasons.append(rules.reason("job-invalid", f"{role} seed {seed}: job {job_id!r} was not found"))
-                continue
-            if job["status"] != "succeeded":
-                reasons.append(rules.reason("job-invalid", f"{role} seed {seed}: job {job_id} is {job['status']}, "
-                                            "not succeeded"))
-                continue
-            problem = rules.fresh_initialization_problem(job["lock"])
-            if problem:
-                reasons.append(rules.reason("not-fresh-initialization", f"{role} seed {seed}: job {job_id} is not a "
-                                            f"fresh initialization: {problem}"))
-            recorded = rules.job_seed(job["lock"])
-            if recorded != seed:
-                reasons.append(rules.reason("seed-mismatch", f"{role}: job {job_id} ran with seed {recorded}, but the "
-                                            f"request pairs it as seed {seed}"))
-            if role == "candidate" and locked is not None \
-                    and rules.recipe_identity(job["lock"]) != rules.recipe_identity(locked["lock"]):
-                reasons.append(rules.reason("candidate-not-locked", f"seed {seed}: job {job_id} is not a run of the "
-                                            f"locked candidate recipe (job {locked['id']})"))
-            pub = next((x for x in ctx.tx.publications(job["id"]) if x["slot"] == slot), None)
-            if pub is None:
-                reasons.append(rules.reason("output-schema", f"{role} seed {seed}: job {job_id} published no {slot!r} output",
-                                            published=[x["slot"] for x in ctx.tx.publications(job["id"])]))
-            elif pub.get("schema") not in rules.PREDICTION_SCHEMAS:
-                reasons.append(rules.reason("output-schema", f"{role} seed {seed}: output {slot!r} has schema "
-                                            f"{pub.get('schema')!r}; the classification adapter reads "
-                                            f"{list(rules.PREDICTION_SCHEMAS)}"))
-            else:
-                outputs[role][seed] = pub
-    return outputs
+        job_id = rules.recipe_job_id(p.get(role))
+        if job_id is None:
+            reasons.append(rules.reason("observed-evidence", f"{role} must name the recorded job whose recipe the plan "
+                                        "will re-run, as {\"job_id\": ...}. Already-observed jobs are never admissible as "
+                                        "confirmation: seeds go in 'seeds', and fresh arms run after the plan is frozen"))
+            continue
+        job = ctx.tx.get_job(job_id)
+        if not job or job["project_id"] != ctx.project_id:
+            reasons.append(rules.reason("job-invalid", f"{role}: job {job_id!r} was not found"))
+            continue
+        if job["status"] != "succeeded":
+            reasons.append(rules.reason("job-invalid", f"{role}: job {job_id} is {job['status']}, not succeeded"))
+            continue
+        problem = rules.fresh_initialization_problem(job["lock"])
+        if problem:
+            reasons.append(rules.reason("not-fresh-initialization", f"{role}: the recipe of job {job_id} is not a fresh "
+                                        f"initialization: {problem}"))
+        if role == "candidate" and locked is not None \
+                and rules.recipe_identity(job["lock"]) != rules.recipe_identity(locked["lock"]):
+            reasons.append(rules.reason("candidate-not-locked", f"job {job_id} is not a run of the locked candidate "
+                                        f"recipe (job {locked['id']})"))
+        pub = next((x for x in ctx.tx.publications(job["id"]) if x["slot"] == slot), None)
+        if pub is None:
+            reasons.append(rules.reason("output-schema", f"{role}: job {job_id} published no {slot!r} output",
+                                        published=[x["slot"] for x in ctx.tx.publications(job["id"])]))
+        elif pub.get("schema") not in rules.PREDICTION_SCHEMAS:
+            reasons.append(rules.reason("output-schema", f"{role}: output {slot!r} has schema {pub.get('schema')!r}; the "
+                                        f"classification adapter reads {list(rules.PREDICTION_SCHEMAS)}"))
+        repeated = rules.seeds_already_run(seeds, rules.recipe_identity(job["lock"]), known)
+        if repeated:
+            reasons.append(rules.reason("seed-already-observed", f"{role}: this recipe already ran with seeds {repeated}, "
+                                        "so their results were visible before this plan; choose seeds it has not run",
+                                        seeds=repeated))
+        recipes[role] = job
+    return recipes
 
 
 def _release(ctx: Ctx, ref: str) -> Any:
@@ -166,9 +176,9 @@ def _check_protocols(ctx: Ctx, reasons: list[dict[str, Any]]) -> None:
 def _classification(ctx: Ctx, p: dict, charter: Any, inv_id: str | None, reasons: list[dict[str, Any]]) -> dict | None:
     """Validate the classification path. Returns what the expansion needs, or None after adding reasons."""
     slot = str(p.get("predictions_slot") or "predictions")
-    arms, pairing = rules.check_seed_pairing(p.get("baseline"), p.get("candidate"))
-    reasons.extend(pairing)
-    outputs = _prediction_outputs(ctx, arms, slot, inv_id, reasons)
+    seeds, problems = rules.check_confirmation_seeds(p.get("seeds"))
+    reasons.extend(problems)
+    recipes = _recipe_jobs(ctx, p, seeds, slot, inv_id, reasons)
     report = _release(ctx, rules.REPORT_REF)
     if report is None:
         reasons.append(rules.reason("output-schema", f"{rules.REPORT_REF} is not an active release here; install the "
@@ -195,10 +205,34 @@ def _classification(ctx: Ctx, p: dict, charter: Any, inv_id: str | None, reasons
                                         "investigation, so they are selection data and cannot confirm", jobs=used[:10]))
     if reasons:
         return None
-    return {"labels": labels, "outputs": outputs, "provenance": provenance}
+    return {"labels": labels, "seeds": seeds, "slot": slot, "recipes": recipes, "provenance": provenance}
 
 
-def _train_evaluate(ctx: Ctx, p: dict, charter: Any, reasons: list[dict[str, Any]]) -> dict | None:
+def _pin_release(ctx: Ctx, name: str) -> str | None:
+    """The newest active release of a component the plan names without a version."""
+    released = _active_named(ctx, name)
+    return max(released, key=lambda r: r.created_at).id if released else None
+
+
+def _check_locked_recipe(ctx: Ctx, spec: dict, inv_id: str, train_ref: str | None, reasons: list[dict[str, Any]]) -> None:
+    """The submitted train/evaluate candidate must be the recipe the investigation locked."""
+    locked = _candidate_lock(ctx, inv_id)
+    if locked is None:
+        reasons.append(rules.reason("candidate-not-locked", "no candidate_lock note names a job; record_note kind "
+                                    "'candidate_lock', text {\"job_id\": \"<selected training job>\"}, before assessing"))
+        return
+    candidate = spec.get("candidate")
+    if isinstance(candidate, dict) and candidate.get("post"):
+        reasons.append(rules.reason("candidate-not-locked", "a candidate_lock names one training job, so a candidate "
+                                    "with post steps cannot be compared with it; assess the locked training recipe"))
+    recorded = rules.recipe_identity(locked["lock"])
+    submitted = rules.train_recipe_identity(spec, "candidate", train_ref)
+    if submitted != recorded:
+        reasons.append(rules.reason("candidate-not-locked", f"train_evaluate.candidate is not the locked candidate recipe "
+                                    f"(job {locked['id']})", submitted=submitted, recorded=recorded))
+
+
+def _train_evaluate(ctx: Ctx, p: dict, charter: Any, inv_id: str | None, reasons: list[dict[str, Any]]) -> dict | None:
     spec = p.get("train_evaluate")
     if not isinstance(spec, dict):
         reasons.append(rules.reason("request-invalid", "this rule's metric uses the train/evaluate path: give "
@@ -226,23 +260,21 @@ def _train_evaluate(ctx: Ctx, p: dict, charter: Any, reasons: list[dict[str, Any
     provenance, problems = rules.check_provenance(p.get("data_provenance"), charter=charter.body,
                                                   split=str(split) if split else None)
     reasons.extend(problems)
+    train_ref = _pin_release(ctx, rules.TRAIN)
+    if inv_id:
+        _check_locked_recipe(ctx, spec, inv_id, train_ref, reasons)
+    if isinstance(seeds, list) and train_ref:
+        known = [j["lock"] for j in ctx.tx.list_jobs(ctx.project_id, limit=100000)]
+        for role in rules.ROLES:
+            identity = rules.train_recipe_identity(spec, role, train_ref)
+            repeated = rules.seeds_already_run([str(s) for s in seeds], identity, known)
+            if repeated:
+                reasons.append(rules.reason("seed-already-observed", f"{role}: this recipe already ran with seeds "
+                                            f"{repeated}, so their results were visible before this plan; choose seeds "
+                                            "it has not run", seeds=repeated))
     if reasons:
         return None
-    return {"provenance": provenance}
-
-
-def _typed_reference(ctx: Ctx, artifact_id: str, schema: str) -> str:
-    """The same bytes under the schema the classification adapter's port declares (recorded in lineage)."""
-    art = ctx.tx.get_artifact(artifact_id)
-    if art["schema"] == schema:
-        return artifact_id
-    aid = f"art_{uuid.uuid4().hex[:16]}"
-    ctx.tx.insert_artifact({"id": aid, "project_id": ctx.project_id, "digest": art["digest"], "size": art["size"],
-                            "media_type": art["media_type"], "schema": schema, "role": art["role"],
-                            "access_class": art["access_class"], "origin": "derived",
-                            "meta": {"typed_reference_of": artifact_id}})
-    ctx.tx.add_lineage(ctx.project_id, artifact_id, aid, "typed-reference")
-    return aid
+    return {"provenance": provenance, "pinned": {rules.TRAIN: train_ref, rules.EVALUATE: _pin_release(ctx, rules.EVALUATE)}}
 
 
 def _draft(ctx: Ctx, p: dict, path: str, checked: dict, rid: str, env: str | None) -> dict[str, Any]:
@@ -251,25 +283,28 @@ def _draft(ctx: Ctx, p: dict, path: str, checked: dict, rid: str, env: str | Non
             "required_isolation": p["required_isolation"], "tuning": p.get("tuning", {}),
             "budget": p.get("budget") or {}, "alternatives_unresolved": p.get("alternatives_unresolved")}
     if path == rules.PATH_CLASSIFICATION:
-        draft = rules.classification_draft({**base, "baseline": p.get("baseline_recipe"), "candidate": p.get("candidate_recipe"),
-                                            "classification": {
-            "labels": _typed_reference(ctx, checked["labels"]["id"], "class-labels/1"),
-            "predictions": {role: {seed: _typed_reference(ctx, pub["artifact_id"], "class-predictions/1")
-                                   for seed, pub in by_seed.items()}
-                            for role, by_seed in checked["outputs"].items()},
-            **{k: p[k] for k in ("classes", "id_field") if k in p}}})
+        draft = rules.fresh_classification_draft({
+            **base, "baseline": p.get("baseline_recipe"), "candidate": p.get("candidate_recipe"),
+            "classification": {
+                "labels": typed_reference(ctx, checked["labels"]["id"], "class-labels/1"), "seeds": checked["seeds"],
+                "slot": checked["slot"], "environment": env,
+                "recipes": {role: job["lock"] for role, job in checked["recipes"].items()},
+                **{k: p[k] for k in ("classes", "id_field") if k in p}}})
     else:
         spec = {k: v for k, v in copy.deepcopy(p["train_evaluate"]).items() if k in rules.TRAIN_EVALUATE_FIELDS}
         draft = rules.train_evaluate_draft({**base, **spec})
-    for arm in draft["arms"]:
-        for run in arm["runs"]:
-            for job in run["jobs"]:
-                if env:
-                    job["environment"] = env
+        for arm in draft["arms"]:
+            for run in arm["runs"]:
+                for job in run["jobs"]:
+                    job["component"] = checked["pinned"].get(job["component"], job["component"])
+                    if env:
+                        job["environment"] = env
     draft["data_provenance"] = checked["provenance"]
     draft["disclosures"]["data_provenance"] = checked["provenance"]
     draft["disclosures"]["pipeline"] = {"request_id": rid, "path": path}
-    draft["disclosures"]["expanded_by"] = "assess_candidate (equals the template's own expansion; ADR 0021)"
+    draft["disclosures"]["expanded_by"] = ("assess_candidate: fresh arms run after the freeze (ADR 0021)"
+                                           if path == rules.PATH_CLASSIFICATION
+                                           else "assess_candidate (equals the template's own expansion; ADR 0021)")
     return draft
 
 
@@ -278,9 +313,11 @@ def assess_candidate(ctx: Ctx, p: dict) -> dict:
     """Default pipeline: from a locked candidate, a baseline and a charter rule to a frozen, launched evidence plan.
 
     The rule's metric selects the path: ordinary accuracy uses eidos.task.paired-classification-report and
-    eidos.assessors.paired-ci@1.2.0, the paired-report metrics use the train/evaluate path. Output schemas, seed
-    pairing, fresh initialization, the charter id and data provenance are validated first; selection data stays
-    exploratory. Every failure is returned as a recorded refusal with its reasons."""
+    eidos.assessors.paired-ci@1.2.0, the paired-report metrics use the train/evaluate path. On both, the candidate,
+    baseline, seeds, data and rule are frozen first and fresh arms run after, so no confirming result exists when the
+    plan is frozen: recorded jobs only name recipes. Output schemas, seeds, fresh initialization, the charter id and
+    data provenance are validated first; selection data stays exploratory. Every failure is returned as a recorded
+    refusal with its reasons."""
     if not ctx.principal.has("spend_compute"):
         raise Forbidden("assess_candidate launches a plan and needs the spend_compute grant")
     rid = p.get("request_id") or f"assessreq_{uuid.uuid4().hex[:12]}"
@@ -303,7 +340,7 @@ def assess_candidate(ctx: Ctx, p: dict) -> dict:
                                     "\"dev:same-user\", \"controls\": [], \"waiver\": \"<reason>\"} or {\"sealed\": true}"))
     _check_protocols(ctx, reasons)
     checked = (_classification(ctx, p, charter, inv_id, reasons) if path == rules.PATH_CLASSIFICATION
-               else _train_evaluate(ctx, p, charter, reasons))
+               else _train_evaluate(ctx, p, charter, inv_id, reasons))
     if reasons or checked is None:
         return _refuse(ctx, rid, p, reasons, path=path)
     n_events, expected = len(ctx.emitted), ctx.expected_revision
@@ -330,7 +367,7 @@ def assess_candidate(ctx: Ctx, p: dict) -> dict:
     except DomainError as exc:
         del ctx.emitted[n_events:]
         ctx.expected_revision = expected
-        code = "step-blocked" if isinstance(exc, _StepBlocked) else "plan-refused"
+        code = "step-blocked" if isinstance(exc, _StepBlocked) else str((exc.details or {}).get("reason_code") or "plan-refused")
         return _refuse(ctx, rid, p, [rules.reason(code, f"{exc.code}: {exc.message}"[:500], **(exc.details or {}))], path=path)
     ctx.expected_revision = expected
     return _record(ctx, rid, p, "launched", path=path, claim_id=claim_id, plan_id=plan["plan_id"],
@@ -356,7 +393,8 @@ def conclusion_claim_state(ctx: Ctx, inv: Any, control: dict[str, Any]) -> dict[
               for c in records]
     claim_ids = {c["id"] for c in claims}
     plans = [{"plan_id": pl.id, "status": pl.status, "obligations": pl.body.get("obligations") or [],
-              "claim_id": (pl.body.get("claim_ref") or {}).get("id"), "data_provenance": pl.body.get("data_provenance")}
+              "claim_id": (pl.body.get("claim_ref") or {}).get("id"), "data_provenance": pl.body.get("data_provenance"),
+              "confirmation": pl.body.get("confirmation")}
              for pl in ctx.tx.list_records(ctx.project_id, "evidence_plan", limit=100000)
              if pl.body.get("investigation_id") == inv.id]
     plan_ids = {p["plan_id"] for p in plans}

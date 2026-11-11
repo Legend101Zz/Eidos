@@ -134,11 +134,32 @@ def freeze_evidence_plan(ctx: Ctx, p: dict) -> dict:
     if not plan.body["arms"]:
         raise Invalid("a plan needs arms before freezing")
     body = dict(plan.body)
+    body["confirmation"] = _confirmation_status(ctx, plan)
     body["assessor"] = {**body["assessor"], "digest": ctx.tx.require("component_release", a_ref).body["digest"]}
     body["frozen_by"] = ctx.principal.id
     rec = ctx.tx.put_record("evidence_plan", plan.id, ctx.project_id, body, created_by=ctx.principal.id, status="frozen")
     ctx.event("evidence_plan.frozen", plan.id, {"digest": rec.digest}, investigation_id=body.get("investigation_id"))
     return {"plan_id": plan.id, "revision": rec.revision, "plan_digest": rec.digest}
+
+
+def _confirmation_status(ctx: Ctx, plan: Any) -> dict:
+    """Whether this plan can confirm a claim, from the ledger rather than from what its draft says (ADR 0021). Locks the
+    pinned charter so two freezes cannot both take the same held-out data."""
+    ref = plan.body["charter_ref"]
+    charter = ctx.tx.require("charter", ref["id"], ref.get("revision"), lock=True)
+    artifacts = {i["artifact_id"]: art for i in ev.literal_inputs(plan.body)
+                 if (art := ctx.tx.get_artifact(i["artifact_id"])) and art["project_id"] == ctx.project_id}
+    results = {a["digest"] for a in ctx.tx.artifacts_with_schemas(ctx.project_id, ev_assessment.RESULT_SCHEMAS)}
+    status = ev.confirmation_status(plan.body, charter=charter.body, artifacts=artifacts, result_digests=results)
+    if status["eligible"]:
+        taken = set(status["data_keys"])
+        for other in ctx.tx.list_records(ctx.project_id, "evidence_plan", limit=100000):
+            reused = taken & set((other.body.get("confirmation") or {}).get("data_keys") or [])
+            if other.id != plan.id and other.status != "draft" and reused:
+                raise Invalid(f"plan {other.id} already used this held-out data for confirmation: running another plan on "
+                              "it would let results seen there choose this one. An operator must attest new held-out data",
+                              details={"reason_code": "held-out-reused", "plan_id": other.id, "data_keys": sorted(reused)})
+    return status
 
 
 def _refuse_unsupported_sealed(ctx: Ctx, body: dict) -> None:
@@ -171,17 +192,41 @@ def arm_jobs(plan_body: dict) -> dict[str, list[str]]:
     return {k: (v if isinstance(v, list) else [v]) for k, v in jobs.items()}
 
 
-def _refs(step: dict, arm_steps: dict[str, dict]) -> dict[str, tuple[str, str]]:
-    """Map input ports to (step key, slot) for inputs that reference earlier pipeline steps."""
+def intermediate_jobs(plan_body: dict) -> set[str]:
+    """Jobs of steps marked ``intermediate``: they run and count for conformance, but their outputs are not the arm's
+    evidence (a fresh training step before the step that reports on it)."""
+    launched = (plan_body.get("launch") or {}).get("steps") or {}
+    return {launched[s["key"]] for arm in plan_body.get("arms") or [] for s in _pipeline_steps(arm)
+            if s["spec"].get("intermediate") and s["key"] in launched}
+
+
+def _refs(step: dict, arm_steps: dict[str, dict], other_steps: dict[str, dict]) -> dict[str, tuple[str, str]]:
+    """Map input ports to (step key, slot) for inputs that reference earlier pipeline steps. A reference resolves in
+    the step's own arm first; ``other_steps`` holds the steps of other arms whose id is unique in the plan."""
     out = {}
     for port, val in (step["spec"].get("inputs") or {}).items():
         if not isinstance(val, str):
             continue
-        for sid in sorted(arm_steps, key=len, reverse=True):
-            if val.startswith(sid + "."):
-                out[port] = (arm_steps[sid]["key"], val[len(sid) + 1:])
+        for steps in (arm_steps, other_steps):
+            sid = next((s for s in sorted(steps, key=len, reverse=True) if val.startswith(s + ".")), None)
+            if sid is not None:
+                out[port] = (steps[sid]["key"], val[len(sid) + 1:])
                 break
     return out
+
+
+def typed_reference(ctx: Ctx, artifact_id: str, schema: str) -> str:
+    """The same bytes under the schema a port declares (recorded in lineage)."""
+    art = ctx.tx.get_artifact(artifact_id)
+    if art["schema"] == schema:
+        return artifact_id
+    aid = f"art_{uuid.uuid4().hex[:16]}"
+    ctx.tx.insert_artifact({"id": aid, "project_id": ctx.project_id, "digest": art["digest"], "size": art["size"],
+                            "media_type": art["media_type"], "schema": schema, "role": art["role"],
+                            "access_class": art["access_class"], "origin": "derived",
+                            "meta": {"typed_reference_of": artifact_id}})
+    ctx.tx.add_lineage(ctx.project_id, artifact_id, aid, "typed-reference")
+    return aid
 
 
 def _admit_step(ctx: Ctx, plan, arm: dict, step: dict, inputs: dict, scope, inv_id) -> str:
@@ -204,16 +249,19 @@ def _advance(ctx: Ctx, plan, launch: dict) -> dict:
     """Admit every pending step whose referenced steps succeeded; block those whose did not."""
     inv_id = plan.body.get("investigation_id")
     scope = launch.get("scope")
+    every = [s for arm in plan.body["arms"] for s in _pipeline_steps(arm)]
+    unique = {s["id"]: s for s in every if sum(x["id"] == s["id"] for x in every) == 1}
     progressed = True
     while progressed:
         progressed = False
         for arm in plan.body["arms"]:
             steps = _pipeline_steps(arm)
             by_id = {s["id"]: s for s in steps}
+            others = {sid: s for sid, s in unique.items() if s["key"] not in {x["key"] for x in steps}}
             for st in steps:
                 if st["key"] in launch["steps"] or st["key"] in launch["blocked"]:
                     continue
-                refs = _refs(st, by_id)
+                refs = _refs(st, by_id, others)
                 ready, blocked, inputs = True, None, dict(st["spec"].get("inputs") or {})
                 for port, (dep_key, slot) in refs.items():
                     if dep_key in launch["blocked"]:
@@ -231,7 +279,8 @@ def _advance(ctx: Ctx, plan, launch: dict) -> dict:
                     if pub is None:
                         blocked = f"predecessor {dep_key} published no '{slot}'"
                         break
-                    inputs[port] = pub["artifact_id"]
+                    wanted = (st["spec"].get("input_schemas") or {}).get(port)
+                    inputs[port] = typed_reference(ctx, pub["artifact_id"], wanted) if wanted else pub["artifact_id"]
                 if blocked:
                     launch["blocked"][st["key"]] = blocked
                     progressed = True

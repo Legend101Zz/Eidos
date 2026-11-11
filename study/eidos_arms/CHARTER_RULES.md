@@ -86,10 +86,16 @@ Each mapped answer records the state and the model's status in `deviations`, and
 full claim state. A submitted candidate is not an improvement confirmed: its point estimate, uncertainty, population
 and unfulfilled obligations stay on the ledger, and only an assessor pass gives `protocol-passed`.
 
-`assess_candidate` goes from a locked candidate, baseline and this rule to a launched plan. It refuses selection data
-(`data_provenance.split: selection`) and any labels the charter does not attest as held-out, so visible validation
-remains selection evidence: charters in this pilot attest no investigator-reachable held-out labels, and arm 4
-concludes with a candidate submitted for confirmation unless an assessor passes.
+An abstention or a null the model reports takes precedence over any other field: a claim state alongside
+`no_improvement_found` or `abstained` does not become an improvement claim. A reported point estimate is normalized
+by the metric's direction, so an improving lower-is-better metric reads as a positive gain.
+
+`assess_candidate` goes from a locked candidate, baseline and this rule to a launched plan with fresh runs of both
+recipes (ADR 0021, "Prospective confirmation"). It refuses selection data (`data_provenance.split: selection`) and any
+labels the charter does not attest as held-out, so visible validation remains selection evidence. The evaluator owns
+this study's held-out test data, so the investigator has only train and validation data and its assessment stays
+exploratory. The normal outcome of arm 4 is "candidate submitted for confirmation", and the evaluator decides; the
+investigator is told this in its tool guide, and it does not need a held-out verdict to submit a candidate.
 
 Commands/interfaces inspected and used:
 

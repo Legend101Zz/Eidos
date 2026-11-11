@@ -265,6 +265,10 @@ def map_claim_state(claim_state, metadata, candidate, measurements):
     if not isinstance(claim_state, dict) or claim_state.get('state') in (None, 'no-claim'):
         return status, claim_type, scope, []
     state = claim_state['state']
+    # An abstention or a null the model reported wins over any other field, including an older claim state.
+    if status in ('abstained', 'no_improvement_found'):
+        return status, 'no_positive_claim', scope, [
+            f'Model status {status!r} kept: an abstention or null takes precedence over the claim state {state!r}']
     estimate = (claim_state.get('point_estimate') or {}).get('value')
     positive = isinstance(estimate, (int, float)) and not isinstance(estimate, bool) and estimate > 0
     deviations = [f'Status mapped from the conclusion claim state {state!r} (ADR 0021); model status was '

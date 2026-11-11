@@ -42,7 +42,7 @@ def make_assessment(*, id: str = "asm_0001", outcome: str = "protocol-passed", c
 
 def make_plan(plan_id: str = "plan_0001", status: str = "frozen", **over: Any) -> dict[str, Any]:
     return {"plan_id": plan_id, "status": status, "obligations": [], "claim_id": CLAIM_ID,
-            "data_provenance": {"split": "held-out"}, **over}
+            "data_provenance": {"split": "held-out"}, "confirmation": {"eligible": True}, **over}
 
 
 def make_charter(**over: Any) -> dict[str, Any]:
@@ -53,9 +53,12 @@ def make_charter(**over: Any) -> dict[str, Any]:
 
 def derive(*, control: dict[str, Any] | None = None, claims: Any = "default", assessments: Any = None,
            plans: Any = None, charter: Any = "default") -> dict[str, Any]:
+    assessments = assessments or []
+    if plans is None:  # by default each assessment ran on a plan that was verified at freeze as able to confirm
+        plans = list(({a["plan_id"]: make_plan(a["plan_id"], status="assessed") for a in assessments}).values())
     return A.derive_claim_state(control=control if control is not None else {},
                                 claims=[make_claim()] if claims == "default" else claims,
-                                assessments=assessments or [], plans=plans or [],
+                                assessments=assessments, plans=plans,
                                 charter=make_charter() if charter == "default" else charter)
 
 
@@ -384,15 +387,17 @@ def test_no_positive_claim_scope_is_a_null():
     assert out["requested_disposition"] == "null" and out["state"] == "null-reported"
 
 
-@pytest.mark.parametrize(("direction", "baseline", "candidate", "expected"), [
-    ("higher_is_better", 0.50, 0.58, 0.08),
-    (None, 0.50, 0.58, 0.08),
-    ("lower_is_better", 10.0, 8.0, 2.0),
-    ("lower_is_better", 0.50, 0.58, -0.08),
+@pytest.mark.parametrize(("direction", "metric", "baseline", "candidate", "expected"), [
+    ("higher_is_better", "val_loss", 0.50, 0.58, 0.08),
+    (None, "score", 0.50, 0.58, 0.08),  # nothing says which way the metric points: the gain is candidate - baseline
+    ("lower_is_better", "val_loss", 10.0, 8.0, 2.0),
+    ("lower_is_better", "val_loss", 0.50, 0.58, -0.08),
+    (None, "val_loss", 10.0, 8.0, 2.0),  # the conventional name says lower is better
+    (None, "val_loss", 0.50, 0.58, -0.08),
 ])
-def test_legacy_measurements_give_the_point_estimate_and_lower_is_better_flips_the_sign(direction, baseline, candidate,
-                                                                                         expected):
-    measurement = {"metric": "val_loss", "split": "validation", "denominator": "examples", "baseline": baseline,
+def test_legacy_measurements_give_the_point_estimate_and_lower_is_better_flips_the_sign(direction, metric, baseline,
+                                                                                         candidate, expected):
+    measurement = {"metric": metric, "split": "validation", "denominator": "examples", "baseline": baseline,
                    "candidate": candidate, "uncertainty_method": "bootstrap",
                    **({"direction": direction} if direction else {})}
     control = {"scope": {"answer": {"status": "improvement_claimed", "measurements": [measurement]}}}
@@ -400,7 +405,7 @@ def test_legacy_measurements_give_the_point_estimate_and_lower_is_better_flips_t
     estimate = out["point_estimate"]
     assert estimate["value"] == pytest.approx(expected)
     assert estimate["source"] == "investigator"
-    assert (estimate["metric"], estimate["split"], estimate["denominator"]) == ("val_loss", "validation", "examples")
+    assert (estimate["metric"], estimate["split"], estimate["denominator"]) == (metric, "validation", "examples")
     assert (estimate["baseline"], estimate["candidate"]) == (baseline, candidate)
     assert out["uncertainty"] == "bootstrap"
 
@@ -425,6 +430,181 @@ def test_malformed_scope_and_answer_do_not_break_the_derivation():
     for control in ({"scope": "text"}, {"scope": {"answer": "text"}}, {"scope": None}, {"claim": "text"}):
         out = derive(control=control, claims=[])
         assert out["state"] == "no-claim"
+
+
+# -- an abstention or a null in either field wins over the other --------------------------------------------------
+def both_fields(requested: str | None, status: str | None, **block: Any) -> dict[str, Any]:
+    """A conclusion that states what it wants in ``claim.disposition`` and in ``scope.answer.status`` (either may be
+    absent)."""
+    control: dict[str, Any] = {"action": "conclude"}
+    if requested is not None or block:
+        control["claim"] = {**({"disposition": requested} if requested is not None else {}), **block}
+    if status is not None:
+        control["scope"] = {"answer": {"status": status}}
+    return control
+
+
+@pytest.mark.parametrize(("requested", "status", "state"), [
+    ("candidate", "abstained", "abstained"),
+    ("confirmed", "abstained", "abstained"),
+    ("candidate", "invalid", "abstained"),
+    ("candidate", "no_improvement_found", "null-reported"),
+    ("confirmed", "no_improvement_found", "null-reported"),
+    ("abstain", "improvement_claimed", "abstained"),
+    ("null", "improvement_claimed", "null-reported"),
+    (None, "abstained", "abstained"),
+    ("abstain", None, "abstained"),
+])
+@pytest.mark.parametrize("with_pass", [False, True], ids=["no-assessment", "assessor-pass"])
+def test_an_abstention_or_a_null_in_either_field_wins_over_the_other_field(requested, status, state, with_pass):
+    out = derive(control=both_fields(requested, status), assessments=[make_assessment()] if with_pass else [])
+    assert out["state"] == state and out["confirmed"] is False
+    assert out["requested_disposition"] == ("abstain" if state == "abstained" else "null")
+    assert "downgraded_from" not in out
+
+
+def test_a_claim_block_that_asks_for_confirmation_cannot_override_an_abstained_answer_status():
+    control = both_fields("confirmed", "abstained", point_estimate={"value": 0.3})
+    out = derive(control=control, assessments=[make_assessment()])
+    assert out["state"] == "abstained" and out["confirmed"] is False and "downgraded_from" not in out
+
+
+def test_candidate_and_improvement_claimed_in_both_fields_still_defer_to_the_evidence():
+    out = derive(control=both_fields("candidate", "improvement_claimed"), assessments=[make_assessment()])
+    assert out["state"] == "protocol-passed" and out["requested_disposition"] == "candidate"
+
+
+# -- a pass on a plan that cannot confirm ----------------------------------------------------------------------------
+def test_a_pass_on_a_plan_with_no_confirmation_block_is_a_submitted_candidate_naming_verified_held_out_data():
+    plans = [make_plan(status="assessed")]
+    del plans[0]["confirmation"]  # a plan frozen before the check existed
+    out = derive(control=disposition("confirmed"), assessments=[make_assessment()], plans=plans)
+    assert out["state"] == "candidate-submitted" and out["confirmed"] is False and out["downgraded_from"] == "confirmed"
+    assert any("verified held-out" in o and "cannot confirm" in o for o in out["unfulfilled_obligations"])
+    assert out["assessment_id"] == "asm_0001"
+
+
+def test_a_pass_on_a_plan_missing_from_the_ledger_view_cannot_confirm():
+    out = derive(control=disposition("confirmed"), assessments=[make_assessment()], plans=[])
+    assert out["state"] == "candidate-submitted"
+
+
+def test_an_exploratory_plan_does_not_hide_an_intact_failure_on_it():
+    plans = [make_plan(status="assessed", confirmation={"eligible": False})]
+    out = derive(assessments=[make_assessment(outcome="protocol-failed")], plans=plans)
+    assert out["state"] == "not-supported"
+
+
+# -- the direction of a reported metric ------------------------------------------------------------------------------
+@pytest.mark.parametrize(("metric", "explicit", "charter", "expected"), [
+    ("rmse", None, None, -1), ("val_loss", None, None, -1), ("MAE", None, None, -1), ("test_error", None, None, -1),
+    ("accuracy", None, None, 1), ("macro-f1", None, None, 1), ("auc", None, None, 1),
+    ("score", None, None, None), ("zorp", None, {}, None), (None, None, None, None),
+    ("score", "lower_is_better", None, -1), ("score", "decrease", None, -1), ("score", "minimize", None, -1),
+    ("score", "higher_is_better", None, 1), ("score", "increase", None, 1),
+    ("rmse", "higher_is_better", None, 1), ("accuracy", "lower_is_better", None, -1),  # what was stated wins
+    ("score", None, {"metrics": {"score": {"direction": "decrease"}}}, -1),
+    ("score", None, {"metrics": {"score": {"direction": "increase"}}}, 1),
+    ("accuracy", None, {"metrics": {"accuracy": {"direction": "decrease"}}}, -1),  # the charter outranks the name
+    ("score", "higher_is_better", {"metrics": {"score": {"direction": "decrease"}}}, 1),  # stated outranks the charter
+    ("custom/1:score", None, {"metrics": {"s": {"identity": "custom/1:score", "direction": "decrease"}}}, -1),
+    ("score", None, {"metrics": {"score": {"direction": "sideways"}}}, None),
+    ("score", None, {"metrics": None}, None),
+])
+def test_metric_direction_is_the_statement_then_the_charter_then_the_conventional_name(metric, explicit, charter,
+                                                                                       expected):
+    assert A.metric_direction(metric, explicit, charter) == expected
+
+
+# -- reported estimates are signed improvements ------------------------------------------------------------------------
+def reported(point: dict[str, Any], *, charter: Any = "default", state: str = "candidate") -> dict[str, Any]:
+    return derive(control=disposition(state, point_estimate=point), charter=charter)["point_estimate"]
+
+
+def test_an_rmse_that_falls_is_a_positive_improvement():
+    estimate = reported({"metric": "rmse", "baseline": 2.0, "candidate": 1.5})
+    assert estimate["value"] == pytest.approx(0.5) and estimate["source"] == "investigator"
+    assert (estimate["baseline"], estimate["candidate"], estimate["metric"]) == (2.0, 1.5, "rmse")
+    assert "direction_unknown" not in estimate
+
+
+def test_an_rmse_that_rises_is_a_negative_improvement():
+    assert reported({"metric": "rmse", "baseline": 1.5, "candidate": 2.0})["value"] == pytest.approx(-0.5)
+
+
+@pytest.mark.parametrize(("baseline", "candidate", "expected"), [(2.0, 1.5, 0.5), (1.5, 2.0, -0.5)])
+def test_a_lower_is_better_direction_from_the_charter_normalizes_a_neutral_metric(baseline, candidate, expected):
+    charter = make_charter(metrics={"score": {"direction": "decrease"}, "rmse": {"direction": "decrease"}})
+    estimate = reported({"metric": "score", "baseline": baseline, "candidate": candidate}, charter=charter)
+    assert estimate["value"] == pytest.approx(expected)
+    by_identity = make_charter(metrics={"m": {"identity": "custom/1:score", "direction": "decrease"}})
+    assert reported({"metric": "custom/1:score", "baseline": baseline, "candidate": candidate},
+                    charter=by_identity)["value"] == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(("baseline", "candidate", "expected"), [(2.0, 1.5, 0.5), (1.5, 2.0, -0.5)])
+def test_an_explicit_lower_is_better_direction_normalizes_a_neutral_metric(baseline, candidate, expected):
+    point = {"metric": "score", "baseline": baseline, "candidate": candidate, "direction": "lower_is_better"}
+    estimate = reported(point, charter=None)
+    assert estimate["value"] == pytest.approx(expected) and estimate["direction"] == "lower_is_better"
+
+
+def test_an_explicit_direction_wins_over_the_charter_and_the_name():
+    charter = make_charter(metrics={"rmse": {"direction": "decrease"}})
+    point = {"metric": "rmse", "baseline": 2.0, "candidate": 1.5, "direction": "higher_is_better"}
+    assert reported(point, charter=charter)["value"] == pytest.approx(-0.5)
+
+
+def test_a_higher_is_better_accuracy_is_unchanged():
+    estimate = reported({"metric": "accuracy", "baseline": 0.50, "candidate": 0.58}, charter=None)
+    assert estimate["value"] == pytest.approx(0.08) and "direction_unknown" not in estimate
+    assert reported({"metric": "accuracy", "baseline": 0.58, "candidate": 0.50})["value"] == pytest.approx(-0.08)
+
+
+def test_a_known_direction_wins_over_a_value_the_investigator_gave():
+    estimate = reported({"metric": "rmse", "value": -0.5, "baseline": 2.0, "candidate": 1.5})
+    assert estimate["value"] == pytest.approx(0.5)
+
+
+def test_an_unrecognized_metric_with_baseline_and_candidate_and_no_direction_gives_no_value():
+    estimate = reported({"metric": "zorp", "baseline": 1.0, "candidate": 2.0}, charter=None)
+    assert estimate["value"] is None and estimate["direction_unknown"] is True
+    assert (estimate["baseline"], estimate["candidate"], estimate["source"]) == (1.0, 2.0, "investigator")
+
+
+def test_an_unknown_direction_keeps_the_value_or_gain_the_investigator_gave():
+    given = reported({"metric": "zorp", "baseline": 1.0, "candidate": 2.0, "value": 0.7})
+    assert given["value"] == 0.7 and "direction_unknown" not in given
+    gain = reported({"metric": "zorp", "baseline": 1.0, "candidate": 2.0, "gain": 0.4})
+    assert gain["value"] == 0.4 and "direction_unknown" not in gain
+
+
+def test_a_value_alone_is_passed_through_as_the_improvement_whatever_the_metric():
+    assert reported({"metric": "rmse", "value": 0.25})["value"] == 0.25
+    assert reported({"value": 0.25})["value"] == 0.25
+
+
+def test_the_unknown_direction_marker_reaches_the_conclusion_json_safely():
+    out = derive(control=disposition("candidate", point_estimate={"metric": "zorp", "baseline": 1.0, "candidate": 2.0}))
+    json.dumps(out)
+    assert out["point_estimate"]["value"] is None and out["point_estimate"]["direction_unknown"] is True
+
+
+@pytest.mark.parametrize("state", ["candidate", "null", "abstain"])
+def test_the_reported_estimate_is_normalized_in_every_state_that_carries_it(state):
+    estimate = reported({"metric": "rmse", "baseline": 2.0, "candidate": 1.5}, state=state)
+    assert estimate["value"] == pytest.approx(0.5)
+
+
+def test_the_legacy_measurements_path_uses_the_charter_when_the_measurement_states_no_direction():
+    measurement = {"metric": "score", "baseline": 2.0, "candidate": 1.5}
+    control = {"scope": {"answer": {"status": "improvement_claimed", "measurements": [measurement]}}}
+    charter = make_charter(metrics={"score": {"direction": "decrease"}})
+    assert derive(control=control, claims=[], charter=charter)["point_estimate"]["value"] == pytest.approx(0.5)
+    assert derive(control=control, claims=[])["point_estimate"]["value"] == pytest.approx(-0.5)  # nothing says: default
+    stated = {**measurement, "direction": "lower_is_better"}
+    control = {"scope": {"answer": {"status": "improvement_claimed", "measurements": [stated]}}}
+    assert derive(control=control, claims=[])["point_estimate"]["value"] == pytest.approx(0.5)
 
 
 # -- (j) unbounded intervals ---------------------------------------------------------------------------------------
@@ -459,11 +639,12 @@ def test_an_unknown_designated_claim_without_a_disposition_is_named_even_for_no_
 
 
 def test_a_pass_over_selection_data_never_gives_protocol_passed():
-    plans = [make_plan(status="assessed", data_provenance={"split": "selection"})]
+    plans = [make_plan(status="assessed", data_provenance={"split": "selection"}, confirmation={"eligible": False})]
     out = derive(control=disposition("confirmed"), assessments=[make_assessment()], plans=plans)
     assert out["state"] == "candidate-submitted" and out["confirmed"] is False
     assert out["downgraded_from"] == "confirmed"
     assert "remaining_alternatives" not in out
+    assert any("selection data" in o and "cannot confirm" in o for o in out["unfulfilled_obligations"])
 
 
 def test_a_pass_over_held_out_data_on_a_plan_still_confirms():

@@ -23,6 +23,22 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
   `tests/unit/test_conclusion_schema.py`, `tests/unit/test_arm4_claim_state_mapping.py`,
   `tests/components/test_assessment_pipeline_template.py`, `tests/integration/test_assess_candidate_e2e.py`.
 
+### Prospective confirmation (ADR 0021, E2b)
+- **A plan that can confirm a claim needs verified held-out data.** `freeze_evidence_plan` records `confirmation` from
+  the ledger against the charter's `held_out`. Missing provenance is exploratory: its assessment is `inconclusive`.
+  This applies to manual plans too, and a new conclusion over an older plan gives a submitted candidate.
+- **Confirming evidence must not exist yet.** Freezing refuses plans pinning existing results, by schema or digest.
+  `assess_candidate` now freezes recipes and seeds and launches fresh arms; a held-out set confirms only once, and
+  a recipe's already-run seeds are refused. `baseline` and `candidate` are now `{"job_id": ...}` naming a recipe.
+- **`eidos.templates.improves-under-budget@1.2.0`'s classification path can no longer be frozen**, since it pins
+  existing predictions.
+- The train/evaluate path verifies the candidate against the investigation's `candidate_lock` and pins its component
+  releases, so it can launch.
+- An abstention or a null in either representation takes precedence over the other. A reported point estimate is
+  normalized by the metric's direction, with lower-is-better metrics no longer reversed.
+- The investigator's tool guide states that a candidate can be submitted without a held-out verdict, the normal case
+  when the evaluator owns the held-out data.
+
 ## Unreleased / 1.1.1
 
 Reasoning models through OpenAI-compatible endpoints (ADR 0016). Measured with MiniMax-M3.1-Flash through

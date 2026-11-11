@@ -52,25 +52,30 @@ Effect tools (executed in order only after the lab accepts your decision):
                       "environment"}]}]}]}  (a pipeline job input may name an earlier job's output: "<job id>.<slot>").
     No thresholds in a draft: the rule comes from the charter. Missing fields are listed as obligations, and a
     plan with obligations cannot be frozen. template_ref and the assessor must be in "Approved protocols".
-    Ordinary (multiclass) accuracy from two training jobs' held-out predictions (charter metric identity
-    "classification-report/1:accuracy"): run eidos.templates.improves-under-budget@1.2.0 with request {claim,
-    success_rule_id, assessor: {"ref": "eidos.assessors.paired-ci@1.2.0"}, required_isolation, classification:
-    {labels: <labels artifact id>, predictions: {baseline: {"<seed>": <artifact id>}, candidate: {"<seed>":
-    <artifact id>}}}} and pass its draft output as draft_artifact_id; each arm runs
-    eidos.task.paired-classification-report (ids must match exactly).
+    Ordinary (multiclass) accuracy (charter metric identity "classification-report/1:accuracy"): use assess_candidate.
+    A plan that pins predictions which already exist is refused at freeze: results must not exist when a plan is frozen.
+    A plan with no attested held-out data stays exploratory: it can be frozen and run, and it can never confirm a claim.
   freeze_evidence_plan {plan_id}; launch_evidence_plan {plan_id} (the assessment then runs by itself; its outcome
     appears under "Your evidence plans")
-  assess_candidate {success_rule_id, claim_id or claim:{statement, scope}, baseline:{"<seed>": <job id>},
-    candidate:{"<seed>": <job id>}, labels:<labels artifact id>, predictions_slot?, data_provenance:{split:
-    "held-out"|"selection"}, required_isolation}: the default route to an independent verdict. In one step it validates
-    output schemas, seed pairing (fresh initializations), the charter and data provenance, then plans, freezes and
-    launches with the right template (paired-report metrics: train_evaluate {seeds, baseline, candidate, evaluation}
-    instead of baseline/candidate/labels). A refusal is recorded with its reasons under "Assessment requests". Labels
-    you used for selection stay exploratory: they are refused here and never confirm anything.
+  assess_candidate {success_rule_id, claim_id or claim:{statement, scope}, baseline:{"job_id": <job whose recipe is the
+    baseline>}, candidate:{"job_id": <the locked job>}, seeds:[<seeds neither recipe has run>], labels:<held-out labels
+    artifact id>, predictions_slot?, data_provenance:{split: "held-out"|"selection"}, required_isolation}: the default
+    route to an independent verdict, for when you have held-out data the charter attests. It validates output schemas,
+    seeds, fresh initialization, the charter and data provenance, then freezes the plan and launches fresh runs of both
+    recipes, so no confirming result exists when the plan is frozen. Results you have already seen cannot be confirmation,
+    and each attested held-out set confirms once (paired-report metrics: train_evaluate {seeds, baseline, candidate,
+    evaluation} instead of baseline/candidate/labels/seeds; its candidate must be the recipe you locked). A refusal is
+    recorded with its reasons under "Assessment requests".
+    YOU CAN SUBMIT A CANDIDATE WITHOUT A HELD-OUT VERDICT. If you only have train and validation data (the usual case:
+    the evaluator owns the held-out test data), your assessment honestly stays exploratory: skip assess_candidate or
+    expect its refusal, and conclude with disposition "candidate" and your validation point estimate. The outcome is
+    "candidate submitted for confirmation" and the independent evaluator decides. That is a normal, complete result.
   export_model {checkpoint_artifact_id, behavior_check_job_id}; record_note {kind, text, evidence_refs}
 Control actions: wait_for_jobs (sleep until admitted work finishes), request_input, conclude {summary, scope, claim?},
   stop. claim = {disposition: "candidate"|"confirmed"|"null"|"abstain", claim_id?, point_estimate: {metric, value or
-  baseline+candidate, split?}, uncertainty?, population?, evidence_refs?: [ids], obligations?: [str]}. Your conclusion's
+  baseline+candidate, split?, direction?: "higher_is_better"|"lower_is_better"} (value means improvement: positive is
+  better, also for a lower-is-better metric), uncertainty?, population?, evidence_refs?: [ids], obligations?: [str]}.
+  Abstaining or reporting a null takes precedence over every other field of your conclusion. Your conclusion's
   claim state comes from recorded evidence: an assessor pass gives protocol-passed, a failed assessment gives not
   supported, and without an assessment your candidate is "submitted for confirmation". Abstaining or reporting a null is
   always allowed; "confirmed" without an assessor pass is recorded as a downgrade.

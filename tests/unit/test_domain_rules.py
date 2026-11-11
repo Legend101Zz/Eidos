@@ -129,13 +129,59 @@ def test_guardrail_violation_blocks_pass():
     assert evidence.evaluate_success_rule(plan, u)["outcome"] != "protocol-passed"
 
 
+def _confirmable(plan):
+    """The plan as the freeze records it when it was verified as able to confirm a claim (ADR 0021)."""
+    return {**plan, "confirmation": {"eligible": True, "reasons": [], "verified": {}, "data_keys": []}}
+
+
+def _conformant(plan):
+    receipts = {arm["id"]: {"status": "succeeded", "receipt": {}} for arm in plan["arms"]}
+    conf = evidence.check_conformance(plan, {"arms": receipts, "isolation_ok": True})
+    assert conf["conformance"] == "conformant"
+    return conf
+
+
+def _finalize(plan, conf, evaluation):
+    return evidence.finalize_assessment(plan=plan, plan_digest="p", evidence_set_digest="e", assessor_ref={},
+                                        conformance=conf, evaluation=evaluation)
+
+
 def test_nonconformance_forces_inconclusive():
-    plan = _plan()
+    plan = _confirmable(_plan())
     conf = evidence.check_conformance(plan, {"arms": {"parent": {"status": "succeeded"}}, "isolation_ok": True})
     assert conf["conformance"] == "incomplete"
-    res = evidence.finalize_assessment(plan=plan, plan_digest="p", evidence_set_digest="e", assessor_ref={},
-                                       conformance=conf, evaluation={"outcome": "protocol-passed"})
+    res = _finalize(plan, conf, {"outcome": "protocol-passed"})
     assert res["outcome"] == "inconclusive"
+
+
+@pytest.mark.parametrize("outcome", ["protocol-passed", "protocol-failed", "inconclusive"])
+def test_a_conformant_assessment_on_a_confirmable_plan_keeps_the_evaluators_outcome(outcome):
+    plan = _confirmable(_plan())
+    res = _finalize(plan, _conformant(plan), {"outcome": outcome})
+    assert res["outcome"] == outcome and res["findings"] == [] and res["conformance"] == "conformant"
+
+
+def test_a_passing_evaluation_on_an_exploratory_plan_is_inconclusive_and_the_evaluation_stays_readable():
+    plan = {**_plan(), "confirmation": {"eligible": False, "reasons": ["no verified held-out data"]}}
+    evaluation = {"outcome": "protocol-passed", "effect": {"estimate": 0.2, "ci_low": 0.1, "ci_high": 0.3}}
+    res = _finalize(plan, _conformant(plan), evaluation)
+    assert res["outcome"] == "inconclusive"
+    assert res["evaluation"] == evaluation and res["evaluation"]["outcome"] == "protocol-passed"
+    assert res["conformance"] == "conformant"
+    assert any(f["finding"].startswith("exploratory plan") for f in res["findings"])
+
+
+def test_a_failing_evaluation_on_an_exploratory_plan_is_inconclusive_too():
+    plan = _plan()  # no confirmation block at all: the plan was frozen before the check existed
+    res = _finalize(plan, _conformant(plan), {"outcome": "protocol-failed"})
+    assert res["outcome"] == "inconclusive"
+    assert [f["finding"] for f in res["findings"] if f["finding"].startswith("exploratory plan")]
+
+
+def test_an_exploratory_finding_is_not_added_when_the_assessment_was_already_inconclusive():
+    plan = _plan()
+    res = _finalize(plan, _conformant(plan), {"outcome": "inconclusive"})
+    assert res["outcome"] == "inconclusive" and res["findings"] == []
 
 
 SUITE = {"target": {"kind": "assessor"}, "scope": ["improves-under-budget"],

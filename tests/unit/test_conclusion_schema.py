@@ -143,8 +143,11 @@ def _assessment(outcome: str = "protocol-passed", **over: Any) -> dict[str, Any]
 def _derive(control: dict[str, Any], *, claims: list | None = None, assessments: list | None = None,
             plans: list | None = None) -> dict[str, Any]:
     charter = {"population": "held-out examples", "success_rules": [{"decision_standard": {"confidence": 0.95}}]}
+    if plans is None:  # each assessment ran on a plan that was verified at freeze as able to confirm
+        plans = [{"plan_id": a["plan_id"], "status": "assessed", "obligations": [], "confirmation": {"eligible": True}}
+                 for a in assessments or []]
     return A.derive_claim_state(control=control, claims=[_claim()] if claims is None else claims,
-                                assessments=assessments or [], plans=plans or [], charter=charter)
+                                assessments=assessments or [], plans=plans, charter=charter)
 
 
 def _record(claim_state: dict[str, Any] | None, action: str = "conclude") -> dict[str, Any]:

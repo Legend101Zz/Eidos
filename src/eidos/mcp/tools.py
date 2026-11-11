@@ -204,13 +204,16 @@ TOOLS: tuple[Tool, ...] = (
     Tool("assess_candidate", "command", "assess_candidate",
          "Default assessment pipeline (ADR 0021): from a locked candidate, a baseline and a charter rule to a frozen, "
          "launched evidence plan with the correct template. Validates output schemas, seed pairing (fresh "
-         "initializations), the charter id and data provenance first; selection data stays exploratory. A refusal is "
-         "recorded and returned as status 'refused' with reasons; a launched plan runs the assessment by itself. "
-         "baseline/candidate map each training seed to a succeeded job id (classification accuracy); data_provenance "
-         "is {split: held-out|selection}.",
+         "initializations), the charter id and data provenance first; selection data stays exploratory, and a candidate "
+         "can be submitted at the conclusion without a held-out verdict. A refusal is recorded and returned as status "
+         "'refused' with reasons; a launched plan runs the assessment by itself. baseline/candidate name the recorded "
+         "jobs whose recipes the plan re-runs under fresh seeds, after freezing; data_provenance is "
+         "{split: held-out|selection}.",
          (P("success_rule_id", "s", "Rule id in the pinned charter.", True), P("charter_id", "s"), P("charter_revision", "i"),
           P("claim_id", "s", "An existing 'improves' claim."), P("claim", "o", "Or file one: {statement, scope}."),
-          P("baseline", "o", "Seed -> succeeded baseline job id."), P("candidate", "o", "Seed -> succeeded candidate job id."),
+          P("baseline", "o", "{job_id}: the baseline's recorded job; its recipe is re-run."),
+          P("candidate", "o", "{job_id}: the locked candidate's recorded job; its recipe is re-run."),
+          P("seeds", "a", "Training seeds neither recipe has run; both arms use them."),
           P("labels", "s", "Held-out labels artifact id (classification path)."), P("predictions_slot", "s"),
           P("data_provenance", "o", "{split: held-out|selection, note?}."), P("required_isolation", "o"),
           P("train_evaluate", "o", "Paired-report path: {seeds, baseline, candidate, evaluation, common_train?, common_evaluate?}."),

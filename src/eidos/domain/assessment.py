@@ -5,9 +5,11 @@ to go from a locked candidate, a baseline and a charter rule to a frozen, launch
 assessment path for the rule's metric and expands the plan draft. The conclusion path uses the second: the claim state
 of a conclusion comes from recorded assessments, never from the status a model chooses.
 
-The draft expansions below reproduce ``eidos.templates.improves-under-budget@1.2.0`` (its ``classification`` and
-train/evaluate paths) so the command can answer in one transaction instead of waiting for a template job; a test keeps
-them equal to the template's own output (``tests/components/test_assessment_pipeline_template.py``).
+The train/evaluate expansion reproduces ``eidos.templates.improves-under-budget@1.2.0`` so the command can answer in
+one transaction instead of waiting for a template job; a test keeps it equal to the template's own output
+(``tests/components/test_assessment_pipeline_template.py``). The classification expansion does not: the template's
+classification path pins predictions that already exist, which can no longer confirm anything (ADR 0021, "Prospective
+confirmation"). ``fresh_classification_draft`` freezes the two recipes, seeds, data and rule, and the arms run after.
 """
 
 from __future__ import annotations
@@ -38,8 +40,17 @@ PREDICTION_SCHEMAS = ("class-predictions/1", "prediction-array/1")
 LABEL_SCHEMAS = ("class-labels/1", "task-array/1")
 CHECKPOINT_SCHEMAS = ("eidos-checkpoint/1", "model-file/1")
 
+# Artifacts that carry a run's results. A plan may not pin these: its results must not exist when it is frozen.
+RESULT_SCHEMAS = (*PREDICTION_SCHEMAS, "classification-pair-rows/1", "labeled-binary-pairs/1")
+
 PROVENANCE_HELD_OUT = "held-out"
 PROVENANCE_SELECTION = "selection"
+
+
+def can_confirm(plan: dict[str, Any] | None) -> bool:
+    """Whether a plan was verified at freeze as able to confirm a claim. Plans frozen before that check have no
+    ``confirmation`` block: they stay readable, and they cannot create a new confirmation."""
+    return ((plan or {}).get("confirmation") or {}).get("eligible") is True
 
 
 def reason(code: str, message: str, **details: Any) -> dict[str, Any]:
@@ -80,28 +91,28 @@ def metric_path(charter: dict[str, Any], rule_id: str) -> tuple[dict[str, Any] |
     return rule, path, []
 
 
-def check_seed_pairing(baseline: Any, candidate: Any) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
-    """Normalize ``{seed: value}`` maps for both arms and require the same, valid seeds in each."""
+def check_confirmation_seeds(seeds: Any) -> tuple[list[str], list[dict[str, Any]]]:
+    """Normalize the seeds a confirmation will train. Both arms use the same list, so the arms are paired by design."""
+    if not isinstance(seeds, list) or not seeds:
+        return [], [reason("seed-pairing", "seeds must be a non-empty list of training seeds that both arms will run")]
+    keys: list[str] = []
     problems: list[dict[str, Any]] = []
-    arms: dict[str, dict[str, Any]] = {}
-    for role, spec in (("baseline", baseline), ("candidate", candidate)):
-        if not isinstance(spec, dict) or not spec:
-            problems.append(reason("seed-pairing", f"{role} must map each training seed to a job id"))
-            continue
-        arms[role] = {}
-        for seed, value in spec.items():
-            key = seed_key(seed)
-            if key is None:
-                problems.append(reason("seed-pairing", f"{role}: seed {seed!r} must be an integer or a non-empty string"))
-            elif key in arms[role]:
-                problems.append(reason("seed-pairing", f"{role}: seed {key} appears twice"))
-            else:
-                arms[role][key] = value
-    if set(arms) == set(ROLES) and set(arms["baseline"]) != set(arms["candidate"]):
-        problems.append(reason("seed-pairing", "paired seed clusters need the same training seeds in both arms",
-                               baseline=sorted(arms["baseline"], key=seed_sort_key),
-                               candidate=sorted(arms["candidate"], key=seed_sort_key)))
-    return arms, problems
+    for seed in seeds:
+        key = seed_key(seed)
+        if key is None:
+            problems.append(reason("seed-pairing", f"seed {seed!r} must be an integer or a non-empty string"))
+        elif key in keys:
+            problems.append(reason("seed-pairing", f"seed {key} appears twice"))
+        else:
+            keys.append(key)
+    return sorted(keys, key=seed_sort_key), problems
+
+
+def recipe_job_id(value: Any) -> str | None:
+    """The job a request names as a recipe (``"job_x"`` or ``{"job_id": "job_x"}``), or None for any other shape."""
+    if isinstance(value, dict):
+        value = value.get("job_id")
+    return value if isinstance(value, str) and value else None
 
 
 def fresh_initialization_problem(lock: dict[str, Any]) -> str | None:
@@ -127,6 +138,20 @@ def recipe_identity(lock: dict[str, Any]) -> dict[str, Any]:
     return {"component": (lock.get("component") or {}).get("ref"), "inputs": inputs, "config": config}
 
 
+def train_recipe_identity(spec: dict[str, Any], role: str, component_ref: str | None) -> dict[str, Any]:
+    """``recipe_identity`` of an arm's training step in a train/evaluate request, comparable with a recorded job's."""
+    config = {**(spec.get("common_train") or {}), **((spec.get(role) or {}).get("train") or {})}
+    return {"component": component_ref, "inputs": {},
+            "config": {k: v for k, v in config.items() if k not in ("seed", "timeout_seconds")}}
+
+
+def seeds_already_run(seeds: list[str], identity: dict[str, Any], locks: list[dict[str, Any]]) -> list[str]:
+    """Which of ``seeds`` an earlier job of the same recipe already ran. Re-running one reproduces results that were
+    visible when the plan was written, so it is not a prospective confirmation."""
+    seen = {job_seed(lock) for lock in locks if recipe_identity(lock) == identity}
+    return sorted(set(seeds) & {s for s in seen if s is not None}, key=seed_sort_key)
+
+
 def check_provenance(declared: Any, *, charter: dict[str, Any], labels_digest: str | None = None,
                      split: str | None = None) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     """(the provenance recorded on the plan, refusal reasons).
@@ -135,7 +160,9 @@ def check_provenance(declared: Any, *, charter: dict[str, Any], labels_digest: s
     before the investigation), by labels digest or by split name; an investigator's declaration alone is not enough.
     """
     if not isinstance(declared, dict) or declared.get("split") not in (PROVENANCE_HELD_OUT, PROVENANCE_SELECTION):
-        return None, [reason("provenance-required", "data_provenance.split must be 'held-out' or 'selection'")]
+        return None, [reason("provenance-required", "data_provenance.split must be 'held-out' or 'selection'. With no "
+                             "attested held-out data the assessment stays exploratory: you can still conclude with the "
+                             "candidate submitted for confirmation, and the evaluator decides")]
     if declared["split"] == PROVENANCE_SELECTION:
         return None, [reason("selection-data", "these labels were used for selection, so they stay exploratory: a plan "
                              "over them cannot confirm anything. Conclude with the candidate submitted for confirmation "
@@ -146,7 +173,8 @@ def check_provenance(declared: Any, *, charter: dict[str, Any], labels_digest: s
     if not labels_ok and not split_ok:
         what = f"labels digest {labels_digest}" if labels_digest else f"split {split!r}"
         return None, [reason("held-out-unattested", f"the charter does not attest {what} as held-out data; an operator "
-                             "must commit it in the charter's held_out section before these data are used")]
+                             "must commit it in the charter's held_out section before these data are used. Without that, conclude "
+                             "with the candidate submitted for confirmation: no held-out verdict is needed to submit it")]
     return {"split": PROVENANCE_HELD_OUT, "attested_by": "charter",
             **({"labels_digest": labels_digest} if labels_digest else {}), **({"evaluation_split": split} if split else {}),
             **({"note": str(declared["note"])[:500]} if declared.get("note") else {})}, []
@@ -160,24 +188,36 @@ def _alternatives(request: dict[str, Any]) -> list[Any]:
     ])
 
 
-def classification_draft(request: dict[str, Any]) -> dict[str, Any]:
-    """The template's ``classification`` draft from {claim, success_rule_id, assessor, required_isolation, tuning?,
-    budget?, alternatives_unresolved?, classification: {labels, predictions: {role: {seed: artifact}}, classes?,
-    id_field?}}. Seeds were checked by ``check_seed_pairing``."""
+def recipe_step(lock: dict[str, Any], step_id: str, seed: str, *, environment: Any = None) -> dict[str, Any]:
+    """A plan step that re-runs a recorded job's recipe from a fresh initialization under another seed."""
+    return {"id": step_id, "component": (lock.get("component") or {}).get("ref"),
+            "inputs": {port: (binding or {}).get("artifact_id") for port, binding in (lock.get("inputs") or {}).items()},
+            "config": {**(lock.get("config") or {}), "seed": seed_value(seed)}, "seed": seed_value(seed),
+            "environment": environment or (lock.get("environment") or {}).get("name"), "wall_seconds": int((lock.get("config") or {}).get("timeout_seconds") or 900),
+            "intermediate": True}  # the report steps carry the arm's evidence; a training step's own outputs do not
+
+
+def fresh_classification_draft(request: dict[str, Any]) -> dict[str, Any]:
+    """A plan draft whose evidence does not exist yet, from {claim, success_rule_id, assessor, required_isolation,
+    tuning?, budget?, alternatives_unresolved?, classification: {labels, seeds, slot, recipes: {role: lock}, classes?,
+    id_field?, environment?}}. For each seed, each arm trains its recipe, then a report step per arm compares the two
+    new prediction outputs with the labels. Seeds were checked by ``check_confirmation_seeds``."""
     spec = request["classification"]
-    predictions, labels = spec["predictions"], spec["labels"]
-    seeds = sorted(predictions["baseline"], key=seed_sort_key)
+    seeds, labels, slot, recipes = spec["seeds"], spec["labels"], spec["slot"], spec["recipes"]
     extra = {k: spec[k] for k in ("classes", "id_field") if k in spec}
     arms = []
     for role in ROLES:
-        runs = [{"seed": seed_value(seed), "cluster": seed,
-                 "jobs": [{"id": f"{role}.s{seed}.report", "component": REPORT_REF,
-                           "inputs": {"baseline": predictions["baseline"][seed],
-                                      "candidate": predictions["candidate"][seed], "labels": labels},
-                           "config": {"role": role, "cluster": seed, **extra}}]} for seed in seeds]
+        runs = []
+        for seed in seeds:
+            train = recipe_step(recipes[role], f"{role}.s{seed}.train", seed, environment=spec.get("environment"))
+            report = {"id": f"{role}.s{seed}.report", "component": REPORT_REF,
+                      "inputs": {"baseline": f"baseline.s{seed}.train.{slot}", "candidate": f"candidate.s{seed}.train.{slot}",
+                                 "labels": labels},
+                      "input_schemas": {"baseline": "class-predictions/1", "candidate": "class-predictions/1"},
+                      "config": {"role": role, "cluster": seed, **extra}, "environment": spec.get("environment")}
+            runs.append({"seed": seed_value(seed), "cluster": seed, "jobs": [train, report]})
         recipe = request.get(role) or {}
-        arms.append({"id": role, "role": role,
-                     "description": recipe.get("description", f"{role} recipe (existing held-out predictions)"),
+        arms.append({"id": role, "role": role, "description": recipe.get("description", f"{role} recipe (fresh runs)"),
                      "runs": runs})
     several = len(seeds) > 1
     alternatives = _alternatives(request)
@@ -194,8 +234,8 @@ def classification_draft(request: dict[str, Any]) -> dict[str, Any]:
             "kind": "independent-training-seeds",
             "seeds": [seed_value(s) for s in seeds],
             "shared_across_arms": True,
-            "note": ("each seed is one trained model per arm; examples within a seed are clustered" if several
-                     else "one trained model per arm; the interval reflects held-out example sampling only"),
+            "note": ("each seed is one newly trained model per arm; examples within a seed are clustered" if several
+                     else "one newly trained model per arm; the interval reflects held-out example sampling only"),
         },
         "splits": {"evaluation": {"labels": labels, "population": "held-out examples"}, "tuning": None},
         "tuning": request.get("tuning", {}),
@@ -205,10 +245,10 @@ def classification_draft(request: dict[str, Any]) -> dict[str, Any]:
         "alternatives_unresolved": alternatives,
         "disclosures": {
             "claim_statement": (request.get("claim") or {}).get("statement"),
-            "evidence_path": "existing held-out predictions -> eidos.task.paired-classification-report -> "
+            "evidence_path": "fresh recipe runs per seed -> eidos.task.paired-classification-report -> "
                              "eidos.assessors.paired-ci (metric accuracy)",
-            "predictions_predate_plan": "the predictions were produced before this plan was frozen; the plan pins "
-                                        "their artifacts, and the charter rule was fixed before them",
+            "results_after_freeze": "the candidate, baseline, seeds, labels and rule were frozen before any of this "
+                                    "plan's runs existed",
             "seed_variance": "clustered by training seed" if several else "not estimated (one seed per arm)",
             "template": "eidos.templates.improves-under-budget",
         },
@@ -329,15 +369,18 @@ def _scope_answer(control: dict[str, Any]) -> tuple[dict[str, Any], dict[str, An
 
 
 def _requested(control: dict[str, Any], block: dict[str, Any]) -> str | None:
-    if block.get("disposition"):
-        return str(block["disposition"])
+    """What the model asked for. An abstention or a null in either representation (the claim block's disposition or
+    the eidos-answer status) takes precedence, whatever the other one says: contradictory fields never make a claim."""
     scope, answer = _scope_answer(control)
+    disposition = str(block["disposition"]) if block.get("disposition") else None
     status = answer.get("status")
-    if isinstance(status, str) and status in _LEGACY_STATUS:
-        return _LEGACY_STATUS[status]
-    if scope.get("claim") == "no_positive_claim":
-        return "null"
-    return None
+    legacy = _LEGACY_STATUS[status] if isinstance(status, str) and status in _LEGACY_STATUS else None
+    for withheld in ("abstain", "null"):
+        if withheld in (disposition, legacy):
+            return withheld
+    if disposition or legacy:
+        return disposition or legacy
+    return "null" if scope.get("claim") == "no_positive_claim" else None
 
 
 def _number(x: Any) -> float | None:
@@ -362,22 +405,61 @@ def _effect_estimate(assessment: dict[str, Any], confidence: float | None) -> tu
     return estimate, uncertainty
 
 
-def _reported_estimate(control: dict[str, Any], block: dict[str, Any]) -> tuple[dict[str, Any] | None, Any]:
-    """(point estimate, uncertainty) the investigator reported, marked as such; never used to set the state."""
+_LOWER_IS_BETTER = ("lower_is_better", "decrease", "minimize", "lower")
+_HIGHER_IS_BETTER = ("higher_is_better", "increase", "maximize", "higher")
+_LOWER_NAMES = ("rmse", "mse", "mae", "loss", "error", "nll")
+_HIGHER_NAMES = ("accuracy", "acc", "f1", "auc", "precision", "recall", "correct")
+
+
+def metric_direction(metric: Any, explicit: Any, charter: dict[str, Any] | None) -> int | None:
+    """+1 when larger values of the metric are better, -1 when smaller are, None when nothing says. In order: what the
+    investigator stated, the charter's definition of that metric, then the metric's conventional name."""
+    if explicit in _LOWER_IS_BETTER:
+        return -1
+    if explicit in _HIGHER_IS_BETTER:
+        return 1
+    name = str(metric or "").lower()
+    metrics = (charter or {}).get("metrics") or {}
+    definition = metrics.get(str(metric)) or next(
+        (d for d in metrics.values() if isinstance(d, dict) and d.get("identity") == metric), None) or {}
+    direction = definition.get("direction")
+    if direction in _LOWER_IS_BETTER:
+        return -1
+    if direction in _HIGHER_IS_BETTER:
+        return 1
+    if any(part in name for part in _LOWER_NAMES):
+        return -1
+    if any(part in name for part in _HIGHER_NAMES):
+        return 1
+    return None
+
+
+def _reported_estimate(control: dict[str, Any], block: dict[str, Any],
+                       charter: dict[str, Any] | None) -> tuple[dict[str, Any] | None, Any]:
+    """(point estimate, uncertainty) the investigator reported, marked as such; never used to set the state.
+
+    ``value`` is always the signed improvement: positive means better, whichever way the metric points. Baseline and
+    candidate figures are normalized by the metric's direction; when nothing states the direction ``value`` is null."""
     pe = block.get("point_estimate")
     if isinstance(pe, dict):
         value = _number(pe.get("value"))
         if value is None and _number(pe.get("gain")) is not None:
             value = _number(pe["gain"])
-        if value is None and _number(pe.get("baseline")) is not None and _number(pe.get("candidate")) is not None:
-            value = _number(pe["candidate"]) - _number(pe["baseline"])  # type: ignore[operator]
-        estimate = {**pe, "value": value, "source": "investigator"}
+        base, cand = _number(pe.get("baseline")), _number(pe.get("candidate"))
+        direction_unknown = False
+        if base is not None and cand is not None:
+            sign = metric_direction(pe.get("metric"), pe.get("direction"), charter)
+            if sign is not None:
+                value = sign * (cand - base)
+            elif value is None:
+                direction_unknown = True
+        estimate = {**pe, "value": value, "source": "investigator", **({"direction_unknown": True} if direction_unknown else {})}
         return estimate, block.get("uncertainty")
     scope, answer = _scope_answer(control)
     for m in answer.get("measurements") or []:
         if not isinstance(m, dict) or _number(m.get("baseline")) is None or _number(m.get("candidate")) is None:
             continue
-        sign = -1 if m.get("direction") == "lower_is_better" else 1
+        sign = metric_direction(m.get("metric"), m.get("direction"), charter) or 1
         value = sign * (_number(m["candidate"]) - _number(m["baseline"]))  # type: ignore[operator]
         estimate = {"metric": m.get("metric"), "split": m.get("split"), "denominator": m.get("denominator"),
                     "baseline": m.get("baseline"), "candidate": m.get("candidate"), "value": value, "source": "investigator"}
@@ -401,7 +483,9 @@ def derive_claim_state(*, control: dict[str, Any], claims: list[dict[str, Any]],
     ``claims``: this investigation's claims, oldest first ({id, revision, statement, scope, created_at?}).
     ``assessments``: their assessment records ({id, claim_id, claim_revision, plan_id, outcome, conformance, health,
     evaluation, success_rule_ref, scope, remaining_alternatives, confidence, created_at}), oldest first.
-    ``plans``: this investigation's evidence plans ({plan_id, status, obligations, claim_id, data_provenance}).
+    ``plans``: this investigation's evidence plans ({plan_id, status, obligations, claim_id, data_provenance,
+    confirmation}). A pass on a plan not verified at freeze as able to confirm (``can_confirm``) gives only a submitted
+    candidate.
 
     The model may abstain or report a null. It cannot confirm: without a conformant, healthy pass on the claim's
     current revision, a requested confirmation becomes a submitted candidate (or "not supported" after a failure) and
@@ -437,12 +521,16 @@ def derive_claim_state(*, control: dict[str, Any], claims: list[dict[str, Any]],
         evidence, chosen = PROTOCOL_PASSED, latest(PROTOCOL_PASSED)
     else:
         evidence, chosen = CANDIDATE_SUBMITTED, current[-1] if current else None
-    # A selection-only plan never confirms, whatever the numbers (it could not be frozen, but keep the rule explicit).
-    selection_only = False
+    # A plan that was not verified at freeze never confirms, whatever the numbers: this covers plans over selection or
+    # unverified data and plans frozen before the check existed, whose records stay readable.
+    unverified: str | None = None
     plan_of = {p.get("plan_id"): p for p in plans}
-    if evidence == PROTOCOL_PASSED and chosen is not None and ((plan_of.get(chosen.get("plan_id")) or {})
-                                                               .get("data_provenance") or {}).get("split") == PROVENANCE_SELECTION:
-        evidence, selection_only = CANDIDATE_SUBMITTED, True
+    if evidence == PROTOCOL_PASSED and chosen is not None:
+        chosen_plan = plan_of.get(chosen.get("plan_id")) or {}
+        if not can_confirm(chosen_plan):
+            evidence = CANDIDATE_SUBMITTED
+            unverified = ("selection data, which stays exploratory" if (chosen_plan.get("data_provenance") or {}).get("split")
+                          == PROVENANCE_SELECTION else "a plan without verified held-out provenance, which stays exploratory")
 
     downgraded: dict[str, Any] = {}
     if requested == "abstain":
@@ -465,7 +553,7 @@ def derive_claim_state(*, control: dict[str, Any], claims: list[dict[str, Any]],
     else:
         estimate, uncertainty = None, None
     if estimate is None and state in (CANDIDATE_SUBMITTED, NULL_REPORTED, ABSTAINED):
-        estimate, uncertainty = _reported_estimate(control, block)
+        estimate, uncertainty = _reported_estimate(control, block, charter)
 
     obligations: list[Any] = []
     if state == CANDIDATE_SUBMITTED:
@@ -477,9 +565,8 @@ def derive_claim_state(*, control: dict[str, Any], claims: list[dict[str, Any]],
                                for p in pending)
         else:
             health, conformance, outcome = chosen.get("health"), chosen.get("conformance"), chosen.get("outcome")
-            if selection_only:
-                obligations.append(f"assessment {chosen.get('id')} ran over selection data, which stays exploratory and "
-                                   "cannot confirm the claim")
+            if unverified:
+                obligations.append(f"assessment {chosen.get('id')} ran over {unverified} and cannot confirm the claim")
             elif health != "intact":
                 obligations.append(f"assessment {chosen.get('id')} evidence health is {health}: reassess under a corrected release")
             elif outcome == "inconclusive":
