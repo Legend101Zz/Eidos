@@ -1,0 +1,7 @@
+# Development pilot 3, addendum 7 — renewed incident admission window
+
+Recorded on 12 November 2026 after the owner authorized continuation and before the resumed controller admits a replacement. The preceding continuation was interrupted before any replacement admission. At the checkpoint, six blocks (24 arm outcomes) were accepted and six blocks were complete incidents awaiting replacement. The interrupted continuation logs are retained and the next driver archives them under `pilot-3/controller-history/` on startup.
+
+The absolute cutoff for admitting a new replacement block is `2026-11-12T20:00:00+05:30` (14:30 UTC on 12 November), ahead of the paper deadline at 05:29 IST on 13 November. Already admitted blocks finish within their original envelope.
+
+Addendum 6 continues to govern admission, grading, and archival. The original 48 assignments and randomized block order, two-block concurrency, model, per-arm resource envelope, four-pass cap, provider probe and scoring rules remain fixed. The frozen Eidos build is `257792ab56b6b984e807fe284a22fc5d31c4dd8b`. The controller admits only whole replacements for current complete incident blocks, retains the replaced records and excludes ordinary failures, missing blocks and incomplete blocks. Before launch, verify the installed lab configuration and build provenance, controller and port idleness, and at least 12.5 GiB free internally.

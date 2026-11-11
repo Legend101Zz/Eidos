@@ -13,7 +13,7 @@ from threading import Event
 import time
 
 DESIGN_SHA256 = "f44a174c5bdcd3e1595ae61894b9cee215a37de38b3a25e67ef1d79d3dce5903"
-CUTOFF = int(datetime.fromisoformat("2026-11-12T03:00:00+05:30").timestamp())
+CUTOFF = int(datetime.fromisoformat("2026-11-12T20:00:00+05:30").timestamp())
 MIN_FREE = int(12.5 * 1024**3)
 CONCURRENCY = 2
 
