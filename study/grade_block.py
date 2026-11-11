@@ -306,7 +306,9 @@ def grade_run(run_dir, grading_dir, block_incident=None, expected_meta=None):
                         )
                         candidate_command(workspace, command)
                         prediction = output / "test_predictions.npz"
-                        infer(workspace, code, output / "model.pt", test_inputs, prediction)
+                        # Pilot-3 addendum 4: confirm with the checkpoint name the candidate declared
+                        # (model_path), not the baseline's "model.pt"; the task contract never fixes it.
+                        infer(workspace, code, output / Path(candidate["model_path"]).name, test_inputs, prediction)
                         measured = score(card["project"], baseline / "test_predictions.npz", prediction)
                         reproduction.append({"seed": seed, **measured})
                     reproduces = reproduces and all(
