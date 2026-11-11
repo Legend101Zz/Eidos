@@ -98,6 +98,16 @@ GENERATOR = textwrap.dedent(
     np.savez(out / "offset3d_train.npz", x=xt.reshape(200, 8, 8), y=yt, ids=np.arange(200))
     np.savez(out / "offset3d_validation.npz", x=shifted.reshape(100, 8, 8), y=yv, ids=np.arange(1000, 1100))
 
+    # shortcut: the same kind of images, but in train the class is also written into a per-example offset (0, 1.5, 3, 4.5),
+    # which validation does not have: it carries an unrelated uniform(0, 5) offset instead. Train-CV cannot see that shift
+    rng = np.random.default_rng(4)
+    protos = np.stack([smooth(rng.normal(0, 1, 64)) for _ in range(4)])
+    protos = 0.5 * protos / protos.std()
+    xt, yt = images(200)
+    xv, yv = images(100)
+    np.savez(out / "shortcut_train.npz", x=xt + (yt * 1.5)[:, None], y=yt, ids=np.arange(200))
+    np.savez(out / "shortcut_validation.npz", x=xv + rng.uniform(0, 5, (100, 1)), y=yv, ids=np.arange(1000, 1100))
+
     # regress: y = x . w + noise (sigma 0.5), 12 features
     rng = np.random.default_rng(3)
     w = rng.normal(0, 1, 12)
@@ -412,15 +422,18 @@ def test_a_classification_template_maximizes_accuracy_and_its_transfer_gap_is_cv
 
 
 # -- 4. finalists -----------------------------------------------------------------------------------------------------------
-FINALIST_TEMPLATE = {"families": ["linear", "knn", "kernel"], "preprocess": ["none", "per_example_center"],
+FINALIST_TEMPLATE = {"families": ["linear", "knn"], "preprocess": ["none", "per_example_center"],
                      "seeds": [1, 2], "cv_folds": 3, "finalists": 3}
 
 
 @pytest.fixture(scope="module")
 def finalist_runs(tmp_path_factory, data):
+    """4 recipes, 3 finalists, on the shortcut data: train-CV and validation disagree about which finalist is best."""
     root = tmp_path_factory.mktemp("finalists")
-    runs = {rank_by: run_sweep(root, data, tpl(**FINALIST_TEMPLATE, rank_by=rank_by), label=rank_by)
-            for rank_by in ("validation", "train-cv")}
+    ranks = ("validation", "train-cv")
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = pool.map(lambda r: run_sweep(root, data, tpl(**FINALIST_TEMPLATE, rank_by=r), kind="shortcut", label=r), ranks)
+        runs = dict(zip(ranks, results, strict=True))
     for res in runs.values():
         assert res.ok, res.manifest.error
     return runs
@@ -431,7 +444,7 @@ def test_exactly_the_requested_number_of_finalists_are_cross_validated_within_tr
     table, best = res.json("evidence_table"), res.json("best_recipe")
     seeds, folds, n = FINALIST_TEMPLATE["seeds"], FINALIST_TEMPLATE["cv_folds"], FINALIST_TEMPLATE["finalists"]
     rows = table["recipes"]
-    assert len(rows) == 6
+    assert len(rows) == 4
     finalists = [r for r in rows if r["stage"] == "finalist"]
     assert [r["stage"] for r in rows] == ["finalist"] * n + ["screened"] * (len(rows) - n)  # the n best by validation
     assert [r["rank"] for r in finalists] == [1, 2, 3]
@@ -465,7 +478,7 @@ def test_exactly_the_requested_number_of_finalists_are_cross_validated_within_tr
 def test_rank_by_train_cv_picks_the_finalist_with_the_best_train_cv_mean(finalist_runs):
     by_validation, by_cv = finalist_runs["validation"], finalist_runs["train-cv"]
     table, best = by_cv.json("evidence_table"), by_cv.json("best_recipe")
-    reference = by_validation.json("evidence_table")
+    reference, validated_best = by_validation.json("evidence_table"), by_validation.json("best_recipe")
     assert table["template"]["rank_by"] == best["template"]["rank_by"] == "train-cv"
     finalists = [r for r in table["recipes"] if r["stage"] == "finalist"]
     assert len(finalists) == 3
@@ -479,13 +492,20 @@ def test_rank_by_train_cv_picks_the_finalist_with_the_best_train_cv_mean(finalis
     assert [r["finalist_rank"] for r in ordered] == [1, 2, 3]
     assert [cv_means[r["recipe_id"]] for r in ordered] == sorted(cv_means.values(), reverse=True)
     assert ordered[0]["recipe_id"] == winner["recipe_id"]
-    # screening is the same either way: the same table rows, the same numbers
+    # screening is the same either way: the same table rows, the same numbers, the same stages
     for a, b in zip(table["recipes"], reference["recipes"], strict=True):
         assert (a["recipe_id"], a["rank"], a["objective"], a["stage"]) == (b["recipe_id"], b["rank"], b["objective"], b["stage"])
         if a["stage"] == "finalist":
             assert a["train_cv"]["objective"] == b["train_cv"]["objective"]
-    # the validation-ranked run's best is still the best validated finalist, whatever train-CV says
-    assert by_validation.json("best_recipe")["recipe"]["recipe_id"] == reference["recipes"][0]["recipe_id"]
+    # the planted shortcut makes the two criteria disagree. Validation picks the recipe that ignores the train-only offset;
+    # train-CV, which cannot see the shift, picks one that learned it, and its transfer gap shows how wrong that is
+    assert validated_best["recipe"]["parameters"]["preprocess"] == "per_example_center"
+    assert best["recipe"]["parameters"]["preprocess"] == "none"
+    assert best["recipe"]["recipe_id"] != validated_best["recipe"]["recipe_id"]
+    assert best["recipe"]["train_cv"]["objective"]["mean"] > 0.95 and best["recipe"]["objective"]["mean"] < 0.6
+    assert best["recipe"]["transfer_gap"] > 0.3
+    assert abs(validated_best["recipe"]["transfer_gap"]) < 0.15
+    assert validated_best["recipe"]["recipe_id"] == reference["recipes"][0]["recipe_id"]
 
 
 def test_zero_finalists_gives_a_full_table_and_the_best_screened_recipe_marked_not_cross_validated(sweep):
@@ -1052,3 +1072,25 @@ def test_the_standalone_toolkit_runs_a_template_and_matches_the_lab_runner(toolk
     assert lab.ok, lab.manifest.error
     assert manifest["receipt"]["evidence_digest"] == lab.receipt["evidence_digest"] == recomputed_digest(table)
     assert manifest["receipt"]["best_recipe_id"] == best["recipe"]["recipe_id"] == lab.receipt["best_recipe_id"]
+
+
+@pytest.mark.parametrize("field", ["preprocess", "families", "seeds"])
+def test_an_empty_list_is_refused_rather_than_replaced_by_the_default(sweep, field):
+    """Review of these tests: ``[]`` used to fall back to the defaults silently."""
+    refused(sweep(tpl(**{**CHEAP, field: []})))
+
+
+def test_cv_folds_are_bounded_so_a_template_cannot_ask_for_an_unbounded_search(sweep):
+    refused(sweep(tpl(**{**CHEAP, "finalists": 1, "cv_folds": 21})), "cv_folds")
+
+
+def test_the_runner_refuses_more_cv_folds_than_training_rows(tmp_path):
+    work = tmp_path / "w"
+    work.mkdir()
+    subprocess.run([NUMPY_PY, "-c", "import numpy as np; np.savez('train.npz', x=np.zeros((5, 2)), y=np.arange(5) % 2)"],
+                   cwd=work, check=True)
+    r = subprocess.run([NUMPY_PY, str(RUNNER), "cv", "--out", "o", "--seed", "1",
+                        "--fold", "0", "--folds", "6", "--task-type", "classification",
+                        "--params", json.dumps({"preprocess": "none", "family": "linear"})],
+                   cwd=work, capture_output=True, text=True)
+    assert r.returncode != 0 and "at most one fold per training row" in r.stderr

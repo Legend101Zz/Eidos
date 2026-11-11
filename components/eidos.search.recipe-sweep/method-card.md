@@ -23,7 +23,7 @@ optional `ids`; staged as `train.npz` and `validation.npz`):
   seed), in family order. The objective is `validation_accuracy` (maximize) or `validation_rmse` (minimize), from
   `task_type` or the `task` input. The budget defaults to the template's recipe count and can be lowered; a seconds
   budget and the job's wall limit apply as for any sweep. The stopping rule must be `none`.
-- *Finalists.* The `finalists` best screened recipes (default 3) are cross-validated within train only (`cv_folds`
+- *Finalists.* The `finalists` best screened recipes (default 3) are cross-validated within train only (`cv_folds`, 2 to 20
   folds, default 3, every seed). Each finalist carries `train_cv`, `finalist_rank` and `transfer_gap` (train-CV minus
   validation, in the better direction). The winner is the best finalist by `rank_by`: `validation` (default) or
   `train-cv`. If no finalist was cross-validated (`finalists: 0`, the budget ended first, or every CV failed), the best

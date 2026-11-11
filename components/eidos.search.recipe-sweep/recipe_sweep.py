@@ -645,6 +645,7 @@ TEMPLATE_SETTINGS = {
 }
 TEMPLATE_KEYS = ("name", "task_type", "preprocess", "families", "finalists", "cv_folds", "seeds", "rank_by",
                  "timeout_seconds", "max_rows")
+MAX_TEMPLATE_FOLDS = 20
 TEMPLATE_METRIC = {"classification": ("accuracy", "maximize"), "regression": ("rmse", "minimize")}
 
 
@@ -675,16 +676,17 @@ def _template_spec(inputs, config, reader, context):
     task_type = template.get("task_type") or (reader.json("task").get("task_type") if "task" in inputs else None)
     if task_type not in TEMPLATE_METRIC:
         raise SweepConfigError("template.task_type (or the task input's task_type) must be classification or regression")
-    preprocess = list(template.get("preprocess") or TEMPLATE_PREPROCESS)
-    families = list(template.get("families") or TEMPLATE_FAMILIES)
+    preprocess = list(TEMPLATE_PREPROCESS if template.get("preprocess") is None else template["preprocess"])
+    families = list(TEMPLATE_FAMILIES if template.get("families") is None else template["families"])
     bad = sorted(set(preprocess) - set(TEMPLATE_PREPROCESS)) + sorted(set(families) - set(TEMPLATE_FAMILIES))
     if bad or not preprocess or not families:
         raise SweepConfigError("template.preprocess must be drawn from %s and template.families from %s; unknown %s"
                                % (list(TEMPLATE_PREPROCESS), list(TEMPLATE_FAMILIES), bad))
     if template.get("rank_by", "validation") not in ("validation", "train-cv"):
         raise SweepConfigError("template.rank_by must be validation or train-cv")
-    if int(template.get("finalists", 3)) < 0 or int(template.get("cv_folds", 3)) < 2:
-        raise SweepConfigError("template.finalists must be >= 0 and template.cv_folds >= 2")
+    if int(template.get("finalists", 3)) < 0 or not 2 <= int(template.get("cv_folds", 3)) <= MAX_TEMPLATE_FOLDS:
+        raise SweepConfigError("template.finalists must be >= 0 and template.cv_folds between 2 and %d"
+                               % MAX_TEMPLATE_FOLDS)
     skipped = {}
     if not _sklearn_available():
         for family in SKLEARN_FAMILIES:
@@ -720,8 +722,10 @@ def _run_template(inputs, config, *, reader, writer, context):
     template, task_type, recipes, skipped = _template_spec(inputs, config, reader, context)
     metric, direction = TEMPLATE_METRIC[task_type]
     budget = _budget(dict(config, budget=config.get("budget") or {"max_trials": len(recipes)}), context)
-    seeds = template.get("seeds") or [context.seed if context.seed is not None else 0]
-    if not isinstance(seeds, list) or not all(isinstance(s, int) and not isinstance(s, bool) for s in seeds):
+    seeds = template.get("seeds")
+    if seeds is None:
+        seeds = [context.seed if context.seed is not None else 0]
+    if not isinstance(seeds, list) or not seeds or not all(isinstance(s, int) and not isinstance(s, bool) for s in seeds):
         raise SweepConfigError("template.seeds must be a non-empty list of integers")
     stopping = dict(config.get("stopping") or {"rule": "none"})
     if stopping.get("rule", "none") != "none":
@@ -800,7 +804,8 @@ def _run_template(inputs, config, *, reader, writer, context):
                 "recipe": None if winner is None else {
                     "recipe_id": winner["recipe_id"], "parameters": winner["parameters"],
                     "objective": winner["objective"], "metrics": winner["metrics"],
-                    "cross_validated": winner in ordered, "train_cv": winner.get("train_cv"),
+                    "cross_validated": winner in ordered,
+                    "train_cv": winner.get("train_cv") if winner in ordered else None,
                     "transfer_gap": winner.get("transfer_gap"), "evaluations": winner["evaluations"],
                     "command": screen_cfg["command"],
                     "reproduce": {"files": [TEMPLATE_RUNNER],

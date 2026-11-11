@@ -247,7 +247,8 @@
      "cv_folds": {
       "type": "integer",
       "minimum": 2,
-      "description": "default 3"
+      "description": "default 3, at most 20",
+      "maximum": 20
      },
      "seeds": {
       "type": "array",

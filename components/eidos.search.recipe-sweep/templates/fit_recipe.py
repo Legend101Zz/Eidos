@@ -321,6 +321,8 @@ def main(argv=None):
     if args.mode == "cv":
         if not 0 <= args.fold < args.folds or args.folds < 2:
             raise SystemExit("cv needs 0 <= fold < folds and folds >= 2")
+        if args.folds > len(xtr):
+            raise SystemExit("cv needs at most one fold per training row (%d folds, %d rows)" % (args.folds, len(xtr)))
         parts = np.array_split(np.random.default_rng(args.seed).permutation(len(xtr)), args.folds)
         held = parts[args.fold]
         fit = np.concatenate([p for i, p in enumerate(parts) if i != args.fold])
