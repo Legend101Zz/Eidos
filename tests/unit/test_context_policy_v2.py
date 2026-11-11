@@ -485,6 +485,17 @@ def test_wall_fact_is_pinned_under_truncation():
     assert_pinned_facts(out["text"])
 
 
+@pytest.mark.parametrize("held_out, can_confirm", [(None, False), ({}, False), ({"labels": []}, False),
+                                                   ({"labels": [], "splits": []}, False), ({"labels": ["sha256:a"]}, True),
+                                                   ({"splits": ["test"]}, True)])
+def test_the_route_line_says_held_out_only_when_something_is_attested(held_out, can_confirm):
+    view = make_view()
+    view["charter"] = {**(view.get("charter") or {"study_id": "s"}), "held_out": held_out}
+    text = pack(view, [])["text"]
+    assert ("so assess_candidate can confirm" in text) is can_confirm
+    assert ("no held-out data is attested" in text) is not can_confirm
+
+
 # -- policy/1 ------------------------------------------------------------------------------------------------------------
 
 

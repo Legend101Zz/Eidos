@@ -362,7 +362,9 @@ def _assessment_facts(view: dict[str, Any]) -> list[str]:
                    + (f", plan {req['plan_id']}" if req.get("plan_id") else "") + (f", reasons {reasons}" if reasons else ""))
     ch = view.get("charter")
     if ch:
-        out.append("- Route: held-out data is attested in the charter, so assess_candidate can confirm." if ch.get("held_out") else
+        attested = ch.get("held_out") if isinstance(ch.get("held_out"), dict) else {}
+        out.append("- Route: held-out data is attested in the charter, so assess_candidate can confirm."
+                   if attested.get("labels") or attested.get("splits") else
                    "- Route: no held-out data is attested in the charter, so assessment stays exploratory. Conclude with claim "
                    'disposition "candidate": the outcome is "candidate submitted for confirmation" and the evaluator decides.')
     return out
