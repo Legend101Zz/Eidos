@@ -487,7 +487,11 @@ def test_after_the_exploration_deadline_an_explore_turn_refuses_new_challengers_
 def test_a_turn_begins_in_finalize_when_one_decision_does_not_fit_before_the_token_holdback(
         scene, decision_tokens, phase, stop):
     inv = scene.investigation(limits=TOKEN_LIMITS, settings={"max_tokens_per_decision": decision_tokens})
-    scene.lock(inv, scene.accuracy_job(inv, 0.70), selection=RULE)
+    # H2 (R17 #3): the token hold-back holds before the first lock too, so where one decision does not fit, the
+    # pre-lock phase has stopped already; the candidate here is run as non-exploratory work.
+    pre = _exploration(scene, inv)
+    assert (pre["phase"], pre["stop"]) == (("finalize", "token-holdback") if stop else ("baseline", None))
+    scene.lock(inv, scene.job(inv, metrics={"accuracy": 0.70}, purpose="reproduction"), selection=RULE)
     state = scene.begin(inv)["spec"]["exploration"]
     assert state["allowance"]["holdback_tokens"] == 1500 and state["allowance"]["tokens_left"] == 8500
     assert (state["phase"], state["stop"]) == (phase, stop)

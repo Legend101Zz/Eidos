@@ -80,7 +80,10 @@ def turn_log(ctx: Ctx, inv_id: str, jobs: list[dict[str, Any]] | None = None
       at admission, ``round_admission``) belong to it (``batch``: its command key), however many calls or resumptions
       it takes;
     * a challenger admitted outside a decision and outside a batch (a direct call) is its own entry: reading an output
-      of an earlier round never hides a new challenger in it (scoring a pending one stays admitted, R14 #6);
+      of an earlier round never hides a new challenger in it;
+    * a job that read an output of a then pending challenger when it was admitted (``finishes``, recorded at
+      admission) belongs to that challenger's round (``finishing``) and is not one of its challengers: scoring finishes
+      a round, it does not start one (R14 #6);
     * a ``candidate_lock`` or ``selection_rule`` note recorded outside a decision (``submit_candidate``,
       ``record_note``) is its own entry, so the rounds after the first lock count from it;
     * any other job admitted outside a decision (never a challenger checked at admission) joins the round of what it
@@ -116,8 +119,7 @@ def turn_log(ctx: Ctx, inv_id: str, jobs: list[dict[str, Any]] | None = None
     for j in all_jobs:
         if str(j["id"]) not in decided_jobs:
             events.append((_at(j.get("created_at")), 2, "job", j))
-    admitted = {r.id: r.body.get("batch") for r in ctx.tx.list_records(ctx.project_id, ADMISSION_KIND, parent_id=inv_id,
-                                                                         limit=100000)}
+    admitted = {r.id: r.body for r in ctx.tx.list_records(ctx.project_id, ADMISSION_KIND, parent_id=inv_id, limit=100000)}
     events.sort(key=lambda e: (e[0], e[1]))
     log: list[dict[str, Any]] = []
     note_turns: dict[str, int] = {}
@@ -141,7 +143,13 @@ def turn_log(ctx: Ctx, inv_id: str, jobs: list[dict[str, Any]] | None = None
             jid = str(item["id"])
             parent = next((produced_in[str(a)] for a in (item.get("inputs") or {}).values() if str(a) in produced_in),
                           None)
-            key = admitted.get(jid)
+            key = (admitted.get(jid) or {}).get("batch")
+            if jid in admitted and admitted[jid].get("finishes") and parent is not None:
+                # it read a pending challenger's output when admitted: it finishes that round, it is not one of its
+                # challengers (R14 #6)
+                parent.setdefault("finishing", []).append(jid)
+                place(parent, [jid])
+                continue
             if jid in admitted:  # a challenger admitted outside a decision (H2): its batch, or its own round
                 entry = (batches.get(key) if key else None) or new_entry(source="direct")
             else:
@@ -166,18 +174,24 @@ def turn_log(ctx: Ctx, inv_id: str, jobs: list[dict[str, Any]] | None = None
     return log, note_turns
 
 
-def record_admission(ctx: Ctx, inv_id: str | None, purpose: str, job_id: str) -> None:
-    """Record a challenger admitted outside a decision in the shared round history (H2, R17 #1), with the MCP batch
-    whose call admitted it, if any. A decision's jobs are recorded by its receipts instead."""
+def record_admission(ctx: Ctx, inv_id: str | None, purpose: str, job_id: str, lock: dict[str, Any]) -> None:
+    """Record a challenger admitted outside a decision in the shared round history (H2, R17 #1): the MCP batch whose
+    call admitted it, if any, and whether it read an output of a challenger then pending (``finishes``: it scores or
+    completes that round, R14 #6, and is not a new round). A decision's jobs are recorded by its receipts instead."""
     if not inv_id or ctx.admission or purpose not in rules.CHALLENGER_PURPOSES:
         return
     batch = _batch_key(ctx)
     if batch is not None and not any(b["key"] == batch for b in _batch_notes(ctx, inv_id)):
         batch = None
+    inputs = {str(i.get("artifact_id")) for i in (lock.get("inputs") or {}).values() if isinstance(i, dict)}
+    finishes = False
+    if inputs:
+        st = exploration_state(ctx, ctx.tx.require("investigation", inv_id))
+        finishes = bool(inputs & set(st.get("pending_outputs") or []))
     ctx.tx.put_record(ADMISSION_KIND, job_id, ctx.project_id,
                       {"investigation_id": inv_id, "job_id": job_id, "purpose": purpose, "batch": batch,
-                       "command_key": ctx.command_key}, created_by=ctx.principal.id, status="recorded",
-                      parent_id=inv_id)
+                       "finishes": finishes, "command_key": ctx.command_key}, created_by=ctx.principal.id,
+                      status="recorded", parent_id=inv_id)
 
 
 def frozen(ctx: Ctx, inv_id: str) -> bool:

@@ -186,7 +186,9 @@ def test_a_direct_run_component_outside_a_decision_is_refused_in_every_finalize_
     if stop == "ceiling-perfect-score":
         _stop_ceiling(scene, inv)
     else:
-        scene.lock(inv, scene.accuracy_job(inv, 0.70), selection=RULE)
+        # H2 (R17 #3): the token hold-back holds before the first lock too, so that candidate runs as reproduction
+        purpose = "reproduction" if stop == "token-holdback" else "open-search"
+        scene.lock(inv, scene.job(inv, metrics={"accuracy": 0.70}, purpose=purpose), selection=RULE)
         if stop == "selection-frozen":
             _stop_frozen(scene, inv)
     assert _exploration(scene, inv)["stop"] == stop
@@ -321,9 +323,11 @@ def test_check_admission_skips_an_effect_of_an_accepted_decision_and_work_that_i
 
     direct = SimpleNamespace(admission=None, tx=_NoLedger())
     assert check_admission(direct, None, "open-search", lock) is None  # no investigation: nothing to stop
-    for purpose in ("reproduction", "confirmation", "qualification", "build", "assessment", "export-check",
-                    "measurement-development"):
+    for purpose in ("reproduction", "confirmation", "qualification", "build", "assessment", "export-check"):
         assert check_admission(direct, "inv_1", purpose, lock) is None  # purposes the finalize phase never refuses
+    # H2 (R17 #2): measurement-development is a challenger purpose, so it is checked against the ledger like the others
+    with pytest.raises(AssertionError, match="read the ledger"):
+        check_admission(direct, "inv_1", "measurement-development", lock)
 
 
 def test_an_effect_of_a_decision_accepted_before_the_freeze_is_admitted_while_a_direct_call_is_refused(scene):

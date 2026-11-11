@@ -162,12 +162,17 @@ accepted decisions recorded); an MCP batch (opened by the `mcp-batch` record `ru
 the challengers its calls admitted, however many calls or resumptions it takes); a challenger admitted by a direct call
 outside a batch (always its own round: reading an earlier round's outputs never hides a new challenger in it); a
 `candidate_lock` or `selection_rule` note recorded outside a decision (its own entry, so rounds count from an MCP lock).
-Every challenger admitted outside a decision is recorded at admission (`round_admission`: the job, its purpose and its
-batch's command key); other jobs outside a decision join the round of what they read, else the entry before them. The domain rules (`rounds`, `state`) are unchanged and see
+Every challenger admitted outside a decision is recorded at admission (`round_admission`: the job, its purpose, its
+batch's command key, and whether it read an output of a then pending challenger). A job that did (it scores or completes
+that challenger) is placed in that challenger's round as finishing work, never as a new challenger (R14 #6); other jobs
+outside a decision join the round of what they read, else the entry before them. The domain rules (`rounds`, `state`) are unchanged and see
 entries numbered from 1. A call of an MCP batch is checked against the state **as its batch began** (its own jobs not
 yet counted), as a decision's effects are checked against the state when it was accepted: one batch is one round, and
 `max_rounds`, patience and the ceiling stop the next round on either path. Scoring the batch's own pending challengers
 remains admitted.
+
+Tests whose setup ran an exploratory candidate before the first lock with no token allowance left now run it as
+reproduction work (`test_r14_selection_e2e`, `test_h1_mcp_exploration_rules`): that pre-lock phase has itself stopped.
 
 **2. `measurement-development` is gated.** `REFUSED_WHEN_FINALIZING` is now every challenger purpose
 (`open-search`, `hypothesis-test`, `measurement-development`), on the decision path and at admission. The only allowance
