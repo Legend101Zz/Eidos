@@ -107,3 +107,26 @@ CI's component job installs scikit-learn in the project environment; the tests a
   selection evidence; confirmation stays independent (ADR 0021).
 - No pilot has used either component yet; the expected effect (better hypotheses and preprocessing, fewer irrelevant
   trials) is a hypothesis.
+
+## Addendum (review R16): held-out names, repeated seeds, pinned releases
+
+- **Every array name the diagnosis may open is checked before any input is read.** `prediction_key` and `groups_key`
+  now go through the same held-out check as `x_key`, `y_key`, `ids_key` and `group_keys`, so `prediction_key:
+  "test_predictions"` or `groups_key: "test_labels"` is refused before a file is opened, and provenance's "no test data
+  read" stays true. Array names are also refused when any word of the name begins with `test`, `holdout` or `heldout`
+  (`testfeatures`, `x_test1`).
+- **A repeated seed is refused, and one evaluation's failure never discards the sweep.** `seed_policy.seeds` and
+  `template.seeds` refuse repeats at validation (a repeated seed measures nothing new). Independently, each evaluation
+  takes its own directory (a repeated label gets `-r2`, `-r3`, ...), and an error while preparing a working directory
+  is recorded as that evaluation's failure; the evidence already gathered is still written.
+- **Data files whose names begin with a held-out word are refused.** The no-source `command.copy` list and non-code
+  source-bundle paths are refused when any word of a name begins with `test`, `holdout` or `heldout` (`test1.csv`,
+  `testfeatures.csv`, `data/x_test2.npy`), not only when the word is exactly a split name. Code files (`.py`, `.sh`, `.md`,
+  `.toml`) keep their exemption. Metric names keep the exact-word rule, so `contest_score` is still a metric.
+- **Release 1.0.0 stays installable.** `components/eidos.search.recipe-sweep@1.0.0/` is the 1.0.0 release byte for byte
+  (its source bundle digest is pinned in `tests/components/test_pinned_releases.py` and equals main 7e6641d's), beside the
+  current `components/eidos.search.recipe-sweep/` (1.1.0). A directory is named either `<id>` (the current release) or
+  `<id>@<release>` (an earlier release kept so pinned references resolve). A fresh installation publishes both; the
+  study arms bind only the current release. The standalone toolkit lists both, and keeps `<id>@<release>` directories off
+  its shared module path so each runs its own module. The pinned 1.0.0 is not patched: changing it would make it a
+  different release. The fixes above are in 1.1.0; a study that wants them pins 1.1.0.

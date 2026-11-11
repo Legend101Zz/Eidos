@@ -40,7 +40,13 @@ seed and per fold (`config.seed_policy`) in its own private working directory. T
 `{param.NAME}`, `{params_json}` or `{recipe}`, the fold from `{fold}` of `{folds}` (the command owns how visible data is
 split into folds), and writes numeric metrics to `{out}/receipt.json` (or `command.metrics_file`). Recipes are drawn
 from `config.space`: a grid (Cartesian product, sorted parameter names, evaluated in that order) or a random search with
-a required seed (the same seed draws the same recipes). A repeated draw is skipped.
+a required seed (the same seed draws the same recipes). A repeated draw is skipped. A repeated seed in
+`seed_policy.seeds` or `template.seeds` is refused. Every evaluation has its own directory, and an error preparing one is
+recorded as that evaluation's failure: the evidence table is still written.
+
+**Releases.** This directory is release 1.1.0. Release 1.0.0 (command sweeps only) is kept, unchanged, in
+`components/eidos.search.recipe-sweep@1.0.0/` so a pinned `eidos.search.recipe-sweep@1.0.0` still installs and runs; the
+fixes since 1.0.0 (repeated seeds, test-prefixed data files) are in 1.1.0 only.
 
 **Limits and stopping.** `config.budget` must bound the search (`max_trials` recipes and/or `max_seconds`). The rule in
 `config.stopping` is `none`, `patience` (`patience` recipes in a row without improving the best by more than
@@ -59,8 +65,9 @@ input port. An objective named after a test or held-out split is refused, and a 
 recorded as a failed evaluation. An unbounded search is refused.
 
 **What each evaluation can touch.** Project files come from a `source` bundle or, without one, from the plain file names
-in `command.copy`; nothing is copied implicitly, and a file named after a test or held-out split is refused either way
-(a bundle may still carry code named that way, such as `test_helpers.py`). Each evaluation runs in a scrubbed environment
+in `command.copy`; nothing is copied implicitly, and a data file with any word of its name beginning `test`, `holdout`
+or `heldout` (`test.csv`, `test1.csv`, `testfeatures.csv`, `data/x_test2.npy`) is refused either way (a bundle may still
+carry code named that way, such as `test_helpers.py`). Each evaluation runs in a scrubbed environment
 (`PATH`, locale, thread and device settings; `HOME` and `TMPDIR` are its own directories), so inherited credentials do not
 reach it. Failure text in the table is redacted, including any value of a variable it did not inherit, before it is cut
 to a tail. The only command output ever published is the redacted tail of a failing command's stderr.

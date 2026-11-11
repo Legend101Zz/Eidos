@@ -24,6 +24,18 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
   sweeps in the context. Method cards, author guide and toolkit coverage updated; arm 4 also installs the diagnosis
   component; the standalone toolkit carries both.
 
+### Review R16 of G2 (ADR 0024 addendum)
+
+- **Diagnosis:** `prediction_key` and `groups_key` are checked against held-out names before any input is opened; array
+  names with a word beginning `test`, `holdout` or `heldout` are refused.
+- **Sweep 1.1.0:** repeated seeds are refused (`seed_policy.seeds`, `template.seeds`); every evaluation gets its own
+  directory and a working-directory error is recorded as that evaluation's failure, so the evidence table is still
+  written. `command.copy` entries and non-code source-bundle files with a word beginning `test`, `holdout` or `heldout`
+  (`test1.csv`, `testfeatures.csv`) are refused.
+- **`eidos.search.recipe-sweep@1.0.0` stays installable** beside 1.1.0 (`components/eidos.search.recipe-sweep@1.0.0/`,
+  byte-identical to the 1.0.0 release), so a fresh project resolves a pinned 1.0.0 reference. Arms publish it unbound;
+  the toolkit runs each release with its own module.
+
 ## Unreleased: 1.2.0
 
 ### Review R13 of the integrated round (ADR 0021 addendum)

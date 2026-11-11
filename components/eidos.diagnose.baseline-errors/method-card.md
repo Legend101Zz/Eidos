@@ -48,7 +48,9 @@ input it read, its configuration, a digest of the rows sampled for the probes, a
 and configuration give the same report.
 
 **What it refuses.** Only the ports `train`, `validation`, `predictions`, `groups` and `task` are read; another port
-(such as `test`) is refused, and an array name that names a test or held-out split is refused, as is a `group_keys` entry
+(such as `test`) is refused. Every array name it may open (`x_key`, `y_key`, `ids_key`, `group_keys`, `prediction_key`,
+`groups_key`) is checked before any input is read, and one with a word beginning `test`, `holdout` or `heldout`
+(`test_predictions`, `testfeatures`) is refused, as is a `group_keys` entry
 that is not an array of the validation input. It never needs, opens or
 names a test file.
 
