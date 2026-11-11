@@ -13,8 +13,8 @@ import time
 from . import lab
 from .common import ROOT, write_json
 
-ASSESSOR = 'eidos.assessors.paired-ci@1.0.0'
-TEMPLATE = 'eidos.templates.improves-under-budget@1.1.0'
+ASSESSOR = 'eidos.assessors.paired-ci@1.2.0'
+TEMPLATE = 'eidos.templates.improves-under-budget@1.2.0'
 RUNNER = 'eidos.qualification-runner@1.0.0'
 
 
