@@ -177,6 +177,7 @@ def scorecard(
             )
     build_path = Path(lab.python()).parent.parent / "pilot-build.json"
     arm4 = [r for r in rows if r["arm"] == 4]
+    required = [r for r in rows if r["arm"] in POLICY["required_invariant_arms"]]
     complete_ladder = set(cards) == set(CARDS) and len(cards) == len(CARDS)
     return dict(
         schema_version=SCHEMA,
@@ -208,11 +209,12 @@ def scorecard(
             full_development_set=complete_ladder,
             completion_pass=complete_ladder and all(r["concluded"] for r in arm4),
             no_dead_ends=all(r["invariant_flags"]["dead_end"] is False for r in arm4),
+            required_invariant_arms=POLICY["required_invariant_arms"],
             invariant_pass=all(
-                r["invariant_flags"][flag] is False for r in rows for flag in REQUIRED_INVARIANTS
+                r["invariant_flags"][flag] is False for r in required for flag in REQUIRED_INVARIANTS
             ),
             coverage_complete=all(
-                r["invariant_flags"][flag] is not None for r in rows for flag in REQUIRED_INVARIANTS
+                r["invariant_flags"][flag] is not None for r in required for flag in REQUIRED_INVARIANTS
             ),
             run_evidence_pass=all(r["status"] == "valid" and r["run_status"] == "ok" for r in arm4),
             comparison_required=True,

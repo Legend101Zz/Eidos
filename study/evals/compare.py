@@ -109,6 +109,8 @@ def compare(before, after, tolerance=0):
             old, new = (r["invariant_flags"][flag] for r in (previous, current))
             if old != new:
                 changes.append(f"{label} {flag} {old} -> {new}")
+            if key[1] not in POLICY["required_invariant_arms"]:
+                continue
             if old is None or new is None:
                 blockers.append(f"{label} required {flag} evidence is unknown")
             if old is False and new is True:

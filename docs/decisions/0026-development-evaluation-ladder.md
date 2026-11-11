@@ -20,7 +20,7 @@ Frozen build wheels, environments, lab homes and local caches live on the SSD. E
 
 Baseline and candidate use the same controller and hash-pinned reference snapshot. A new scorecard
 uses prospective zero tolerance per assignment and in aggregate. Verified native-unit test gain
-remains comparable when a coding-arm reference is missing. Missing invariant coverage blocks Tier 1.
+remains comparable when a coding-arm reference is missing. Missing required arm-4 invariant coverage blocks Tier 1. Optional arm-2 coverage remains explicit and its outcomes are compared separately.
 The arm-4 eval bridge records identifier matches and hashes from outbound provider requests, and
 the independent scan retains its limits for derived information. Controller abstention remains
 distinct from investigator conclusions. Each attempt preserves separate controller and verified

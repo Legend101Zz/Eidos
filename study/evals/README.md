@@ -106,8 +106,9 @@ forwarding. It stores request hashes and matched identifiers without retaining b
 The scorecard also scans registered packed contexts, replies and read receipts. Stored internal provenance
 manifests are outside the model-facing scan. Unavailable coverage is unknown and blocks the gate.
 The audit has limited coverage of derived information. Core Tier-0 boundary tests remain the primary
-isolation check. The optional coding arm's private provider context is unavailable to this audit and a
-comparison including that arm remains diagnostic.
+isolation check. The required investigator invariant gate covers arm 4. The optional coding arm's private provider context
+is unavailable to this audit. Its unknown coverage remains visible, and its completion, verification and
+quality are reported separately and compared with the matching reference arm.
 
 Tier 1 uses a prospective tolerance of zero, with an absolute `1e-12` floating-point epsilon. Check
 every card and arm for a lost investigator conclusion, verified outcome, verified native-unit gain, or

@@ -5,6 +5,7 @@ POLICY = {
     "tolerance": 0.0,
     "absolute_float_epsilon": 1e-12,
     "quality": "Per assignment verified gain in native units and ratio where the frozen reference exists.",
+    "required_invariant_arms": [4],
     "invariants": ["dead_end", "fabricated_empty_wait", "held_out_reads"],
-    "missing_evidence": "Unknown required invariant evidence or an absent verified gain blocks the gate.",
+    "missing_evidence": "Unknown required arm-4 invariant evidence or an absent verified gain blocks the gate.",
 }

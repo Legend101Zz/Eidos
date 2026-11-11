@@ -103,6 +103,32 @@ class GateTests(unittest.TestCase):
         self.assertEqual(len(result["regressions"]), 2)
         self.assertFalse(result["gate_pass"])
 
+    def test_optional_arm2_keeps_unknown_coverage_outside_required_gate(self):
+        before = self.scorecard()
+        before["arms"] = [2, 4]
+        optional = [
+            {
+                **row,
+                "arm": 2,
+                "disposition": "coding_answer",
+                "invariant_flags": dict.fromkeys(row["invariant_flags"]),
+            }
+            for row in before["runs"]
+        ]
+        before["runs"].extend(optional)
+        before["by_arm"]["2"] = summarize(optional)
+        before["aggregate"] = summarize(before["runs"])
+        after = copy.deepcopy(before)
+        self.assertTrue(compare(before, after)["gate_pass"])
+        self.assertEqual(after["by_arm"]["2"]["invariant_unknown_counts"]["held_out_reads"], len(CARDS))
+        after["runs"][0]["invariant_flags"]["held_out_reads"] = None
+        self.assertFalse(compare(before, after)["gate_pass"])
+        after["runs"][0]["invariant_flags"]["held_out_reads"] = False
+        after["runs"][-1]["verified_test_gain"] -= 0.01
+        self.assertTrue(
+            any("arm 2 verified_test_gain" in issue for issue in compare(before, after)["regressions"])
+        )
+
     def test_complete_reference_is_hash_bound_and_preserves_d02_null(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
