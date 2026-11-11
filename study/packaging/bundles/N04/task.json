@@ -1,0 +1,51 @@
+{
+  "schema_version": "eidos-task-bundle/0.1",
+  "task_id": "N04",
+  "project": "classification",
+  "role": "public_development",
+  "nclasses": 2,
+  "task_type": "classification",
+  "inputs": {
+    "train": {
+      "shape": [
+        1800,
+        20
+      ],
+      "dtype": "float32"
+    },
+    "validation": {
+      "shape": [
+        600,
+        20
+      ],
+      "dtype": "float32"
+    }
+  },
+  "metric": "accuracy",
+  "direction": "maximize",
+  "denominator": "fixed evaluator input IDs",
+  "allowed_operations": [
+    "edit model/trainer",
+    "train-only preprocessing/augmentation",
+    "create instruments"
+  ],
+  "reference_visibility": "excluded from this investigator bundle; controller only",
+  "qualification": "see QUALIFICATION_P3.md",
+  "resource_profile": {
+    "threads": 1,
+    "cpu_cores": 1,
+    "ram_gib_estimate": 2,
+    "disk_gib_environment_estimate": 4,
+    "reference_timeout_seconds": 120
+  },
+  "investigator_budget": "UNDECIDED",
+  "answer_schema": "eidos-answer/0.2",
+  "hashes": {
+    "answer_schema.py": "a22da0fc4fa56d555fc46f97eb1958f1c270b97449c23b76aabe9fdb84f01c4c",
+    "brief.md": "de7825bb3bbb3a5e942a3d4b90c250a4e785ffb6634b6b2c6255d10bcaa20209",
+    "project.py": "575ddc4fb5ad323ac1e7fb312e4508e807f946c18b60923e13b1991172bbacf7",
+    "requirements.lock": "be1d27623dd05e7d6c630152f4d3c4850786238b28530e9f2a88124027ecec41",
+    "train.npz": "a9d9d99392df91ca0434744bd1e01948f37ef05b088a9c228dab12fe5aaa9bcb",
+    "validation.npz": "3474b9f72c063ab174d17ab2e34f6f49eec4fa8d352dedabd10bf0d150dbe33d"
+  }
+}

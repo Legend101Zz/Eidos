@@ -13,6 +13,7 @@ from grade import read_predictions, score
 def main(root):
     root=Path(root);root.mkdir(parents=True,exist_ok=True);rows=[]
     for card,name in TASKS.items():
+        if card.startswith('N'): continue  # Pilot-2 qualification retains its original four cards.
         task=root/card/'task';package(card,task)
         baseline=root/card/'baseline';baseline.mkdir()
         subprocess.run([research_python(),str(task/'project.py'),'train','--inputs',str(task),'--out',str(baseline),'--seed','11'],check=True)

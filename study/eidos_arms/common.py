@@ -73,11 +73,11 @@ def prepare(c, run_dir, arm):
     for directory in builtin_component_dirs():
         if directory.name in ('eidos.project.command', 'eidos.task.score-classification',
                               'eidos.search.recipe-sweep') or (
-                imported['task_id'] in ('D03', 'D06') and directory.name == 'eidos.task.paired-classification-report'):
+                imported['task_id'] in ('D03', 'D06', 'N01', 'N04') and directory.name == 'eidos.task.paired-classification-report'):
             r = install_component(c, project, directory, 'default', True)
             if 'component_ref' not in r or r.get('validation') == 'failed':
                 raise RuntimeError(f'component installation failed: {r}')
-    if imported['task_id'] not in ('D01', 'D04', 'D05'):
+    if imported['task_id'] not in ('D01', 'D04', 'D05', 'N02', 'N03'):
         from .protocols import prepare as prepare_protocols
         prepare_protocols(c, project, run_dir)
     write_json(run_dir / 'lab_import.json', {'project': project, **imported})

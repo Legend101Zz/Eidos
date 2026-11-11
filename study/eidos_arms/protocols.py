@@ -21,8 +21,8 @@ RUNNER = 'eidos.qualification-runner@1.0.0'
 def prepare(c, project, run_dir):
     from study.common import read_json
     card = read_json(run_dir / "arm.json")["card"]
-    assessor = "eidos.assessors.paired-ci@1.2.0" if card in ("D03", "D06") else ASSESSOR
-    template = "eidos.templates.improves-under-budget@1.2.0" if card in ("D03", "D06") else TEMPLATE
+    assessor = "eidos.assessors.paired-ci@1.2.0" if card in ("D03", "D06", "N01", "N04") else ASSESSOR
+    template = "eidos.templates.improves-under-budget@1.2.0" if card in ("D03", "D06", "N01", "N04") else TEMPLATE
     from eidos.cli.main import builtin_component_dirs, install_component
     from eidos.runtime.env_probe import registration_key
     from eidos.tasks.bundle import _inspect_env

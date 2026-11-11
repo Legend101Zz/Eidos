@@ -15,7 +15,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from datetime import UTC
 
-from study.common import DEVELOPMENT, FAMILIES, dev_command, read_json, research_python, write_json
+from study.common import DEVELOPMENT, FAMILIES, FRESH_RECIPE_CARDS, IMPROVEMENT_CARDS, dev_command, read_json, research_python, write_json
 from study.fresh_check import candidate_command, fresh_check, infer
 
 
@@ -98,6 +98,14 @@ def snapshot(out, workspace):
 
 
 def make_inputs(project, path):
+    if project in ('breast_cancer', 'diabetes', 'friedman1', 'classification'):
+        from study.packaging.p3_data import TASKS, dataset
+        import numpy as np
+        card = next(c for c, p in TASKS.items() if p == project)
+        data, _, _ = dataset(card)
+        x, _, ids = data['test']
+        np.savez(path, x=x, ids=ids)
+        return
     # Only this trusted subprocess owns labels. Its serialized export excludes y.
     code = (
         "import sys,numpy as np;sys.path.insert(0,sys.argv[1]);from data import dataset;"
@@ -114,6 +122,9 @@ def make_inputs(project, path):
 
 
 def score(project, baseline, candidate):
+    if project in ('breast_cancer', 'diabetes', 'friedman1', 'classification'):
+        from study.packaging.score_p3 import compare
+        return compare(project, baseline, candidate)
     import subprocess
 
     try:
@@ -164,7 +175,7 @@ def grade_run(run_dir, grading_dir, block_incident=None, expected_meta=None):
         task=meta["card"],
         run=meta["run_index"],
         arm=meta["arm"],
-        primary_eligible=meta["card"] in {"D02","D03","D04","D05","D06"},
+        primary_eligible=meta["card"] in IMPROVEMENT_CARDS,
         verified_success=False,
         card_success=False,
         status="invalid_output",
@@ -196,7 +207,11 @@ def grade_run(run_dir, grading_dir, block_incident=None, expected_meta=None):
             if answer["task_id"] != meta["card"]:
                 raise ValueError("answer task_id differs from assignment")
             verify_artifacts(root / "out", answer)
-            card = read_json(DEVELOPMENT / "tasks" / f"{meta['card']}.json")
+            if meta['card'].startswith('N'):
+                from study.packaging.p3_data import card_spec
+                card = card_spec(meta['card'])
+            else:
+                card = read_json(DEVELOPMENT / "tasks" / f"{meta['card']}.json")
             candidate = answer["candidate"]
             numeric, reproduction, fresh = None, [], None
             reproduces, guardrails, scope_ok = False, False, False
@@ -278,7 +293,7 @@ def grade_run(run_dir, grading_dir, block_incident=None, expected_meta=None):
                 # Cards specify no critical slices. Enforce their actual data/CPU/format boundaries;
                 # do not invent a slice threshold from the protocol's explicitly draft defaults.
                 guardrails = digest(test_inputs) == expected_hash
-                if meta["card"] in {"D03","D04","D05","D06"} or (meta["card"] == "D02" and answer["claim_type"] in {"recipe_improvement", "architecture_improvement"}):
+                if meta["card"] in FRESH_RECIPE_CARDS or (meta["card"] == "D02" and answer["claim_type"] in {"recipe_improvement", "architecture_improvement"}):
                     for seed in card["seeds"][1:]:
                         output = workspace / f"confirmation-{seed}"
                         output.mkdir()

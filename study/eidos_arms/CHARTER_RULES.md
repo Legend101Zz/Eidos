@@ -127,6 +127,16 @@ Source references: `src/eidos/domain/charter.py` (rule types),
 ## Pilot 2
 D03 and D06 use classification-report/1:accuracy with eidos.task.paired-classification-report and paired-ci@1.2.0, at 0.01 and 0.30. The CI lower bound must reach the card bar. D04 and D05 require baseline RMSE minus candidate RMSE >= 0.5, including fresh seeds. No built-in assessor supports RMSE reduction (paired-ci supports classification and paired reports). Their charters remain exploration-only; local and GitHub evaluators enforce RMSE and reproduction. No classification surrogate is substituted. This is a material arm-4 capability gap.
 
+Pilot 3 reuses these paths: N01 and N04 use the I4 classification-report accuracy
+path, paired-classification-report and paired-ci@1.2.0, with a 0.02 lower-CI-bound
+rule. N02 and N03 have no built-in RMSE assessor and remain exploration-only.
+Their evaluator rules require absolute reductions of 8.900388389192335 and
+0.5521391269423149 RMSE units respectively (5% of their fixed seed-11 baseline
+test RMSE), including fresh seeds 23 and 37. Independent local and hosted grading
+enforce those bars. The missing RMSE assessor remains a material arm-4 capability
+gap. Pilot-2 environment, information, final-outcome and setup-timing rules apply
+unchanged to all four prospective cards.
+
 P2S adds `pilot_2_setup` to the generated D03–D06 lab charters before model work.
 It pins research-interpreter parity across selectable environments, the shared
 METHOD text and no-source baseline note, final-outcome run classification, and

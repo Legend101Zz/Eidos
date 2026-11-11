@@ -1,0 +1,51 @@
+{
+  "schema_version": "eidos-task-bundle/0.1",
+  "task_id": "N01",
+  "project": "breast_cancer",
+  "role": "public_development",
+  "nclasses": 2,
+  "task_type": "classification",
+  "inputs": {
+    "train": {
+      "shape": [
+        341,
+        30
+      ],
+      "dtype": "float32"
+    },
+    "validation": {
+      "shape": [
+        114,
+        30
+      ],
+      "dtype": "float32"
+    }
+  },
+  "metric": "accuracy",
+  "direction": "maximize",
+  "denominator": "fixed evaluator input IDs",
+  "allowed_operations": [
+    "edit model/trainer",
+    "train-only preprocessing/augmentation",
+    "create instruments"
+  ],
+  "reference_visibility": "excluded from this investigator bundle; controller only",
+  "qualification": "see QUALIFICATION_P3.md",
+  "resource_profile": {
+    "threads": 1,
+    "cpu_cores": 1,
+    "ram_gib_estimate": 2,
+    "disk_gib_environment_estimate": 4,
+    "reference_timeout_seconds": 120
+  },
+  "investigator_budget": "UNDECIDED",
+  "answer_schema": "eidos-answer/0.2",
+  "hashes": {
+    "answer_schema.py": "a22da0fc4fa56d555fc46f97eb1958f1c270b97449c23b76aabe9fdb84f01c4c",
+    "brief.md": "de7825bb3bbb3a5e942a3d4b90c250a4e785ffb6634b6b2c6255d10bcaa20209",
+    "project.py": "575ddc4fb5ad323ac1e7fb312e4508e807f946c18b60923e13b1991172bbacf7",
+    "requirements.lock": "be1d27623dd05e7d6c630152f4d3c4850786238b28530e9f2a88124027ecec41",
+    "train.npz": "ed4d89393e550c522df51b79c14687b744a0d631d4c0e2bed4b50ef0b6e07185",
+    "validation.npz": "5b4d5531fa38373cd86095510a393c569713c8b3b42406aa60f19f93393578c1"
+  }
+}

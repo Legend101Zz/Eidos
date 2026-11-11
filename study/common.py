@@ -13,7 +13,10 @@ STUDY = ROOT / "study"
 DEVELOPMENT = ROOT / "research/public/development"
 MODEL = "MiniMax-M3.1-Flash"
 ENVELOPE = {"wall_s": 1800, "tokens": 8_000_000, "threads": 1}
-FAMILIES = {"D01": "iris", "D02": "digits", "D12": "duplicate-input-null", "D03":"digits_shift", "D04":"conditioning", "D05":"forecast", "D06":"order"}
+FAMILIES = {"D01": "iris", "D02": "digits", "D12": "duplicate-input-null", "D03":"digits_shift", "D04":"conditioning", "D05":"forecast", "D06":"order",
+            "N01":"breast_cancer", "N02":"diabetes", "N03":"friedman1", "N04":"classification"}
+IMPROVEMENT_CARDS = frozenset({'D02', 'D03', 'D04', 'D05', 'D06', 'N01', 'N02', 'N03', 'N04'})
+FRESH_RECIPE_CARDS = IMPROVEMENT_CARDS - {'D02'}
 
 
 def write_json(path, value):
@@ -123,7 +126,7 @@ def render_prompt(arm, card, *, base=None):
 
 def dev_command(script, *args, **kwargs):
     return subprocess.run(
-        [research_python(), str(STUDY / "packaging/package_card.py" if script == "package_task.py" and any(str(a) in {"D03","D04","D05","D06"} for a in args) else DEVELOPMENT / script), *map(str, args)],
+        [research_python(), str(STUDY / "packaging/package_card.py" if script == "package_task.py" and any(str(a) in FRESH_RECIPE_CARDS for a in args) else DEVELOPMENT / script), *map(str, args)],
         check=True,
         text=True,
         capture_output=True,

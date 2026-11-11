@@ -1,0 +1,286 @@
+{
+  "N01": {
+    "metric": "accuracy",
+    "baseline": 0.9122807017543859,
+    "baseline_by_seed": {
+      "11": 0.9122807017543859,
+      "23": 0.8333333333333334,
+      "37": 0.8508771929824561
+    },
+    "bar": 0.02,
+    "baseline_wall_seconds": {
+      "11": 1.374918291985523,
+      "23": 1.1417246249620803,
+      "37": 1.0952442499692552
+    },
+    "references": {
+      "11": {
+        "seed": 11,
+        "baseline": 0.9122807017543859,
+        "diagnostic_baseline_same_seed": 0.9122807017543859,
+        "reference": 0.9736842105263158,
+        "gain": 0.061403508771929904,
+        "passes": true,
+        "elapsed_seconds": 0.01742483302950859
+      },
+      "23": {
+        "seed": 23,
+        "baseline": 0.9122807017543859,
+        "diagnostic_baseline_same_seed": 0.8333333333333334,
+        "reference": 0.9736842105263158,
+        "gain": 0.061403508771929904,
+        "passes": true,
+        "elapsed_seconds": 0.001795999996829778
+      },
+      "37": {
+        "seed": 37,
+        "baseline": 0.9122807017543859,
+        "diagnostic_baseline_same_seed": 0.8508771929824561,
+        "reference": 0.9736842105263158,
+        "gain": 0.061403508771929904,
+        "passes": true,
+        "elapsed_seconds": 0.00166712497593835
+      }
+    },
+    "qualified": true,
+    "splits": {
+      "train": {
+        "n": 341,
+        "hashes": {
+          "x": "d03f36da1131cf9aef40eaab85872977f04bed8248298f620a8ce15373b2dacf",
+          "y": "f3f8786b90be8a1dde7603052fc468705903c03cd64aa8cf2faeb44a4d333a7e",
+          "ids": "2c601d1a2b61c75c212dbaf214e44687fa26a4883226e977f28a644c063890a7"
+        }
+      },
+      "validation": {
+        "n": 114,
+        "hashes": {
+          "x": "e15b0bc559c6bbf26b6365f03f70125f81144d201729a0d06b0a29c748ca29bb",
+          "y": "ccc42916dbf2fe5e26d070718464d2c807744b54285e163a9255ce9ef5658d87",
+          "ids": "db398764efbadd130ad395f6c68fee5e403d44368da7b480a67126c80874a7ea"
+        }
+      },
+      "test": {
+        "n": 114,
+        "hashes": {
+          "x": "817870f7c540a3707ec0c4cffa07a1fb984ac6d85f6bb2ddfd2224edc3a6352b",
+          "y": "9400efda1bf739ee175b8ac0951c4b41442469f25610a8db9ab23b15132b700c",
+          "ids": "d99940b710a5016e5771b0d9cb7782d86e01ca1e23f112a87a713700d7794bd8"
+        }
+      }
+    }
+  },
+  "N02": {
+    "metric": "rmse",
+    "baseline": 178.0077677838467,
+    "baseline_by_seed": {
+      "11": 178.0077677838467,
+      "23": 177.77617924501973,
+      "37": 178.07065590835157
+    },
+    "bar": 8.900388389192335,
+    "baseline_wall_seconds": {
+      "11": 1.1011769159813412,
+      "23": 1.0911858750041574,
+      "37": 1.0877912500291131
+    },
+    "references": {
+      "11": {
+        "seed": 11,
+        "baseline": 178.0077677838467,
+        "diagnostic_baseline_same_seed": 178.0077677838467,
+        "reference": 52.011559852970734,
+        "gain": 125.99620793087597,
+        "passes": true,
+        "elapsed_seconds": 0.007216708967462182
+      },
+      "23": {
+        "seed": 23,
+        "baseline": 178.0077677838467,
+        "diagnostic_baseline_same_seed": 177.77617924501973,
+        "reference": 52.011559852970734,
+        "gain": 125.99620793087597,
+        "passes": true,
+        "elapsed_seconds": 0.0010691250208765268
+      },
+      "37": {
+        "seed": 37,
+        "baseline": 178.0077677838467,
+        "diagnostic_baseline_same_seed": 178.07065590835157,
+        "reference": 52.011559852970734,
+        "gain": 125.99620793087597,
+        "passes": true,
+        "elapsed_seconds": 0.0009330830071121454
+      }
+    },
+    "qualified": true,
+    "splits": {
+      "train": {
+        "n": 265,
+        "hashes": {
+          "x": "15ce35c17c162b75dd7a62186db09500dca56a923a4473b2dcb3597e0418d2f1",
+          "y": "329a727e3413a3a90a73478e3b678043b3c9650952145967f7ffeba99b47f553",
+          "ids": "4e300f834e798c910c344da7158544b0ae48743fbd9f29d684a0c5cb5cc4f779"
+        }
+      },
+      "validation": {
+        "n": 88,
+        "hashes": {
+          "x": "9b5dfdd2019b718345953f7689409a4ae43f7497d365b8df2fca19e140a14b16",
+          "y": "833ff095f147ef32e2b6d5bec154a4907797820cbf43445b8154a6d67ac93521",
+          "ids": "73133ba2ad0552cd3d3134ab944301e107b5dcdbcc58ba4b11eaa1c65458cbe5"
+        }
+      },
+      "test": {
+        "n": 89,
+        "hashes": {
+          "x": "6e4ca0c9f4e88ce8f9deb8f3ad4aa8536d1a8c5294d0bd113cc57bd50643c84b",
+          "y": "6425c475621eaa5b8145091d108e8b14a55534020f28b6c4e5dd9830d5a2c763",
+          "ids": "aeea62576048f7563c78c218064128dea11723e12a0ff998e2f03c1130248b17"
+        }
+      }
+    }
+  },
+  "N03": {
+    "metric": "rmse",
+    "baseline": 11.042782538846298,
+    "baseline_by_seed": {
+      "11": 11.042782538846298,
+      "23": 11.023737510584956,
+      "37": 10.864258361476159
+    },
+    "bar": 0.5521391269423149,
+    "baseline_wall_seconds": {
+      "11": 1.0970573329832405,
+      "23": 1.3563729169545695,
+      "37": 1.209006999968551
+    },
+    "references": {
+      "11": {
+        "seed": 11,
+        "baseline": 11.042782538846298,
+        "diagnostic_baseline_same_seed": 11.042782538846298,
+        "reference": 1.4304120554527633,
+        "gain": 9.612370483393535,
+        "passes": true,
+        "elapsed_seconds": 0.07517500000540167
+      },
+      "23": {
+        "seed": 23,
+        "baseline": 11.042782538846298,
+        "diagnostic_baseline_same_seed": 11.023737510584956,
+        "reference": 1.4304120554527633,
+        "gain": 9.612370483393535,
+        "passes": true,
+        "elapsed_seconds": 0.07027991599170491
+      },
+      "37": {
+        "seed": 37,
+        "baseline": 11.042782538846298,
+        "diagnostic_baseline_same_seed": 10.864258361476159,
+        "reference": 1.4304120554527633,
+        "gain": 9.612370483393535,
+        "passes": true,
+        "elapsed_seconds": 0.07030408398713917
+      }
+    },
+    "qualified": true,
+    "splits": {
+      "train": {
+        "n": 1200,
+        "hashes": {
+          "x": "852aba20123ad361cce3f192ee3dbb9a5898068bb67bfcbecdfa3f25ee64b606",
+          "y": "f70dca8cb9ebdf48e427138b9bfd4ae94e7f89acafff827c5f0a08cccf8df05d",
+          "ids": "8ab9942d35e56a66624536765eb77c594e6f4ee3ea916d1b97fd6223034ba08c"
+        }
+      },
+      "validation": {
+        "n": 400,
+        "hashes": {
+          "x": "270c68ed9657786e4c5f4c3a93eb283f39e111141b6f56507a9be39441fd4db6",
+          "y": "4b5cc5b1400adf83ae016de49b948f6ff6208a8cc44a199b0cd4f145b548daad",
+          "ids": "e3dcba1a54de471e3101e6f7b83dfb064265b5c27e96bce40a8d562fde23dcd2"
+        }
+      },
+      "test": {
+        "n": 400,
+        "hashes": {
+          "x": "cd3bbc26df28a05b0d04632f02bf68eb0ed9b7e70cd9d5351e431fae140419e0",
+          "y": "78167f4039721cc3582165c2ab6c99de0903ad31a389e3691b9d10abbde0a5df",
+          "ids": "e00455e2fd4a591166700329a7d4fce81a6f976ca71e51bc19d550512cbe0dc6"
+        }
+      }
+    }
+  },
+  "N04": {
+    "metric": "accuracy",
+    "baseline": 0.6883333333333334,
+    "baseline_by_seed": {
+      "11": 0.6883333333333334,
+      "23": 0.6966666666666667,
+      "37": 0.6983333333333334
+    },
+    "bar": 0.02,
+    "baseline_wall_seconds": {
+      "11": 1.155740624992177,
+      "23": 1.102703874988947,
+      "37": 1.1117393330205232
+    },
+    "references": {
+      "11": {
+        "seed": 11,
+        "baseline": 0.6883333333333334,
+        "diagnostic_baseline_same_seed": 0.6883333333333334,
+        "reference": 0.87,
+        "gain": 0.18166666666666664,
+        "passes": true,
+        "elapsed_seconds": 0.046359665982890874
+      },
+      "23": {
+        "seed": 23,
+        "baseline": 0.6883333333333334,
+        "diagnostic_baseline_same_seed": 0.6966666666666667,
+        "reference": 0.87,
+        "gain": 0.18166666666666664,
+        "passes": true,
+        "elapsed_seconds": 0.04291445796843618
+      },
+      "37": {
+        "seed": 37,
+        "baseline": 0.6883333333333334,
+        "diagnostic_baseline_same_seed": 0.6983333333333334,
+        "reference": 0.87,
+        "gain": 0.18166666666666664,
+        "passes": true,
+        "elapsed_seconds": 0.04268320801202208
+      }
+    },
+    "qualified": true,
+    "splits": {
+      "train": {
+        "n": 1800,
+        "hashes": {
+          "x": "74344526aad922cb923c957db22e26e56a7a2cffe2bed1218221ab9d090ad905",
+          "y": "d9e36e540581d0efd9de8a0a525d170550cce4ddd6d7adb9dbcc2f5a9cb4d9a9",
+          "ids": "14a3c9d1cd38e01dcc1ce79a51761157245397f864f72bcc9da1e009c00108b2"
+        }
+      },
+      "validation": {
+        "n": 600,
+        "hashes": {
+          "x": "bf6f8bddf934dd36aeeffa34eabb3fe5206e95cba9c019997fd1f7bbc7fe55a2",
+          "y": "1b7ae8e9b71457b64a835751bc4f38656f8c0665cfaa3c784d29032984673c44",
+          "ids": "309c3bee93007ecb600b4f1082817a6f43bc4a11fc7d281761cd781a59bf6286"
+        }
+      },
+      "test": {
+        "n": 600,
+        "hashes": {
+          "x": "5666178fc6410a2bda2bdf0e4754a059c3d1f9340c75e0b08430f75cbf082040",
+          "y": "9ef0fdfbbf14161d27cdcf35e1f6e80d27eecac6cd50785458b79716682ee3e8",
+          "ids": "081e96fdea3a871f56aaf740e9c3701f3c6834f99a3241f91b224a1204a87eaf"
+        }
+      }
+    }
+  }
+}
