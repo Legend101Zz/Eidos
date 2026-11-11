@@ -79,8 +79,8 @@ def archive_block(block_dir, reason):
 
 def prepare(row, run_dir):
     free = int(subprocess.check_output(["df", "-k", "/"], text=True).splitlines()[1].split()[3])
-    if free < 14 * 1024 * 1024:
-        raise RuntimeError("STOP: less than 14 GiB free")
+    if free < int(12.5 * 1024 * 1024):  # pilot-2 addendum 2: owner floor 12 GiB (+0.5 margin)
+        raise RuntimeError("STOP: less than 12.5 GiB free")
     run_dir.mkdir(parents=True, exist_ok=True)
     dev_command("package_task.py", "--task", row["task"], "--out", run_dir / "task")
     # The common structural interface contains no graders, labels or references.
