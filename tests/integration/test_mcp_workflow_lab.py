@@ -93,6 +93,14 @@ def test_upload_batch_wait_submit_against_the_real_lab(lab, tmp_path):
                  statement="the fit improves on the reference", scope={"task": "demo", "population": "visible validation"})
     assert again["claim_id"] == sub["claim_id"] and again["lock_note_id"] == sub["lock_note_id"]
 
+    # R15: the key binds the whole request; adding an assessment is a conflict before any step, and starts nothing
+    with pytest.raises(ToolFailure) as exc:
+        tool("submit_candidate", command_key="sub-1", investigation_id=inv, job_id=fit_job,
+             statement="the fit improves on the reference", scope={"task": "demo", "population": "visible validation"},
+             assessment={"success_rule_id": "r1", "baseline": {"job_id": fit_job}, "seeds": [1]})
+    assert exc.value.code == "COMMAND_KEY_CONFLICT" and exc.value.details["step"] == "submit"
+    assert lab.q(lab.admin, "list_records", {"kind": "assessment_request"}, project=pid) == []
+
 
 def test_a_failed_fit_skips_its_scorer_and_a_bad_reference_runs_nothing(lab, tmp_path):
     pid, inv, _acts, _base, runner = _lab(lab, tmp_path)
@@ -129,4 +137,28 @@ def test_submission_without_a_succeeded_job_records_nothing(lab, tmp_path):
     assert exc.value.code == "CANDIDATE_NOT_READY"
     with lab.ledger.transaction() as tx:
         row = tx._one("SELECT count(*) AS n FROM commands WHERE project_id=:p AND command_key LIKE 's-x:%%'", p=pid)
+    assert row["n"] == 0
+
+
+def test_a_batch_cannot_launch_a_trial_of_another_scope_or_carry_its_outputs(lab, tmp_path):
+    """R15: a literal trial planned outside the batch's investigation is refused before any effect (its scope is read
+    from the trial record), and so is a reference from it into a call charged to the investigation."""
+    pid, inv, _acts, _base, _runner = _lab(lab, tmp_path)
+    client = lab_client_over_http(lab)
+    up = call_tool(client, "upload_source", {"project": pid, "command_key": "up-s", "files": {"a.py": "x\n"}})
+    trial = call_tool(client, "plan_trial", {"project": pid, "command_key": "pt-s", "component_ref": FIT_REF, **RUN,
+                                             "config": {"fail": False}, "inputs": {"source": up["artifact_id"]}})
+    trial_id = trial["result"]["trial_id"]
+    before = len(lab.q(lab.admin, "list_jobs", {}, project=pid))
+    with pytest.raises(ToolFailure) as exc:
+        call_tool(client, "run_batch", {"project": pid, "command_key": "b-x", "investigation_id": inv, "wait_seconds": 0,
+                                        "calls": [{"tool": "launch_trial", "args": {"trial_id": trial_id}},
+                                                  {"tool": "run_component", "args": {
+                                                      "component_ref": SCORE_REF, **RUN,
+                                                      "inputs": {"model": {"$ref": "call[0].outputs.model"}}}}]})
+    assert exc.value.code == "INVESTIGATION_MISMATCH"
+    assert exc.value.details == {"call": 0, "investigation_id": None, "batch_investigation_id": inv, "references": [1]}
+    assert len(lab.q(lab.admin, "list_jobs", {}, project=pid)) == before
+    with lab.ledger.transaction() as tx:
+        row = tx._one("SELECT count(*) AS n FROM commands WHERE project_id=:p AND command_key LIKE 'b-x:%%'", p=pid)
     assert row["n"] == 0
