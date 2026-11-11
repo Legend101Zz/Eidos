@@ -43,3 +43,57 @@ jobs:
         run: '"$EIDOS_RESEARCH_PYTHON" -m unittest discover -s study/tests -v'
       - name: Installed lab arm tests
         run: '"$EIDOS_STUDY_PYTHON" -m unittest study.eidos_arms.test_contract study.eidos_arms.test_parity -v'
+      - name: Cache the pinned Temporal archive
+        id: temporal-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/eidos-temporal
+          key: eidos-temporal-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/eidos/supervisor/services.py') }}
+      - name: Go fallback for a cold Temporal archive cache
+        if: steps.temporal-cache.outputs.cache-hit != 'true'
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: stable
+          cache: false
+      - name: Prepare Temporal binaries for isolated lab initialization
+        env:
+          EXTRACT_TO_SOURCE: "1"
+        run: bash scripts/ci/temporal_server.sh
+      - name: Frozen build helper and retained two-card stub scorecard
+        run: |
+          eval_root='/Volumes/Mrigesh SSD/eidos-v1'
+          sudo mkdir -p "$eval_root"
+          sudo chown "$(id -un)" "$eval_root"
+          export EIDOS_STUDY_ROOT="$eval_root"
+          export EIDOS_STUDY_TEMPORAL_SOURCE="$TEMPORAL_SOURCE"
+          study/evals/build_lab.sh HEAD ci-evals
+          source "$eval_root/evals-labs/ci-evals/env.sh"
+          "$EIDOS_RESEARCH_PYTHON" -m study.evals.mini_eval \
+            --cards N01,N03 --arms 4 --seed-index 1 \
+            --out "$eval_root/tmp/mini-eval-cli" \
+            --lab-home "$EIDOS_STUDY_HOME" --lab-python "$EIDOS_STUDY_PYTHON" --stub
+          "$EIDOS_RESEARCH_PYTHON" - "$eval_root" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          score = json.loads((root / 'tmp/mini-eval-cli/scorecard.json').read_text())
+          assert score['stub'] and score['aggregate']['runs'] == 2
+          assert all(r['status'] == 'valid' and r['test_gain'] == 0 for r in score['runs'])
+          assert score['aggregate']['tokens'] == 0
+          build = json.loads((root / 'evals-labs/ci-evals/venv/pilot-build.json').read_text())
+          assert score['provenance']['pilot_build'] == build
+          config = json.loads((root / 'evals-labs/ci-evals/home/config/lab.json').read_text())
+          assert config['lab_python'] == build['python']
+          PY
+      - name: Retain stub scorecard and build provenance
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tier1-baseline-stub
+          path: |
+            /Volumes/Mrigesh SSD/eidos-v1/tmp/mini-eval-cli/scorecard.*
+            /Volumes/Mrigesh SSD/eidos-v1/evals-labs/ci-evals/ports.json
+            /Volumes/Mrigesh SSD/eidos-v1/evals-labs/ci-evals/venv/pilot-build.json
+          retention-days: 7
+          if-no-files-found: ignore
