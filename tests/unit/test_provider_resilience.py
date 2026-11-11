@@ -361,21 +361,38 @@ def test_transient_failure_with_a_retry_after_sets_the_next_retry_delay():
     json.dumps(err.details[0])
 
 
-def test_transient_failure_retry_delay_is_bounded_by_the_completion_boundary():
-    exc = ModelCallFailed("overloaded", failure=failure_of(529, retry_after=120.0))
+def test_transient_failure_retry_delay_never_passes_the_completion_boundary():
+    # R14 #5: a Retry-After that fits is honoured, but its jitter (up to a fifth: 28 s -> 33.6 s) cannot carry the wait
+    # past the boundary: the delay is clamped to the time left (30 s minus what the call took).
+    exc = ModelCallFailed("overloaded", failure=failure_of(529, retry_after=28.0))
     now = time.time()
-    err = model_failure_error(exc, completion(left=30, now=now))
-    delay = err.details[0]["next_retry_delay_seconds"]
-    assert 0 < delay <= 30.0 and delay > 25.0  # the exploration time left (30 s minus what the call took)
-    assert err.next_retry_delay == timedelta(seconds=delay)
+    for _ in range(20):
+        err = model_failure_error(exc, completion(left=30, now=now))
+        assert err.non_retryable is False and "retry_stopped" not in err.details[0]
+        delay = err.details[0]["next_retry_delay_seconds"]
+        assert 28.0 <= delay <= 30.0
+        assert err.next_retry_delay == timedelta(seconds=delay)
 
 
-def test_transient_failure_past_the_boundary_asks_for_no_delay():
+def test_transient_failure_whose_retry_after_does_not_fit_stops_retrying():
+    # R14 #5: retrying sooner than asked is pointless and waiting would spend the hold-back, so the retry stops
     exc = ModelCallFailed("overloaded", failure=failure_of(529, retry_after=120.0))
+    for left in (30, 0, -5):  # 120 s asked of 30 s, of none and of a boundary already past
+        err = model_failure_error(exc, completion(left=left, now=time.time()))
+        assert err.type == "MODEL_CALL_FAILED" and err.non_retryable is True
+        assert err.details[0]["retry_stopped"] == "retry-after-exceeds-exploration-time"
+        assert "next_retry_delay_seconds" not in err.details[0]
+        assert err.next_retry_delay is None  # nothing to wait for: the error is final
+        assert err.details[0]["kind"] == "transient" and err.details[0]["retry_after_seconds"] == 120.0
+        json.dumps(err.details[0])
+
+
+def test_transient_failure_without_a_retry_after_past_the_boundary_is_left_to_the_schedule_bound():
+    # nothing asked for, nothing to not fit: Temporal's backoff and the turn's schedule-to-close bound decide
+    exc = ModelCallFailed("connection reset", failure=failure_of(None, retry_after=None))
     err = model_failure_error(exc, completion(left=-5, now=time.time()))
-    assert err.details[0]["next_retry_delay_seconds"] == 0.0
-    assert err.next_retry_delay is None  # no override: the turn's schedule-to-close bound then ends it as a deadline
-    assert err.non_retryable is False
+    assert err.non_retryable is False and err.next_retry_delay is None
+    assert "next_retry_delay_seconds" not in err.details[0] and "retry_stopped" not in err.details[0]
 
 
 def test_transient_failure_without_a_retry_after_leaves_temporals_backoff():
@@ -610,7 +627,7 @@ def test_decide_quota_failure_raises_the_typed_non_retryable_error_and_records_t
 def test_decide_transient_failure_carries_the_retry_after_bounded_by_the_boundary(world, monkeypatch):
     now = time.time()
     world.turn["spec"]["completion"] = completion(left=30, now=now)
-    failure = provider_failure(overloaded_error({"retry-after": "120"}), True)
+    failure = provider_failure(overloaded_error({"retry-after": "28"}), True)  # fits; its jitter may not
     exc = ModelCallFailed("overloaded", failure=failure, possible_usage={"calls": 1})
     err = failed_decide(decide_with(world, monkeypatch, FailingRuntime(exc)))
     assert err.type == "MODEL_CALL_FAILED" and err.non_retryable is False
@@ -618,10 +635,10 @@ def test_decide_transient_failure_carries_the_retry_after_bounded_by_the_boundar
     assert err.next_retry_delay == timedelta(seconds=delay)
     boundary_left = world.turn["spec"]["completion"]["deadline_unix"] \
         - world.turn["spec"]["completion"]["conclude_threshold_seconds"] - now
-    assert 0 < delay <= boundary_left + 0.001  # never later than the start of the conclusion's reserve (3-decimal rounding)
+    assert 28.0 <= delay <= boundary_left + 0.001  # never later than the start of the conclusion's reserve (3-decimal rounding)
     usage = world.payloads["record_model_usage"][0]["usage"]
     assert usage["uncertain"] is True and usage["attempt"] == ATTEMPT
-    assert usage["failure"]["kind"] == "transient" and usage["failure"]["retry_after_seconds"] == 120.0
+    assert usage["failure"]["kind"] == "transient" and usage["failure"]["retry_after_seconds"] == 28.0
     assert usage["failure"]["next_retry_delay_seconds"] == delay  # the record says what the retry waited for
 
 
@@ -632,12 +649,17 @@ def test_decide_transient_failure_without_a_completion_waits_at_least_the_retry_
     assert 7.0 <= delay <= 8.4 and err.next_retry_delay == timedelta(seconds=delay)
 
 
-def test_decide_transient_failure_past_the_boundary_records_zero_delay_and_sets_no_override(world, monkeypatch):
+def test_decide_transient_failure_past_the_boundary_stops_the_retry_and_records_why(world, monkeypatch):
     world.turn["spec"]["completion"] = completion(left=-10, now=time.time())
     exc = ModelCallFailed("overloaded", failure=provider_failure(overloaded_error({"retry-after": "30"}), True))
     err = failed_decide(decide_with(world, monkeypatch, FailingRuntime(exc)))
-    assert err.details[0]["next_retry_delay_seconds"] == 0.0 and err.next_retry_delay is None
-    assert world.payloads["record_model_usage"][0]["usage"]["failure"]["next_retry_delay_seconds"] == 0.0
+    assert err.type == "MODEL_CALL_FAILED" and err.non_retryable is True and err.next_retry_delay is None
+    assert err.details[0]["retry_stopped"] == "retry-after-exceeds-exploration-time"
+    assert "next_retry_delay_seconds" not in err.details[0]
+    usage = world.payloads["record_model_usage"][0]["usage"]  # the failed attempt is still recorded, with the reason
+    assert usage["uncertain"] is True and usage["failure"] == err.details[0]
+    assert usage["failure"]["retry_stopped"] == "retry-after-exceeds-exploration-time"
+    assert "next_retry_delay_seconds" not in usage["failure"]
 
 
 def test_decide_permanent_failure_is_non_retryable_and_still_recorded(world, monkeypatch):
@@ -760,3 +782,18 @@ def test_turn_retry_delay_is_never_negative():
     assert turn_retry_delay(60, retry_failure(30), completion(left=-500, now=NOW), NOW, 1.0) == 0.0
     assert turn_retry_delay(-5, retry_failure(None), {}, NOW, 0.0) == 0.0
     assert turn_retry_delay(0, retry_failure(None), {}, NOW, 0.5) == 0.0
+
+
+def test_a_retry_stopped_for_exploration_time_is_retryable_at_the_turn_level():
+    # R14 #5: the decide activity stops retrying (non-retryable) when the provider's delay cannot fit before the
+    # exploration deadline; the coordinator still retries the turn, its backoff bounded by that deadline, so the next
+    # turn begins in the finalize phase instead of asking an operator.
+    cause = ApplicationError("x", {"kind": "transient", "status": 429, "retry_after_seconds": 200,
+                                   "retry_stopped": "retry-after-exceeds-exploration-time"},
+                             type="MODEL_CALL_FAILED", non_retryable=True)
+    f = turn_failure(activity_error(cause, RetryState.NON_RETRYABLE_FAILURE))
+    assert f["retryable"] is True and f["retry_stopped"] == "retry-after-exceeds-exploration-time"
+    now = 1_000_000.0
+    completion = {"deadline_unix": now + 1000, "conclude_threshold_seconds": 100, "conclude_now": False,
+                  "exploration_deadline_unix": now + 10}
+    assert 0.0 <= turn_retry_delay(60, f, completion, now, 0.5) <= 10.0

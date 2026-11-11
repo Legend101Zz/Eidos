@@ -23,6 +23,7 @@ from eidos.investigator.context import (
     MAX_CATALOG,
     MAX_JOBS,
     POLICY_V1,
+    POLICY_V2,
     STDERR_TAIL_CHARS,
     TOOL_GUIDE,
     pack,
@@ -269,7 +270,10 @@ def make_heavy_view():
     jobs = [make_job(0, purpose="reproduction", status="succeeded", receipt={"metrics": {"accuracy": 0.61}})]
     jobs += [failed_job(i) for i in range(1, 4)]
     jobs += [make_job(100 + i, config=bulky, purpose="open-search") for i in range(36)]
-    return make_view(jobs, environment_details={"lab": capability_summary(env)}, pinned_notes=pinned_notes_lock())
+    # R14 #7: the baseline is designated explicitly (a "baseline" note), never guessed from a job's purpose
+    notes = pinned_notes_lock() + [{"id": "note_base", "kind": "baseline", "text": "baseline job_0000",
+                                    "evidence_refs": ["job_0000"]}]
+    return make_view(jobs, environment_details={"lab": capability_summary(env)}, pinned_notes=notes)
 
 
 # Room for the whole tool guide plus the pinned facts; anything smaller only exercises the last guard.
@@ -365,9 +369,18 @@ def test_jobs_beyond_the_window_are_omitted_even_with_room():
 
 
 def test_baseline_fact_is_the_reproduction_job_with_its_metrics():
-    out = pack(make_view([make_job(1, purpose="reproduction", receipt={"metrics": {"accuracy": 0.5}}), make_job(2)]), [])
+    # context-policy/2 (kept for replay) guessed the baseline from a reproduction-purpose job
+    out = pack(make_view([make_job(1, purpose="reproduction", receipt={"metrics": {"accuracy": 0.5}}), make_job(2)]), [],
+               policy=POLICY_V2)
     line = line_starting(out["text"], "- Baseline:")
     assert "job job_0001" in line and "c@1" in line and "environment lab" in line and '"accuracy": 0.5' in line
+
+
+def test_v3_never_takes_a_reproduction_job_for_the_baseline():
+    # R14 #7: a reproduction may reproduce a candidate; without a recorded or designated baseline there is none
+    out = pack(make_view([make_job(1, purpose="reproduction", receipt={"metrics": {"accuracy": 0.5}}), make_job(2)]), [])
+    assert "- Baseline: none recorded yet" in out["text"]
+    assert "job job_0001" not in line_starting(out["text"], "- Baseline:")
 
 
 def test_baseline_fact_says_so_when_there_is_no_baseline():
@@ -387,7 +400,7 @@ def test_baseline_fact_includes_the_job_that_scored_it():
     base = make_job(1, purpose="reproduction", receipt={"metrics": {"loss": 1.0}},
                     outputs=[{"slot": "preds", "artifact_id": "art_preds", "role": "output", "schema": "p/1"}])
     scorer = make_job(2, inputs={"predictions": "art_preds"}, receipt={"metrics": {"accuracy": 0.8}})
-    line = line_starting(pack(make_view([base, scorer]), [])["text"], "- Baseline:")
+    line = line_starting(pack(make_view([base, scorer]), [], policy=POLICY_V2)["text"], "- Baseline:")
     assert "scored by job_0002" in line and '"accuracy": 0.8' in line
 
 

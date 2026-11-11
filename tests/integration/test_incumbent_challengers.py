@@ -40,7 +40,12 @@ from eidos.investigator.context import pack
 pytestmark = pytest.mark.pg
 
 COMMAND_REF = "eidos.project.command"
-RULE = {"metric": "accuracy", "split": "validation", "direction": "higher_is_better"}
+SELECTION_DATA = {"config": {"split": "validation"}}
+# R14 #2: the rule names the scorer component and the selection data it reads before any result is known. The default
+# scorer is the trial itself (its receipt carries the metric); SCORER_RULE scores through the scorer component.
+RULE = {"metric": "accuracy", "split": "validation", "direction": "higher_is_better", "scorer": "proj.trial",
+        "data": SELECTION_DATA}
+SCORER_RULE = {**RULE, "scorer": "proj.scorer"}
 LIMITS = {"model_tokens": 1e6, "compute_seconds": 1e6, "trials": 1000}
 
 COMMAND = {"id": COMMAND_REF, "release": "1.0.0", "implements": "project-command/1", "kind": "artifact-op",
@@ -65,7 +70,7 @@ def rule_text(**override) -> str:
 class Scene:
     """One project with a project command, a trial and a scorer component, a charter, and shorthands for the lab."""
 
-    def __init__(self, lab):
+    def __init__(self, lab, *, held_out: dict | None = None):
         self.lab = lab
         self.pid = f"p{uuid.uuid4().hex[:8]}"
         lab.cmd(lab.admin, "create_project", {"project_id": self.pid, "budgets": {"compute_seconds": 1e7, "trials": 1000}})
@@ -74,8 +79,9 @@ class Scene:
         self.trial = _publish(lab, self.pid, TRIAL, CODE)["component_ref"]
         self.infer = _publish(lab, self.pid, INFER, CODE)["component_ref"]
         self.scorer = _publish(lab, self.pid, SCORER, CODE)["component_ref"]
-        lab.cmd(lab.admin, "commit_study_charter", {"charter": {"study_id": f"s{self.pid}", "question": "q",
-                                                                "exploration_only": True}}, project=self.pid)
+        lab.cmd(lab.admin, "commit_study_charter", {"charter": {
+            "study_id": f"s{self.pid}", "question": "q", "exploration_only": True,
+            **({"held_out": held_out} if held_out else {})}}, project=self.pid)
         self.launcher = lab.principal(f"launcher-{self.pid}", ["launcher"], [self.pid])
         self.wf = lab.principal(f"wf-{self.pid}", ["workflow"], [self.pid])
         self.n = 0
@@ -96,13 +102,18 @@ class Scene:
     # -- jobs, through the launcher
     def job(self, inv: str | None, *, ref: str | None = None, purpose: str = "open-search", metrics: dict | None = None,
             inputs: dict | None = None, status: str = "succeeded", wall_seconds: int = 60,
-            config: dict | None = None) -> str:
+            config: dict | None = None, finish: bool = True) -> str:
         """Admit a run of ``ref`` (the trial component by default) and finish it through the launcher: it publishes one
-        output and reports ``metrics`` in its receipt. Returns the job id."""
+        output and reports ``metrics`` in its receipt. Returns the job id. The job's configuration names the validation
+        split unless ``config`` says otherwise (the default selection data of RULE). ``finish=False`` leaves the job
+        admitted: a challenger still running."""
         self.n += 1
         job = self.cmd("run_component", {"component_ref": ref or self.trial, "environment": "lab", "purpose": purpose,
                                          "inputs": inputs or {}, "wall_seconds": wall_seconds,
-                                         "config": config or {}, **({"investigation_id": inv} if inv else {})})["job_id"]
+                                         "config": {"split": "validation", **(config or {})},
+                                         **({"investigation_id": inv} if inv else {})})["job_id"]
+        if not finish:
+            return job
         started = self.lab.cmd(self.launcher, "start_attempt", {"job_id": job}, project=self.pid)["result"]
         attempt = {"job_id": job, "attempt_id": started["attempt_id"], "epoch": started["epoch"]}
         if status == "succeeded":
@@ -245,7 +256,11 @@ def test_a_lock_cannot_change_the_recorded_rule(scene):
 @pytest.mark.parametrize("bad", [
     pytest.param({"split": "test"}, id="test-split"), pytest.param({"split": "held-out"}, id="held-out-split"),
     pytest.param({"direction": "sideways"}, id="direction"), pytest.param({"metric": ""}, id="no-metric"),
-    pytest.param({"max_rounds": -1}, id="negative-rounds")])
+    pytest.param({"max_rounds": -1}, id="negative-rounds"), pytest.param({"scorer": None}, id="no-scorer"),
+    pytest.param({"scorer": " "}, id="blank-scorer"), pytest.param({"data": None}, id="no-data"),
+    pytest.param({"data": {}}, id="empty-data"), pytest.param({"data": {"config": {}}}, id="empty-config-data"),
+    pytest.param({"data": {"labels": "x"}}, id="unknown-data-key"),
+    pytest.param({"reproduce_within": -0.1}, id="negative-tolerance")])
 def test_an_invalid_selection_rule_is_refused_and_records_no_rule(scene, bad):
     inv = scene.investigation()
     with pytest.raises(Invalid):
@@ -288,8 +303,24 @@ def test_the_first_lock_reads_its_evidence_from_the_scorer_that_read_its_outputs
     inv = scene.investigation()
     job = scene.job(inv)  # the trial itself reports no metric
     scorer = scene.scored(inv, job, {"accuracy": 0.82})
-    out = scene.lock(inv, job, selection=RULE)
+    out = scene.lock(inv, job, selection=SCORER_RULE)
     assert out["incumbent"]["evidence"] == {"metric": "accuracy", "split": "validation", "value": 0.82, "scored_by": scorer}
+
+
+def test_a_scorers_receipt_is_not_evidence_when_the_rule_names_another_scorer(scene):
+    inv = scene.investigation()
+    job = scene.job(inv)
+    scene.scored(inv, job, {"accuracy": 0.82})  # the rule's scorer is the trial itself, which reported nothing
+    assert scene.lock(inv, job, selection=RULE)["incumbent"]["evidence"] is None
+
+
+def test_a_scorer_ref_with_a_release_matches_that_release_only(scene):
+    inv = scene.investigation()
+    job = scene.job(inv)
+    scene.scored(inv, job, {"accuracy": 0.82})
+    other_release = scene.scorer.split("@")[0] + "@9.9.9"
+    assert "@" in scene.scorer and scene.lock(inv, job, selection={**RULE, "scorer": other_release})["incumbent"][
+        "evidence"] is None
 
 
 def test_evidence_is_never_the_number_the_model_typed(scene):
@@ -299,13 +330,26 @@ def test_evidence_is_never_the_number_the_model_typed(scene):
     assert out["incumbent"]["evidence"]["value"] == 0.7
 
 
-def test_a_first_lock_with_no_selection_rule_records_no_evidence(scene):
+def test_a_first_lock_with_no_selection_rule_is_refused_and_records_nothing(scene):
+    """R14: the rule comes first. A lock that names a job without any recorded rule (a prior note or its own
+    ``selection``) is refused: there would be no way to say which result selected it."""
     inv = scene.investigation()
-    out = scene.lock(inv, scene.accuracy_job(inv, 0.7))
-    assert out["incumbent"] == {"version": 1, "basis": "first-lock", "evidence": None}
+    with pytest.raises(Invalid) as caught:
+        scene.lock(inv, scene.accuracy_job(inv, 0.7))
+    assert "selection rule" in refusal(caught) and "recorded first" in refusal(caught)
+    assert scene.notes(inv) == [] and scene.events(inv, "incumbent.changed") == []
+    assert scene.locked_job(inv) is None
 
 
-def test_a_lock_that_names_no_job_is_recorded_as_before_with_no_incumbent(scene):
+def test_a_lock_that_carries_the_rule_records_it_and_the_first_lock_is_accepted(scene):
+    inv = scene.investigation()
+    job = scene.accuracy_job(inv, 0.7)
+    scene.lock(inv, job, selection=RULE)
+    assert scene.locked_job(inv) == job
+    assert len(scene.notes(inv, "candidate_lock")) == 1
+
+
+def test_a_lock_that_names_no_job_is_recorded_as_before_with_no_incumbent(scene):  # even without a rule
     inv = scene.investigation()
     out = scene.note(inv, "candidate_lock", "the recipe with the deeper tree")
     assert "incumbent" not in out and scene.events(inv, "incumbent.changed") == []
@@ -322,12 +366,14 @@ DIRECTIONS = [
 @pytest.mark.parametrize(("direction", "metric", "incumbent", "worse", "better"), DIRECTIONS)
 def test_a_worse_challenger_is_refused_and_the_incumbent_stays(scene, direction, metric, incumbent, worse, better):
     inv = scene.investigation()
+    rule = {**RULE, "metric": metric, "direction": direction}
+    scene.rule(inv, metric=metric, direction=direction)
     a = scene.accuracy_job(inv, incumbent, metric=metric)
-    scene.lock(inv, a, selection={"metric": metric, "split": "validation", "direction": direction})
+    scene.lock(inv, a)
     for value in (worse, incumbent):  # worse, and equal: a tie keeps the incumbent
         challenger = scene.accuracy_job(inv, value, metric=metric)
         with pytest.raises(Invalid) as caught:
-            scene.lock(inv, challenger, selection={"metric": metric, "split": "validation", "direction": direction})
+            scene.lock(inv, challenger, selection=rule)  # restating the recorded rule is not a change
         assert "does not beat the incumbent" in refusal(caught)
         details = caught.value.details
         assert details["challenger"]["value"] == value and details["incumbent"]["job_id"] == a
@@ -340,9 +386,9 @@ def test_a_worse_challenger_is_refused_and_the_incumbent_stays(scene, direction,
 def test_a_better_challenger_becomes_incumbent_version_2_with_the_previous_one_named(
         scene, direction, metric, incumbent, worse, better):
     inv = scene.investigation()
-    rule = {"metric": metric, "split": "validation", "direction": direction}
+    scene.rule(inv, metric=metric, direction=direction)
     a = scene.accuracy_job(inv, incumbent, metric=metric)
-    first = scene.lock(inv, a, selection=rule)
+    first = scene.lock(inv, a)
     c = scene.accuracy_job(inv, better, metric=metric)
     out = scene.lock(inv, c)  # the rule is already fixed: the lock need not restate it
     assert out["incumbent"]["version"] == 2 and out["incumbent"]["basis"] == "beats-incumbent"
@@ -361,7 +407,7 @@ def test_a_better_challenger_becomes_incumbent_version_2_with_the_previous_one_n
 def test_the_incumbent_is_the_latest_valid_lock_through_several_changes(scene):
     inv = scene.investigation()
     scene.rule(inv)
-    a, b, c, d = (scene.accuracy_job(inv, v) for v in (0.60, 0.70, 0.65, 0.80))
+    a, b, c, d = (scene.accuracy_job(inv, v) for v in (0.60, 0.70, 0.65, 0.80))  # all admitted after the rule
     scene.lock(inv, a)
     assert scene.lock(inv, b)["incumbent"]["version"] == 2
     with pytest.raises(Invalid):  # c beats a but not the incumbent b
@@ -391,7 +437,7 @@ def test_a_challenger_with_no_recorded_metric_is_refused(scene):
     unscored = scene.job(inv)
     with pytest.raises(Invalid) as caught:
         scene.lock(inv, unscored)
-    assert "no recorded" in refusal(caught) and "accuracy" in refusal(caught)
+    assert "no recorded" in refusal(caught) and "accuracy" in refusal(caught) and "proj.trial" in refusal(caught)
     assert caught.value.details["job_id"] == unscored and caught.value.details["incumbent"]["job_id"] == a
     assert scene.locked_job(inv) == a
 
@@ -410,8 +456,10 @@ def test_a_challenger_that_reports_another_metric_or_failed_has_no_recorded_evid
 
 def test_a_challenger_scored_by_a_job_that_read_its_outputs_has_recorded_evidence(scene):
     inv = scene.investigation()
-    a = scene.accuracy_job(inv, 0.7)
-    scene.lock(inv, a, selection=RULE)
+    scene.rule(inv, scorer="proj.scorer")
+    a = scene.job(inv)
+    scene.scored(inv, a, {"accuracy": 0.7})
+    scene.lock(inv, a)
     challenger = scene.job(inv)
     with pytest.raises(Invalid):
         scene.lock(inv, challenger)  # not scored yet
@@ -421,32 +469,65 @@ def test_a_challenger_scored_by_a_job_that_read_its_outputs_has_recorded_evidenc
 
 
 # =====================================================================================================================
-# 6. without a selection rule a re-lock is allowed, recorded as unverified
+# 6. the rule comes first: no lock without it, no re-lock under a rule chosen after the results (R14 #1)
 # =====================================================================================================================
-def test_without_a_selection_rule_a_relock_is_allowed_and_recorded_as_unverified(scene):
-    inv = scene.investigation()
-    a = scene.accuracy_job(inv, 0.9)
-    worse = scene.accuracy_job(inv, 0.5)
-    scene.lock(inv, a)
-    out = scene.lock(inv, worse)  # nothing says it must beat the incumbent
-    assert out["incumbent"]["version"] == 2 and out["incumbent"]["basis"] == "unverified-no-selection-rule"
-    assert scene.locked_job(inv) == worse
-    body = next(n for n in scene.notes(inv, "candidate_lock") if n["id"] == out["note_id"])["body"]["incumbent"]
-    assert body["basis"] == "unverified-no-selection-rule" and body["previous"]["job_id"] == a
-    assert body["rule"] is None
-    assert [e["body"]["basis"] for e in scene.events(inv, "incumbent.changed")] == ["first-lock",
-                                                                                   "unverified-no-selection-rule"]
+def _legacy_lock(scene, inv: str, job: str) -> str:
+    """A lock recorded before R14: it names a job, carries no rule and no incumbent record."""
+    nid = f"note_legacy{uuid.uuid4().hex[:6]}"
+    scene.put("note", nid, {"investigation_id": inv, "kind": "candidate_lock", "text": json.dumps({"job_id": job}),
+                            "status": "open"}, status="open", parent_id=inv)
+    return nid
 
 
-def test_a_rule_recorded_after_unverified_locks_binds_every_later_change(scene):
+def test_without_a_selection_rule_the_first_lock_is_refused_so_nothing_is_there_to_relock(scene):
+    """The old behaviour (a re-lock without a rule allowed and recorded as "unverified-no-selection-rule") is gone: a
+    lock that names a job needs the rule recorded first, so a worse job cannot replace a better one by being named."""
     inv = scene.investigation()
+    a, worse = scene.accuracy_job(inv, 0.9), scene.accuracy_job(inv, 0.5)
+    for job in (a, worse):
+        with pytest.raises(Invalid) as caught:
+            scene.lock(inv, job)
+        assert "selection rule" in refusal(caught) and "recorded first" in refusal(caught)
+    assert scene.notes(inv) == [] and scene.locked_job(inv) is None and scene.events(inv, "incumbent.changed") == []
+
+
+def test_a_relock_without_a_recorded_rule_is_refused_whatever_the_challenger_scored(scene):
+    """A lock that predates the rule requirement (it names a job and records no rule) cannot be re-locked by a better
+    challenger either: nothing was fixed before the results."""
+    inv = scene.investigation()
+    a, better = scene.accuracy_job(inv, 0.5), scene.accuracy_job(inv, 0.9)
+    legacy = _legacy_lock(scene, inv, a)
+    with pytest.raises(Invalid) as caught:
+        scene.lock(inv, better)
+    assert "selection rule" in refusal(caught)
+    assert [n["id"] for n in scene.notes(inv, "candidate_lock")] == [legacy] and scene.events(inv, "incumbent.changed") == []
+
+
+def test_a_rule_given_first_with_a_relock_is_refused(scene):
+    """The rule must exist before any lock. A rule that arrives with a re-lock was chosen when the results were visible,
+    even if it would let the challenger win."""
+    inv = scene.investigation()
+    a, better = scene.accuracy_job(inv, 0.5), scene.accuracy_job(inv, 0.9)
+    legacy = _legacy_lock(scene, inv, a)
+    with pytest.raises(Invalid) as caught:
+        scene.lock(inv, better, selection=RULE)
+    assert "before the challenger round" in refusal(caught) and caught.value.details["incumbent"] == a
+    assert [n["id"] for n in scene.notes(inv, "candidate_lock")] == [legacy]
+    assert scene.notes(inv, "selection_rule") == [] and scene.events(inv, "incumbent.changed") == []
+
+
+def test_a_rule_recorded_after_a_lock_that_names_no_job_binds_every_later_change(scene):
+    """A lock that names no job fixes nothing; a rule recorded after it comes before any lock that names a job, so it
+    binds every later change (the old test recorded the rule after unverified locks)."""
+    inv = scene.investigation()
+    scene.note(inv, "candidate_lock", "the recipe with the deeper tree")
+    scene.rule(inv)
     a, b = scene.accuracy_job(inv, 0.6), scene.accuracy_job(inv, 0.7)
     scene.lock(inv, a)
-    scene.rule(inv)
-    out = scene.lock(inv, b)  # the incumbent's own evidence is read from its job: 0.7 beats 0.6
+    out = scene.lock(inv, b)
     assert out["incumbent"]["basis"] == "beats-incumbent"
     body = next(n for n in scene.notes(inv, "candidate_lock") if n["id"] == out["note_id"])["body"]["incumbent"]
-    assert body["previous"]["job_id"] == a and body["previous"]["evidence"]["value"] == 0.6
+    assert body["previous"]["job_id"] == a and body["previous"]["evidence"]["value"] == 0.6 and body["rule"] == RULE
     with pytest.raises(Invalid):
         scene.lock(inv, scene.accuracy_job(inv, 0.65))
 
@@ -481,8 +562,9 @@ def test_after_a_plan_is_frozen_or_an_assessment_requested_no_lock_names_another
     assert scene.locked_job(inv) == a and len(scene.events(inv, "incumbent.changed")) == 1
 
 
-def test_the_freeze_holds_with_no_selection_rule_too(scene):
+def test_the_freeze_holds_with_the_rule_recorded_as_a_note_too(scene):
     inv = scene.investigation()
+    scene.rule(inv)
     a, b = scene.accuracy_job(inv, 0.7), scene.accuracy_job(inv, 0.9)
     scene.lock(inv, a)
     _plan(scene, inv, "frozen")
@@ -494,16 +576,18 @@ def test_the_freeze_holds_with_no_selection_rule_too(scene):
 @pytest.mark.parametrize(("write", "status"), NOT_FREEZING)
 def test_a_draft_or_cancelled_plan_or_a_refused_request_does_not_freeze_the_selection(scene, write, status):
     inv = scene.investigation()
-    a, b = scene.accuracy_job(inv, 0.7), scene.accuracy_job(inv, 0.9)
+    a = scene.accuracy_job(inv, 0.7)
     scene.lock(inv, a, selection=RULE)
+    b = scene.accuracy_job(inv, 0.9)  # a challenger of a round after the rule
     write(scene, inv, status)
     assert scene.lock(inv, b)["incumbent"]["version"] == 2
 
 
 def test_another_investigations_frozen_plan_does_not_freeze_this_one(scene):
     inv, other = scene.investigation(), scene.investigation()
-    a, b = scene.accuracy_job(inv, 0.7), scene.accuracy_job(inv, 0.9)
+    a = scene.accuracy_job(inv, 0.7)
     scene.lock(inv, a, selection=RULE)
+    b = scene.accuracy_job(inv, 0.9)
     _plan(scene, other, "frozen")
     assert scene.lock(inv, b)["incumbent"]["version"] == 2
 
@@ -523,7 +607,8 @@ def test_a_launched_assess_candidate_freezes_the_selection(lab, tmp_path):
     flow = AssessScene(lab, tmp_path)
     baseline, candidate = flow.job(BASELINE_RECIPE), flow.job(CANDIDATE_RECIPE)
     inv = flow.investigation()
-    flow.lock(inv, candidate)
+    flow.cmd("record_note", {"investigation_id": inv, "kind": "candidate_lock",
+                             "text": json.dumps({"job_id": candidate, "selection": RULE})})
     receipt = flow.assess_candidate(flow.request(baseline, candidate, investigation_id=inv))
     assert receipt["status"] == "launched", receipt
     with pytest.raises(Invalid) as caught:
@@ -571,15 +656,22 @@ def _source_artifact(scene) -> str:
                                            "media_type": "application/json"})["artifact_id"]
 
 
-def test_a_reproduction_job_is_the_baseline_when_none_was_recorded(scene):
+def test_a_reproduction_job_is_not_the_baseline_whatever_its_purpose(scene):
+    """R14 #7: purpose "reproduction" also reproduces candidates, so it never makes a job the baseline; only the
+    project's own command (no authored source) or a job a "baseline" note names does."""
     inv = scene.investigation()
     scene.job(inv, purpose="hypothesis-test", metrics={"accuracy": 0.5})
     with pytest.raises(NotFound):
         _baseline(scene, inv)
-    repro = scene.job(inv, purpose="reproduction", metrics={"accuracy": 0.6})
+    scene.job(inv, purpose="reproduction", metrics={"accuracy": 0.6})
+    scene.job(inv, ref=scene.command, purpose="reproduction", inputs={"source": _source_artifact(scene)})
+    with pytest.raises(NotFound):
+        _baseline(scene, inv)
+    assert scene.events(inv, "baseline.recorded") == []
+    # the project's own command is the baseline even when its job's purpose is reproduction
+    base = scene.job(inv, ref=scene.command, purpose="reproduction", metrics={"accuracy": 0.6})
     rec = _baseline(scene, inv)
-    assert rec["body"]["job_id"] == repro and rec["body"]["purpose"] == "reproduction"
-    assert rec["body"]["component"] == scene.trial
+    assert rec["body"]["job_id"] == base and rec["body"]["basis"] == "automatic"
 
 
 def test_a_job_with_metrics_that_read_the_baseline_outputs_is_recorded_as_its_scorer(scene):
@@ -667,7 +759,7 @@ def test_begin_turn_records_the_baseline_phase_before_any_lock_and_the_explore_p
     state = first["spec"]["exploration"]
     assert state["phase"] == "baseline" and state["stop"] is None and state["incumbent"] is None
     assert state["versions"] == 0 and state["rounds"] == 0 and state["rule"] is None
-    assert state["policy"] == "exploration-policy/1" and state["patience_rounds"] == 3
+    assert state["policy"] == "exploration-policy/2" and state["patience_rounds"] == 3
     assert scene.q("get_turn", {"turn_id": first["turn_id"]})["spec"]["exploration"] == state  # persisted with the turn
     scene.finish_turn(first["turn_id"])
 

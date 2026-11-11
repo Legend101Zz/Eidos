@@ -111,3 +111,41 @@ retry owner. Retries never relax a success rule or the independent assessment.
   replay under their own policies.
 - Not addressed here: the baseline error-analysis component (recommendation 2), recipe templates (3) and the external
   MCP workflow (4). The study prompt for arm 4 is not changed by this ADR (the running pilot keeps its prompt).
+
+## Addendum R14: selection is prospective and evidence-bound
+
+Review R14 found seven ways the first implementation let selection depend on what was seen after the fact, or let
+exploration spend the reproduction hold-back. Each is closed as follows.
+
+1. **The rule comes before the challengers.** A `candidate_lock` that names a job is refused without a recorded rule
+   (a `selection_rule` note, or the first lock's `selection`); a rule first given with a re-lock is refused. A re-lock
+   needs recorded selection evidence for **both** the incumbent and the challenger under the rule, and the challenger
+   must have been admitted after the rule was recorded. The bases `unverified-no-selection-rule` and
+   `incumbent-unscored` no longer exist.
+2. **Evidence is bound to prospective provenance.** A rule now names its `scorer` (a component ref; without a release it
+   matches any release) and its selection `data` (`inputs` {port: artifact} and/or `config` {key: value}). Only a
+   receipt of that scorer, run on exactly that data, reading no charter-attested held-out artifact, is evidence; the
+   first such job of the candidate's lineage (else the job itself) supplies it. A rule naming attested held-out data is
+   refused, and a lock cannot nominate `scored_by` (a nomination that differs from the rule's evidence is refused).
+3. **Reproduced means evaluated.** The rule may declare `reproduce_within` (else the policy's
+   `reproduction_tolerance`, default 0.02, fixed when the investigation starts). A later run of the incumbent's recipe
+   under another seed reproduces it only when its own selection evidence is no worse than the incumbent's by more than
+   that; unscored or short attempts are recorded as such. A lock records the evaluation and is refused if it claims
+   `reproduced` without it; the conclusion records the incumbent with `reproduced` true only when it passed.
+4. **The hold-back cannot be spent by an open turn.** An exploratory turn's deadline and its activities end at the
+   exploration deadline (`completion.exploration_deadline_unix`, the start of the hold-back; `turn_boundary` honours
+   it). Between decisions, `accept_decision` recomputes the boundary (wall and model tokens) and refuses new
+   challengers once it is passed; `reserve_model_budget` refuses an exploratory reservation larger than the tokens left
+   before the hold-back; exploration stops (`token-holdback`) when one decision's envelope no longer fits.
+5. **Retries are bounded by the exploration deadline.** Activity and turn retries bound their delay by the exploration
+   deadline (never past the conclusion reserve). When the provider's Retry-After cannot fit, the activity stops
+   retrying (`retry_stopped`), and the turn retry waits at most until the exploration deadline, so the next turn begins
+   in the finalize phase rather than asking an operator.
+6. **Patience counts evaluated rounds only.** A challenger round counts as unsuccessful only once every challenger it
+   admitted is terminal and, if it succeeded, has selection evidence. Pending rounds may finish: in the finalize phase a
+   decision that scores a pending challenger's outputs is still accepted.
+7. **The baseline is explicit.** The baseline is the project command without authored source, or a job a `baseline`
+   note designates (recorded at once if it already succeeded). A `reproduction` purpose never makes a job the baseline,
+   and `context-policy/3` no longer guesses one.
+
+`exploration-policy/2` identifies these rules in the turn spec.

@@ -70,6 +70,12 @@ def turn_failure(exc: ActivityError) -> dict[str, Any]:
     hint = details[0] if details and isinstance(details[0], dict) else {}
     if hint.get("kind"):  # ADR 0023: the provider failure's class and its Retry-After, for the turn retry
         out["provider"] = {k: hint.get(k) for k in ("kind", "status", "retry_after_seconds")}
+    if hint.get("retry_stopped"):
+        # R14 #5: the decide activity stopped retrying because the provider's delay cannot fit before the exploration
+        # deadline. That is not a fault needing an operator: the turn retry waits until that deadline at most
+        # (turn_retry_delay) and the next turn begins in the finalize phase, which may use the hold-back.
+        out["retryable"] = True
+        out["retry_stopped"] = str(hint["retry_stopped"])
     return out
 
 
@@ -84,8 +90,9 @@ def turn_retry_delay(base_delay: float, failure: dict[str, Any], completion: dic
     if completion:
         # R14 #5: an exploratory turn's retry never waits into the reproduction hold-back; when the requested delay
         # cannot fit, the backoff ends at the exploration deadline and the next turn begins in the finalize phase.
-        boundary = float(completion["exploration_deadline_unix"]) if completion.get("exploration_deadline_unix") \
-            is not None else float(completion["deadline_unix"]) - float(completion["conclude_threshold_seconds"])
+        boundary = float(completion["deadline_unix"]) - float(completion["conclude_threshold_seconds"])
+        if completion.get("exploration_deadline_unix") is not None:
+            boundary = min(boundary, float(completion["exploration_deadline_unix"]))
         delay = min(delay, boundary - now)
     return max(0.0, delay)
 

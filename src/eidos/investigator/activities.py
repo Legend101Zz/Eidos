@@ -176,9 +176,10 @@ def retry_delay(failure: dict[str, Any], completion: dict[str, Any] | None, *, n
 def retry_boundary(completion: dict[str, Any]) -> float:
     """R14 #5: the time a retry may not wait past. For an exploratory turn the start of the reproduction hold-back
     (``exploration_deadline_unix``, set by begin_turn), else the start of the conclusion's reserve."""
+    reserve = float(completion["deadline_unix"]) - float(completion["conclude_threshold_seconds"])
     if completion.get("exploration_deadline_unix") is not None:
-        return float(completion["exploration_deadline_unix"])
-    return float(completion["deadline_unix"]) - float(completion["conclude_threshold_seconds"])
+        return min(float(completion["exploration_deadline_unix"]), reserve)
+    return reserve
 
 
 def retry_fits(failure: dict[str, Any], completion: dict[str, Any] | None, *, now: float | None = None) -> bool:

@@ -1,6 +1,10 @@
-"""The incumbent-and-challengers exploration policy (ADR 0023): the pure rules in ``eidos.domain.exploration`` and the
-context-policy/3 lines that present them. All pure: hand-built jobs, notes and views go in, decisions and prompts come
-out. No network, no model calls."""
+"""The incumbent-and-challengers exploration policy (ADR 0023, R14): the pure rules in ``eidos.domain.exploration`` and
+the context-policy/3 lines that present them. All pure: hand-built jobs, notes and views go in, decisions and prompts
+come out. No network, no model calls.
+
+Since R14 a selection rule names its ``scorer`` component and the selection ``data`` that scorer reads, and only a
+receipt that ran that scorer on that data is selection evidence; the R14 rules themselves (provenance, reproduction,
+evaluated rounds, hold-back) are in ``test_r14_exploration.py``."""
 
 from __future__ import annotations
 
@@ -33,8 +37,11 @@ from eidos.domain.exploration import (
 )
 from eidos.investigator.context import POLICY_ID, POLICY_V2, pack
 
-RULE = {"metric": "accuracy", "split": "validation", "direction": "higher_is_better"}
-LOWER_RULE = {"metric": "mse", "split": "validation", "direction": "lower_is_better"}
+SCORER = "eidos.project.score"  # a ref with no release matches any release of the component
+DATA = {"config": {"split": "validation"}}  # the selection data the scorer reads
+SELECTION = {"scorer": SCORER, "data": DATA}
+RULE = {"metric": "accuracy", "split": "validation", "direction": "higher_is_better", **SELECTION}
+LOWER_RULE = {"metric": "mse", "split": "validation", "direction": "lower_is_better", **SELECTION}
 
 
 # -- builders ------------------------------------------------------------------------------------------------------------
@@ -51,13 +58,23 @@ def job(jid, *, component="eidos.project.command@1", purpose="open-search", stat
             "error": None, "receipt": {"metrics": metrics} if metrics is not None else None}
 
 
+def scored(jid, accuracy=0.8, *, metrics=None, config=None, **kw):
+    """A job that is its own scorer: the rule's scorer component, run on the rule's selection data (split validation),
+    reporting ``accuracy`` (or ``metrics``). Its own receipt is the selection evidence for its recipe."""
+    return job(jid, component="eidos.project.score@1",
+               config={"seed": 1, "lr": 0.1, "split": "validation", **(config or {})},
+               metrics={"accuracy": accuracy} if metrics is None else metrics, **kw)
+
+
 def train_chain(prefix, *, seed=1, accuracy=0.8, lr=0.1):
-    """A train job -> an inference job reading its model -> a score job reading the predictions (the only one with metrics)."""
+    """A train job -> an inference job reading its model -> a score job reading the predictions (the only one with
+    metrics: the scorer, on the selection data)."""
     train = job(f"{prefix}_train", config={"seed": seed, "lr": lr})
     infer = job(f"{prefix}_infer", component="eidos.project.infer@1", inputs={"model": f"art_{prefix}_train"},
                 outputs={"predictions": f"art_{prefix}_pred"})
     score = job(f"{prefix}_score", component="eidos.project.score@1", purpose="measurement-development",
-                inputs={"predictions": f"art_{prefix}_pred"}, outputs={}, metrics={"classification-report/1:accuracy": accuracy})
+                config={"split": "validation"}, inputs={"predictions": f"art_{prefix}_pred"}, outputs={},
+                metrics={"classification-report/1:accuracy": accuracy})
     return [train, infer, score]
 
 
@@ -74,7 +91,7 @@ def rule_note(note_id, rule):
 
 def run_state(*, notes=None, jobs=None, round_log=None, note_turns=None, **over):
     kw = {"notes": [lock("note_1", "job_a", RULE)] if notes is None else notes,
-          "jobs": [job("job_a", metrics={"accuracy": 0.8})] if jobs is None else jobs,
+          "jobs": [scored("job_a", 0.8)] if jobs is None else jobs,
           "round_log": [] if round_log is None else round_log,
           "note_turns": {"note_1": 2} if note_turns is None else note_turns,
           "lock_job": candidate_lock_job_id}
@@ -83,8 +100,8 @@ def run_state(*, notes=None, jobs=None, round_log=None, note_turns=None, **over)
 
 
 def challengers(n):
-    """``n`` open-search challenger jobs (different learning rates) and the round log with one per turn, from turn 3."""
-    jobs = [job(f"job_c{i}", config={"seed": 1, "lr": 0.2 + i / 10}, metrics={"accuracy": 0.7}) for i in range(n)]
+    """``n`` scored open-search challenger jobs (different learning rates) and the round log with one per turn, from turn 3."""
+    jobs = [scored(f"job_c{i}", 0.7, config={"lr": 0.2 + i / 10}) for i in range(n)]
     log = [{"turn": 3 + i, "jobs": [f"job_c{i}"]} for i in range(n)]
     return jobs, log
 
@@ -106,20 +123,20 @@ def test_parse_rule_accepts_a_dict():
 
 
 def test_parse_rule_defaults_split_to_validation_and_direction_to_higher_is_better():
-    assert parse_rule({"metric": "accuracy"}) == RULE
+    assert parse_rule({"metric": "accuracy", **SELECTION}) == RULE
 
 
 def test_parse_rule_strips_the_metric_name():
-    assert parse_rule({"metric": "  accuracy "})["metric"] == "accuracy"
+    assert parse_rule({"metric": "  accuracy ", **SELECTION})["metric"] == "accuracy"
 
 
 def test_parse_rule_accepts_training_cv_and_lower_is_better():
-    rule = parse_rule({"metric": "mse", "split": "training-cv", "direction": "lower_is_better"})
+    rule = parse_rule({"metric": "mse", "split": "training-cv", "direction": "lower_is_better", **SELECTION})
     assert (rule["split"], rule["direction"]) == ("training-cv", "lower_is_better")
 
 
 def test_parse_rule_carries_a_numeric_ceiling_as_a_float_and_a_round_limit():
-    rule = parse_rule({"metric": "accuracy", "ceiling": 1, "max_rounds": 4})
+    rule = parse_rule({"metric": "accuracy", "ceiling": 1, "max_rounds": 4, **SELECTION})
     assert rule["ceiling"] == 1.0 and isinstance(rule["ceiling"], float)
     assert rule["max_rounds"] == 4
 
@@ -133,29 +150,29 @@ def test_parse_rule_rejects_a_missing_or_blank_metric(raw):
 @pytest.mark.parametrize("split", ["test", "held-out", "heldout", "", None])
 def test_parse_rule_rejects_a_held_out_or_unknown_split(split):
     with pytest.raises(RuleError, match="held-out"):
-        parse_rule({"metric": "accuracy", "split": split})
+        parse_rule({"metric": "accuracy", "split": split, **SELECTION})
 
 
 @pytest.mark.parametrize("direction", ["up", "higher", "maximize", "", None])
 def test_parse_rule_rejects_a_bad_direction(direction):
     with pytest.raises(RuleError, match="direction"):
-        parse_rule({"metric": "accuracy", "direction": direction})
+        parse_rule({"metric": "accuracy", "direction": direction, **SELECTION})
 
 
 @pytest.mark.parametrize("ceiling", ["high", "1.0", True, False, [1], float("nan"), float("inf")])
 def test_parse_rule_rejects_a_non_numeric_ceiling(ceiling):
     with pytest.raises(RuleError, match="ceiling"):
-        parse_rule({"metric": "accuracy", "ceiling": ceiling})
+        parse_rule({"metric": "accuracy", "ceiling": ceiling, **SELECTION})
 
 
 @pytest.mark.parametrize("max_rounds", [-1, True, False, 2.5, "3", [3]])
 def test_parse_rule_rejects_a_negative_or_non_integer_max_rounds(max_rounds):
     with pytest.raises(RuleError, match="max_rounds"):
-        parse_rule({"metric": "accuracy", "max_rounds": max_rounds})
+        parse_rule({"metric": "accuracy", "max_rounds": max_rounds, **SELECTION})
 
 
 def test_parse_rule_accepts_zero_max_rounds():
-    assert parse_rule({"metric": "accuracy", "max_rounds": 0})["max_rounds"] == 0
+    assert parse_rule({"metric": "accuracy", "max_rounds": 0, **SELECTION})["max_rounds"] == 0
 
 
 @pytest.mark.parametrize("raw", ["not json", "[1, 2]", "3", ["accuracy"], None])
@@ -187,12 +204,20 @@ def test_rule_from_notes_a_selection_rule_note_before_a_lock_selection_wins():
 
 
 def test_rule_from_notes_skips_an_invalid_rule_note():
-    bad = {"metric": "accuracy", "split": "test"}
+    bad = {**RULE, "split": "test"}
     assert rule_from_notes([rule_note("note_1", bad), rule_note("note_2", RULE)]) == (RULE, "note_2")
 
 
+def test_rule_from_notes_skips_a_rule_without_a_scorer_or_selection_data():
+    no_scorer = {k: v for k, v in RULE.items() if k != "scorer"}
+    no_data = {k: v for k, v in RULE.items() if k != "data"}
+    notes = [rule_note("note_1", no_scorer), lock("note_2", "job_a", no_data), rule_note("note_3", RULE)]
+    assert rule_from_notes(notes) == (RULE, "note_3")
+    assert rule_from_notes(notes[:2]) is None
+
+
 def test_rule_from_notes_skips_an_invalid_lock_selection():
-    bad = {"metric": "accuracy", "direction": "sideways"}
+    bad = {**RULE, "direction": "sideways"}
     assert rule_from_notes([lock("note_1", "job_a", bad), lock("note_2", "job_b", RULE)]) == (RULE, "note_2")
 
 
@@ -319,43 +344,63 @@ def test_selection_evidence_value_is_never_taken_from_note_text():
     assert st["incumbent"]["evidence"]["value"] == 0.8
 
 
-def test_selection_evidence_ignores_scored_by_outside_the_lineage():
-    jobs = [*train_chain("a", accuracy=0.8), job("job_x", inputs={"source": "art_z"}, metrics={"accuracy": 0.99})]
-    ev = selection_evidence(jobs, "a_train", RULE, scored_by="job_x")
+def test_selection_evidence_ignores_a_scorer_outside_the_lineage():
+    # a matching scorer on the right data, but it never read this candidate's outputs
+    jobs = [*train_chain("a", accuracy=0.8), scored("job_x", 0.99, inputs={"source": "art_z"})]
+    ev = selection_evidence(jobs, "a_train", RULE)
     assert (ev["value"], ev["scored_by"]) == (0.8, "a_score")
 
 
-def test_selection_evidence_honours_scored_by_inside_the_lineage():
+def test_selection_evidence_takes_the_first_matching_scorer_of_the_lineage_not_a_later_better_one():
     jobs = train_chain("a", accuracy=0.7)
-    jobs.append(job("a_score2", component="eidos.project.score@1", inputs={"predictions": "art_a_pred"},
-                    metrics={"accuracy": 0.9}))
-    assert selection_evidence(jobs, "a_train", RULE)["scored_by"] == "a_score"
-    assert selection_evidence(jobs, "a_train", RULE, scored_by="a_score2")["value"] == 0.9
+    jobs.append(job("a_score2", component="eidos.project.score@1", config={"split": "validation"},
+                    inputs={"predictions": "art_a_pred"}, metrics={"accuracy": 0.9}))
+    ev = selection_evidence(jobs, "a_train", RULE)
+    assert (ev["scored_by"], ev["value"]) == ("a_score", 0.7)
+
+
+def test_selection_evidence_has_no_way_to_nominate_a_scorer():
+    # R14 #2: the scorer is the rule's, fixed before any result; the model can no longer pick one by id
+    jobs = train_chain("a", accuracy=0.7)
+    with pytest.raises(TypeError):
+        selection_evidence(jobs, "a_train", RULE, scored_by="a_score")  # type: ignore[call-arg]
 
 
 def test_selection_evidence_falls_back_to_the_jobs_own_receipt():
-    ev = selection_evidence([job("job_a", metrics={"accuracy": 0.85})], "job_a", RULE)
+    ev = selection_evidence([scored("job_a", 0.85)], "job_a", RULE)
     assert ev == {"metric": "accuracy", "split": "validation", "value": 0.85, "scored_by": "job_a"}
 
 
 def test_selection_evidence_prefers_a_scorer_over_the_jobs_own_receipt():
     jobs = train_chain("a", accuracy=0.8)
-    jobs[0]["receipt"] = {"metrics": {"accuracy": 0.99}}  # e.g. a training-set number
+    jobs[0]["receipt"] = {"metrics": {"accuracy": 0.99}}  # e.g. a training-set number, from the training component
     assert selection_evidence(jobs, "a_train", RULE)["value"] == 0.8
 
 
+def test_selection_evidence_prefers_the_lineage_even_when_the_job_is_a_scorer_itself():
+    jobs = [scored("a_train", 0.99), job("a_inf", component="eidos.project.infer@1", inputs={"model": "art_a_train"},
+                                          outputs={"predictions": "art_a_pred"}),
+            scored("a_score", 0.8, inputs={"predictions": "art_a_pred"}, outputs={})]
+    assert selection_evidence(jobs, "a_train", RULE)["scored_by"] == "a_score"
+
+
 def test_selection_evidence_is_none_when_the_metric_is_absent():
-    assert selection_evidence([job("job_a", metrics={"loss": 0.3})], "job_a", RULE) is None
+    assert selection_evidence([scored("job_a", metrics={"loss": 0.3})], "job_a", RULE) is None
 
 
 def test_selection_evidence_is_none_for_an_unknown_job_or_a_failed_one():
-    assert selection_evidence([job("job_a", metrics={"accuracy": 0.8})], "job_missing", RULE) is None
-    assert selection_evidence([job("job_a", status="failed", metrics={"accuracy": 0.8})], "job_a", RULE) is None
+    assert selection_evidence([scored("job_a", 0.8)], "job_missing", RULE) is None
+    assert selection_evidence([scored("job_a", 0.8, status="failed")], "job_a", RULE) is None
 
 
 def test_selection_evidence_carries_the_rules_split():
     rule = {**RULE, "split": "training-cv"}
-    assert selection_evidence([job("job_a", metrics={"accuracy": 0.8})], "job_a", rule)["split"] == "training-cv"
+    assert selection_evidence([scored("job_a", 0.8)], "job_a", rule)["split"] == "training-cv"
+
+
+def test_selection_evidence_is_none_for_a_receipt_that_did_not_run_the_rules_scorer():
+    # the same number on a command job's receipt (R14 #2: only the rule's scorer, on its data, is evidence)
+    assert selection_evidence([job("job_a", metrics={"accuracy": 0.85})], "job_a", RULE) is None
 
 
 # -- 6. better and the ceiling -------------------------------------------------------------------------------------------
@@ -457,41 +502,47 @@ def test_lock_versions_ignores_other_note_kinds():
 
 
 def test_reproduced_a_later_same_recipe_job_with_another_seed_counts():
-    jobs = [job("job_a", config={"seed": 1, "lr": 0.1}), job("job_r", config={"seed": 2, "lr": 0.1})]
-    assert reproduced(jobs, "job_a") == "job_r"
+    jobs = [scored("job_a", 0.8), scored("job_r", 0.8, config={"seed": 2})]
+    assert reproduced(jobs, "job_a", RULE) == "job_r"
 
 
 def test_reproduced_ignores_the_timeout_in_the_recipe():
-    jobs = [job("job_a", config={"seed": 1, "lr": 0.1, "timeout_seconds": 60}),
-            job("job_r", config={"seed": 2, "lr": 0.1, "timeout_seconds": 600})]
-    assert reproduced(jobs, "job_a") == "job_r"
+    jobs = [scored("job_a", 0.8, config={"timeout_seconds": 60}),
+            scored("job_r", 0.8, config={"seed": 2, "timeout_seconds": 600})]
+    assert reproduced(jobs, "job_a", RULE) == "job_r"
 
 
 def test_reproduced_needs_a_different_seed():
-    assert reproduced([job("job_a"), job("job_r")], "job_a") is None
+    assert reproduced([scored("job_a"), scored("job_r")], "job_a", RULE) is None
 
 
 def test_reproduced_needs_the_same_recipe():
-    assert reproduced([job("job_a"), job("job_r", config={"seed": 2, "lr": 0.5})], "job_a") is None
+    assert reproduced([scored("job_a"), scored("job_r", config={"seed": 2, "lr": 0.5})], "job_a", RULE) is None
 
 
 def test_reproduced_needs_the_same_inputs():
-    other = job("job_r", config={"seed": 2, "lr": 0.1}, inputs={"source": "art_other"})
-    assert reproduced([job("job_a"), other], "job_a") is None
+    other = scored("job_r", config={"seed": 2}, inputs={"source": "art_other"})
+    assert reproduced([scored("job_a"), other], "job_a", RULE) is None
 
 
 def test_reproduced_only_looks_at_jobs_after_the_incumbent():
-    jobs = [job("job_r", config={"seed": 2, "lr": 0.1}), job("job_a")]
-    assert reproduced(jobs, "job_a") is None
+    jobs = [scored("job_r", config={"seed": 2}), scored("job_a")]
+    assert reproduced(jobs, "job_a", RULE) is None
 
 
 def test_reproduced_needs_a_succeeded_job():
-    jobs = [job("job_a"), job("job_r", status="failed", config={"seed": 2, "lr": 0.1})]
-    assert reproduced(jobs, "job_a") is None
+    jobs = [scored("job_a"), scored("job_r", config={"seed": 2}, status="failed")]
+    assert reproduced(jobs, "job_a", RULE) is None
 
 
 def test_reproduced_is_none_for_an_unknown_job():
-    assert reproduced([job("job_a")], "job_missing") is None
+    assert reproduced([scored("job_a")], "job_missing", RULE) is None
+
+
+def test_reproduced_is_none_without_a_rule_even_for_a_same_recipe_rerun():
+    # R14 #3: no prospective criterion, no reproduction
+    jobs = [scored("job_a", 0.8), scored("job_r", 0.8, config={"seed": 2})]
+    assert reproduced(jobs, "job_a", None) is None
 
 
 def test_reproduction_jobs_are_same_recipe_reruns_and_the_lineages_but_not_the_originals():
@@ -509,46 +560,48 @@ def test_reproduction_jobs_cover_every_recipe_given():
 
 
 def test_rounds_is_empty_before_the_first_lock():
-    jobs = [job("job_b")]
-    assert rounds([{"turn": 3, "jobs": ["job_b"]}], jobs, None, None) == ([], 0)
+    jobs = [scored("job_b")]
+    assert rounds([{"turn": 3, "jobs": ["job_b"]}], jobs, None, None, rule=RULE) == ([], 0, [])
 
 
 def test_rounds_count_only_turns_after_the_first_locks_turn():
-    jobs = [job("job_b"), job("job_c"), job("job_d")]
+    jobs = [scored("job_b"), scored("job_c"), scored("job_d")]
     log = [{"turn": 1, "jobs": ["job_b"]}, {"turn": 2, "jobs": ["job_c"]}, {"turn": 3, "jobs": ["job_d"]}]
-    assert rounds(log, jobs, 2, 2) == ([3], 1)
+    assert rounds(log, jobs, 2, 2, rule=RULE) == ([3], 1, [])
 
 
 @pytest.mark.parametrize("purpose, counted", [("open-search", True), ("hypothesis-test", True),
                                               ("measurement-development", True), ("reproduction", False),
                                               ("confirmation", False)])
 def test_rounds_count_only_challenger_purposes(purpose, counted):
-    turns, _ = rounds([{"turn": 3, "jobs": ["job_b"]}], [job("job_b", purpose=purpose)], 2, 2)
+    turns, _, _ = rounds([{"turn": 3, "jobs": ["job_b"]}], [scored("job_b", purpose=purpose)], 2, 2, rule=RULE)
     assert (turns == [3]) is counted
 
 
 def test_rounds_a_turn_counts_once_however_many_jobs_it_admitted():
-    jobs = [job("job_b"), job("job_c")]
-    turns, _ = rounds([{"turn": 3, "jobs": ["job_b", "job_c"]}, {"turn": 3, "jobs": ["job_c"]}], jobs, 2, 2)
-    assert turns == [3]
+    jobs = [scored("job_b"), scored("job_c")]
+    turns, since, _ = rounds([{"turn": 3, "jobs": ["job_b", "job_c"]}, {"turn": 3, "jobs": ["job_c"]}], jobs, 2, 2,
+                             rule=RULE)
+    assert (turns, since) == ([3], 1)
 
 
 def test_rounds_exclude_reproduction_work_and_a_turn_of_nothing_else_is_no_round():
-    jobs = [job("job_r"), job("job_b")]
+    jobs = [scored("job_r"), scored("job_b")]
     log = [{"turn": 3, "jobs": ["job_r"]}, {"turn": 4, "jobs": ["job_r", "job_b"]}]
-    assert rounds(log, jobs, 2, 2, excluded={"job_r"}) == ([4], 1)
+    assert rounds(log, jobs, 2, 2, excluded={"job_r"}, rule=RULE) == ([4], 1, [])
 
 
 def test_rounds_without_improvement_count_rounds_after_the_latest_locks_turn():
-    jobs = [job(f"job_{i}") for i in range(5)]
+    jobs = [scored(f"job_{i}") for i in range(5)]
     log = [{"turn": 3 + i, "jobs": [f"job_{i}"]} for i in range(5)]  # turns 3..7
-    turns, since = rounds(log, jobs, 2, 5)  # the incumbent last changed in turn 5
+    turns, since, pending = rounds(log, jobs, 2, 5, rule=RULE)  # the incumbent last changed in turn 5
     assert turns == [3, 4, 5, 6, 7]
     assert since == 2  # turns 6 and 7
+    assert pending == []
 
 
 def test_rounds_a_job_unknown_to_the_job_list_is_not_a_challenger():
-    assert rounds([{"turn": 3, "jobs": ["job_missing"]}], [job("job_b")], 2, 2) == ([], 0)
+    assert rounds([{"turn": 3, "jobs": ["job_missing"]}], [scored("job_b")], 2, 2, rule=RULE) == ([], 0, [])
 
 
 # -- 9. allowance, hold-back and policy ----------------------------------------------------------------------------------
@@ -651,7 +704,7 @@ def test_state_takes_the_incumbents_evidence_from_the_recorded_receipt():
 
 
 def test_state_without_a_rule_has_no_evidence_and_so_no_ceiling_stop():
-    st = run_state(notes=[lock("note_1", "job_a")], jobs=[job("job_a", metrics={"accuracy": 1.0})])
+    st = run_state(notes=[lock("note_1", "job_a")], jobs=[scored("job_a", 1.0)])
     assert st["rule"] is None and st["incumbent"]["evidence"] is None
     assert (st["phase"], st["stop"]) == ("explore", None)
 
@@ -669,12 +722,12 @@ def test_state_finalizes_with_selection_frozen():
 
 
 def test_state_frozen_outranks_the_other_stops():
-    st = run_state(jobs=[job("job_a", metrics={"accuracy": 1.0})], frozen=True)
+    st = run_state(jobs=[scored("job_a", 1.0)], frozen=True)
     assert st["stop"] == "selection-frozen"
 
 
 def test_state_finalizes_at_a_perfect_score():
-    st = run_state(jobs=[job("job_a", metrics={"accuracy": 1.0})])
+    st = run_state(jobs=[scored("job_a", 1.0)])
     assert (st["phase"], st["stop"]) == ("finalize", "ceiling-perfect-score")
 
 
@@ -686,27 +739,27 @@ def test_state_finalizes_at_a_declared_ceiling():
 
 def test_state_finalizes_with_no_improvement_in_the_patience_rounds():
     extra, log = challengers(3)
-    st = run_state(jobs=[job("job_a", metrics={"accuracy": 0.8}), *extra], round_log=log)
+    st = run_state(jobs=[scored("job_a", 0.8), *extra], round_log=log)
     assert (st["phase"], st["stop"]) == ("finalize", "ceiling-no-improvement")
     assert (st["rounds"], st["rounds_without_improvement"], st["patience_rounds"]) == (3, 3, 3)
 
 
 def test_state_keeps_exploring_just_short_of_the_patience_rounds():
     extra, log = challengers(2)
-    st = run_state(jobs=[job("job_a", metrics={"accuracy": 0.8}), *extra], round_log=log)
+    st = run_state(jobs=[scored("job_a", 0.8), *extra], round_log=log)
     assert (st["phase"], st["stop"], st["rounds_without_improvement"]) == ("explore", None, 2)
 
 
 def test_state_patience_comes_from_the_exploration_config():
     extra, log = challengers(1)
-    st = run_state(jobs=[job("job_a", metrics={"accuracy": 0.8}), *extra], round_log=log,
+    st = run_state(jobs=[scored("job_a", 0.8), *extra], round_log=log,
                    config={"exploration": {"patience_rounds": 1}})
     assert (st["stop"], st["patience_rounds"]) == ("ceiling-no-improvement", 1)
 
 
 def test_state_zero_patience_never_stops_on_no_improvement():
     extra, log = challengers(4)
-    st = run_state(jobs=[job("job_a", metrics={"accuracy": 0.8}), *extra], round_log=log,
+    st = run_state(jobs=[scored("job_a", 0.8), *extra], round_log=log,
                    config={"exploration": {"patience_rounds": 0}})
     assert (st["phase"], st["stop"]) == ("explore", None)
 
@@ -714,13 +767,13 @@ def test_state_zero_patience_never_stops_on_no_improvement():
 def test_state_finalizes_at_the_rules_search_limit():
     extra, log = challengers(2)
     rule = {**RULE, "max_rounds": 2}
-    st = run_state(notes=[lock("note_1", "job_a", rule)], jobs=[job("job_a", metrics={"accuracy": 0.8}), *extra], round_log=log)
+    st = run_state(notes=[lock("note_1", "job_a", rule)], jobs=[scored("job_a", 0.8), *extra], round_log=log)
     assert (st["phase"], st["stop"], st["max_rounds"]) == ("finalize", "search-limit", 2)
 
 
 def test_state_finalizes_at_the_search_limit_from_the_policy_config():
     extra, log = challengers(2)
-    st = run_state(jobs=[job("job_a", metrics={"accuracy": 0.8}), *extra], round_log=log,
+    st = run_state(jobs=[scored("job_a", 0.8), *extra], round_log=log,
                    config={"exploration": {"max_rounds": 2}})
     assert st["stop"] == "search-limit"
 
@@ -758,7 +811,7 @@ def test_state_with_no_completion_and_no_token_limit_has_no_allowance_stop():
 def test_state_a_later_relock_resets_rounds_without_improvement():
     extra, log = challengers(3)  # challenger rounds in turns 3, 4 and 5
     notes = [lock("note_1", "job_a", RULE), lock("note_2", "job_c1")]  # re-locked in turn 4
-    st = run_state(notes=notes, jobs=[job("job_a", metrics={"accuracy": 0.8}), *extra], round_log=log,
+    st = run_state(notes=notes, jobs=[scored("job_a", 0.8), *extra], round_log=log,
                    note_turns={"note_1": 2, "note_2": 4})
     assert (st["rounds"], st["rounds_without_improvement"]) == (3, 1)
     assert (st["phase"], st["stop"]) == ("explore", None)
@@ -770,7 +823,7 @@ def test_state_rounds_count_from_the_first_lock_even_after_a_relock():
     extra, log = challengers(3)
     log = [{"turn": 1, "jobs": ["job_c0"]}, *log]  # a round before any lock is not a challenger round
     notes = [lock("note_1", "job_a", RULE), lock("note_2", "job_c1")]
-    st = run_state(notes=notes, jobs=[job("job_a", metrics={"accuracy": 0.8}), *extra], round_log=log,
+    st = run_state(notes=notes, jobs=[scored("job_a", 0.8), *extra], round_log=log,
                    note_turns={"note_1": 2, "note_2": 4})
     assert st["rounds"] == 3
 
@@ -778,18 +831,17 @@ def test_state_rounds_count_from_the_first_lock_even_after_a_relock():
 def test_state_relocking_the_same_job_does_not_reset_the_count():
     extra, log = challengers(3)
     notes = [lock("note_1", "job_a", RULE), lock("note_2", "job_a")]
-    st = run_state(notes=notes, jobs=[job("job_a", metrics={"accuracy": 0.8}), *extra], round_log=log,
+    st = run_state(notes=notes, jobs=[scored("job_a", 0.8), *extra], round_log=log,
                    note_turns={"note_1": 2, "note_2": 5})
     assert (st["rounds_without_improvement"], st["stop"]) == (3, "ceiling-no-improvement")
 
 
 def test_state_a_same_recipe_reproduction_is_not_a_challenger_round_and_marks_the_incumbent_reproduced():
-    jobs = [job("job_a", metrics={"accuracy": 0.8}), *train_chain("r", seed=2)]
-    jobs[1]["config"] = {"seed": 2, "lr": 0.1}  # r_train re-runs job_a's recipe under another seed
-    jobs[1]["inputs"] = {"source": "art_x"}
-    jobs[1]["purpose"] = "open-search"  # excluded by recipe, not by purpose
+    # a_train is scored by a_score; r_train re-runs a_train's recipe under another seed and is scored by r_score
+    jobs = [*train_chain("a", seed=1, accuracy=0.8), *train_chain("r", seed=2, accuracy=0.8)]
+    assert jobs[3]["purpose"] == "open-search"  # excluded by recipe, not by purpose
     log = [{"turn": 3, "jobs": ["r_train"]}, {"turn": 4, "jobs": ["r_infer"]}, {"turn": 5, "jobs": ["r_score"]}]
-    st = run_state(jobs=jobs, round_log=log)
+    st = run_state(notes=[lock("note_1", "a_train", RULE)], jobs=jobs, round_log=log)
     assert st["rounds"] == 0
     assert st["incumbent"]["reproduced_by"] == "r_train"
     assert st["phase"] == "explore"
@@ -797,7 +849,7 @@ def test_state_a_same_recipe_reproduction_is_not_a_challenger_round_and_marks_th
 
 def test_state_the_baselines_reruns_are_not_challenger_rounds():
     jobs = [job("job_base", config={"seed": 1, "lr": 0.9}), job("job_base2", config={"seed": 2, "lr": 0.9}),
-            job("job_a", metrics={"accuracy": 0.8})]
+            scored("job_a", 0.8)]
     log = [{"turn": 3, "jobs": ["job_base2"]}]
     assert run_state(jobs=jobs, round_log=log, baseline_job="job_base")["rounds"] == 0
     assert run_state(jobs=jobs, round_log=log)["rounds"] == 1
@@ -805,20 +857,22 @@ def test_state_the_baselines_reruns_are_not_challenger_rounds():
 
 def test_state_reports_the_policy_id_and_frozen_flag():
     st = run_state()
-    assert st["policy"] == "exploration-policy/1" and st["frozen"] is False
+    assert st["policy"] == "exploration-policy/2" and st["frozen"] is False
 
 
 def test_compact_keeps_phase_stop_incumbent_rule_allowance_and_the_version_count():
     extra, log = challengers(1)
     notes = [lock("note_1", "job_a", RULE), lock("note_2", "job_c0")]
-    st = run_state(notes=notes, jobs=[job("job_a", metrics={"accuracy": 0.8}), *extra], round_log=log,
+    st = run_state(notes=notes, jobs=[scored("job_a", 0.8), *extra], round_log=log,
                    note_turns={"note_1": 2, "note_2": 3}, completion=COMPLETION, wall_seconds=3600.0)
     out = compact(st)
     assert (out["phase"], out["stop"], out["rule"]) == ("explore", None, RULE)
     assert out["versions"] == 2 and out["rounds"] == 1 and out["allowance"] == st["allowance"]
     assert out["incumbent"]["job_id"] == "job_c0" and out["incumbent"]["version"] == 2
     assert out["incumbent"]["note_id"] == "note_2"
-    assert set(out["incumbent"]) == {"version", "job_id", "note_id", "evidence", "basis", "reproduced_by"}
+    assert set(out["incumbent"]) == {"version", "job_id", "note_id", "evidence", "basis", "reproduced_by",
+                                     "reproduction"}
+    assert out["pending_challengers"] == []
 
 
 def test_compact_of_a_baseline_state_has_no_incumbent():
@@ -827,7 +881,7 @@ def test_compact_of_a_baseline_state_has_no_incumbent():
 
 
 def test_compact_of_a_finalize_state_keeps_the_stop_reason_and_limits():
-    out = compact(run_state(jobs=[job("job_a", metrics={"accuracy": 1.0})]))
+    out = compact(run_state(jobs=[scored("job_a", 1.0)]))
     assert (out["phase"], out["stop"]) == ("finalize", "ceiling-perfect-score")
     assert out["patience_rounds"] == 3 and out["max_rounds"] is None
 
@@ -850,7 +904,7 @@ def make_view(jobs=(), **over):
 
 def exploration_view(**state_over):
     """A view whose ``exploration`` is the compact state of a locked incumbent (job_a, accuracy 0.8)."""
-    jobs = state_over.pop("jobs", None) or [job("job_a", metrics={"accuracy": 0.8})]
+    jobs = state_over.pop("jobs", None) or [scored("job_a", 0.8)]
     return make_view(jobs, exploration=compact(run_state(jobs=jobs, **state_over)))
 
 
@@ -885,13 +939,13 @@ def test_context_explore_lists_the_allowance_left():
 
 
 def test_context_explore_says_a_reproduced_incumbent_is_reproduced():
-    jobs = [job("job_a", metrics={"accuracy": 0.8}), job("job_r", config={"seed": 2, "lr": 0.1})]
+    jobs = [scored("job_a", 0.8), scored("job_r", 0.8, config={"seed": 2})]
     text = text_of(exploration_view(jobs=jobs), policy=POLICY_ID)
     assert "reproduced by job_r" in line_with(text, "Incumbent v1")
 
 
 def test_context_finalize_says_stopped_and_why():
-    text = text_of(exploration_view(jobs=[job("job_a", metrics={"accuracy": 1.0})]), policy=POLICY_ID)
+    text = text_of(exploration_view(jobs=[scored("job_a", 1.0)]), policy=POLICY_ID)
     line = line_with(text, "Exploration:")
     assert "STOPPED" in line and "perfect score" in line
     assert "keep improving" not in text
@@ -903,7 +957,7 @@ def test_context_finalize_explains_a_frozen_selection():
 
 
 def test_context_finalize_explains_the_search_limit_with_its_number():
-    jobs = [job("job_a", metrics={"accuracy": 0.8})]
+    jobs = [scored("job_a", 0.8)]
     view = make_view(jobs, exploration=compact(run_state(notes=[lock("note_1", "job_a", {**RULE, "max_rounds": 0})], jobs=jobs)))
     assert "search limit of 0 rounds" in text_of(view, policy=POLICY_ID)
 
@@ -985,4 +1039,4 @@ def test_scoring_the_incumbent_after_the_lock_is_not_a_challenger_round():
                                 inputs={"model": "art_job_inc"}, outputs={"pred": "art_pred"})]
     excluded = reproduction_jobs(jobs, ["job_inc"])
     assert "job_inf" in excluded
-    assert rounds([{"turn": 3, "jobs": ["job_inf"]}], jobs, 2, 2, excluded) == ([], 0)
+    assert rounds([{"turn": 3, "jobs": ["job_inf"]}], jobs, 2, 2, excluded, RULE) == ([], 0, [])
