@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Compare two Tier-1 scorecards; exit 1 on regression and 2 on incompatible inputs."""
+
 from __future__ import annotations
 
 import argparse
@@ -32,16 +33,29 @@ def compare(before, after, tolerance=0.05):
         raise ValueError("reference snapshots differ; rescore both builds against the same references")
     regressions, changes = [], []
     groups = [("all arms", before["aggregate"], after["aggregate"])]
-    groups.extend((f"arm {arm}", before["by_arm"][str(arm)], after["by_arm"][str(arm)]) for arm in before["arms"])
+    groups.extend(
+        (f"arm {arm}", before["by_arm"][str(arm)], after["by_arm"][str(arm)]) for arm in before["arms"]
+    )
     for label, old, new in groups:
         if old["runs"] != new["runs"] or old["gain_ratio_cards"] != new["gain_ratio_cards"]:
             raise ValueError(f"incompatible run or ratio coverage for {label}")
-        for metric in ("concluded", "verified", "dead_ends", "crash", "timeout", "token_budget", "incident", "invalid_output"):
+        for metric in (
+            "concluded",
+            "verified",
+            "dead_ends",
+            "crash",
+            "timeout",
+            "token_budget",
+            "incident",
+            "invalid_output",
+        ):
             previous, current = old[metric], new[metric]
             if previous != current:
                 message = f"{label} {metric} {previous} -> {current}"
                 changes.append(message)
-                if (current < previous if metric in {"concluded", "verified"} else current > previous):
+                is_success_count = metric in {"concluded", "verified"}
+                regressed = current < previous if is_success_count else current > previous
+                if regressed:
                     regressions.append(message)
         previous, current = old["median_gain_ratio"], new["median_gain_ratio"]
         if (previous is None) != (current is None):
@@ -53,12 +67,14 @@ def compare(before, after, tolerance=0.05):
             changes.append(change)
             if previous - current > tolerance + 1e-12:
                 regressions.append(change)
+
     # Equal aggregate counts can conceal a different card losing completion or becoming a dead end.
     def keyed(value):
         result = {(r["card"], r["arm"], r["seed_index"]): r for r in value["runs"]}
         if len(result) != len(value["runs"]):
             raise ValueError("duplicate scorecard assignments")
         return result
+
     old_rows, new_rows = keyed(before), keyed(after)
     if old_rows.keys() != new_rows.keys():
         raise ValueError("scorecard assignments differ")
@@ -68,15 +84,25 @@ def compare(before, after, tolerance=0.05):
             regressions.append(f"{key[0]} arm {key[1]} lost completion")
         if not previous["invariant_flags"]["dead_end"] and current["invariant_flags"]["dead_end"]:
             regressions.append(f"{key[0]} arm {key[1]} acquired a dead end")
-    return dict(regression=bool(regressions), tolerance=tolerance,
-                tolerance_unit="absolute median gain-ratio points", regressions=regressions, changes=changes)
+    return dict(
+        regression=bool(regressions),
+        tolerance=tolerance,
+        tolerance_unit="absolute median gain-ratio points",
+        regressions=regressions,
+        changes=changes,
+    )
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("before", type=Path)
     parser.add_argument("after", type=Path)
-    parser.add_argument("--tolerance", type=float, default=0.05, help="allowed absolute median gain-ratio decrease (default 0.05)")
+    parser.add_argument(
+        "--tolerance",
+        type=float,
+        default=0.05,
+        help="allowed absolute median gain-ratio decrease (default 0.05)",
+    )
     args = parser.parse_args()
     try:
         report = compare(read_json(args.before), read_json(args.after), args.tolerance)

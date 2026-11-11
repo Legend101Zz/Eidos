@@ -15,7 +15,16 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from socketserver import TCPServer
 from urllib.parse import urlparse
+
+
+class LoopbackServer(ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer's getfqdn lookup can exhaust startup and wall deadlines on hosted runners.
+        TCPServer.server_bind(self)
+        self.server_name = 'localhost'
+        self.server_port = self.server_address[1]
 
 
 def serve(upstream, deadline, timeout, state):
@@ -58,7 +67,7 @@ def serve(upstream, deadline, timeout, state):
                 # No exception/header/body logging: exceptions can carry request context.
                 self.close_connection = True
 
-    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    server = LoopbackServer(('127.0.0.1', 0), Handler)
     state.write_text(json.dumps({'pid': os.getpid(), 'upstream': upstream, 'deadline_unix': deadline,
                                 'base_url': f'http://127.0.0.1:{server.server_port}/v1'}))
     timer = threading.Timer(max(0, deadline - time.time()), lambda: os._exit(124))

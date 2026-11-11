@@ -10,7 +10,7 @@ References pool verified coding-arm test gains from the specified local pilot re
 
 Tier-0 fixtures retain all registered model-response artifacts, including replies absent from accepted-decision exports, request timings, turn outcomes, receipts and terminal state. Blob hashes are checked during extraction. Eidos core owns the coordinator replay assertions.
 
-Frozen build wheels, environments, lab homes and local caches live on the SSD. Eval labs receive dedicated recorded ports. The builder uses its caller's environment and a generated eval environment file. Baseline stubs qualify the infrastructure with zero model calls. A macOS study CI job exercises the existing Seatbelt grading path.
+Frozen build wheels, environments, lab homes and local caches live on the SSD. Eval labs receive dedicated recorded ports. The builder uses its caller's environment and a generated eval environment file. Baseline stubs qualify the infrastructure with zero model calls. A macOS study CI job exercises the existing Seatbelt grading path. The loopback provider bridge supplies its local server name during binding, avoiding startup delays from hosted-runner reverse DNS.
 
 ## Verification
 

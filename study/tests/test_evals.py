@@ -1,4 +1,5 @@
 """Tier-1 baseline-stub qualification and portable real-record replay extraction."""
+
 from __future__ import annotations
 
 import copy
@@ -30,11 +31,28 @@ class MiniEval(unittest.TestCase):
             python = root / "venv/bin/python"
             python.parent.mkdir(parents=True)
             python.symlink_to(sys.executable)
-            write_json(root / "venv/pilot-build.json", dict(eidos_commit_sha="stub-build", python=str(python)))
+            write_json(
+                root / "venv/pilot-build.json", dict(eidos_commit_sha="stub-build", python=str(python))
+            )
             # Exercise the public CLI, research subprocesses, optional arm 2 and local grading.
-            command = [sys.executable, "-m", "study.evals.mini_eval", "--cards", "N01,N03", "--arms", "2,4",
-                       "--seed-index", "2", "--out", str(root / "out"), "--lab-home", str(root / "home"),
-                       "--lab-python", str(python), "--stub"]
+            command = [
+                sys.executable,
+                "-m",
+                "study.evals.mini_eval",
+                "--cards",
+                "N01,N03",
+                "--arms",
+                "2,4",
+                "--seed-index",
+                "2",
+                "--out",
+                str(root / "out"),
+                "--lab-home",
+                str(root / "home"),
+                "--lab-python",
+                str(python),
+                "--stub",
+            ]
             process = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=240)
             self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
             score = read_json(root / "out/scorecard.json")
@@ -64,8 +82,18 @@ class MiniEval(unittest.TestCase):
                 regressed = copy.deepcopy(score)
                 regressed["aggregate"][metric] = value
                 write_json(root / "regressed.json", regressed)
-                result = subprocess.run([sys.executable, "-m", "study.evals.compare", str(root / "out/scorecard.json"),
-                                         str(root / "regressed.json")], cwd=ROOT, text=True, capture_output=True)
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "study.evals.compare",
+                        str(root / "out/scorecard.json"),
+                        str(root / "regressed.json"),
+                    ],
+                    cwd=ROOT,
+                    text=True,
+                    capture_output=True,
+                )
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertTrue(json.loads(result.stdout)["regression"])
             self.assertFalse(compare(score, score, tolerance=0)["regression"])
@@ -92,8 +120,11 @@ class ReplayExtraction(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(raw)
             events[artifact["ledger_seq"]] = dict(
-                seq=artifact["ledger_seq"], type="artifact.registered", subject=artifact["artifact_id"],
-                body=dict(name=artifact["name"], digest=digest, schema="model-response/1"))
+                seq=artifact["ledger_seq"],
+                type="artifact.registered",
+                subject=artifact["artifact_id"],
+                body=dict(name=artifact["name"], digest=digest, schema="model-response/1"),
+            )
         rows = [dict(type="ledger_event", data=e) for _, e in sorted(events.items())]
         rows.append(dict(type="investigation", data=expected["final_state"]))
         rows.extend(dict(type="turn", data=dict(t, id=t["turn_id"])) for t in expected["turns"])
@@ -104,8 +135,12 @@ class ReplayExtraction(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             run, expected = self.materialize_real_record(root)
-            result = subprocess.run([sys.executable, "-m", "study.evals.extract_replay", str(run), str(root / "fixture.json")],
-                                    cwd=ROOT, text=True, capture_output=True)
+            result = subprocess.run(
+                [sys.executable, "-m", "study.evals.extract_replay", str(run), str(root / "fixture.json")],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             fixture = read_json(root / "fixture.json")
             self.assertEqual(fixture["schema_version"], REPLAY_SCHEMA)
@@ -116,7 +151,10 @@ class ReplayExtraction(unittest.TestCase):
             self.assertEqual(len(fixture["response_artifacts"]), 19)
             self.assertEqual(len(fixture["requests"]), 41)
             # Only 12 accepted decisions were exported by the original arm adapter.
-            self.assertGreater(len(fixture["response_artifacts"]), sum(a["accepted"] is True for a in fixture["response_artifacts"]))
+            self.assertGreater(
+                len(fixture["response_artifacts"]),
+                sum(a["accepted"] is True for a in fixture["response_artifacts"]),
+            )
             self.assertTrue(fixture["needs_input"])
             self.assertIn("invalid-proposals", {t["stop_reason"] for t in fixture["turns"]})
             observations = inspect_run(run)
@@ -131,8 +169,15 @@ class ReplayExtraction(unittest.TestCase):
             packed_path = root / "lab/artifacts/blobs/sha256" / packed_digest[:2] / packed_digest
             packed_path.parent.mkdir(parents=True, exist_ok=True)
             packed_path.write_bytes(packed)
-            event = dict(type="ledger_event", data=dict(type="artifact.registered", seq=fixture["receipts"][-1]["seq"] + 1, subject="packed-test",
-                         body=dict(schema="packed-context/1", name="packed-test", digest=packed_digest)))
+            event = dict(
+                type="ledger_event",
+                data=dict(
+                    type="artifact.registered",
+                    seq=fixture["receipts"][-1]["seq"] + 1,
+                    subject="packed-test",
+                    body=dict(schema="packed-context/1", name="packed-test", digest=packed_digest),
+                ),
+            )
             with (run / "transcript.jsonl").open("a") as transcript:
                 transcript.write(json.dumps(event) + "\n")
             self.assertTrue(inspect_run(run)["invariant_flags"]["held_out_reads"])
@@ -151,6 +196,8 @@ class ReplayExtraction(unittest.TestCase):
             self.assertTrue(fixture["needs_input"])
             requests = fixture["requests"]
             self.assertEqual([r["index"] for r in requests], list(range(len(requests))))
-            self.assertEqual([r["started_unix"] for r in requests], sorted(r["started_unix"] for r in requests))
+            self.assertEqual(
+                [r["started_unix"] for r in requests], sorted(r["started_unix"] for r in requests)
+            )
             self.assertEqual(len({r["provider_response_id"] for r in requests}), len(requests))
             self.assertTrue(all(r["elapsed_s"] >= 0 and r["remaining_s"] >= 0 for r in requests))

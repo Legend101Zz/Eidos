@@ -105,6 +105,20 @@ class ClaudeStreaming(unittest.TestCase):
 
 
 class ProviderWall(unittest.TestCase):
+    def test_loopback_bridge_startup_avoids_dns(self):
+        from http.server import BaseHTTPRequestHandler
+        from unittest.mock import patch
+
+        from .provider_bridge import LoopbackServer
+
+        with patch('socket.getfqdn', side_effect=AssertionError('unexpected DNS lookup')):
+            server = LoopbackServer(('127.0.0.1', 0), BaseHTTPRequestHandler)
+            try:
+                self.assertEqual(server.server_name, 'localhost')
+                self.assertGreater(server.server_port, 0)
+            finally:
+                server.server_close()
+
     def test_deadline_exits_and_closes_a_blocked_request(self):
         from .provider_bridge import start
         with tempfile.TemporaryDirectory() as d:

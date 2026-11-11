@@ -1,4 +1,5 @@
 """Offline observations shared by scorecards and replay consumers."""
+
 from __future__ import annotations
 
 import json
@@ -29,10 +30,16 @@ def inspect_run(run_dir):
     concluded = bool(conclusion or state.get("status") == "concluded" or concluded_events)
     if record.get("stub") or record.get("arm") == 2:
         concluded = record["status"] == "ok" and (root / "out/answer.json").is_file()
-    locked = any(r.get("type") == "note" and r["data"].get("body", {}).get("kind") == "candidate_lock" for r in rows)
+    locked = any(
+        r.get("type") == "note" and r["data"].get("body", {}).get("kind") == "candidate_lock" for r in rows
+    )
     locked = locked or any(e["type"] == "incumbent.changed" for e in events)
-    deadline_limits = [e for e in events if e["type"] == "model.usage"
-                       and "deadline" in str(e["body"].get("usage", {}).get("limit_reached", "")).lower()]
+    deadline_limits = [
+        e
+        for e in events
+        if e["type"] == "model.usage"
+        and "deadline" in str(e["body"].get("usage", {}).get("limit_reached", "")).lower()
+    ]
     fabricated, empty = [], []
     for turn in turns:
         for decision in turn.get("decisions", []):
@@ -49,21 +56,31 @@ def inspect_run(run_dir):
     unused = None
     if concluded:
         if concluded_events and record.get("started_at"):
-            wall_to_conclusion = timestamp(concluded_events[-1]["created_at"]) - timestamp(record["started_at"])
+            wall_to_conclusion = timestamp(concluded_events[-1]["created_at"]) - timestamp(
+                record["started_at"]
+            )
         else:
             wall_to_conclusion = wall
         if wall_to_conclusion is not None:
             unused = max(0, ENVELOPE["wall_s"] - wall_to_conclusion)
     isolation = scan_held_out(record, rows, events)
     return dict(
-        concluded=concluded, needs_input=needs_input, locked_candidate=locked,
+        concluded=concluded,
+        needs_input=needs_input,
+        locked_candidate=locked,
         unused_time_at_conclusion_s=unused,
-        invariant_flags=dict(dead_end=bool(needs_input and locked and not concluded),
-                             runtime_deadline_limit=bool(deadline_limits),
-                             fabricated_empty_wait=bool(fabricated), held_out_reads=isolation["violation"]),
-        invariant_evidence=dict(deadline_limit_receipts=deadline_limits,
-                                fabricated_wait_decisions=fabricated, empty_wait_decisions=empty,
-                                held_out_scan=isolation),
+        invariant_flags=dict(
+            dead_end=bool(needs_input and locked and not concluded),
+            runtime_deadline_limit=bool(deadline_limits),
+            fabricated_empty_wait=bool(fabricated),
+            held_out_reads=isolation["violation"],
+        ),
+        invariant_evidence=dict(
+            deadline_limit_receipts=deadline_limits,
+            fabricated_wait_decisions=fabricated,
+            empty_wait_decisions=empty,
+            held_out_scan=isolation,
+        ),
     )
 
 
@@ -78,17 +95,27 @@ def scan_held_out(record, rows, events):
             continue
         data = event["body"]
         name = data.get("name", "").lower()
-        if name.endswith("/test.npz") or name == "test.npz" or data.get("role") in {"held-out", "heldout", "test"}:
+        if (
+            name.endswith("/test.npz")
+            or name == "test.npz"
+            or data.get("role") in {"held-out", "heldout", "test"}
+        ):
             known.update((event["subject"], data["digest"]))
     model_facing = [r["data"] for r in rows if r.get("type") == "model_response"]
     if record.get("arm") == 2:
         model_facing.extend(rows)
-    reads = [e["body"].get("usage", {}).get("structured_output", {}).get("reads", [])
-             for e in events if e["type"] == "model.usage"]
+    reads = [
+        e["body"].get("usage", {}).get("structured_output", {}).get("reads", [])
+        for e in events
+        if e["type"] == "model.usage"
+    ]
     model_facing.extend(reads)
     scanned, unavailable = 0, []
     for event in events:
-        if event["type"] != "artifact.registered" or event["body"].get("schema") not in {"model-response/1", "packed-context/1"}:
+        if event["type"] != "artifact.registered" or event["body"].get("schema") not in {
+            "model-response/1",
+            "packed-context/1",
+        }:
             continue
         if not record.get("lab_home"):
             unavailable.append(event["subject"])
@@ -101,6 +128,12 @@ def scan_held_out(record, rows, events):
     content = json.dumps(model_facing)
     matches = sorted(value for value in known if value in content)
     coverage = "no-model-calls" if record.get("stub") else "best-effort"
-    return dict(violation=bool(matches), coverage=coverage, matched_identifiers=matches,
-                known_identifiers=len(known), scanned_blobs=scanned, unavailable_blobs=unavailable,
-                limitation="Detects known held-out identifiers and digests in recorded contexts/replies/reads; derived information may evade this scan")
+    return dict(
+        violation=bool(matches),
+        coverage=coverage,
+        matched_identifiers=matches,
+        known_identifiers=len(known),
+        scanned_blobs=scanned,
+        unavailable_blobs=unavailable,
+        limitation="Detects known held-out identifiers and digests in recorded contexts/replies/reads; derived information may evade this scan",
+    )
