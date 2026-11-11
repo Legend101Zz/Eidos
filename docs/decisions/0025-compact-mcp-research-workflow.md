@@ -42,7 +42,8 @@ same reference rules with MCP tool names (`upload_source` produces `artifact_id`
   stands in for a value of the declared type), `project`/`command_key`/`expected_revision` inside a call are refused,
   and references are refused if malformed, forward or self, out of range, naming a field the tool does not produce,
   `outputs.*` of a non-job tool, or placed in `component_ref`, `environment`, `investigation_id` or `purpose`, also
-  inside `payload` (`INVALID_REF`, `INVALID_BATCH`). Nothing reaches the lab. Each call's arguments get the same ADR 0017
+  inside `payload` (`INVALID_REF`, `INVALID_BATCH`). Literal `upload_source` files are checked as the single tool checks
+  them. Nothing reaches the lab, not even the batch record. Each call's arguments get the same ADR 0017
   normalization as a single MCP call, sent with the command and shown in its receipt as `normalized_arguments`.
 - Composite tools take keys of at most 180 characters, so the derived `<key>:<suffix>` keys stay within the lab's 200.
 - **Recorded prospectively.** The first command is a `record_note` of kind `mcp-batch` keyed `<key>:batch`, holding the
