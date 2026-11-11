@@ -63,8 +63,9 @@ def client():
 
 
 def guard_disk():
-    if shutil.disk_usage('/').free < 12 * 1024**3:
-        raise RuntimeError('STOP: internal disk has less than 12 GiB free')
+    minimum_gib = 14 if 'p2' in str(home()) or 'pilot-2' in str(home()) else 12
+    if shutil.disk_usage('/').free < minimum_gib * 1024**3:
+        raise RuntimeError(f'STOP: internal disk has less than {minimum_gib} GiB free')
     if ROOT not in home().parents:
         raise ValueError('study lab must be under EIDOS_STUDY_ROOT')
 
