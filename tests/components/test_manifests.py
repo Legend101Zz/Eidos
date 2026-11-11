@@ -18,7 +18,8 @@ TORCH = {
     "eidos.pytorch.behavior-check",
 }
 LAB = {"eidos.assessors.paired-ci", "eidos.qualification-runner"}
-NUMPY = {"eidos.task.score-classification", "eidos.task.score-regression"}  # need numpy (project env)
+NUMPY = {"eidos.task.score-classification", "eidos.task.score-regression",
+         "eidos.diagnose.baseline-errors"}  # need numpy (project env)
 
 
 def test_ten_components_present():
