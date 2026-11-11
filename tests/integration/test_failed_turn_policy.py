@@ -117,6 +117,10 @@ class Scripted:
     async def enter_finalization(self, a: dict) -> dict:
         return {"enabled": False}  # these regressions exercise the operator finalization policy
 
+    @activity.defn(name="reconcile_finalization")
+    async def reconcile_finalization(self, a: dict) -> dict:
+        return {"finalization": False}  # these fixtures have no autonomous recovery admission
+
     @activity.defn(name="record_turn_retry")
     async def record_turn_retry(self, a: dict) -> dict:
         self.retries.append(a)
@@ -136,7 +140,7 @@ class Scripted:
 
     def acts(self):
         return [self.begin_turn, self.build_context, self.decide, self.execute_decision, self.complete_turn, self.enter_finalization,
-                self.check_news, self.mark_needs_input, self.record_turn_retry]
+                self.reconcile_finalization, self.check_news, self.mark_needs_input, self.record_turn_retry]
 
 
 async def until(predicate, timeout: float = 30.0, what: str = "condition", step: float = 0.1) -> None:

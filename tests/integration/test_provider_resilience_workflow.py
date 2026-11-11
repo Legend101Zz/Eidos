@@ -49,7 +49,7 @@ class Provider(Scripted):
 
     def acts(self):
         return [self.begin_turn, self.build_context, self.decide, self.execute_decision, self.complete_turn, self.enter_finalization,
-                self.check_news, self.mark_needs_input, self.record_turn_retry]
+                self.reconcile_finalization, self.check_news, self.mark_needs_input, self.record_turn_retry]
 
 
 @temporal
