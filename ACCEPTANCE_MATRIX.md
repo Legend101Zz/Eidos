@@ -170,7 +170,7 @@ All gates must pass on the same commit. Evidence files are in `docs/release/evid
 | Wrong scorer ports are refused before rule recording; recorded rules stay immutable | `tests/integration/test_r4_finalization.py`, `test_r14_selection_e2e.py` |
 | Slow provider still allows a durable conclusion before the export margin | `tests/integration/test_failed_turn_e2e.py` |
 | All context policies exclude held-out provenance in exploratory, ordinary and recovery model input | `tests/integration/test_r4_finalization.py` |
-| Default healthy path completes reproduction, independent assessment and conclusion | `tests/integration/test_r3_arm4_combined_workflow.py` |
+| Default healthy path completes reproduction and confirmation without exposing the labels binding or verdict before conclusion | `tests/integration/test_r3_arm4_combined_workflow.py` |
 | Recovered provider failures, terminal 429/quota classification and declared confirmation checkpoint | `tests/integration/test_provider_resilience_workflow.py`, `study/eidos_arms/test_contract.py`, `study/tests/test_grading.py` |
 | Four verified historical behavioral crash tails and terminal quota replay | `tests/integration/test_pilot3_failure_replays.py`, `tests/fixtures/deadline/pilot-3/` |
 

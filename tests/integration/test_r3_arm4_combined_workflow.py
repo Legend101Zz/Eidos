@@ -526,18 +526,24 @@ def test_a_scripted_fake_provider_drives_the_arm4_workflow_through_the_real_acti
     assert all(r["ok"] for r in reproduction), reproduction
     reproduced_job = reproduction[0]["result"]["job_id"]
 
-    # 6. Confirm with a prospective, independent assessment on a disjoint held-out seed.
-    provider.script.append({
-        **decision(call("assess_candidate", success_rule_id=RULE_ID, charter_id=charter_id,
-                        baseline={"job_id": base}, candidate={"job_id": challenger}, seeds=[fresh_seed],
-                        labels=labels, data_provenance={"split": "held-out"}, required_isolation=ISOLATION,
-                        claim={"statement": CLAIM["statement"], "scope": CLAIM["scope"]}),
-                   action="wait_for_jobs"),
-        "purpose": "confirmation",
-    })
+    # 6. The provider sees the safe route and requests a held-out assessment with no hidden artifact ID.
+    def assess_from_context(prompt: str) -> dict:
+        assert "Route: held-out data is attested in the charter" in prompt
+        assert labels not in prompt and labels_digest not in prompt
+        return {
+            **decision(call("assess_candidate", success_rule_id=RULE_ID, charter_id=charter_id,
+                            baseline={"job_id": base}, candidate={"job_id": challenger}, seeds=[fresh_seed],
+                            data_provenance={"split": "held-out"}, required_isolation=ISOLATION,
+                            claim={"statement": CLAIM["statement"], "scope": CLAIM["scope"]}),
+                       action="wait_for_jobs"),
+            "purpose": "confirmation",
+        }
+
+    provider.script.append(assess_from_context)
     assert journey.turn()["stop_reason"] == "waiting"
     request = journey.receipts(8)[0]
     assert request["ok"] and request["result"]["status"] == "launched", request
+    assert "labels" not in journey.proposal(8)["calls"][0]["args"]
     plan_id = request["result"]["plan_id"]
     confirmation.run_plan(plan_id)
     assessment = confirmation.assess(plan_id)

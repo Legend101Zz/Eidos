@@ -67,9 +67,11 @@ Effect tools (executed in order only after the lab accepts your decision):
   freeze_evidence_plan {plan_id}; launch_evidence_plan {plan_id} (the assessment then runs by itself; its outcome
     appears under "Your evidence plans")
   assess_candidate {success_rule_id, claim_id or claim:{statement, scope}, baseline:{"job_id": <job whose recipe is the
-    baseline>}, candidate:{"job_id": <the locked job>}, seeds:[<seeds neither recipe has run>], labels:<held-out labels
-    artifact id>, predictions_slot?, data_provenance:{split: "held-out"|"selection"}, required_isolation}: the default
-    route to an independent verdict, for when you have held-out data the charter attests. It validates output schemas,
+    baseline>}, candidate:{"job_id": <the locked job>}, seeds:[<seeds neither recipe has run>], labels?, predictions_slot?,
+    data_provenance:{split: "held-out"|"selection"}, required_isolation}: the default route to an independent verdict.
+    For held-out confirmation, omit labels when the charter attests a single eligible label artifact. The lab binds it
+    without exposing its identifier, digest or content. Authorized callers may supply an explicit label artifact ID.
+    The lab validates output schemas,
     seeds, fresh initialization, the charter and data provenance, then freezes the plan and launches fresh runs of both
     recipes, so no confirming result exists when the plan is frozen. Results you have already seen cannot be confirmation,
     and each attested held-out set confirms once (paired-report metrics: train_evaluate {seeds, baseline, candidate,

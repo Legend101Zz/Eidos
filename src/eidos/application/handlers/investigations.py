@@ -278,8 +278,9 @@ def mark_needs_input(ctx: Ctx, p: dict) -> dict:
         incumbent = exploration.final_incumbent(ctx, inv)
         details = p.get("details") or {}
         failure = _bounded_details(redact_value(details.get("failure")))
-        terminal_rate_limit = code == "provider-unavailable" or (failure.get("provider") or {}).get("status") == 429
-        if (incumbent and incumbent.get("job_id")) or terminal_rate_limit:
+        terminal_provider = code == "provider-unavailable" or (failure.get("provider") or {}).get("status") == 429
+        non_retryable = code == "turn-failed" and failure.get("retryable") is False
+        if (incumbent and incumbent.get("job_id")) or terminal_provider or non_retryable:
             abstention = _record_controller_abstention(
                 ctx, inv, code=code, reason=str(p.get("reason", ""))[:300],
                 failure=failure, incumbent=incumbent)

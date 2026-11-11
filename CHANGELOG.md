@@ -5,7 +5,7 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 ## Unreleased: 1.4.0
 
 - Preserve ordinary finalization's reproduction/export/confirmation under the default policy; admit conclude-only recovery separately and handle disabled operator admission without deadline loops (R18).
-- Isolate direct and derived held-out evidence in model prompts, same-turn feedback and read results across exploration and finalization. Preserve the original charter attestation in internal audit metadata.
+- Isolate direct and derived held-out evidence in model prompts, same-turn feedback and read results across exploration and finalization. Preserve the original charter attestation in internal audit metadata. An explicit held-out assessment can use one uniquely attested labels binding without disclosing it to the investigator.
 - Replay the four verified historical pilot-3 crash tails through the coordinator and preserve terminal quota classification from its recorded provider receipt.
 
 - **Deadline admission (ADR 0026).** Valid read follow-ups can use the actual remaining decision/turn time with a durable-write margin; HTTP and total request timeouts fit that boundary. Runtime deadline exhaustion is explicit telemetry/control, never a fabricated model wait. The exploration boundary transitions to finalization without sleeping through hold-back.
