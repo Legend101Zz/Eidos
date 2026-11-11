@@ -143,7 +143,9 @@ exploration spend the reproduction hold-back. Each is closed as follows.
    in the finalize phase rather than asking an operator.
 6. **Patience counts evaluated rounds only.** A challenger round counts as unsuccessful only once every challenger it
    admitted is terminal and, if it succeeded, has selection evidence. Pending rounds may finish: in the finalize phase a
-   decision that scores a pending challenger's outputs is still accepted.
+   decision that scores a pending challenger's outputs is still accepted. A succeeded challenger that is never scored under the
+   rule stays pending, so patience cannot end exploration on it; the hold-back, the search limit and the turn limit
+   still do. Before the first lock (the baseline phase) there is no incumbent to reproduce, so no hold-back applies.
 7. **The baseline is explicit.** The baseline is the project command without authored source, or a job a `baseline`
    note designates (recorded at once if it already succeeded). A `reproduction` purpose never makes a job the baseline,
    and `context-policy/3` no longer guesses one.

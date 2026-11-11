@@ -2,12 +2,14 @@
 
 The lab side of the exploration policy, through the real command service:
 
-* the selection rule is fixed once recorded (a ``selection_rule`` note or the ``selection`` of the first lock) and may
-  only name validation or training cross-validation data;
-* the first lock is incumbent version 1 with evidence read from recorded job receipts; a re-lock must beat the incumbent
-  on the rule (a worse or equal challenger, or one with no recorded metric, is refused and the incumbent stays), a
-  better one is version 2 with ``previous`` and an ``incumbent.changed`` event, and without any rule a re-lock is
-  allowed and recorded as unverified;
+* the selection rule (metric, split, direction, and since R14 the scorer component and the selection data) is fixed once
+  recorded (a ``selection_rule`` note or the ``selection`` of the first lock) and may only name validation or training
+  cross-validation data; a lock that names a job with no recorded rule is refused, as is a rule first given with a
+  re-lock;
+* the first lock is incumbent version 1 with evidence read from recorded job receipts (the rule's scorer run on the
+  rule's data); a re-lock must beat the incumbent on the rule (a worse or equal challenger, one with no recorded
+  metric, an unscored incumbent, or a challenger admitted before the rule is refused and the incumbent stays), a better
+  one is version 2 with ``previous`` and an ``incumbent.changed`` event;
 * the selection freezes once an evidence plan is frozen or an assessment requested (assessor feedback never selects);
 * the baseline of an investigation is recorded as a durable record by the launcher's terminal hook, and the packed
   context reads it instead of guessing from recent jobs;
@@ -93,32 +95,38 @@ class Scene:
     def q(self, name: str, params: dict | None = None) -> dict:
         return self.lab.q(self.lab.admin, name, params or {}, project=self.pid)
 
-    def investigation(self, **investigator) -> str:
+    def investigation(self, *, limits: dict | None = None, **investigator) -> str:
         return self.cmd("start_investigation", {
             "question": "which recipe is best?", "charter_id": f"charter:s{self.pid}", "environment": "lab",
-            "limits": LIMITS, "investigator": {"runtime": "fixture", "settings": {"max_tokens_per_decision": 120_000},
-                                               **investigator}})["investigation_id"]
+            "limits": limits or LIMITS, "investigator": {"runtime": "fixture",
+                                                         "settings": {"max_tokens_per_decision": 120_000},
+                                                         **investigator}})["investigation_id"]
 
     # -- jobs, through the launcher
     def job(self, inv: str | None, *, ref: str | None = None, purpose: str = "open-search", metrics: dict | None = None,
             inputs: dict | None = None, status: str = "succeeded", wall_seconds: int = 60,
-            config: dict | None = None, finish: bool = True) -> str:
+            config: dict | None = None, finish: bool = True, slot: str | None = None) -> str:
         """Admit a run of ``ref`` (the trial component by default) and finish it through the launcher: it publishes one
         output and reports ``metrics`` in its receipt. Returns the job id. The job's configuration names the validation
         split unless ``config`` says otherwise (the default selection data of RULE). ``finish=False`` leaves the job
-        admitted: a challenger still running."""
-        self.n += 1
+        admitted, a challenger still running: ``finish_job`` ends it later."""
         job = self.cmd("run_component", {"component_ref": ref or self.trial, "environment": "lab", "purpose": purpose,
                                          "inputs": inputs or {}, "wall_seconds": wall_seconds,
                                          "config": {"split": "validation", **(config or {})},
                                          **({"investigation_id": inv} if inv else {})})["job_id"]
-        if not finish:
-            return job
+        if finish:
+            self.finish_job(job, ref=ref, metrics=metrics, status=status, slot=slot)
+        return job
+
+    def finish_job(self, job: str, *, ref: str | None = None, metrics: dict | None = None, status: str = "succeeded",
+                   slot: str | None = None) -> None:
+        """Drive an admitted job to its terminal state through the launcher (``ref``: the component it runs)."""
+        self.n += 1
         started = self.lab.cmd(self.launcher, "start_attempt", {"job_id": job}, project=self.pid)["result"]
         attempt = {"job_id": job, "attempt_id": started["attempt_id"], "epoch": started["epoch"]}
         if status == "succeeded":
-            slot = "predictions" if (ref or self.trial) != self.scorer else "report"
-            schema = "class-predictions/1" if slot == "predictions" else "score-report/1"
+            slot = slot or ("report" if ref == self.scorer else "predictions")
+            schema = "score-report/1" if slot == "report" else "class-predictions/1"
             digest, size = self.lab.store.put_bytes(json.dumps({"job": job, "n": self.n}).encode())
             manifest = {"wire": "eidos-wire/1", **attempt, "status": "succeeded",
                         "outputs": [{"slot": slot, "filename": f"{slot}.json", "digest": digest, "size": size,
@@ -130,14 +138,14 @@ class Scene:
             **({"error": {"category": "runtime", "message": "the run failed"}, "final": True} if status != "succeeded"
                else {})}, project=self.pid)
         assert self.q("get_job", {"job_id": job})["status"] == status
-        return job
 
     def output(self, job: str, slot: str = "predictions") -> str:
         return next(o["artifact_id"] for o in self.q("get_job", {"job_id": job})["outputs"] if o["slot"] == slot)
 
-    def scored(self, inv: str, job: str, metrics: dict) -> str:
-        """A scorer job that reads ``job``'s predictions and reports ``metrics``."""
-        return self.job(inv, ref=self.scorer, inputs={"predictions": self.output(job)}, metrics=metrics)
+    def scored(self, inv: str, job: str, metrics: dict, **kw) -> str:
+        """A scorer job that reads ``job``'s predictions and reports ``metrics`` (``kw``: more of ``job``'s arguments,
+        e.g. the ``config`` naming the data it scored)."""
+        return self.job(inv, ref=self.scorer, inputs={"predictions": self.output(job)}, metrics=metrics, **kw)
 
     def accuracy_job(self, inv: str, value: float, *, metric: str = "accuracy") -> str:
         return self.job(inv, metrics={metric: value})
@@ -611,8 +619,8 @@ def test_a_launched_assess_candidate_freezes_the_selection(lab, tmp_path):
                              "text": json.dumps({"job_id": candidate, "selection": RULE})})
     receipt = flow.assess_candidate(flow.request(baseline, candidate, investigation_id=inv))
     assert receipt["status"] == "launched", receipt
-    with pytest.raises(Invalid) as caught:
-        flow.lock(inv, baseline)
+    with pytest.raises(Invalid) as caught:  # through the command, as the lab checks it (flow.lock writes the note directly)
+        flow.cmd("record_note", {"investigation_id": inv, "kind": "candidate_lock", "text": json.dumps({"job_id": baseline})})
     assert "frozen" in caught.value.message
     latest = [n for n in flow.q("investigation_view", {"investigation_id": inv, "horizon": flow.q("project_summary")["horizon"]}
                                 )["pinned_notes"] if n["kind"] == "candidate_lock"][-1]
