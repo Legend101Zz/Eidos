@@ -7,10 +7,10 @@ import time
 import uuid
 from typing import Any
 
-from eidos.application.service import Ctx, command
+from eidos.application.service import EFFECT_ADMISSION, Ctx, command
 from eidos.domain import charter as charter_rules
 from eidos.domain import turns as turn_rules
-from eidos.domain.errors import BudgetExhausted, Invalid, QuestionRevised, StaleRevision
+from eidos.domain.errors import BudgetExhausted, EffectNotAdmitted, Invalid, QuestionRevised, StaleRevision
 
 RUNNING_JOB_POLICIES = ("drain", "checkpoint-and-stop", "cancel")
 BUDGET_DIMS = ("model_tokens", "model_usd", "compute_seconds", "trials", "turns")
@@ -291,6 +291,9 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
     if pre and pre["status"] == "open":  # lock order (F2b): the turn row, then the investigation row
         _turn(ctx, pre["id"], lock=True)
     inv = ctx.tx.require("investigation", p["investigation_id"], lock=True)
+    stale = _fence_turn_ticket(ctx, inv.id, run, p.get("ticket"))
+    if stale:  # F5c (R8 #1): a delayed begin_turn of an earlier turn workflow begins and resumes nothing
+        return {"started": False, "reason": "superseded-run", **stale}
     if inv.status != "active":
         return {"started": False, "reason": f"investigation is {inv.status}"}
     last = ctx.tx.last_turn(inv.id)
@@ -346,6 +349,38 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
 # step). An accepted decision that was never handed off before its run lost the turn is revoked: it never reached
 # execution, and its acceptance may have committed after its workflow was terminated.
 # ---------------------------------------------------------------------------------------------
+
+def _fence_turn_ticket(ctx: Ctx, inv_id: str, run: str, ticket: Any) -> dict | None:
+    """F5c (review R8 #1): fence turn acquisition by the coordinator's ordered ticket (ADR 0017 addendum).
+
+    The coordinator gives every TurnWorkflow it starts a ticket from its workflow clock: durable (the child's input is
+    in the history) and strictly increasing across its turn workflows, since each starts only after the previous one
+    ended. The lab keeps the highest ticket that has begun or resumed a turn of the investigation (``turn_ticket``,
+    under the investigation row lock, which every begin_turn holds) and refuses an older one, so a delayed begin_turn
+    of a terminated run can never take a turn (or start a new one) after a newer run. Without the fence, the last
+    begin_turn to commit won, whatever its run's age.
+
+    Returns why ``run`` is refused, or None (and records its ticket). Callers without a run id (tests, tools) are not
+    fenced. A run without a ticket (a turn workflow started before ``turn-ticket-v1``) is refused once a ticketed run
+    has begun a turn; among unticketed runs the earlier rule applies (the documented limitation)."""
+    if not run:
+        return None
+    rec = ctx.tx.get_record("turn_ticket", inv_id, lock=True)
+    held = rec.body if rec is not None else None
+    if ticket is None:
+        return {"superseded": "unticketed-run", "current_ticket": held["ticket"]} if held else None
+    ticket = int(ticket)
+    if held is not None:
+        if ticket < int(held["ticket"]):
+            return {"superseded": "stale-ticket", "ticket": ticket, "current_ticket": int(held["ticket"])}
+        if ticket == int(held["ticket"]):
+            # The same ticket from another run: the turn workflow was reset by hand (Eidos never does). The run that
+            # holds it keeps it; the order of two runs with one ticket cannot be known.
+            return None if held.get("run") == run else {"superseded": "ticket-held-by-another-run", "ticket": ticket}
+    ctx.tx.put_record("turn_ticket", inv_id, ctx.project_id, {"investigation_id": inv_id, "ticket": ticket, "run": run},
+                      created_by=ctx.principal.id, status="active")
+    return None
+
 
 def _run_of(execution: str) -> str:
     return str(execution or "").split("/", 1)[0]
@@ -412,26 +447,65 @@ def _revoke(ctx: Ctx, turn: dict, decision_id: str, slot: int, reason: str, orig
 @command("hand_off_decision", "turn")
 def hand_off_decision(ctx: Ctx, p: dict) -> dict:
     """The first step of executing an accepted decision (F5, C1): under the turn row lock, the owning run records
-    that the decision reached execution. A run that no longer owns the turn, a revoked decision or a closed turn is
-    refused (``handed_off`` false) and nothing is executed. Idempotent: an existing handoff is returned."""
+    that the decision reached execution. A run that no longer owns the turn, a revoked decision, a closed turn or an
+    investigation that is no longer active (stopped, paused, concluded) is refused (``handed_off`` false) and nothing
+    is executed. F5c (review R8 #2): the turn and investigation state is checked under their locks (turn row, then
+    investigation row, the order stop/pause and accept_decision use) before granting a new handoff AND before
+    returning an existing one, so a stop or a turn closure that commits first always wins. Each effect is checked
+    again at its own admission (``admit_decision_effect``), so a stop that commits after the handoff refuses the
+    decision's remaining effects. Idempotent otherwise: an existing handoff is returned."""
     dec = ctx.tx.get_decision(p["decision_id"])
     if not dec or not dec["accepted"]:
         raise Invalid("only an accepted decision can be handed off")
-    turn = _turn(ctx, dec["turn_id"], lock=True)
-    refused = _execution_refused(ctx, turn, str(p.get("execution") or ""))
-    if refused:  # first: a run that lost the turn executes nothing, even a decision it had handed off (its retry)
+    refused = _decision_refused(ctx, dec, str(p.get("execution") or ""))
+    if refused:
         return {"decision_id": dec["id"], "handed_off": False, "reason": refused}
-    if decision_revoked(ctx, dec["id"]):
-        return {"decision_id": dec["id"], "handed_off": False, "reason": "decision-revoked"}
     existing = ctx.tx.get_record("decision_handoff", dec["id"])
     if existing is not None:  # idempotent; the owner of a resumed turn continues a handed-off decision (recovery)
         return {"decision_id": dec["id"], "handed_off": True, "by": existing.body.get("run")}
-    if turn["status"] != "open":
-        return {"decision_id": dec["id"], "handed_off": False, "reason": f"turn-{turn['status']}"}
     ctx.tx.put_record("decision_handoff", dec["id"], ctx.project_id,
-                      {"turn_id": turn["id"], "slot": dec["slot"], "run": _run_of(str(p.get("execution") or ""))},
-                      created_by=ctx.principal.id, status="handed-off", parent_id=turn["id"])
+                      {"turn_id": dec["turn_id"], "slot": dec["slot"], "run": _run_of(str(p.get("execution") or ""))},
+                      created_by=ctx.principal.id, status="handed-off", parent_id=dec["turn_id"])
     return {"decision_id": dec["id"], "handed_off": True, "by": _run_of(str(p.get("execution") or ""))}
+
+
+def _decision_refused(ctx: Ctx, dec: dict, execution: str) -> str | None:
+    """Why ``execution`` may not execute (or continue executing) the accepted decision ``dec``, or None. Takes the turn
+    row lock, then the investigation row lock (the order of stop/pause/resume, accept_decision and complete_turn), so
+    the answer is atomic with respect to a stop, a pause and the turn's closing: whichever commits first wins."""
+    turn = _turn(ctx, dec["turn_id"], lock=True)
+    inv = ctx.tx.require("investigation", turn["investigation_id"], lock=True)
+    # first: a run that lost the turn executes nothing, even a decision it had handed off (its retry)
+    return _execution_refused(ctx, turn, execution) \
+        or ("decision-revoked" if decision_revoked(ctx, dec["id"]) else None) \
+        or (f"turn-{turn['status']}" if turn["status"] != "open" else None) \
+        or (f"investigation-{inv.status}" if inv.status != "active" else None)
+
+
+def admit_decision_effect(ctx: Ctx, admission: dict) -> None:
+    """F5c (review R8 #2): the admission boundary of every effect of an accepted decision (``file_claim`` included).
+
+    The investigator's execute_decision sends each effect command with ``admission`` = {decision_id, execution}; the
+    command service calls this in the effect's own transaction, before the handler runs (a replay of an effect that
+    already committed is returned as before). The effect is refused (``EFFECT_NOT_ADMITTED``, nothing written) unless
+    the decision was handed off, is not revoked, its turn is open, the investigation is active and ``execution``'s run
+    still owns the turn. The check holds the turn and investigation row locks until the effect commits, so a stop
+    (or pause) either commits first and the effect is refused, or waits until the effect has committed."""
+    did = str(admission.get("decision_id") or "")
+    dec = ctx.tx.get_decision(did) if did else None
+    if not dec or not dec["accepted"]:
+        raise EffectNotAdmitted("not an effect of an accepted decision", details={"reason": "not-accepted",
+                                                                                   "decision_id": did})
+    _turn(ctx, dec["turn_id"])  # project access
+    refused = _decision_refused(ctx, dec, str(admission.get("execution") or "")) \
+        or (None if _handed_off(ctx, did) else "not-handed-off")
+    if refused:
+        raise EffectNotAdmitted(f"effect of decision {did} not admitted: {refused}",
+                                details={"reason": refused, "decision_id": did})
+
+
+if admit_decision_effect not in EFFECT_ADMISSION:
+    EFFECT_ADMISSION.append(admit_decision_effect)
 
 
 @command("record_turn_context", "turn")

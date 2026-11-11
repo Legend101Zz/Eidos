@@ -195,7 +195,10 @@ class InvestigatorActivities:
             # F5 (C1): the TurnWorkflow run that begins or resumes the turn becomes its owner
             r = self.wf.command("begin_turn", {"investigation_id": a["investigation_id"],
                                                "runtime_release": "eidos-investigator/1",
-                                               "run_id": getattr(activity.info(), "workflow_run_id", "") or ""},
+                                               "run_id": getattr(activity.info(), "workflow_run_id", "") or "",
+                                               # F5c: the coordinator's ordered ticket for this turn workflow (ADR 0017 addendum)
+                                               **({"ticket": int(a["ticket"])} if a.get("ticket") is not None
+                                                  else {})},
                                 project=a["project_id"],
                                 # per run (F5): a new run of the same index must take the turn, not replay the receipt
                                 key=f"begin:{a['investigation_id']}:{a['index']}:"
@@ -412,15 +415,33 @@ class InvestigatorActivities:
                                           f"{getattr(info, 'attempt', 1)}")["result"]
         if not h.get("handed_off"):
             return {"summary": [], "skipped": h.get("reason") or "not-handed-off"}
+        # F5c (review R8 #2): every effect is admitted against this decision and run in its own transaction, so a stop,
+        # pause or turn closure that commits after the handoff refuses the remaining effects (EFFECT_NOT_ADMITTED).
+        admission = {"decision_id": dec["id"],
+                     "execution": f"{getattr(info, 'workflow_run_id', '')}/{getattr(info, 'activity_id', '')}"}
         receipts = []
         for call in dec["body"]["calls"]:
-            receipts.append(self._execute_call(p, a["investigation_id"], turn["id"], dec["id"], call))
+            r = self._execute_call(p, a["investigation_id"], turn["id"], dec["id"], call, admission)
+            if r.get("code") == "EFFECT_NOT_ADMITTED":
+                why = str(((r.get("error") or {}).get("details") or {}).get("reason") or "not-admitted")
+                if why == "superseded-execution":
+                    # the run that now owns the turn continues this handed-off decision (its receipts are its own)
+                    return {"summary": [], "skipped": why}
+                receipts.append(r)  # the effects before it ran; this one and the rest were refused
+                return self._finish_decision(p, a, dec, receipts, stopped=why)
+            receipts.append(r)
+        return self._finish_decision(p, a, dec, receipts)
+
+    def _finish_decision(self, p: str, a: dict, dec: dict, receipts: list[dict], stopped: str | None = None) -> dict:
         # Replay-invariant record: a retry after committed effects yields identical receipts.
         stable = [{k: v for k, v in r.items() if k != "replayed"} for r in receipts]
         self.wf.command("record_decision_receipts", {"decision_id": dec["id"], "receipts": stable}, project=p,
                         key=f"receipts:{dec['id']}")
         summary = [{"tool": r["tool"], "ok": r["ok"], "replayed": r.get("replayed"), "code": r.get("code")} for r in receipts]
         out: dict[str, Any] = {"summary": summary}
+        if stopped:
+            out["stopped"] = stopped
+            return bounded(out)
         # A wait after effects that created nothing to wait for (every effect call failed, or none launched work)
         # would park the investigation: report it so the turn treats it like a refused proposal (ADR 0007/0008).
         if (dec["body"].get("control") or {}).get("action") == "wait_for_jobs" and receipts:
@@ -434,16 +455,19 @@ class InvestigatorActivities:
                                        for r in receipts if not r["ok"]]
         return bounded(out)
 
-    def _execute_call(self, p: str, inv: str, turn_id: str, dec_id: str, call: dict) -> dict:
+    def _execute_call(self, p: str, inv: str, turn_id: str, dec_id: str, call: dict,
+                      admission: dict | None = None) -> dict:
         tool, args, idx = call["tool"], dict(call["args"]), call["index"]
         key = call["command_key"]
+        adm: dict[str, Any] = {"admission": admission} if admission else {}
         assert key == command_key(p, turn_id, dec_id, idx), "persisted command key mismatch"
         args.setdefault("investigation_id", inv)
         try:
             if tool == "author_source":  # the whole-trainer path: candidate project files, no build
                 bundle = json.dumps({"files": args.get("files") or {}}, sort_keys=True).encode()
                 up = self.inv.upload(p, data=bundle, media_type="application/vnd.eidos.source-bundle+json",
-                                     schema="source-bundle/1", role="source", name="authored-source", key=key)
+                                     schema="source-bundle/1", role="source", name="authored-source", key=key,
+                                     **adm)
                 return {"tool": tool, "index": idx, "ok": True, "replayed": up.get("replayed"),
                         "result": {"artifact_id": up["result"]["artifact_id"],
                                    "use_as": "run_component inputs.source (e.g. eidos.project.command)"}}
@@ -451,13 +475,16 @@ class InvestigatorActivities:
                 bundle = json.dumps({"files": args.get("files") or {}}, sort_keys=True).encode()
                 up = self.inv.upload(p, data=bundle, media_type="application/vnd.eidos.source-bundle+json",
                                      schema="source-bundle/1", role="source", name="authored-component",
-                                     key=command_key(p, turn_id, dec_id, idx, 1))
+                                     key=command_key(p, turn_id, dec_id, idx, 1),
+                                     **adm)
                 aid = up["result"]["artifact_id"]
                 r = self.inv.command("validate_component", {"bundle_artifact_id": aid, "investigation_id": inv,
-                                     "environment": args.get("environment", "default")}, project=p, key=key)
+                                     "environment": args.get("environment", "default")}, project=p, key=key,
+                                     **adm)
                 r["result"]["bundle_artifact_id"] = aid
             else:
-                r = self.inv.command(EFFECT_TOOLS[tool], args, project=p, key=key)
+                r = self.inv.command(EFFECT_TOOLS[tool], args, project=p, key=key,
+                                     **adm)
             return {"tool": tool, "index": idx, "ok": True, "replayed": r.get("replayed"), "result": r["result"]}
         except LabError as exc:
             return {"tool": tool, "index": idx, "ok": False, "code": exc.code, "error": exc.error}

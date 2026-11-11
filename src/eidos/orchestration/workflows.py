@@ -211,7 +211,7 @@ class InvestigationWorkflow:
                     and workflow.patched("needs-input-survives-rollover-v1"):
                 # A rollover while waiting for operator input: keep waiting (no turn without operator news).
                 await self._wait_for_operator(a, inv, history_limit, idle)
-                a = {**a, "invalid_turns": 0}
+                a = {**{k: v for k, v in a.items() if k != "operator_cursor"}, "invalid_turns": 0}
                 invalid_turns = 0
             if workflow.info().get_current_history_length() > history_limit or self._turns >= turns_per_run:
                 self._status = "rolling-over"
@@ -223,9 +223,18 @@ class InvestigationWorkflow:
             self._turns += 1
             seen = self._wakes
             self._status = f"turn {counter}"
+            child: dict[str, Any] = {"investigation_id": inv, "project_id": a["project_id"], "index": counter}
+            if workflow.patched("turn-ticket-v1"):
+                # F5c (review R8 #1, ADR 0017 addendum): an ordered ticket for this turn workflow, issued by the
+                # coordinator (the only one running for the investigation) from its workflow clock, which is durable
+                # (the child's input is in the history) and strictly increasing across its turn workflows: each is
+                # started only after the previous one ended, and across Continue-As-New, reset or a restarted
+                # coordinator. A delayed begin_turn of an earlier, terminated turn workflow carries an older ticket,
+                # and the lab never lets it take the turn back from a newer one.
+                child["ticket"] = int(workflow.now().timestamp() * 1_000_000)
             try:
                 res = await workflow.execute_child_workflow(
-                    "TurnWorkflow", {"investigation_id": inv, "project_id": a["project_id"], "index": counter},
+                    "TurnWorkflow", child,
                     id=f"{inv}-turn-{counter}", task_queue=WORKFLOW_QUEUE,
                     execution_timeout=timedelta(seconds=int(a.get("turn_timeout_seconds", 1800))))
                 consecutive_errors = 0
@@ -268,11 +277,18 @@ class InvestigationWorkflow:
                     continue
                 needs_input = invalid_turns > MAX_INVALID_RETRY_TURNS
             if needs_input and workflow.patched("needs-input-visible-v1"):
-                await workflow.execute_activity(
+                marked = await workflow.execute_activity(
                     "mark_needs_input", {"investigation_id": inv, "project_id": a["project_id"], "turn_counter": counter,
                                          "refused_turns": invalid_turns,
                                          "reason": "repeated refused proposals after bounded retries"},
                     task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
+                # F5c (review R8 #3): this wait, like the failed-turn wait (A1), counts only operator events after the
+                # mark's cursor, not after the last turn's horizon (an event between the two would end it at once).
+                # The cursor is kept in the workflow input, so a Continue-As-New during the wait carries it too.
+                cursor = (marked or {}).get("cursor")
+                a = {k: v for k, v in a.items() if k != "operator_cursor"}
+                if cursor:
+                    a["operator_cursor"] = int(cursor)
             if not res.get("started") or reason in WAIT_REASONS or reason == "error":
                 self._status = "needs operator input (repeated refused proposals)" if needs_input else f"waiting ({reason})"
                 waited_since = workflow.now()
@@ -293,7 +309,9 @@ class InvestigationWorkflow:
                     # A quiet poll costs no model call: start a turn only if something happened.
                     news = await workflow.execute_activity(
                         "check_news", {"investigation_id": inv, "project_id": a["project_id"],
-                                       **({"operator_only": True} if needs_input else {})},
+                                       **({"operator_only": True} if needs_input else {}),
+                                       **({"after": int(a["operator_cursor"])}
+                                          if needs_input and a.get("operator_cursor") else {})},
                         task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
                     quiet_news = bool(news.get("news"))
                     if news.get("news") or workflow.info().get_current_history_length() > history_limit \

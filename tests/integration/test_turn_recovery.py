@@ -44,10 +44,11 @@ class ShimClient:
     def __init__(self, lab, principal):
         self.lab, self.pr = lab, principal
 
-    def command(self, name, payload=None, *, project=None, key=None, expected_revision=None):
+    def command(self, name, payload=None, *, project=None, key=None, expected_revision=None, admission=None):
         try:
             return self.lab.svc.execute(self.pr, name, project_id=project, command_key=key or uuid.uuid4().hex,
-                                        payload=payload or {}, expected_revision=expected_revision)
+                                        payload=payload or {}, expected_revision=expected_revision,
+                                        admission=admission)
         except DomainError as exc:
             raise LabError(exc.http_status, exc.to_dict()) from exc
 
@@ -59,11 +60,11 @@ class ShimClient:
             raise LabError(exc.http_status, exc.to_dict()) from exc
 
     def upload(self, project, path=None, *, data=None, media_type="application/octet-stream", schema=None,
-               role="input", access_class="project", name=None, key=None, investigation=None):
+               role="input", access_class="project", name=None, key=None, investigation=None, admission=None):
         digest, size = self.lab.store.put_bytes(data)
         return self.command("register_artifact", {"digest": digest, "size": size, "media_type": media_type,
                                                   "schema": schema, "role": role, "name": name}, project=project,
-                            key=key or f"up:{digest}")
+                            key=key or f"up:{digest}", admission=admission)
 
     def download(self, project, artifact_id, dest):
         art = self.query("get_artifact", {"artifact_id": artifact_id}, project=project)

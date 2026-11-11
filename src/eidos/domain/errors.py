@@ -131,3 +131,10 @@ class QuestionRevised(DomainError):
     code = "QUESTION_REVISED"
     http_status = 409
     next_action = "The investigation question changed after this turn began; propose new work in the next turn."
+
+
+class EffectNotAdmitted(DomainError):
+    code = "EFFECT_NOT_ADMITTED"
+    http_status = 409
+    next_action = ("The decision this effect belongs to may no longer act (the investigation was stopped or paused, the "
+                   "turn closed, the decision was revoked, or another run owns the turn); nothing was written.")

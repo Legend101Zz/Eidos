@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import time
 from typing import Any, cast
@@ -30,6 +31,8 @@ class CommandRequest(BaseModel):
     delegation: dict[str, Any] = Field(default_factory=dict)
     # Argument shapes the MCP adapter normalized before sending (ADR 0017); recorded in the receipt, nothing else.
     normalized_arguments: list[dict[str, Any]] = Field(default_factory=list, max_length=64)
+    # F5c: the accepted decision an effect belongs to ({decision_id, execution}); checked at the effect's admission.
+    admission: dict[str, Any] | None = None
 
 
 class QueryRequest(BaseModel):
@@ -116,7 +119,8 @@ def create_app(service: CommandService, *, relay: Any = None, maintenance_flag: 
         return await asyncio.to_thread(service.execute, pr, name, project_id=body.project_id,
                                        command_key=body.command_key, payload=body.payload,
                                        expected_revision=body.expected_revision, delegation=client,
-                                       normalized_arguments=body.normalized_arguments)
+                                       normalized_arguments=body.normalized_arguments,
+                                       admission=body.admission)
 
     @app.post("/v1/queries/{name}")
     async def run_query(name: str, body: QueryRequest, request: Request):
@@ -165,8 +169,16 @@ def create_app(service: CommandService, *, relay: Any = None, maintenance_flag: 
                    "name": request.headers.get("x-eidos-name"), "origin": "upload"}
         if request.headers.get("x-eidos-investigation"):
             payload["investigation_id"] = request.headers["x-eidos-investigation"]
+        admission = None
+        if request.headers.get("x-eidos-admission"):  # F5c: an effect of an accepted decision (author_source)
+            try:
+                admission = json.loads(request.headers["x-eidos-admission"])
+            except ValueError as exc:
+                raise Invalid("X-Eidos-Admission must be a JSON object") from exc
+            if not isinstance(admission, dict):
+                raise Invalid("X-Eidos-Admission must be a JSON object")
         return await asyncio.to_thread(service.execute, pr, "register_artifact", project_id=project_id,
-                                       command_key=key, payload=payload)
+                                       command_key=key, payload=payload, admission=admission)
 
     @app.get("/v1/projects/{project_id}/artifacts/{artifact_id}/content")
     async def download(project_id: str, artifact_id: str, request: Request):

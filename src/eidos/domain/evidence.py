@@ -217,7 +217,14 @@ def evaluate_success_rule(
 
     eff = interval_of(diffs, keys)
     min_eff = float(rule["min_effect"])
-    if std["kind"] == "threshold":
+    # F5c (review R8 #4, ADR 0018 s.8): a two-way interval that is unbounded below because the variance collapsed or
+    # there are too few seed clusters never supports a pass under ANY decision standard. A threshold rule used to
+    # compare the point estimate alone, so three favourable seeds of a discrete seed effect could still pass it.
+    # Such evidence is decided by its interval, exactly as under the interval standard: it can fail (the upper bound
+    # is below the minimum effect, e.g. identical arms), never pass, and is otherwise inconclusive. The original
+    # interval method keeps its recorded behaviour (assessor releases before paired-ci@1.2.0).
+    unbounded = eff.get("unbounded_reason") if interval == INTERVAL_TWO_WAY else None
+    if std["kind"] == "threshold" and not unbounded:
         outcome = "protocol-passed" if eff["estimate"] >= min_eff else "protocol-failed"
     elif eff["ci_low"] >= min_eff:
         outcome = "protocol-passed"
@@ -242,6 +249,11 @@ def evaluate_success_rule(
             outcome = "protocol-failed" if ge["ci_high"] < -float(g["max_regression"]) else "inconclusive"
     out = {"outcome": outcome, "effect": eff, "min_effect": min_eff, "guardrails": guards,
            "direction": mdef["direction"], "metric": metric}
+    if unbounded:  # surfaced in the result: why this evidence cannot pass, whatever the decision standard
+        out["unbounded_reason"] = unbounded
+        out["decided_by"] = "interval-upper-bound" if outcome == "protocol-failed" else "none"
+        if outcome == "inconclusive":
+            out["reason"] = f"the interval is unbounded below ({unbounded}): this evidence cannot support a pass"
     if mismatch:
         out.update(outcome="inconclusive", reason="baseline and candidate units do not match", unit_mismatch=mismatch)
     return out
