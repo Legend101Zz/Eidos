@@ -16,3 +16,9 @@ Evidence is in `/Volumes/Mrigesh SSD/eidos-v1/pilot-3/runs/N03-r3/` and `N04-r3/
 - The companion grading sweep remains the sole local grading owner. Final reporting will verify every current block's local grade and hosted grade provenance, rather than equating dispatch markers with completed grading.
 
 No retrospective success is inferred from the other arms' completed answers in an excluded incident block. Report the later accepted whole-block attempt and preserve the excluded attempt in the incident inventory.
+
+## Further observation, approximately 22:11–22:13 IST
+
+The current N01-r3 and N02-r3 arm-4 attempts also stopped at the disk guard, at `2026-11-11T16:40:23.079800+00:00` and `2026-11-11T16:40:22.610833+00:00`. Their `worker_error.txt` and `run_record.json` contain the explicit disk error; the paired blocks were still closing at inspection. Apply the same whole-block incident rule when they close. The source directories will be retained under `runs/incidents/` on replacement.
+
+The initial relocation and internal study-cache cleanup did not provide enough headroom for the transient demand. The controller additionally cleared the regenerable download cache at `~/.cache/uv` (uv reported 3.1 GiB removed). The subsequent `df -k /` observation showed 16,197,176 KiB available, approximately 15.45 GiB. This removes cached package downloads only; it changes neither installed environments nor the frozen build. Continue observing free space rather than treating that snapshot as a guarantee.
