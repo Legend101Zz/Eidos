@@ -135,7 +135,15 @@ class SealTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform == "darwin", "requires macOS Seatbelt")
     def test_all_four_stub_arms_stage_and_grade_the_same_sealed_card(self):
         seal = PrivateSeal(self.private, self.commitment)
+        lab = self.root / "stub-lab"
+        lab_python = lab / "bin/python"
+        lab_python.parent.mkdir(parents=True)
+        lab_python.symlink_to(sys.executable)
+        (lab / "pilot-build.json").write_text(json.dumps({
+            "eidos_commit_sha": "synthetic", "python": str(lab_python),
+        }))
         env = {
+            "EIDOS_STUDY_PYTHON": str(lab_python),
             "EIDOS_RESEARCH_PYTHON": sys.executable,
             "EIDOS_PILOT_CHARTER_COMMIT": "synthetic",
             "EIDOS_PILOT_CHARTER_PATH": "docs/experiments/pilot-4/CHARTER.md",
@@ -149,8 +157,10 @@ class SealTests(unittest.TestCase):
             patch("study.grade_block.configured_seal", return_value=seal),
         ):
             block = run_block(rows, runs, stub=True)
-            self.assertEqual(block["status"], "ok")
             block_dir = runs / block["block_id"]
+            if block["status"] != "ok":
+                logs = [(path.parent.name, path.read_text()) for path in sorted(block_dir.glob("arm*/launcher.log"))]
+                self.fail(f"{block['incident_reason']}; stub logs: {logs}")
             for arm in (1, 2, 3, 4):
                 arm_dir = block_dir / f"arm{arm}"
                 self.assertEqual({p.name for p in (arm_dir / "task").iterdir()}, MODEL_FILES)
