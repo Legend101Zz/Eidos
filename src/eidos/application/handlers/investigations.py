@@ -700,7 +700,7 @@ def _live_exploration_stop(ctx: Ctx, inv, turn: dict) -> str | None:
     whose wall allowance or model-token allowance has since run out admits no new challengers: the turn's start is not
     the only time the boundary is checked."""
     state = turn["spec"].get("exploration") or {}
-    if state.get("phase") != "explore":
+    if state.get("phase") not in exploration_rules.EXPLORING_PHASES:  # before the first lock too (H2, R17 #3)
         return None
     until = (turn["spec"].get("completion") or {}).get("exploration_deadline_unix")
     if until is not None and time.time() >= float(until):
@@ -737,8 +737,8 @@ def _check_exploration_phase(turn: dict, decision: dict, live_stop: str | None =
     exploratory compute is refused. Reproducing the incumbent (purpose "reproduction"), confirmation, export and the
     conclusion remain, and so does scoring a pending challenger (R14 #6). A bounded outcome is left to end the turn."""
     state = dict(turn["spec"].get("exploration") or {})
-    if live_stop and state.get("phase") == "explore":
-        state.update(phase="finalize", stop=live_stop)
+    if live_stop and state.get("phase") in exploration_rules.EXPLORING_PHASES:
+        state.update(phase="finalize", stop=live_stop, **({} if state.get("incumbent") else {"candidate": "none"}))
     control = decision.get("control") or {}
     if state.get("phase") != "finalize" or control.get("bounded_outcome") \
             or decision.get("purpose", "open-search") not in exploration_rules.REFUSED_WHEN_FINALIZING:
@@ -748,11 +748,12 @@ def _check_exploration_phase(turn: dict, decision: dict, live_stop: str | None =
     starts = [i for i, c in enumerate(decision["calls"]) if c["tool"] in turn_rules.JOB_TOOLS
               and not (pending and _finishes_pending_round(c, decision["calls"], pending, memo))]
     if starts:
-        raise Invalid(f"exploration has stopped ({state.get('stop')}): no new challengers. Reproduce the incumbent "
-                      "with purpose \"reproduction\", export, assess or conclude",
+        message, next_action = exploration_rules.stopped_message(state)
+        raise Invalid(message,
                       details={"stop": state.get("stop"), "calls": starts, "purpose": decision.get("purpose"),
-                               "incumbent": state.get("incumbent"), "allowance": state.get("allowance")},
-                      next_action="Propose the incumbent's reproduction (purpose reproduction) or conclude.")
+                               "incumbent": state.get("incumbent"), "allowance": state.get("allowance"),
+                               **({"candidate": "none"} if not state.get("incumbent") else {})},
+                      next_action=next_action)
 
 
 def _late_decision(ctx: Ctx, turn: dict, inv, slot: int, attempt: int | None, epoch: int | None = None) -> str | None:
@@ -1030,7 +1031,7 @@ def reserve_model_budget(ctx: Ctx, p: dict) -> dict:
     if p.get("attempt") is not None and p.get("epoch") is None:  # callers without begin_decision
         _note_attempt(ctx, turn, int(p.get("slot") or 0), int(p["attempt"]))
     tokens = float((p.get("estimate") or {}).get("model_tokens") or 0)
-    if tokens > 0 and (turn["spec"].get("exploration") or {}).get("phase") == "explore" \
+    if tokens > 0 and (turn["spec"].get("exploration") or {}).get("phase") in exploration_rules.EXPLORING_PHASES \
             and isinstance(budgets.get("model_tokens"), dict):
         # R14 #4: an exploratory decision's reservation must fit in what is left before the token hold-back, as of now
         # (other decisions of the turn have reserved and spent since it began); the hold-back is for finalization.

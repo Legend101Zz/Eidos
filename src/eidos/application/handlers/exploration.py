@@ -51,12 +51,43 @@ def _notes(ctx: Ctx, inv_id: str) -> list[dict[str, Any]]:
             if n.body.get("kind") in NOTE_KINDS]
 
 
-def turn_log(ctx: Ctx, inv_id: str) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    """(per turn, the jobs its accepted decisions admitted; the turn of every note a decision recorded)."""
-    log: list[dict[str, Any]] = []
-    note_turns: dict[str, int] = {}
+MCP_BATCH_KIND = "mcp-batch"  # the prospective record ``run_batch`` writes before any of its calls (ADR 0025)
+
+
+def _batch_notes(ctx: Ctx, inv_id: str) -> list[dict[str, Any]]:
+    out = []
+    for n in ctx.tx.list_records(ctx.project_id, "note", parent_id=inv_id, limit=100000):
+        if n.body.get("kind") != MCP_BATCH_KIND:
+            continue
+        key = (rules.note_json({"text": n.body.get("text")}) or {}).get("command_key")
+        out.append({"id": n.id, "key": str(key) if key else None, "created_at": n.created_at})
+    return out
+
+
+def _at(value: Any) -> tuple[int, Any]:
+    return (0, value) if value is not None else (1, 0)
+
+
+def turn_log(ctx: Ctx, inv_id: str, jobs: list[dict[str, Any]] | None = None
+             ) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """The investigation's shared round history (H2, R17 #1): (per entry, in ledger order, the jobs it admitted; the
+    entry of every lock or rule note). Investigator turns and work outside a decision share one history, so the same
+    stopping rules (``max_rounds``, patience, ceiling) hold on both paths:
+
+    * an investigator turn: the jobs and notes its accepted decisions recorded;
+    * an MCP ``run_batch``: its ``mcp-batch`` record opens an entry, and the jobs admitted outside a decision after it
+      belong to it (``batch``: its command key), however many calls or resumptions it takes;
+    * a ``candidate_lock`` or ``selection_rule`` note recorded outside a decision (``submit_candidate``,
+      ``record_note``) is its own entry, so the rounds after the first lock count from it;
+    * any other job admitted outside a decision joins the entry before it, or opens one after such a note.
+
+    Entries are numbered from 1 in ledger order (``turn``); a decision's turn keeps its place among them."""
+    events: list[tuple[tuple[int, Any], int, str, Any]] = []
+    decided_jobs: set[str] = set()
+    decided_notes: set[str] = set()
     for t in ctx.tx.list_turns(inv_id):
-        jobs: list[str] = []
+        t_jobs: list[str] = []
+        t_notes: list[str] = []
         for d in ctx.tx.decisions(t["id"]):
             if not d["accepted"]:
                 continue
@@ -65,10 +96,42 @@ def turn_log(ctx: Ctx, inv_id: str) -> tuple[list[dict[str, Any]], dict[str, int
                 res = r.get("result") or {}
                 if r.get("ok") and isinstance(res, dict):
                     if res.get("job_id"):
-                        jobs.append(str(res["job_id"]))
+                        t_jobs.append(str(res["job_id"]))
                     if res.get("note_id"):
-                        note_turns[str(res["note_id"])] = int(t["seq"])
-        log.append({"turn": int(t["seq"]), "jobs": jobs})
+                        t_notes.append(str(res["note_id"]))
+        decided_jobs |= set(t_jobs)
+        decided_notes |= set(t_notes)
+        events.append((_at(t.get("created_at")), 0, "turn", {"jobs": t_jobs, "notes": t_notes, "seq": int(t["seq"])}))
+    for b in _batch_notes(ctx, inv_id):
+        events.append((_at(b["created_at"]), 0, "batch", b))
+    for n in _notes(ctx, inv_id):
+        if n.get("kind") in ("candidate_lock", "selection_rule") and str(n["id"]) not in decided_notes:
+            events.append((_at(n.get("created_at")), 1, "note", n))
+    for j in jobs if jobs is not None else _jobs(ctx, inv_id):
+        if str(j["id"]) not in decided_jobs:
+            events.append((_at(j.get("created_at")), 2, "job", j))
+    events.sort(key=lambda e: (e[0], e[1]))
+    log: list[dict[str, Any]] = []
+    note_turns: dict[str, int] = {}
+    current: dict[str, Any] | None = None
+    for _, _, what, item in events:
+        if what == "job":
+            if current is None or current.get("note"):
+                current = {"turn": len(log) + 1, "jobs": [], "source": "direct"}
+                log.append(current)
+            current["jobs"].append(str(item["id"]))
+            continue
+        current = {"turn": len(log) + 1, "jobs": list(item["jobs"]) if what == "turn" else []}
+        log.append(current)
+        if what == "turn":
+            current.update(source="turn", seq=item["seq"])
+            for nid in item["notes"]:
+                note_turns[nid] = current["turn"]
+        elif what == "batch":
+            current.update(source="batch", batch=item["key"])
+        else:
+            current.update(source="note", note=str(item["id"]))
+            note_turns[str(item["id"])] = current["turn"]
     return log, note_turns
 
 
@@ -115,10 +178,14 @@ def decision_tokens(inv: Any) -> float | None:
 
 
 def exploration_state(ctx: Ctx, inv: Any, *, completion: dict[str, Any] | None = None,
-                      budgets: dict[str, Any] | None = None) -> dict[str, Any]:
-    log, note_turns = turn_log(ctx, inv.id)
+                      budgets: dict[str, Any] | None = None, at_start_of_batch: str | None = None) -> dict[str, Any]:
+    """The domain state from the ledger. ``at_start_of_batch`` (an MCP batch's command key): the state as the batch
+    began, its own jobs not yet counted, as a decision is checked when it is accepted (H2, R17 #1)."""
     base = ctx.tx.get_record(BASELINE_KIND, inv.id)
     jobs = _jobs(ctx, inv.id)
+    log, note_turns = turn_log(ctx, inv.id, jobs)
+    if at_start_of_batch is not None:
+        log = [r for r in log if r.get("batch") != at_start_of_batch]
     held = held_out_artifacts(ctx, inv, jobs)
     st = rules.state(baseline_job=base.body.get("job_id") if base else None, notes=_notes(ctx, inv.id), jobs=jobs,
                      round_log=log, note_turns=note_turns, lock_job=candidate_lock_job_id, completion=completion,
@@ -130,33 +197,51 @@ def exploration_state(ctx: Ctx, inv: Any, *, completion: dict[str, Any] | None =
     return st
 
 
+def _batch_key(ctx: Ctx) -> str | None:
+    """The command key of the MCP batch this command is a call of (``<batch key>:<index>``), if any."""
+    key = ctx.command_key or ""
+    head, _, index = key.rpartition(":")
+    return head if head and index.isdigit() else None
+
+
 def check_admission(ctx: Ctx, inv_id: str | None, purpose: str, lock: dict[str, Any]) -> float | None:
     """ADR 0023 for exploratory work admitted outside a decision: the MCP batch path and direct calls (ADR 0025, H1).
-    The same rules as ``accept_decision``, from the state at admission: once exploration has stopped (selection frozen,
-    a ceiling, the search limit, the wall or token hold-back) a new ``open-search`` or ``hypothesis-test`` job is
-    refused, unless it reads an output of a pending challenger (it finishes an admitted round, R14 #6). While
-    exploration runs, returns when it must end (the start of the hold-back), so the job's wall can be capped there
-    (R14 #4); otherwise None. A decision's effects are checked when the decision is accepted, not here."""
+    The same rules as ``accept_decision``, from the shared round history (H2, R17 #1): once exploration has stopped
+    (selection frozen, a ceiling, the search limit, the wall or token hold-back, before the first lock too: R17 #3) a
+    new job with a challenger purpose (``open-search``, ``hypothesis-test``, ``measurement-development``: R17 #2) is
+    refused, unless it reads an output of a pending challenger (it finishes an admitted round, R14 #6). A call of an MCP
+    batch is judged by the state as its batch began, as a decision's effects are by the state when it was accepted, so
+    a batch is one round and the round limits stop the next one. While exploring, returns when exploratory work must
+    end (the start of the hold-back), so the job's wall can be capped there (R14 #4); otherwise None. A decision's
+    effects are checked when the decision is accepted, not here."""
     if not inv_id or ctx.admission or purpose not in rules.REFUSED_WHEN_FINALIZING:
         return None
     inv = ctx.tx.require("investigation", inv_id)
     wall = inv.body.get("wall")
     completion = turn_rules.completion_state(wall["deadline_unix"], time.time(), wall["conclude_threshold_seconds"]) \
         if wall else None
-    st = exploration_state(ctx, inv, completion=completion, budgets=ctx.tx.budgets(f"inv:{inv.id}"))
+    budgets = ctx.tx.budgets(f"inv:{inv.id}")
+    batch = _batch_key(ctx)
+    if batch is not None and not any(b["key"] == batch for b in _batch_notes(ctx, inv_id)):
+        batch = None
+    st = exploration_state(ctx, inv, completion=completion, budgets=budgets, at_start_of_batch=batch)
     if st["phase"] != "finalize":
         return rules.exploration_deadline_unix(st, completion)
     pending = set(st.get("pending_outputs") or [])
+    if batch is not None:  # the batch's own challengers are pending too: scoring them finishes its round
+        pending |= set(exploration_state(ctx, inv, completion=completion, budgets=budgets).get("pending_outputs") or [])
     inputs = {str(i.get("artifact_id")) for i in (lock.get("inputs") or {}).values() if isinstance(i, dict)}
     if pending and inputs & pending:
         return None
     inc = st.get("incumbent") or {}
-    raise Invalid(f"exploration has stopped ({st.get('stop')}): no new challengers. Reproduce the incumbent with purpose "
-                  "\"reproduction\", export, assess or conclude",
+    message, next_action = rules.stopped_message(st)
+    raise Invalid(message,
                   details={"stop": st.get("stop"), "purpose": purpose, "allowance": st.get("allowance"),
+                           "rounds": st.get("rounds"), "max_rounds": st.get("max_rounds"),
+                           "rounds_without_improvement": st.get("rounds_without_improvement"),
                            "incumbent": {k: inc.get(k) for k in ("version", "job_id", "evidence", "reproduced_by")}
-                           if inc else None},
-                  next_action="Run the incumbent's reproduction (purpose reproduction), or submit or conclude.")
+                           if inc else None, **({"candidate": "none"} if not inc else {})},
+                  next_action=next_action)
 
 
 def _check_rule_provenance(ctx: Ctx, inv: Any, rule: dict[str, Any]) -> None:

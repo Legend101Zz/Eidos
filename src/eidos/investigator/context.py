@@ -408,7 +408,13 @@ def _exploration_facts(view: dict[str, Any]) -> list[str]:
     rounds = (f"{st.get('rounds')} challenger round(s), {st.get('rounds_without_improvement')} without improvement "
               f"(stop at {st.get('patience_rounds')})" + (f", search limit {st['max_rounds']}" if st.get("max_rounds")
                                                           is not None else ""))
-    if st.get("phase") == "finalize":
+    if st.get("phase") == "finalize" and not st.get("incumbent"):  # H2 (R17 #3): the hold-back reached before a lock
+        why = STOP_TEXT.get(str(st.get("stop")), str(st.get("stop"))).format(
+            patience=st.get("patience_rounds"), max_rounds=st.get("max_rounds"))
+        out.append(f"- Exploration: STOPPED before any candidate was locked, {why}. No new exploratory work (refused). "
+                   "Lock an already scored candidate if one beats the baseline; otherwise conclude, reporting that no "
+                   "candidate was found within the exploration allowance.")
+    elif st.get("phase") == "finalize":
         why = STOP_TEXT.get(str(st.get("stop")), str(st.get("stop"))).format(
             patience=st.get("patience_rounds"), max_rounds=st.get("max_rounds"))
         out.append(f"- Exploration: STOPPED, {why}. No new challengers (refused). Reproduce the incumbent if it is not "
