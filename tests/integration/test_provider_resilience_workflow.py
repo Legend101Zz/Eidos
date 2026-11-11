@@ -40,6 +40,16 @@ class Provider(Scripted):
             raise ApplicationError("provider quota exhausted: HTTP 429 error 2056 usage limit exceeded",
                                    {"kind": "quota-exhausted", "status": 429, "retry_after_seconds": None},
                                    type="PROVIDER_QUOTA_EXHAUSTED", non_retryable=True)
+        if mode == "recover-429":
+            if len(self.attempt_times[index]) == 1:
+                raise ApplicationError(
+                    "MODEL_CALL_FAILED: 429 rate limit",
+                    {"kind": "transient", "status": 429, "retry_after_seconds": 0.1},
+                    type="MODEL_CALL_FAILED",
+                    next_retry_delay=timedelta(seconds=0.1),
+                )
+            return {"accepted": True, "decision_id": "recovered", "n_calls": 0,
+                    "control": {"action": "conclude", "summary": "provider recovered"}}
         if mode == "retry-after":
             raise ApplicationError("MODEL_CALL_FAILED: 529 overloaded",
                                    {"kind": "transient", "status": 529, "retry_after_seconds": self.retry_after},
@@ -48,8 +58,8 @@ class Provider(Scripted):
         return await super().decide(a)
 
     def acts(self):
-        return [self.begin_turn, self.build_context, self.decide, self.execute_decision, self.complete_turn,
-                self.check_news, self.mark_needs_input, self.record_turn_retry]
+        return [self.begin_turn, self.build_context, self.decide, self.execute_decision, self.complete_turn, self.enter_finalization,
+                self.reconcile_finalization, self.check_news, self.mark_needs_input, self.record_turn_retry]
 
 
 @temporal
@@ -82,3 +92,15 @@ async def test_a_transient_failure_waits_for_the_providers_retry_after(env):  # 
     assert retry["failure"]["provider"]["retry_after_seconds"] == 3.0
     assert 3.0 <= retry["delay_seconds"] <= 3.6  # at least the Retry-After (base 1 s), with at most 20 % jitter
     assert fake.started == [1, 2]
+
+
+@temporal
+async def test_a_recovered_429_completes_the_same_turn_without_a_handoff(env):  # noqa: F811
+    fake = Provider({1: "recover-429"})
+    async with running(env, fake) as (handle, _):
+        result = await asyncio.wait_for(handle.result(), 20)
+    assert result["status"] == "finished" and result["reason"] == "concluded"
+    assert fake.started == [1]
+    assert fake.decide_attempts == {1: 2}
+    assert fake.completed_turn(1)["stop_reason"] == "concluded"
+    assert not fake.marks and not fake.retries

@@ -41,6 +41,11 @@ jobs:
       - name: shellcheck (errors) over CI, qualification, journey and ops scripts
         run: shellcheck -S error scripts/ci/*.sh scripts/qualify/*.sh scripts/qualify/mcp_clients/*.sh scripts/journeys/*.sh tests/journeys/*.sh tests/ops/*.sh
       - run: uv run pytest tests/unit -q
+      - name: Offline study arm and grader contracts
+        run: |
+          export EIDOS_RESEARCH_PYTHON="$PWD/.venv/bin/python"
+          export EIDOS_STUDY_PYTHON="$PWD/.venv/bin/python"
+          uv run python -m unittest study.eidos_arms.test_contract study.eidos_arms.test_parity study.tests.test_grading
       - run: uv run pytest tests/mcp tests/reporting -q   # the live-lab MCP test is covered by the e2e-journey job
 
   integration:
@@ -97,7 +102,7 @@ jobs:
           enable-cache: true
       - run: uv sync
       - name: root setup (bubblewrap, eidos-cand, interpreter under /opt, SDK readable)
-        run: sudo env "PATH=$PATH" bash scripts/ci/separate_identity_setup.sh "$GITHUB_WORKSPACE"
+        run: sudo --preserve-env=HTTP_PROXY,HTTPS_PROXY,ALL_PROXY,NO_PROXY,http_proxy,https_proxy,all_proxy,no_proxy env "PATH=$PATH" bash scripts/ci/separate_identity_setup.sh "$GITHUB_WORKSPACE"
       - name: bwrap diagnostics (as root; informational)
         run: sudo env "PATH=$PATH" EIDOS_CANDIDATE_PYTHON=/opt/eidos/envs/sealed-py312/bin/python .venv/bin/python scripts/ci/sealed_diag.py || true
       - name: sealed job as eidos-cand + assessment as the lab identity, end to end (as root)
@@ -131,7 +136,9 @@ jobs:
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           enable-cache: true
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libsecret-tools gnome-keyring dbus-x11
+      - name: Install secret-store dependencies from the official Ubuntu archive
+        run: |
+          sudo --preserve-env=HTTP_PROXY,HTTPS_PROXY,ALL_PROXY,NO_PROXY,http_proxy,https_proxy,all_proxy,no_proxy bash scripts/ci/ubuntu_archive.sh libsecret-tools gnome-keyring dbus-x11
       - run: uv sync
       - name: secret-tool round trip on a private session bus with an unlocked gnome-keyring
         run: |

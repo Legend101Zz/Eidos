@@ -1,0 +1,94 @@
+"""Held-out provenance closes over lineage, producers, digest aliases and project-wide jobs."""
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
+
+from eidos.application.handlers.finalization_evidence import check_read, excluded, safe_view
+from eidos.domain.errors import Forbidden
+
+
+def evidence_ctx():
+    artifacts = [
+        {'id': 'held', 'digest': 'root', 'access_class': 'project'},
+        {'id': 'direct', 'digest': 'd1', 'producer_job': 'j1', 'access_class': 'project'},
+        {'id': 'alias', 'digest': 'd1', 'access_class': 'project'},
+        {'id': 'derived', 'digest': 'd2', 'producer_job': 'j2', 'access_class': 'project'},
+        {'id': 'source', 'digest': 'd3', 'access_class': 'project'},
+        {'id': 'safe', 'digest': 's', 'access_class': 'project'},
+    ]
+    jobs = [{'id': 'j1', 'lock': {'inputs': {'x': {'artifact_id': 'held', 'digest': 'root'}}}},
+            {'id': 'j2', 'lock': {'inputs': {'x': {'artifact_id': 'alias', 'digest': 'd1'}}}}]
+    inv = SimpleNamespace(id='inv', body={'charter_ref': {'id': 'charter'}})
+    tx = Mock()
+    tx.get_record.return_value = SimpleNamespace(body={'held_out': {'labels': ['sha256:root']}})
+    tx.require.return_value = inv
+    tx.list_artifacts.return_value = artifacts
+    tx.list_jobs.return_value = jobs
+    tx.lineage.return_value = [{'src': 'derived', 'dst': 'source'}, {'src': 'source', 'dst': 'component'}]
+    return SimpleNamespace(tx=tx, project_id='p'), inv
+
+
+def test_exclusion_follows_transitive_jobs_aliases_and_lineage():
+    ctx, inv = evidence_ctx()
+    assert excluded(ctx, inv) == {'held', 'j1', 'direct', 'alias', 'j2', 'derived', 'source', 'component'}
+
+
+def test_read_boundary_checks_allowlist_and_rechecks_provenance_before_disclosure():
+    ctx, _ = evidence_ctx()
+    ctx.tx.get_turn.return_value = {'project_id': 'p', 'investigation_id': 'inv', 'spec': {
+        'evidence_allowlist': {'artifacts': ['safe', 'derived']}}}
+    check_read(ctx, {'finalization_turn_id': 't'}, 'artifacts', 'safe')
+    for artifact in ['derived', 'unknown']:
+        with pytest.raises(Forbidden):
+            check_read(ctx, {'finalization_turn_id': 't'}, 'artifacts', artifact)
+
+
+def test_packed_projection_removes_echoes_of_held_out_results_and_pins():
+    view = {'investigation': {'id': 'inv', 'body': {'question': 'q', 'inputs': {'held': 'held', 'safe': 'safe'}}},
+            'jobs': [{'id': 'j1', 'receipt': {'secret': 123}}, {'id': 'good', 'receipt': {'accuracy': .9}}],
+            'call_results': [{'secret': 123}], 'turns': [{'result': {'secret': 123}}],
+            'pinned_notes': [{'text': 'derived result held'}, {'text': 'locked good'}],
+            'created_artifacts': [{'artifact_id': 'held'}, {'artifact_id': 'safe'}],
+            'baseline_record': {'job_id': 'j1', 'value': 123}}
+    clean = safe_view(view, {'jobs': ['good'], 'artifacts': ['safe']}, blocked={'held', 'j1'})
+    assert clean['jobs'] == [view['jobs'][1]] and clean['baseline_record'] is None
+    assert clean['turns'] == clean['call_results'] == []
+    assert clean['pinned_notes'] == [{'text': 'locked good'}]
+    assert clean['created_artifacts'] == [{'artifact_id': 'safe'}]
+    assert clean['investigation']['body']['inputs'] == {'safe': 'safe'}
+
+
+def test_ordinary_context_retains_confirmation_handles_without_observations():
+    view = {'investigation': {'id': 'inv', 'body': {'question': 'q'}},
+            'evidence_plans': [{'plan_id': 'plan', 'status': 'launched', 'obligations': ['confirm'],
+                                'assessment': {'secret': 123}, 'jobs': ['held-job']}],
+            'assessment_requests': [{'request_id': 'request', 'plan_id': 'plan', 'status': 'launched'}],
+            'call_results': [{'tool': 'assess_candidate', 'ok': True,
+                              'result': {'request_id': 'request', 'secret': 123}}]}
+    clean = safe_view(view, {'jobs': [], 'artifacts': []}, blocked={'held-job'}, ordinary=True)
+    assert clean['evidence_plans'][0]['plan_id'] == 'plan'
+    assert 'assessment' not in clean['evidence_plans'][0] and 'jobs' not in clean['evidence_plans'][0]
+    assert clean['assessment_requests'][0]['request_id'] == 'request'
+    assert clean['call_results'][0]['result'] == {'request_id': 'request'}
+
+
+def test_equal_output_bytes_do_not_reverse_taint_an_independent_producer():
+    # An empty log or receipt may have equal bytes across independent jobs. Its artifact aliases are denied,
+    # but provenance must follow dependencies forward instead of marking every producer of those bytes tainted.
+    ctx, inv = evidence_ctx()
+    ctx.tx.list_jobs.return_value.append({'id': 'independent', 'lock': {'inputs': {}}})
+    ctx.tx.list_artifacts.return_value.append({'id': 'equal-log', 'digest': 'd1',
+                                               'producer_job': 'independent', 'access_class': 'project'})
+    blocked = excluded(ctx, inv)
+    assert 'equal-log' in blocked and 'independent' not in blocked
+    view = {'investigation': {'id': 'inv', 'body': {'question': 'q'}},
+            'jobs': [{'id': 'independent', 'outputs': [{'artifact_id': 'equal-log'}, {'artifact_id': 'safe'}]}]}
+    clean = safe_view(view, {'jobs': ['independent'], 'artifacts': ['safe']}, blocked=blocked)
+    assert clean['jobs'][0]['outputs'] == [{'artifact_id': 'safe'}]
+
+
+def test_question_naming_isolated_evidence_is_redacted_without_destroying_the_context_shape():
+    view = {'investigation': {'id': 'inv', 'body': {'question': 'Read held-job', 'environment': 'lab'}}}
+    clean = safe_view(view, {'jobs': [], 'artifacts': []}, blocked={'held-job'})
+    assert clean['investigation']['body'] == {'question': None, 'environment': 'lab', 'inputs': {}}

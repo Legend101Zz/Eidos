@@ -12,6 +12,7 @@ import importlib.metadata
 import json
 import os
 import platform
+import shlex
 import shutil
 import subprocess
 import sys
@@ -270,7 +271,7 @@ def test_a_descendant_holding_the_output_open_cannot_extend_the_timeout(tmp_path
     """R10 #2: the probe's own process group is killed at the timeout, so a grandchild that inherited stdout and outlives its
     parent (which is what would hold a pipe open and hang the registering process) is gone and the call returns."""
     pidfile = tmp_path / "child.pid"
-    fake = executable(tmp_path / "fake-python", f"sleep 300 &\necho $! > {pidfile}\nsleep 300\n")
+    fake = executable(tmp_path / "fake-python", f"sleep 300 &\necho $! > {shlex.quote(str(pidfile))}\nsleep 300\n")
     child = None
     try:
         started = time.monotonic()
@@ -295,8 +296,8 @@ def test_a_descendant_holding_the_output_open_cannot_extend_the_timeout(tmp_path
 def test_a_descendant_that_outlives_a_successful_probe_is_also_stopped(tmp_path):
     """The group is killed on every exit, not only at the timeout: nothing the interpreter left behind survives the probe."""
     pidfile = tmp_path / "child.pid"
-    real = f"{sys.executable!r}"
-    fake = executable(tmp_path / "fake-python", f"sleep 300 &\necho $! > {pidfile}\nexec {real} \"$@\"\n")
+    real = shlex.quote(sys.executable)
+    fake = executable(tmp_path / "fake-python", f"sleep 300 &\necho $! > {shlex.quote(str(pidfile))}\nexec {real} \"$@\"\n")
     child = None
     try:
         out = probe_environment(fake, timeout=30)

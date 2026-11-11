@@ -87,17 +87,18 @@ def run(run_dir, meta):
         files['METHOD.md'] = (ROOT / 'study/METHOD.md').read_text()
         question = prompt(4, run_dir) + '\n\nPackaged task files:\n' + json.dumps(files, ensure_ascii=False)
         begin = time.monotonic()
+        deadline_utc = time.time() + wall
         began_at = utc()
         write_json(run_dir / 'setup.json', {'setup_started_at': setup_started_at,
                    'setup_ended_at': began_at, 'setup_wall_s': round(begin - setup_begin, 3),
                    'setup_complete': True})
-        deadline_utc = time.time() + wall
         from .provider_bridge import start as start_bridge
         bridge, bridge_receipt = start_bridge(run_dir, investigator['settings']['base_url'],
                                               deadline_utc, investigator['settings']['request_timeout'])
         investigator['settings']['base_url'] = bridge_receipt['base_url']
         # ADR 0020: completion state, the conclusion's reserve and the "conclude now" turn, inside the watchdog's envelope.
         investigator['wall_seconds'] = remaining_wall_seconds(deadline_utc)
+        investigator['wall_deadline_unix'] = deadline_utc - WATCHDOG_MARGIN_SECONDS
         r = c.command('start_investigation', {
             'question': question, 'charter_id': imported['charter_id'], 'environment': 'default',
             'inputs': imported['artifacts'], 'task': imported['task'], 'investigator': investigator,
@@ -181,7 +182,8 @@ def run(run_dir, meta):
             valid = False
             write_json(run_dir / 'validation_error.json', {'error': str(exc)})
         status, incident = classify(observed or shown, receipts, models, expired.is_set(), valid)
-        return {'status': status, 'incident_reason': incident, 'tokens': tokens, 'billed_usd': billed,
+        controller_abstention = (shown.get('body') or {}).get('controller_abstention')
+        return {'status': status, **({'controller_abstention': controller_abstention} if controller_abstention else {}), 'incident_reason': incident, 'tokens': tokens, 'billed_usd': billed,
                 'started_at': began_at,
                 'model_ids_seen': models, 'agent_claim': agent_claim, 'transcript': 'transcript.jsonl',
                 'project': project, 'investigation_id': inv, 'selected_job': selected,

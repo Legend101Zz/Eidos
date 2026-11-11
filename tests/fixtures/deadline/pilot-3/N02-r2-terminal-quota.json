@@ -1,0 +1,64 @@
+{
+  "schema_version": "eidos-terminal-provider-failure/1",
+  "source": {
+    "block_id": "N02-r2",
+    "arm": 4,
+    "recorded_outcome": "incident",
+    "usage_receipts_sha256": "a7e6a80a3e0b6e190ff73adcc419731264d144c2ea960dc799d69f884703f628",
+    "transcript_sha256": "5fd4d6a03e8c8da80a5730cf7ed0855c2427233fc969d2dcc12efc32b2040154",
+    "eidos_commit_sha": "257792ab56b6b984e807fe284a22fc5d31c4dd8b"
+  },
+  "receipt": {
+    "seq": 8727,
+    "project_id": "pilot-a4-dfa800eebf97400e",
+    "investigation_id": "inv_3b37946c061b",
+    "type": "model.usage",
+    "subject": "turn_inv_3b37946c061b_7",
+    "body": {
+      "usage": {
+        "calls": 0,
+        "error": "ModelRateLimitError: status_code: 429, model_name: MiniMax-M3.1-Flash, body: {'type': 'rate_limit_error', 'message': 'Token Plan usage limit reached: Upgrade your Token Plan or purchase Credits for more usage. (2056)', 'http_code': '429'}",
+        "model": "openai-compatible:MiniMax-M3.1-Flash",
+        "attempt": 1,
+        "failure": {
+          "kind": "quota-exhausted",
+          "error": "ModelRateLimitError",
+          "status": 429,
+          "retry_after_seconds": null
+        },
+        "provider": "openai-compatible",
+        "uncertain": true,
+        "per_request": [],
+        "request_ids": [],
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "served_models": [],
+        "failed_request": {
+          "kind": "quota-exhausted",
+          "error": "ModelRateLimitError",
+          "status_code": 429,
+          "retry_after_seconds": null
+        },
+        "elapsed_seconds": 1.622,
+        "reasoning_tokens": null,
+        "structured_output": {
+          "mode": "json",
+          "reads": [],
+          "valid": false,
+          "errors": [],
+          "reasks": 0,
+          "repairs": [],
+          "runaway": [],
+          "json_mode": true,
+          "fresh_state": [],
+          "read_requests": 0,
+          "runaway_reasks": 0,
+          "fresh_state_repairs": 0
+        },
+        "reasoning_accounting": "not-reported"
+      }
+    },
+    "command_id": 14586,
+    "created_at": "2026-11-11 22:30:18.172427+05:30"
+  }
+}

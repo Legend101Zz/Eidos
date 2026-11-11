@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from eidos.application.handlers import finalization_evidence
 from eidos.application.handlers.assessment import conclusion_claim_state
 from eidos.application.handlers.components import catalog
 from eidos.application.handlers.investigations import confirm_scope, inv_scope
@@ -113,13 +114,17 @@ def list_events(ctx: Ctx, p: dict) -> dict:
 
 @query("get_job")
 def get_job(ctx: Ctx, p: dict) -> dict:
+    allowed = finalization_evidence.read_allowlist(ctx, p)
+    if allowed is not None and p["job_id"] not in allowed.get("jobs", []):
+        raise Forbidden("job is outside the finalization allowlist or derives from held-out data")
     job = ctx.tx.get_job(p["job_id"])
     if not job or job["project_id"] != ctx.project_id:
         raise NotFound(f"job {p['job_id']} not found")
     _expose_job(ctx, job)
     out = _jsonable(job)
     out["attempts"] = [_jsonable(a) for a in ctx.tx.list_attempts(job["id"])]
-    out["outputs"] = [_jsonable(x) for x in ctx.tx.publications(job["id"])]
+    out["outputs"] = [_jsonable(x) for x in ctx.tx.publications(job["id"])
+                      if allowed is None or x["artifact_id"] in allowed.get("artifacts", [])]
     out["environment"] = _job_environment(job)  # kept when the lock is stripped (ADR 0020)
     if not p.get("include_lock", True):
         out.pop("lock", None)
@@ -149,6 +154,7 @@ def get_artifact(ctx: Ctx, p: dict) -> dict:
 @query("artifact_preview", "artifact:read")
 def artifact_preview(ctx: Ctx, p: dict) -> dict:
     """A bounded preview: the first bytes of text/JSON/CSV content, never arbitrary paths."""
+    finalization_evidence.check_read(ctx, p, "artifacts", p["artifact_id"])
     art = _artifact(ctx, p["artifact_id"])
     limit = min(int(p.get("max_bytes", PREVIEW_BYTES)), 65_536)
     if not ctx.store.has(art["digest"], art["size"]):
@@ -175,7 +181,10 @@ def search_components(ctx: Ctx, p: dict) -> dict:
     if p.get("as_of_horizon") is not None:  # catalog snapshot as of a ledger horizon
         cutoff = ctx.tx.event_time(int(p["as_of_horizon"]))
     published = {r.id: r.created_at for r in ctx.tx.list_records(ctx.project_id, "component_release", limit=5000)}
+    allowed = finalization_evidence.read_allowlist(ctx, p)
     for r in catalog(ctx, include_inactive=bool(p.get("include_inactive"))):
+        if allowed is not None and r["ref"] not in allowed.get("components", []):
+            continue
         if cutoff is not None and published.get(r["ref"]) and published[r["ref"]] > cutoff:
             continue
         m = r["manifest"]
@@ -232,10 +241,12 @@ def catalog_row(ref: str, m: dict, status: str, qualification: Any = None, *, ca
 
 @query("describe_component")
 def describe_component(ctx: Ctx, p: dict) -> dict:
+    finalization_evidence.check_read(ctx, p, "components", p["component_ref"])
     rec = ctx.tx.require("component_release", p["component_ref"])
     approvals = [a.view() for a in ctx.tx.list_records(ctx.project_id, "approval") if a.body["release_ref"] == rec.id]
     quals = [q.view() for q in ctx.tx.list_records(ctx.project_id, "qualification", parent_id=rec.id)]
-    return {**rec.view(), "approvals": approvals, "qualifications": quals}
+    return {**rec.view(), "approvals": [] if p.get("finalization_turn_id") else approvals,
+            "qualifications": [] if p.get("finalization_turn_id") else quals}
 
 
 @query("get_profile")
@@ -248,11 +259,16 @@ def get_investigation(ctx: Ctx, p: dict) -> dict:
     inv = ctx.tx.require("investigation", p["investigation_id"])
     if inv.project_id != ctx.project_id:
         raise NotFound("not found")
+    final = ctx.tx.get_record("investigation_finalization", inv.id)
+    ordinary = ctx.tx.get_record("investigation_finalization_phase", inv.id)
+    receipt = ctx.tx.get_record("finalization_export_receipt", inv.id)
     turns = ctx.tx.list_turns(inv.id)
     jobs = ctx.tx.list_jobs(ctx.project_id, investigation_id=inv.id)
     for j in jobs:  # evidence-arm statuses reveal outcomes
         _expose_job(ctx, j)
     return {**inv.view(), "needs_input": (inv.labels or {}).get("needs_input"),
+            "finalization": final.body if final else None, "finalization_phase": ordinary.body if ordinary else None,
+            "finalization_export_receipt": receipt.body if receipt else None,
             "turns": [{"id": t["id"], "seq": t["seq"], "status": t["status"], "horizon": t["horizon"],
                        "stop_reason": (t["result"] or {}).get("stop_reason")} for t in turns],
             "jobs": [{"id": j["id"], "status": j["status"], "kind": j["kind"],
@@ -385,6 +401,31 @@ def assessment_inputs(ctx: Ctx, p: dict) -> dict:
     return {"plan_id": plan.id, "plan_digest": plan.digest, "plan": plan.body, "arms": arms}
 
 
+@query("model_evidence_exclusions")
+def model_evidence_exclusions(ctx: Ctx, p: dict) -> dict:
+    """Identifiers and digests to suppress when assembling a model request."""
+    turn = ctx.tx.get_turn(p["turn_id"])
+    if not turn or turn["project_id"] != ctx.project_id:
+        raise Forbidden("model evidence policy requires its admitted turn")
+    inv = ctx.tx.require("investigation", turn["investigation_id"])
+    return {"excluded": sorted(finalization_evidence.excluded(ctx, inv, include_digests=True))}
+
+
+@query("finalization_view")
+def finalization_view(ctx: Ctx, p: dict) -> dict:
+    turn = ctx.tx.get_turn(p["turn_id"])
+    if not turn or turn["project_id"] != ctx.project_id or not turn["spec"].get("evidence_allowlist"):
+        raise Forbidden("finalization context requires its admitted turn")
+    inv = ctx.tx.require("investigation", turn["investigation_id"])
+    blocked = finalization_evidence.excluded(ctx, inv)
+    allowed = {k: [v for v in values if v not in blocked]
+               for k, values in turn["spec"]["evidence_allowlist"].items()}
+    view = investigation_view(ctx, {"investigation_id": inv.id, "horizon": turn["horizon"],
+                                    "finalization_allowlist": allowed})
+    return finalization_evidence.safe_view(view, allowed, blocked=blocked,
+                                           ordinary=bool(turn["spec"].get("finalization_phase") and not turn["spec"].get("finalization")))
+
+
 @query("investigation_view")
 def investigation_view(ctx: Ctx, p: dict) -> dict:
     """Authorized source view at a ledger horizon, used by the context builder. Nothing after the
@@ -407,6 +448,8 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
             inv_body = h["body"]
     jobs = []
     for j in ctx.tx.list_jobs(ctx.project_id, investigation_id=inv.id):
+        if p.get("finalization_allowlist") is not None and j["id"] not in p["finalization_allowlist"].get("jobs", []):
+            continue
         if cutoff_ts is not None and j["created_at"] > cutoff_ts:
             continue
         terminal_visible = j["id"] in finished
@@ -428,7 +471,7 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
     turns = [t for t in ctx.tx.list_turns(inv.id) if t["horizon"] <= horizon]
     claims = [c for c in ctx.tx.list_records(ctx.project_id, "claim") if c.body.get("investigation_id") == inv.id
               and (cutoff_ts is None or c.created_at <= cutoff_ts)]
-    for c in claims:
+    for c in claims if p.get("finalization_allowlist") is None else []:
         _expose_record(ctx, c)
     environments, environment_details = _environments_at(ctx, cutoff_ts)
     refusals = [{"component": e["subject"], **{k: (e["body"] or {}).get(k) for k in ("environment", "problems", "command_key")}}
@@ -466,8 +509,9 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
     for pl in ctx.tx.list_records(ctx.project_id, "evidence_plan", limit=100000):
         if pl.body.get("investigation_id") != inv.id or (cutoff_ts is not None and pl.created_at > cutoff_ts):
             continue
-        _expose_record(ctx, pl)
-        asm = assessments.get(pl.id)
+        if p.get("finalization_allowlist") is None:
+            _expose_record(ctx, pl)
+        asm = assessments.get(pl.id) if p.get("finalization_allowlist") is None else None
         if asm is not None:
             _expose_record(ctx, asm)
         launch = pl.body.get("launch") or {}

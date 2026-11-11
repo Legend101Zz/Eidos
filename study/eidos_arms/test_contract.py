@@ -47,6 +47,38 @@ class Receipts(unittest.TestCase):
         self.assertEqual(classify({'status': 'concluded'}, [], [], answer_valid=False)[0], 'invalid_output')
 
 
+    def test_controller_abstention_preserves_failure_and_terminal_provider_incidents(self):
+        abstention = {'status': 'stopped', 'body': {'controller_abstention': {
+            'author': 'controller', 'code': 'finalization-failed', 'investigator_concluded': False}}}
+        self.assertEqual(classify(abstention, [], [])[0], 'crash')
+        rate_limit = {'error': 'HTTP 429'}
+        self.assertEqual(classify(abstention, [rate_limit, {'calls': 0, 'runtime_outcome': 'deadline'}], [])[0], 'incident')
+        self.assertEqual(classify(abstention, [rate_limit, {'calls': 2}], [])[0], 'crash')
+        abstention['body']['controller_abstention']['code'] = 'provider-unavailable'
+        self.assertEqual(classify(abstention, [], [])[0], 'incident')
+
+
+    def test_recorded_terminal_quota_is_a_study_incident(self):
+        root = Path(__file__).parents[2]
+        fixture = root / 'tests/fixtures/deadline/pilot-3/N02-r2-terminal-quota.json'
+        record = json.loads(fixture.read_text())
+        usage = record['receipt']['body']['usage']
+        self.assertEqual(classify({'status': 'stopped'}, [usage], [])[0], record['source']['recorded_outcome'])
+
+
+    def test_terminal_controller_limits_preserve_distinct_study_outcomes(self):
+        provider_receipts = [{'error': 'HTTP 429'}]
+        for cause, expected in (('budget-exhausted', 'token_budget'), ('wall-deadline-reached', 'timeout'),
+                                ('max-turns-reached', 'crash'), ('turn-budget-exhausted', 'crash')):
+            with self.subTest(cause=cause):
+                shown = {'status': 'stopped', 'turns': [], 'body': {'controller_abstention': {
+                    'author': 'controller', 'code': 'coordinator-stopped',
+                    'investigator_concluded': False, 'failure': {'error_type': cause}}}}
+                self.assertEqual(classify(shown, provider_receipts, [])[0], expected)
+        shown['body']['controller_abstention']['failure'] = {'kind': 'finalization-incomplete', 'reason': 'deadline'}
+        self.assertEqual(classify(shown, [], [])[0], 'crash')
+
+
 class Selection(unittest.TestCase):
     def setUp(self):
         self.jobs = {}

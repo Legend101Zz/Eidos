@@ -91,6 +91,7 @@ class DecisionResult:
     raw_response: Any
     model_settings: dict[str, Any]
     prompt_revision: str
+    runtime_outcome: str | None = None  # runtime control, never a model proposal
 
 
 class ModelCallFailed(Exception):

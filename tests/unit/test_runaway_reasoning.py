@@ -516,14 +516,13 @@ def test_runaway_counts_against_the_request_budget_the_decision_may_still_use_th
     assert len(wire.requests) == 2 and res.usage["calls"] == 2 and res.usage["structured_output"]["valid"]
 
 
-def test_a_decision_deadline_after_a_runaway_keeps_the_runaway_billed_and_recorded():
+def test_shorter_deadline_admits_a_runaway_reask_and_keeps_both_requests_billed():
     wire = Wire(RECORDED_RUNAWAY, DECISION)
-    # one more request (timeout 120s) could outlive a 100s deadline: no re-ask, but the runaway is not lost
     res = wire_runtime(wire, request_timeout=120).decide(request(deadline_seconds=100))
-    assert len(wire.requests) == 1
-    assert res.proposal["control"]["bounded_outcome"] == "decision-deadline" and res.proposal["calls"] == []
-    assert res.usage["calls"] == 1 and res.usage["output_tokens"] == CAP
-    assert runaway_of(res) == [(1, False)] and res.usage["structured_output"]["runaway_reasks"] == 0
+    assert len(wire.requests) == 2
+    assert res.runtime_outcome is None and res.proposal["calls"]
+    assert res.usage["calls"] == 2 and res.usage["output_tokens"] > CAP
+    assert runaway_of(res) == [(1, False)] and res.usage["structured_output"]["runaway_reasks"] == 1
 
 
 # -- repair mode -----------------------------------------------------------------------------------------------------
@@ -559,8 +558,7 @@ def test_runaway_in_tool_mode_gets_one_final_request_without_read_tools_and_the_
     res = wire_runtime(wire, "tool", runaway_reasoning_effort="high").decide(request(read_tools([])))
     first, final = wire.requests
     assert len(wire.requests) == 2
-    assert tool_names(first) == ["inspect_evidence", "search_components", "describe_component", "get_job",
-                                 "final_result"]
+    assert tool_names(first) == ["inspect_evidence", "get_job", "final_result"]
     assert tool_names(final) == ["final_result"]  # no read tools in the final request
     assert last_user(final).endswith(RUNAWAY_TOOL_NOTE.format(cap=CAP)) and "No further reads" in last_user(final)
     assert "reasoning_effort" not in first and final["reasoning_effort"] == "high"
@@ -884,8 +882,8 @@ def test_a_decision_deadline_after_a_runaway_is_the_deadline_outcome_with_the_ru
     req = request(read_tools([]))
     req.abort = abort
     res = wire_runtime(wire, mode).decide(req)
-    assert len(wire.requests) == 1 and res.proposal["control"]["bounded_outcome"] == "decision-deadline"
-    assert res.proposal["calls"] == [] and res.usage["calls"] == 1 and res.usage["output_tokens"] == CAP
+    assert len(wire.requests) == 1 and res.runtime_outcome == "deadline-exhausted"
+    assert res.proposal == {} and res.usage["calls"] == 1 and res.usage["output_tokens"] == CAP
 
 
 # -- A3: the runaway record survives a stop or the decision deadline that prevents the re-ask -------------------------
@@ -987,7 +985,7 @@ def test_text_mode_decision_deadline_after_a_runaway_keeps_the_runaway_record(mo
     wire.on_request = lambda n: pass_the_deadline() if n == 1 else None
     res = wire_runtime(wire, mode).decide(aborted_request(abort, tools=True))
     assert len(wire.requests) == 1 and isinstance(res, DecisionResult)
-    assert res.proposal["control"]["bounded_outcome"] == "decision-deadline" and res.proposal["calls"] == []
+    assert res.runtime_outcome == "deadline-exhausted" and res.proposal == {}
     assert res.usage["aborted"] == {"reason": "decision-deadline", "in_flight": False}
     assert "no further request was started" in res.usage["limit_reached"] and not res.usage.get("uncertain")
     assert_runaway_kept(res.usage, mode, 37_196)
@@ -1000,7 +998,7 @@ def test_text_mode_decision_deadline_during_the_reask_keeps_the_runaway_record(m
     model = hanging(pass_the_deadline, runaway_response())
     res = fn_runtime(model, mode).decide(aborted_request(abort))
     assert model.fn.calls == 2 and model.fn.cancelled == 1
-    assert res.proposal["control"]["bounded_outcome"] == "decision-deadline" and res.proposal["calls"] == []
+    assert res.runtime_outcome == "deadline-exhausted" and res.proposal == {}
     assert res.usage["aborted"]["reason"] == "decision-deadline" and res.usage["aborted"]["in_flight"] is True
     assert "in-flight request was abandoned" in res.usage["limit_reached"] and res.usage["uncertain"] is True
     assert_runaway_kept(res.usage, mode, 3000)
@@ -1042,7 +1040,7 @@ def test_tool_mode_decision_deadline_after_a_runaway_keeps_the_runaway_record():
     wire.on_request = lambda n: pass_the_deadline() if n == 1 else None
     res = wire_runtime(wire, "tool").decide(aborted_request(abort, tools=True))
     assert len(wire.requests) == 1 and isinstance(res, DecisionResult)
-    assert res.proposal["control"]["bounded_outcome"] == "decision-deadline" and res.proposal["calls"] == []
+    assert res.runtime_outcome == "deadline-exhausted" and res.proposal == {}
     assert res.usage["aborted"] == {"reason": "decision-deadline", "in_flight": False}
     assert "no further request was started" in res.usage["limit_reached"] and not res.usage.get("uncertain")
     assert_runaway_kept(res.usage, "tool", 37_196)
@@ -1054,7 +1052,7 @@ def test_tool_mode_decision_deadline_during_the_final_tool_free_request_keeps_th
     model = hanging(pass_the_deadline, runaway_response())
     res = fn_runtime(model, "tool").decide(aborted_request(abort, tools=True))
     assert model.fn.calls == 2 and model.fn.cancelled == 1
-    assert res.proposal["control"]["bounded_outcome"] == "decision-deadline" and res.proposal["calls"] == []
+    assert res.runtime_outcome == "deadline-exhausted" and res.proposal == {}
     assert res.usage["aborted"]["reason"] == "decision-deadline" and res.usage["aborted"]["in_flight"] is True
     assert "in-flight request was abandoned" in res.usage["limit_reached"] and res.usage["uncertain"] is True
     assert_runaway_kept(res.usage, "tool", 3000)

@@ -34,18 +34,18 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from test_cancel_through_acceptance import _env
+from test_classification_accuracy_e2e import CHARTER, FRESH_SEED, ISOLATION, RULE_ID, Flow
 from test_command_path import _publish
 from test_diagnose_and_template_sweep_lab import GENERATE, _bundle
 from test_f5d_conclude_race import _complete as _complete_turn
 from test_incumbent_challengers import SCORER_RULE, Scene, _request, refusal
-from test_r2_combined_workflow import FakeProvider, Journey, call, decision, ref
+from test_r2_combined_workflow import FakeProvider, Journey, allow_investigator_to_freeze, call, decision, ref
 from test_turn_recovery import ShimClient
 
 from eidos.domain.errors import Invalid
@@ -67,22 +67,21 @@ CLAIM = {"statement": "the locked recipe raises validation accuracy over the bas
 ESTIMATE = {"metric": "accuracy", "baseline": 0.61, "candidate": 0.85, "split": "validation"}
 RULE_WITH_SCORER = SCORER_RULE  # {metric: accuracy, split: validation, higher_is_better, scorer: proj.scorer, data: ...}
 
-# The project's own components for the scripted journey. The trial predicts the first ``correct`` of ten labels right; the
-# scorer reports accuracy from the predictions it reads (its receipt is the selection evidence); the command is the baseline.
+# The scripted journey uses disjoint seed-defined groups. The trial gets ``correct`` tenths of a group's labels right.
+# The selection scorer computes accuracy from its prediction input. The assessor uses independently registered labels.
 ARM_CODE = """
-LABELS = [0, 1, 2, 0, 1, 2, 0, 1, 2, 0]
-
-
 def trial(inputs, config, *, reader=None, writer=None, context=None):
-    rows = [{"id": i, "prediction": label if i < int(config["correct"]) else (label + 1) % 3}
-            for i, label in enumerate(LABELS)]
+    seed = config.get("seed", 11)
+    labels = [(i + seed) % 3 for i in range(120)]
+    rows = [{"id": seed * 1000 + i, "prediction": label if i < 12 * int(config["correct"]) else (label + 1) % 3}
+            for i, label in enumerate(labels)]
     writer.stage_json("predictions", rows, schema="class-predictions/1")
     return {"examples": len(rows)}
 
 
 def score(inputs, config, *, reader=None, writer=None, context=None):
     rows = reader.json("predictions")
-    accuracy = sum(1 for r in rows if r["prediction"] == LABELS[r["id"]]) / len(LABELS)
+    accuracy = sum(1 for r in rows if r["prediction"] == (r["id"] % 1000 + r["id"] // 1000) % 3) / len(rows)
     writer.stage_json("report", {"accuracy": accuracy}, schema="score-report/1")
     return {"metrics": {"accuracy": accuracy}}
 """
@@ -428,9 +427,19 @@ def test_a_scripted_fake_provider_drives_the_arm4_workflow_through_the_real_acti
     scene = ArmScene(lab, tmp_path)
     refs = scene.publish_project_components()
     sources = {name: scene.arts[name] for name in ("train", "validation")}
+    confirmation = Flow(lab, tmp_path, project_id=scene.pid)
+    allow_investigator_to_freeze(scene)
+    fresh_seed = int(FRESH_SEED)
+    labels = confirmation.artifact([{"id": fresh_seed * 1000 + i, "label": (i + fresh_seed) % 3}
+                                    for i in range(120)], "class-labels/1")
+    labels_digest = scene.q("get_artifact", {"artifact_id": labels})["digest"]
+    charter = {**CHARTER, "study_id": "r4-full-journey", "held_out": {"labels": [labels_digest]}}
+    scene.cmd("commit_study_charter", {"charter": charter})
+    charter_id = "charter:r4-full-journey"
 
-    def trial(tag: str, correct: int) -> dict:
-        return call("run_component", component_ref=refs["trial"], **LAB, config={"correct": correct, "tag": tag})
+    def trial(tag: str, correct: int, seed: int = 11) -> dict:
+        return call("run_component", component_ref=refs["trial"], **LAB,
+                    config={"correct": correct, "tag": tag, "seed": seed})
 
     def scorer(tag: str, index: int) -> dict:  # reads the predictions of the call at ``index`` of its own decision
         return call("run_component", component_ref=refs["scorer"], **LAB, config={**ON_VALIDATION, "tag": f"{tag}-score"},
@@ -454,18 +463,14 @@ def test_a_scripted_fake_provider_drives_the_arm4_workflow_through_the_real_acti
         decision(trial("challenger", 9), scorer("challenger", 0), action="wait_for_jobs"),
         # 6. the scored challenger is better: re-lock it
         lock(refs["trial"], "challenger", action="wait_for_jobs"),
-        # 7. submit: file the claim, conclude with disposition candidate
-        decision(call("file_claim", **CLAIM)),
-        decision(action="conclude", scope={"split": "validation", "population": "visible validation only"},
-                 claim={"disposition": "candidate", "point_estimate": ESTIMATE}),
     ]
     provider = FakeProvider(*script)
-    journey = Journey(scene, provider, f"charter:s{scene.pid}")
+    journey = Journey(scene, provider, charter_id)
     inv = journey.inv
-    assert [journey.turn()["stop_reason"] for _ in range(7)] == ["waiting"] * 6 + ["concluded"]
-    assert len(provider.prompts) == len(script)  # one model request per decision: each scripted decision was accepted as written
-    receipts = {i: journey.receipts(i) for i in range(len(script) - 1)}  # the conclusion has no calls, so no receipts
-    assert all(r["ok"] for rs in receipts.values() for r in rs), receipts
+    assert scene.q("get_investigation", {"investigation_id": inv})["body"]["investigator"]["finalization"] == "autonomous"
+    assert [journey.turn()["stop_reason"] for _ in range(6)] == ["waiting"] * 6
+    receipts = {i: journey.receipts(i) for i in range(len(script))}
+    assert all(r["ok"] for rs in receipts.values() for r in rs), [r for rs in receipts.values() for r in rs if not r["ok"]]
 
     # 1. the baseline: recorded by the lab from the first project-command job, scored by the job that read its predictions
     base, base_scorer = receipts[0][0]["result"]["job_id"], receipts[0][1]["result"]["job_id"]
@@ -505,25 +510,66 @@ def test_a_scripted_fake_provider_drives_the_arm4_workflow_through_the_real_acti
     assert [(e["body"]["version"], e["body"]["job_id"]) for e in changed] == [(1, first), (2, challenger)]
     assert changed[-1]["body"]["basis"] == "beats-incumbent" and changed[-1]["body"]["previous"]["job_id"] == first
     jobs = {j["id"]: j for j in scene.view(inv)["jobs"]}
-    assert jobs[challenger]["receipt"]["examples"] == 10 and "metrics" not in jobs[challenger]["receipt"]  # the trial scores nothing
+    assert jobs[challenger]["receipt"]["examples"] == 120 and "metrics" not in jobs[challenger]["receipt"]  # the trial scores nothing
     assert jobs[challenger_score]["receipt"]["metrics"] == {"accuracy": 0.9}  # the rule's scorer does
 
-    # 5. submitted: the claim state is derived from the evidence (no assessment), not from the disposition asked for
-    claim_id = receipts[7][0]["result"]["claim_id"]
+    # 5. Reproduce the selected recipe under a different seed in the ordinary finalization window.
+    assert scene.cmd("enter_finalization", {
+        "investigation_id": inv, "trigger": "exploration-boundary",
+    })["mode"] == "ordinary"
+    provider.script.append({
+        **decision(trial("challenger", 9, seed=12), scorer("reproduction", 0), action="wait_for_jobs"),
+        "purpose": "reproduction",
+    })
+    assert journey.turn()["stop_reason"] == "waiting"
+    reproduction = journey.receipts(7)
+    assert all(r["ok"] for r in reproduction), reproduction
+    reproduced_job = reproduction[0]["result"]["job_id"]
+
+    # 6. The provider sees the safe route and requests a held-out assessment with no hidden artifact ID.
+    def assess_from_context(prompt: str) -> dict:
+        assert "Route: held-out data is attested in the charter" in prompt
+        assert labels not in prompt and labels_digest not in prompt
+        return {
+            **decision(call("assess_candidate", success_rule_id=RULE_ID, charter_id=charter_id,
+                            baseline={"job_id": base}, candidate={"job_id": challenger}, seeds=[fresh_seed],
+                            data_provenance={"split": "held-out"}, required_isolation=ISOLATION,
+                            claim={"statement": CLAIM["statement"], "scope": CLAIM["scope"]}),
+                       action="wait_for_jobs"),
+            "purpose": "confirmation",
+        }
+
+    provider.script.append(assess_from_context)
+    assert journey.turn()["stop_reason"] == "waiting"
+    request = journey.receipts(8)[0]
+    assert request["ok"] and request["result"]["status"] == "launched", request
+    assert "labels" not in journey.proposal(8)["calls"][0]["args"]
+    plan_id = request["result"]["plan_id"]
+    confirmation.run_plan(plan_id)
+    assessment = confirmation.assess(plan_id)
+    assert assessment["outcome"] == "protocol-passed", assessment
+
+    provider.script.append(decision(action="conclude", claim={"disposition": "confirmed"}))
+    assert journey.turn()["stop_reason"] == "concluded"
     state = journey.conclusion()["claim_state"]
-    assert state["state"] == "candidate-submitted" and state["confirmed"] is False, state
-    assert state["claim_id"] == claim_id and state["assessment_id"] is None and "downgraded_from" not in state
-    assert state["label"] == "candidate submitted for confirmation" and state["requested_disposition"] == "candidate"
+    assert state["state"] == "protocol-passed" and state["confirmed"] is True, state
+    assert state["claim_id"] == request["result"]["claim_id"] and state["assessment_id"] == assessment["assessment_id"]
+    shown = scene.q("get_investigation", {"investigation_id": inv})
+    assert shown["needs_input"] is None and not scene.events(inv, "investigation.finalization_started")
+    assert len(provider.prompts) == len(provider.script)
+    assert all(labels_digest not in prompt and labels not in prompt for prompt in provider.prompts)
+    assert assessment["assessment_id"] not in provider.prompts[-1]
+    assert "outcome protocol-passed" not in provider.prompts[-1] and "health intact" not in provider.prompts[-1]
+    assert "Independent assessment recorded. Its outcome is sealed" in provider.prompts[-1]
 
     # the pinned facts of the last turn's context (the model's own prompt): baseline, incumbent v2, allowance, diagnosis
     facts = pinned_facts(provider.prompts[-1])
     assert (f"- Baseline (recorded): job {base} (eidos.project.command@1.1.0, environment lab), metrics null; "
             f'scored by {base_scorer}: {{"accuracy": 0.6}}') in facts
-    assert f"- Incumbent v2: job {challenger}, accuracy 0.9 (scored by {challenger_score}); not reproduced yet" in facts
+    assert f"- Incumbent v2: job {challenger}, accuracy 0.9 (scored by {challenger_score}); reproduced by {reproduced_job}" in facts
     assert f"- Selection rule: {json.dumps(SCORED_RULE, sort_keys=True)}" in facts
     exploration = next(line for line in facts.splitlines() if line.startswith("- Exploration:"))
-    left = re.search(r"Allowance left: (\d+) model tokens \(after 150000 held back\)\.", exploration)
-    assert exploration.startswith("- Exploration: keep improving. ") and left and 0 < int(left[1]) < 850_000, exploration
+    assert "Exploration" in exploration and "keep improving" not in exploration, exploration
     assert f"- Diagnosis {diagnosis['id']} (succeeded): report " in facts and "top hypothesis per-example-additive-offset" in facts
     assert f"- Sweep {sweep['id']} (succeeded): " in facts and "evidence_table" in facts
     assert next(line for line in facts.splitlines() if line.startswith("- Current lock")).startswith(

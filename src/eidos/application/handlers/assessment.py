@@ -174,6 +174,31 @@ def _check_protocols(ctx: Ctx, reasons: list[dict[str, Any]]) -> None:
                                         "'improves' claims; qualify and promote it first", release=ref))
 
 
+def _classification_labels(ctx: Ctx, p: dict, charter: Any, reasons: list[dict[str, Any]]) -> dict | None:
+    """Resolve the sole attested label binding for an explicit held-out request."""
+    supplied = p.get("labels")
+    provenance = p.get("data_provenance")
+    if supplied is None and isinstance(provenance, dict) and provenance.get("split") == rules.PROVENANCE_HELD_OUT:
+        attested = set((charter.body.get("held_out") or {}).get("labels") or [])
+        matches = [art for art in ctx.tx.artifacts_with_schemas(ctx.project_id, rules.LABEL_SCHEMAS)
+                   if art["digest"] in attested]
+        if len(attested) != 1 or len(matches) != 1:
+            reasons.append(rules.reason("output-schema", "An omitted labels binding requires exactly one "
+                                        "eligible project label artifact attested by the charter. An operator "
+                                        "must resolve missing or ambiguous bindings."))
+            return None
+        supplied = matches[0]["id"]
+    labels = ctx.tx.get_artifact(str(supplied or ""))
+    if labels is None or labels["project_id"] != ctx.project_id:
+        reasons.append(rules.reason("output-schema", f"labels artifact {p.get('labels')!r} was not found"))
+        return None
+    if labels.get("schema") not in rules.LABEL_SCHEMAS:
+        reasons.append(rules.reason("output-schema", f"labels artifact has schema {labels.get('schema')!r}; expected "
+                                    f"one of {list(rules.LABEL_SCHEMAS)}"))
+        return None
+    return labels
+
+
 def _classification(ctx: Ctx, p: dict, charter: Any, inv_id: str | None, reasons: list[dict[str, Any]]) -> dict | None:
     """Validate the classification path. Returns what the expansion needs, or None after adding reasons."""
     slot = str(p.get("predictions_slot") or "predictions")
@@ -187,13 +212,7 @@ def _classification(ctx: Ctx, p: dict, charter: Any, inv_id: str | None, reasons
     elif (report.body["manifest"].get("output") or {}).get("predictions") != "classification-pair-rows/1":
         reasons.append(rules.reason("output-schema", f"{rules.REPORT_REF} does not output 'predictions' rows the "
                                     "assessor reads"))
-    labels = ctx.tx.get_artifact(str(p.get("labels") or ""))
-    if labels is None or labels["project_id"] != ctx.project_id:
-        reasons.append(rules.reason("output-schema", f"labels artifact {p.get('labels')!r} was not found"))
-        labels = None
-    elif labels.get("schema") not in rules.LABEL_SCHEMAS:
-        reasons.append(rules.reason("output-schema", f"labels artifact has schema {labels.get('schema')!r}; expected "
-                                    f"one of {list(rules.LABEL_SCHEMAS)}"))
+    labels = _classification_labels(ctx, p, charter, reasons)
     provenance, problems = rules.check_provenance(p.get("data_provenance"), charter=charter.body,
                                                   labels_digest=labels["digest"] if labels else None)
     reasons.extend(problems)

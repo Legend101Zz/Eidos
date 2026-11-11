@@ -82,7 +82,8 @@ def _start(lab, w, **investigator) -> str:
     return lab.cmd(lab.admin, "start_investigation", {
         "question": "q", "charter_id": f"charter:s{w.pid}",
         "limits": {"model_tokens": 1e6, "compute_seconds": 1e5, "trials": 100},
-        "investigator": {"runtime": "fixture", "settings": {"policy": "test-run-echo-then-wait"}, **investigator}},
+        "investigator": {"runtime": "fixture", "finalization": "operator",
+                         "settings": {"policy": "test-run-echo-then-wait"}, **investigator}},
         project=w.pid)["result"]["investigation_id"]
 
 

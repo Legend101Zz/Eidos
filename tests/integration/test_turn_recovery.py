@@ -177,8 +177,9 @@ def test_in_turn_model_budget_is_reserved_before_each_decision_and_released(lab)
         tx.project_id = pid
         tx.reserve(f"inv:{inv}", "model_tokens", 100_000, f"model:{b['turn_id']}:9:1")
     d1 = env.run(acts.decide, {**base, "slot": 1})
-    assert not d1["accepted"] and d1["reason"] == "budget-exhausted"  # no model call without budget
-    env.run(acts.complete_turn, {**base, "stop_reason": "budget-exhausted"})
+    assert not d1["accepted"] and d1["reason"] == "runtime-bounded"  # no model call spends the hold-back
+    assert d1["runtime_outcome"] == "exploration-exhausted"
+    env.run(acts.complete_turn, {**base, "stop_reason": "runtime-bounded", "runtime_outcome": d1["runtime_outcome"]})
     turn = lab.q(lab.admin, "get_turn", {"turn_id": b["turn_id"]}, project=pid)
     # F2c: the leaked reservation may have had a request at the provider: charged as provisional uncertain usage
     # (the whole open amount), not released as zero.

@@ -124,13 +124,14 @@ def _builtin(name: str) -> tuple[dict, dict]:
 class Flow:
     """One lab project with the real components published, a charter, a claim, a runner and an assessor."""
 
-    def __init__(self, lab, tmp_path: Path):
+    def __init__(self, lab, tmp_path: Path, *, project_id: str | None = None):
         from test_command_path import _publish, _register_lab_env, project
         from test_turn_recovery import ShimClient
 
         self.lab = lab
-        self.pid = project(lab)
-        _register_lab_env(lab, self.pid)
+        self.pid = project_id if project_id is not None else project(lab)
+        if project_id is None:
+            _register_lab_env(lab, self.pid)
         self.train_ref = _publish(lab, self.pid, TRAIN_MANIFEST, {"m.py": TRAIN_CODE})["component_ref"]
         for name in (REPORT, TEMPLATE, ASSESSOR):
             manifest, files = _builtin(name)

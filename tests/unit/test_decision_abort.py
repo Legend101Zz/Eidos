@@ -15,7 +15,6 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
-from eidos.domain.turns import validate_decision
 from eidos.investigator import activities
 from eidos.investigator import pydantic_ai_runtime as par
 from eidos.investigator.runtime import (
@@ -202,18 +201,15 @@ def test_decision_aborted_is_a_non_retryable_model_call_failure():
 
 # -- 2. a slow provider ----------------------------------------------------------------------------------------------
 @pytest.mark.parametrize("mode", MODES)
-def test_deadline_abandons_the_in_flight_request_and_returns_a_no_effect_decision(mode):
+def test_deadline_abandons_the_in_flight_request_and_returns_a_runtime_outcome(mode):
     provider = Provider()
     rt = runtime(provider, mode, max_output_tokens=512)
-    abort = DecisionAbort(deadline=time.monotonic() + 0.3)
+    abort = DecisionAbort(deadline=time.monotonic() + par.DURABLE_WRITE_MARGIN_SECONDS + 0.3)
     res, elapsed = timed(lambda: rt.decide(request(abort)))
     assert not isinstance(res, BaseException), res
     assert elapsed < WITHIN, f"decide took {elapsed:.2f}s: the in-flight request was not abandoned"
     assert provider.calls == 1 and provider.cancelled == 1  # the connection (task) was cancelled
-    assert res.proposal["calls"] == []
-    assert res.proposal["control"]["bounded_outcome"] == "decision-deadline"
-    assert res.proposal["control"]["action"] == "wait_for_jobs"
-    assert validate_decision(res.proposal, max_calls=4)["control"]["action"] == "wait_for_jobs"
+    assert res.proposal == {} and res.runtime_outcome == "deadline-exhausted"
     u = res.usage
     assert u["limit_reached"] and "deadline" in u["limit_reached"] and "abandoned" in u["limit_reached"]
     assert u["uncertain"] is True and u["calls"] == 0  # unknown bill: never recorded as zero
@@ -257,12 +253,12 @@ def test_an_abort_set_before_decide_starts_no_request(mode):
 
 
 @pytest.mark.parametrize("mode", MODES)
-def test_an_expired_deadline_before_decide_returns_the_no_effect_decision_without_a_request(mode):
+def test_an_expired_deadline_before_decide_returns_the_runtime_outcome_without_a_request(mode):
     provider = Provider(fast=[lambda info: decision_reply(mode, info)])
     rt = runtime(provider, mode)
     res = rt.decide(request(DecisionAbort(deadline=time.monotonic() - 1)))
     assert provider.calls == 0
-    assert res.proposal["calls"] == [] and res.proposal["control"]["bounded_outcome"] == "decision-deadline"
+    assert res.proposal == {} and res.runtime_outcome == "deadline-exhausted"
     assert "no further request was started" in res.usage["limit_reached"]
     assert res.usage["aborted"] == {"reason": "decision-deadline", "in_flight": False}
     assert res.usage.get("uncertain") is not True and res.usage["calls"] == 0
@@ -288,14 +284,14 @@ def test_responses_received_before_the_stop_are_counted(mode):
 
 
 @pytest.mark.parametrize("mode", ["json", "tool"])
-def test_deadline_after_a_response_keeps_its_usage_in_the_no_effect_decision(mode):
+def test_deadline_after_a_response_keeps_its_usage_in_the_runtime_outcome(mode):
     provider = Provider(fast=[read_reply(mode, inp=111, out=22)])
     rt = runtime(provider, mode)
-    abort = DecisionAbort(deadline=time.monotonic() + 0.4)
+    abort = DecisionAbort(deadline=time.monotonic() + par.DURABLE_WRITE_MARGIN_SECONDS + 0.4)
     res, elapsed = timed(lambda: rt.decide(request(abort, read_tools())))
     assert not isinstance(res, BaseException), res
     assert elapsed < WITHIN and provider.cancelled == 1
-    assert res.proposal["calls"] == [] and res.proposal["control"]["bounded_outcome"] == "decision-deadline"
+    assert res.proposal == {} and res.runtime_outcome == "deadline-exhausted"
     assert res.usage["calls"] == 1 and res.usage["input_tokens"] == 111 and res.usage["output_tokens"] == 22
     assert res.usage["uncertain"] is True and res.usage["aborted"]["in_flight"] is True
     assert len(res.raw_response) >= 1  # the received response is kept in the record
@@ -321,7 +317,7 @@ def test_abort_set_while_a_response_arrives_stops_before_the_next_request(mode):
 
 
 @pytest.mark.parametrize("mode", ["json", "tool"])
-def test_deadline_between_requests_is_a_no_effect_decision_with_exact_usage(mode):
+def test_deadline_between_requests_is_a_runtime_outcome_with_exact_usage(mode):
     now = [0.0]
     abort = DecisionAbort(deadline=10.0, clock=lambda: now[0])
 
@@ -332,7 +328,7 @@ def test_deadline_between_requests_is_a_no_effect_decision_with_exact_usage(mode
     provider = Provider(fast=[first, lambda info: decision_reply(mode, info)])
     res = runtime(provider, mode).decide(request(abort, read_tools()))
     assert provider.calls == 1
-    assert res.proposal["control"]["bounded_outcome"] == "decision-deadline" and res.proposal["calls"] == []
+    assert res.proposal == {} and res.runtime_outcome == "deadline-exhausted"
     assert "no further request was started" in res.usage["limit_reached"]
     assert res.usage["calls"] == 1 and res.usage["input_tokens"] == 40 and res.usage["output_tokens"] == 9
     assert res.usage.get("uncertain") is not True and res.usage["aborted"]["in_flight"] is False

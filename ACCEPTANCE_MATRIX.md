@@ -157,3 +157,23 @@ All gates must pass on the same commit. Evidence files are in `docs/release/evid
 | G7 review open questions | pass | writer fence (`test_writer_fence.py`), reservation double release (`test_turn_recovery.py`), quiet rollover (`test_workflows.py`), CI fallback; review docs updated |
 | G8 docs | pass | this file, HANDOFF, IMPLEMENTATION_STATUS, `docs/mac/STATUS.md`, INSTALL_AND_OPERATE, TROUBLESHOOTING, README, CHANGELOG, release notes |
 | G9 final verification | **pass** on tree `ac30bfc3` (commit `027d474b`; `008883cf` before the [ID rewrite](docs/release/COMMIT_ID_MAP.md)) | qualification Mac: ruff and import contracts clean; unit, integration, MCP and reporting suite 167 passed, 4 skipped; switch-order journey from fresh wheels 154/154; macOS owner kit from fresh wheels 15/15 (`docs/release/evidence/g9-*`); CI 10/10 on that tree; independent review of `eidos-v0.7.0..` with its one docs blocker and should-fixes fixed in the verified tree |
+
+## Round 4: deadline admission and bounded finalization
+
+| Guarantee | Evidence |
+|---|---|
+| Six N01-r2 read responses at 249/233/221 s admit their decisions; HTTP timeouts fit remaining time | `tests/unit/test_deadline_admission_r4.py`, `tests/fixtures/deadline/n01-r2-d3.json` |
+| Runtime deadline exhaustion never fabricates a model wait; cancellation and uncertain spend remain accounted | `test_decision_abort.py`, `test_in_flight_estimate.py`, `test_provider_resilience.py` |
+| One autonomous finalization after repeated refusals/runtime exhaustion; immediate exploration-boundary transition | `tests/integration/test_r4_finalization_workflows.py` |
+| Finalization reports the locked incumbent and provenance; no training, authoring, re-lock or rule changes | `tests/integration/test_r4_finalization.py` |
+| Failed default finalization produces a terminal controller abstention and export receipt with failed investigator outcome; operator policy retains input-needed | `tests/integration/test_r4_finalization.py` |
+| Wrong scorer ports are refused before rule recording; recorded rules stay immutable | `tests/integration/test_r4_finalization.py`, `test_r14_selection_e2e.py` |
+| Slow provider still allows a durable conclusion before the export margin; delayed registration and queued completion cannot extend it | `tests/integration/test_failed_turn_e2e.py`, `tests/integration/test_r4_finalization.py`, `tests/unit/test_r10_findings.py` |
+| All context policies exclude held-out provenance in exploratory, ordinary and recovery model input | `tests/integration/test_r4_finalization.py` |
+| Default healthy path completes reproduction and confirmation without exposing the labels binding or verdict before conclusion | `tests/integration/test_r3_arm4_combined_workflow.py` |
+| Recovered provider failures, terminal 429/quota classification and declared confirmation checkpoint | `tests/integration/test_provider_resilience_workflow.py`, `study/eidos_arms/test_contract.py`, `study/tests/test_grading.py` |
+| Four verified historical behavioral crash tails and terminal quota replay | `tests/integration/test_pilot3_failure_replays.py`, `tests/fixtures/deadline/pilot-3/` |
+
+Policy and limits: ADRs 0026 and 0027. All new model behavior tests use fake providers; no pilot records are changed.
+
+R18 finalization corrections: default-policy incumbent/challenger reproduction and confirmation; ordinary/recovery durable phase separation; both-policy real boundary admission; disabled operator wait; direct and derived held-out read/context exclusion; child failure, timeout and coordinator restart receipts; SHA-verified N01-r2 six-slot coordinator replay (`test_r4_finalization.py`, `test_r4_finalization_workflows.py`, `test_finalization_evidence.py`).

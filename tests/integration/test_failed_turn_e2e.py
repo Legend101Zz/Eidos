@@ -22,15 +22,19 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from temporalio import activity
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 from test_turn_recovery import ShimClient, setup
 
+from eidos.application.handlers import investigations
 from eidos.investigator.activities import InvestigatorActivities
 from eidos.orchestration.names import INVESTIGATOR_QUEUE, WORKFLOW_QUEUE
 from eidos.orchestration.workflows import (
@@ -96,12 +100,16 @@ class FakeProvider:
                 with outer.lock:
                     outer.requests.append({"path": self.path, "body": json.loads(raw or b"{}")})
                     status, body = outer.script.pop(0) if outer.script else outer.default
-                data = json.dumps(body).encode()
+                delay = body.get("_fixture_delay_seconds", 0)
+                if delay:
+                    time.sleep(delay)
+                data = json.dumps({k: v for k, v in body.items() if k != "_fixture_delay_seconds"}).encode()
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
-                self.wfile.write(data)
+                with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+                    self.wfile.write(data)
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.server.daemon_threads = True
@@ -184,21 +192,30 @@ async def until(what: str, probe, timeout: float = 55.0, every: float = 0.3):
 
 
 @contextlib.asynccontextmanager
-async def running(env, lab, prov: FakeProvider, **workflow_args):
+async def running(env, lab, prov: FakeProvider, *, investigator_options=None, investigation_limits=None,
+                  before_complete=None, **workflow_args):
     """Start the real investigation coordinator against ``prov`` and terminate it at the end."""
     pid, _, _ = setup(lab)  # project, environment, component and charter of the turn-recovery tests
     inv = lab.cmd(lab.admin, "start_investigation", {
-        "question": "q", "charter_id": f"charter:s{pid}", "limits": {"model_tokens": 1e6, "trials": 100},
-        "investigator": {"runtime": "pydantic-ai", "model": "openai-compatible:fake",
-                         "settings": {"max_tokens_per_decision": 120_000}}}, project=pid)["result"]["investigation_id"]
+        "question": "q", "charter_id": f"charter:s{pid}",
+        "limits": {"model_tokens": 1e6, "trials": 100, **(investigation_limits or {})},
+        "investigator": {"runtime": "pydantic-ai", "model": "openai-compatible:fake", "finalization": "operator",
+                         "settings": {"max_tokens_per_decision": 120_000},
+                         **(investigator_options or {})}}, project=pid)["result"]["investigation_id"]
     acts = InvestigatorActivities(
         ShimClient(lab, lab.principal(f"inv-{pid}", ["investigator"], [pid])),
         ShimClient(lab, lab.principal(f"wf-{pid}", ["workflow"], [pid])),
         runtime_overrides={"base_url": prov.url, "api_key_env": "EIDOS_TEST_NO_SUCH_KEY", "output_mode": "json",
                            "request_timeout": 30, "abort_poll_seconds": 0.2, "max_output_tokens": MAX_OUTPUT_TOKENS})
+    @activity.defn(name="complete_turn")
+    def delayed_complete(a):
+        before_complete(a)
+        return acts.complete_turn(a)
+
     # The activities the real investigator worker registers (eidos.apps.roots.run_investigator_worker).
-    registered = [acts.begin_turn, acts.build_context, acts.decide, acts.execute_decision, acts.complete_turn,
-                  acts.check_news, acts.mark_needs_input, acts.record_turn_retry]
+    complete = delayed_complete if before_complete else acts.complete_turn
+    registered = [acts.begin_turn, acts.build_context, acts.decide, acts.execute_decision, complete,
+                  acts.check_news, acts.mark_needs_input, acts.record_turn_retry, acts.enter_finalization, acts.reconcile_finalization]
     args = {"investigation_id": inv, "project_id": pid, "idle_poll_seconds": 1, "failed_turn_backoff_seconds": 1,
             **workflow_args}
     pool = ThreadPoolExecutor(max_workers=16)  # the real activities are synchronous
@@ -396,3 +413,155 @@ async def test_a_persistent_retryable_failure_stops_after_the_bounded_automatic_
         # And then it waits for the operator: no further turn, no further request.
         await asyncio.sleep(3)
         assert run.stop_reasons() == ["error"] * 3 and prov.count == 9
+
+
+async def test_slow_provider_still_records_a_conclusion_before_export_margin(env, lab, provider):
+    export_margin = 5.0  # arm-4 adapter's WATCHDOG_MARGIN_SECONDS, tested at its registration boundary
+    status, delayed = decision_reply(ASK, "delayed-exploration")
+    conclude = decision_reply({
+        "rationale": "no eligible locked candidate",
+        "calls": [],
+        "control": {"action": "conclude", "summary": "Abstain because no candidate was locked.",
+                    "claim_json": json.dumps({"disposition": "abstain"})},
+    }, "conclusion")
+    fake = provider([(status, {**delayed, "_fixture_delay_seconds": 12})], conclude)
+    watchdog_deadline = time.time() + 24.0
+    options = {"finalization": "autonomous", "wall_seconds": 24.0, "conclude_threshold_seconds": 9.0,
+               "wall_deadline_unix": watchdog_deadline - export_margin}
+    async with running(env, lab, fake, investigator_options=options) as run:
+        wall = run.view()["body"]["wall"]
+        assert wall["deadline_unix"] == watchdog_deadline - export_margin
+        result = await asyncio.wait_for(run.handle.result(), 25)
+        assert result["status"] == "finished" and result["reason"] == "concluded"
+        shown = run.view()
+        assert shown["status"] == "concluded" and shown["body"]["conclusion"]["claim_state"]["state"] == "abstained"
+        (closure,) = [event for event in run.events("turn.completed") if event["body"]["stop_reason"] == "concluded"]
+        written_at = datetime.fromisoformat(closure["created_at"]).timestamp()
+        assert watchdog_deadline - written_at > export_margin
+        assert run.view()["needs_input"] is None
+        assert run.stop_reasons()[-1] == "concluded" and fake.count == 2
+
+
+async def test_failed_default_recovery_finishes_with_an_attributed_controller_abstention(env, lab, provider):
+    invalid = decision_reply({
+        "rationale": "an empty wait is not admissible",
+        "calls": [],
+        "control": {"action": "wait_for_jobs", "summary": "scripted refused wait"},
+    })
+    fake = provider([], invalid)
+    async with running(env, lab, fake, investigator_options={"finalization": "autonomous"}) as run:
+        result = await asyncio.wait_for(run.handle.result(), 20)
+        assert result["status"] == "abstained" and result["reason"] == "controller-abstained"
+        shown = run.view()
+        assert shown["status"] == "stopped" and shown["needs_input"] is None
+        assert "conclusion" not in shown["body"]
+        abstention = shown["body"]["controller_abstention"]
+        assert abstention["author"] == "controller" and abstention["investigator_concluded"] is False
+        assert shown["finalization_export_receipt"]["controller_abstention"] == abstention
+        assert len(run.events("investigation.controller_abstained")) == 1
+        assert not run.events("investigation.needs_input")
+
+
+@pytest.mark.parametrize(("reply", "code", "kind"), [
+    ((429, {"error": {"message": "provider quota exhausted, usage limit exceeded", "code": "2056"}}),
+     "provider-unavailable", "quota-exhausted"),
+    (error_reply(401), "turn-failed", "permanent"),
+])
+async def test_default_terminal_non_retryable_provider_before_any_lock_abstains(env, lab, provider, reply, code, kind):
+    fake = provider([reply], reply)
+    async with running(env, lab, fake, investigator_options={"finalization": "autonomous"}) as run:
+        result = await asyncio.wait_for(run.handle.result(), 20)
+        assert result["status"] == "abstained" and result["reason"] == "controller-abstained"
+        shown = run.view()
+        assert shown["status"] == "stopped" and shown["needs_input"] is None
+        abstention = shown["body"]["controller_abstention"]
+        assert abstention["incumbent"] is None and abstention["code"] == code
+        assert abstention["failure"]["provider"]["kind"] == kind
+        assert abstention["investigator_concluded"] is False
+        assert fake.count == 1 and not run.events("investigation.turn_retry_scheduled")
+
+
+async def test_default_no_lock_abstains_after_retryable_failure_exhausts_its_retries(env, lab, provider):
+    unavailable = error_reply(503)
+    fake = provider([], unavailable)
+    async with running(env, lab, fake, investigator_options={"finalization": "autonomous"}) as run:
+        result = await asyncio.wait_for(run.handle.result(), 45)
+        assert result["status"] == "abstained" and result["reason"] == "controller-abstained"
+        shown = run.view()
+        assert shown["status"] == "stopped" and shown["needs_input"] is None
+        abstention = shown["body"]["controller_abstention"]
+        assert abstention["incumbent"] is None and abstention["code"] == "turn-failed"
+        assert abstention["failure"]["retryable"] is True
+        assert abstention["failure"]["provider"]["status"] == 503 and abstention["investigator_concluded"] is False
+        assert len(run.events("investigation.turn_retry_scheduled")) == MAX_FAILED_TURN_RETRIES
+        assert run.stop_reasons() == ["error"] * (MAX_FAILED_TURN_RETRIES + 1)
+        assert fake.count == 3 * (MAX_FAILED_TURN_RETRIES + 1)
+
+
+@pytest.mark.parametrize(("options", "limits", "cause"), [
+    ({"max_turns": 0}, {}, "max-turns-reached"),
+    ({}, {"turns": 0}, "turn-budget-exhausted"),
+    ({}, {"model_tokens": 0}, "budget-exhausted"),
+    ({"wall_seconds": 0.00001}, {}, "wall-deadline-reached"),
+])
+async def test_default_hard_limit_before_first_turn_abstains_with_exact_cause(env, lab, provider, options, limits, cause):
+    fake = provider([], decision_reply(ASK))
+    async with running(env, lab, fake, investigator_options={"finalization": "autonomous", **options},
+                       investigation_limits=limits) as run:
+        result = await asyncio.wait_for(run.handle.result(), 20)
+        assert result["status"] == "abstained" and result["reason"] == "controller-abstained"
+        shown = run.view()
+        assert shown["status"] == "stopped" and shown["needs_input"] is None
+        abstention = shown["body"]["controller_abstention"]
+        assert abstention["incumbent"] is None and abstention["code"] == "coordinator-stopped"
+        assert abstention["failure"]["error_type"] == cause and abstention["investigator_concluded"] is False
+        assert not shown["turns"] and fake.count == 0
+
+
+@pytest.mark.parametrize("policy", ["autonomous", "operator"])
+async def test_queued_completion_cannot_commit_a_late_conclusion(env, lab, provider, monkeypatch, policy):
+    fake = provider([], decision_reply({
+        "rationale": "timely response", "calls": [],
+        "control": {"action": "conclude", "summary": "No candidate was locked.",
+                    "claim_json": json.dumps({"disposition": "abstain"})},
+    }))
+    queued, release = threading.Event(), threading.Event()
+
+    def hold_completion(a):
+        assert a["stop_reason"] == "concluded"
+        queued.set()
+        assert release.wait(12), "test did not release the completion activity"
+
+    deadline = time.time() + 30
+    async with running(env, lab, fake, before_complete=hold_completion,
+                       investigator_options={"finalization": policy, "wall_seconds": 40,
+                                             "wall_deadline_unix": deadline, "conclude_threshold_seconds": 0}) as run:
+        try:
+            assert await asyncio.to_thread(queued.wait, 10)
+            (decision,) = run.events("decision.accepted")
+            assert datetime.fromisoformat(decision["created_at"]).timestamp() < deadline
+            child = env.client.get_workflow_handle(f"{run.inv}-turn-1")
+            history = await child.fetch_history()
+            (completion,) = [event for event in history.events
+                             if event.activity_task_scheduled_event_attributes.activity_type.name == "complete_turn"]
+            assert completion.event_time.ToDatetime().timestamp() < deadline
+            before = run.view()
+            assert "conclusion" not in before["body"]
+            actual_lab_deadline = before["body"]["wall"]["deadline_unix"]
+            monkeypatch.setattr(investigations, "time", SimpleNamespace(time=lambda: actual_lab_deadline + 1))
+        finally:
+            release.set()
+        result = await asyncio.wait_for(run.handle.result(), 15)
+        shown = run.view()
+        assert "conclusion" not in shown["body"] and run.stop_reasons() == ["deadline"]
+        (closed,) = run.events("turn.completed")
+        assert closed["body"]["control_refused"] == "wall-deadline-reached"
+        if policy == "autonomous":
+            assert result["status"] == "abstained" and shown["status"] == "stopped"
+            assert shown["needs_input"] is None
+            abstention = shown["body"]["controller_abstention"]
+            assert abstention["failure"]["error_type"] == "wall-deadline-reached"
+            assert abstention["investigator_concluded"] is False
+        else:
+            assert result["reason"] == "wall-deadline-reached" and shown["status"] == "active"
+            assert shown["needs_input"]["details"]["failure"]["error_type"] == "wall-deadline-reached"

@@ -901,3 +901,24 @@ def test_a_natural_language_lock_with_no_single_job_is_refused_with_the_format(s
     scene.assert_refused(receipt, "candidate-not-locked", claims=claims)
     message = next(r["message"] for r in receipt["reasons"] if r["code"] == "candidate-not-locked")
     assert '{"job_id"' in message and "evidence_refs" in message
+
+
+@pytest.mark.parametrize("case", ["missing", "wrong-schema", "ambiguous"])
+def test_omitted_held_out_labels_require_one_eligible_attested_binding(scene, case):
+    if case == "missing":
+        digests = ["0" * 64]
+    else:
+        schema = "unrelated/1" if case == "wrong-schema" else "class-labels/1"
+        other = scene.flow.artifact(scene.flow.labels()[:-1], schema)
+        digests = [scene.q("get_artifact", {"artifact_id": other})["digest"]]
+        if case == "ambiguous":
+            digests.append(scene.digest)
+    charter_id = scene.commit_charter(case, labels=digests)
+    baseline, candidate = scene.job(BASELINE_RECIPE), scene.job(CANDIDATE_RECIPE)
+    request = scene.request(baseline, candidate, charter_id=charter_id)
+    del request["labels"]
+    receipt = scene.assess_candidate(request)
+    assert receipt["status"] == "refused"
+    assert any(reason["code"] == "output-schema" and "exactly one eligible project label artifact" in reason["message"]
+               for reason in receipt["reasons"]), receipt
+    assert all(digest not in json.dumps(receipt) for digest in digests)

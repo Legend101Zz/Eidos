@@ -53,7 +53,7 @@ REQUIRED_ARGS = {
 CONTROL_TOOLS = ("wait_for_jobs", "request_input", "conclude", "stop")
 READ_TOOLS = ("inspect_evidence", "search_components", "describe_component", "get_job", "read_artifact")
 STOP_REASONS = ("calls-exhausted", "invalid-proposals", "waiting", "input-requested", "concluded", "budget-exhausted",
-                "deadline", "cancelled", "error", "stale-revision")
+                "deadline", "cancelled", "error", "stale-revision", "runtime-bounded")
 CONCLUDING_ACTIONS = ("conclude", "stop")
 
 
@@ -91,7 +91,7 @@ def turn_boundary(completion: dict[str, Any]) -> float:
     turn the wall deadline itself. An exploratory turn (R14 #4, #5: ``exploration_deadline_unix``, set by begin_turn)
     ends where the reproduction hold-back begins, so neither its activities nor their retries can spend it."""
     deadline = float(completion["deadline_unix"])
-    if completion["conclude_now"]:
+    if completion.get("conclude_now") or completion.get("finalization"):
         return deadline
     if completion.get("exploration_deadline_unix") is not None:
         return min(float(completion["exploration_deadline_unix"]), deadline - float(completion["conclude_threshold_seconds"]))

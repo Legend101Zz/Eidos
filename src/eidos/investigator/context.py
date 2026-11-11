@@ -67,9 +67,11 @@ Effect tools (executed in order only after the lab accepts your decision):
   freeze_evidence_plan {plan_id}; launch_evidence_plan {plan_id} (the assessment then runs by itself; its outcome
     appears under "Your evidence plans")
   assess_candidate {success_rule_id, claim_id or claim:{statement, scope}, baseline:{"job_id": <job whose recipe is the
-    baseline>}, candidate:{"job_id": <the locked job>}, seeds:[<seeds neither recipe has run>], labels:<held-out labels
-    artifact id>, predictions_slot?, data_provenance:{split: "held-out"|"selection"}, required_isolation}: the default
-    route to an independent verdict, for when you have held-out data the charter attests. It validates output schemas,
+    baseline>}, candidate:{"job_id": <the locked job>}, seeds:[<seeds neither recipe has run>], labels?, predictions_slot?,
+    data_provenance:{split: "held-out"|"selection"}, required_isolation}: the default route to an independent verdict.
+    For held-out confirmation, omit labels when the charter attests a single eligible label artifact. The lab binds it
+    without exposing its identifier, digest or content. Authorized callers may supply an explicit label artifact ID.
+    The lab validates output schemas,
     seeds, fresh initialization, the charter and data provenance, then freezes the plan and launches fresh runs of both
     recipes, so no confirming result exists when the plan is frozen. Results you have already seen cannot be confirmation,
     and each attested held-out set confirms once (paired-report metrics: train_evaluate {seeds, baseline, candidate,
@@ -88,6 +90,14 @@ Effect tools (executed in order only after the lab accepts your decision):
     scorer's receipts on that data count (never held-out data; a lock cannot name its own scorer job). A re-lock must
     beat the incumbent on it, both scored, the challenger run after the rule (refused otherwise); no lock changes after
     a plan is frozen or an assessment requested.
+  Classification scorer-port example: {"metric": "accuracy", "split": "validation", "direction":
+    "higher_is_better", "scorer": "eidos.task.score-classification@1.0.2", "data": {"inputs":
+    {"reference": "art_selection_labels"}}}. "validation" is the scientific split; the scorer's label port is
+    "reference", not "validation". Inspect describe_component before recording: invalid ports are refused prospectively.
+  Reproduction-seed example: select with data.config {"split": "validation"}, run the locked recipe with seed 11,
+    then reproduce it with seed 23 and purpose "reproduction", scoring on the same reference artifact. Do not fix
+    data.config.seed=11 when fresh-seed reproduction must match: fixed config values match exactly and seed 23 would
+    be unscored. A previously recorded rule is immutable; report its limitations rather than rewriting it.
 Batches: calls run in order, and any argument of a later call can be {"$ref": "call[<i>].<field>"}, an earlier call of
   the SAME decision's result, filled in when the later call runs. So one decision can author, train, infer and score:
   [author_source {files}, run_component {inputs: {source: {"$ref": "call[0].artifact_id"}}, ...}, run_component {inputs:
@@ -122,6 +132,25 @@ Control actions: wait_for_jobs (sleep until admitted work finishes), request_inp
   supported, and without an assessment your candidate is "submitted for confirmation". Abstaining or reporting a null is
   always allowed; "confirmed" without an assessor pass is recorded as a downgrade.
 Success rules come only from the committed charter; you cannot set thresholds. Cite artifact/job ids for numbers."""
+
+
+FINALIZATION_GUIDE = """You are in the single bounded autonomous finalization turn.
+Read existing evidence only: get_job {job_id}, inspect_evidence {artifact_id, max_bytes?},
+describe_component {component_ref}. Then return ONE decision with calls: [] and control.action: conclude or stop.
+No search, compute, authoring, rule changes, candidate changes, re-lock or new evidence collection is allowed.
+Report the locked candidate with its source/job/receipt identifiers, visible metrics, provenance limits and recorded
+reproduction status. With no eligible locked candidate, honestly abstain. Missing held-out evidence never passes
+assessment. A candidate may be submitted pending independent confirmation, with limitations stated explicitly.
+Use only the remaining original wall/token budget; do not request operator input or wait for jobs in this turn."""
+
+
+def _tool_guide(view: dict[str, Any]) -> str:
+    return FINALIZATION_GUIDE if view.get("finalization") else TOOL_GUIDE
+
+
+def _known_tools(view: dict[str, Any]) -> list[str]:
+    return ["get_job", "inspect_evidence", "describe_component", "conclude", "stop"] if view.get("finalization") \
+        else sorted(EFFECT_TOOLS) + list(CONTROL_TOOLS)
 
 
 def pack(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int = MODEL_CONTEXT_CHAR_LIMIT,
@@ -217,16 +246,16 @@ def _pack_v1(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
     omitted["catalog"] = [c["ref"] for c in catalog[MAX_CATALOG:]]
     if len(catalog) > MAX_CATALOG:
         lines.append("(more components exist: use search via the catalog query; they are data, not tools)")
-    lines.append("## Tools\n" + TOOL_GUIDE)
+    lines.append("## Tools\n" + _tool_guide(view))
     text = "\n".join(lines)
     truncated = False
     if len(text) > char_limit:
-        text = text[: char_limit - 200] + "\n...[context truncated by context-policy/1]\n" + TOOL_GUIDE
+        text = text[: char_limit - 200] + "\n...[context truncated by context-policy/1]\n" + _tool_guide(view)
         truncated = True
     return {"policy": POLICY_V1, "text": text, "selections": sel, "omissions": omitted,
             "truncations": {"context_truncated": truncated}, "chars": len(text),
             "source_manifest_digest": "sha256:" + sha256_bytes(canonical_json(view).encode()),
-            "known_tools": sorted(EFFECT_TOOLS) + list(CONTROL_TOOLS)}
+            "known_tools": _known_tools(view)}
 
 
 def _error_view_v1(err: Any) -> Any:
@@ -453,7 +482,9 @@ def _assessment_facts(view: dict[str, Any]) -> list[str]:
     out: list[str] = []
     state = view.get("claim_state") or {}
     chosen = state.get("assessment_id")
-    if chosen:  # derived by the conclusion's rules: current claim revision, plan eligibility, a failure outweighs a pass
+    if state.get("assessment_result_withheld"):
+        out.append("- Independent assessment recorded. Its outcome is sealed and the ledger derives the final claim state.")
+    elif chosen:  # derived by the conclusion's rules: current claim revision, plan eligibility, a failure outweighs a pass
         a: dict[str, Any] = next((x for x in state.get("assessments_considered") or [] if x.get("id") == chosen), {})
         out.append(f"- Candidate state: {state.get('state')} (claim {state.get('claim_id')} revision {state.get('claim_revision')}, "
                    f"plan {state.get('plan_id')}, assessment {chosen}, outcome {a.get('outcome')}, conformance "
@@ -631,7 +662,7 @@ def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
             out += ["- Known failures so far (do not repeat one without changing what caused it):", *pinned["failures"]]
         return out
 
-    tail = ["## Tools", TOOL_GUIDE]
+    tail = ["## Tools", _tool_guide(view)]
 
     def pinned_chars() -> int:
         return len("\n".join(assemble_head() + assemble_facts() + tail))
@@ -722,4 +753,4 @@ def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
     return {"policy": POLICY_ID if v3 else POLICY_V2, "text": text, "selections": sel, "omissions": omitted,
             "truncations": {"context_truncated": budget_cut, "budget_left": max(room, 0)}, "chars": len(text),
             "source_manifest_digest": "sha256:" + sha256_bytes(canonical_json(view).encode()),
-            "known_tools": sorted(EFFECT_TOOLS) + list(CONTROL_TOOLS)}
+            "known_tools": _known_tools(view)}
