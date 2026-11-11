@@ -463,13 +463,18 @@ def submit_candidate(client: Any, project: str, key: str, args: dict[str, Any]) 
                               "wait_status {job_ids: [job_id]} first.", {"job_id": job_id, "status": job.get("status")})
     # R15: the key binds the whole normalized submission before any step, so a retry that adds, drops or changes
     # anything (the assessment included) is COMMAND_KEY_CONFLICT here, with nothing replayed or started.
+    selection = args.get("selection") or None  # ADR 0023: the prospective rule, when none is recorded yet (H1)
+    if selection is not None and not isinstance(selection, dict):
+        raise WorkflowFailure("INVALID_ARGUMENTS", "selection must be a selection rule object")
     request = {"investigation_id": inv, "job_id": job_id, "statement": args["statement"], "scope": args["scope"],
-               "assessment": assessment}
+               "assessment": assessment, **({"selection": selection} if selection is not None else {})}
     digest = hashlib.sha256(json.dumps(request, sort_keys=True, default=str).encode()).hexdigest()
     step("record_note", {"investigation_id": inv, "kind": "mcp-submission", "status": "recorded",
                          "text": json.dumps({"command_key": key, "request_sha256": digest,
                                              "assessment": assessment is not None}, sort_keys=True)}, "submit")
-    lock = step("record_note", {"investigation_id": inv, "kind": "candidate_lock", "text": json.dumps({"job_id": job_id}),
+    # the same validated lock as the investigator's: the lab checks the selection rule, the incumbent and the freeze
+    lock_text = {"job_id": job_id, **({"selection": selection} if selection is not None else {})}
+    lock = step("record_note", {"investigation_id": inv, "kind": "candidate_lock", "text": json.dumps(lock_text),
                                 "evidence_refs": [job_id]}, "lock")
     claim = step("file_claim", {"statement": args["statement"], "kind": "improves", "scope": args["scope"],
                                 "investigation_id": inv}, "claim")

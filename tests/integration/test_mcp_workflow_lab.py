@@ -78,25 +78,35 @@ def test_upload_batch_wait_submit_against_the_real_lab(lab, tmp_path):
     assert status["done"] is True
     assert status["jobs"][0]["outputs"]["model"] == model
 
-    # 5. submit_candidate: lock + improves claim; the lab derives candidate-submitted
+    # 5. submit_candidate: lock + improves claim; the lab derives candidate-submitted. H1: the lock is the same validated
+    # lock as the investigator's (ADR 0023), so it needs the prospective selection rule; without one nothing is filed
+    scope = {"task": "demo", "population": "visible validation"}
+    with pytest.raises(ToolFailure) as refused:
+        tool("submit_candidate", command_key="sub-0", investigation_id=inv, job_id=fit_job,
+             statement="the fit improves on the reference", scope=scope)
+    assert refused.value.code == "INVALID" and "selection rule" in str(refused.value)
+    assert refused.value.details["step"] == "lock"
+    rule = {"metric": "accuracy", "split": "validation", "direction": "higher_is_better", "scorer": SCORE_REF,
+            "data": {"config": {"split": "validation"}}}
     sub = tool("submit_candidate", command_key="sub-1", investigation_id=inv, job_id=fit_job,
-               statement="the fit improves on the reference", scope={"task": "demo", "population": "visible validation"})
+               statement="the fit improves on the reference", scope=scope, selection=rule)
     assert sub["claim"]["state"] == "candidate-submitted" and sub["claim"]["confirmed"] is False
     claim = lab.q(lab.admin, "get_claim", {"claim_id": sub["claim_id"]}, project=pid)
     assert (claim.get("body") or claim)["kind"] == "improves"
     note = lab.q(lab.admin, "get_record", {"kind": "note", "id": sub["lock_note_id"]}, project=pid)
-    assert json.loads(note["body"]["text"]) == {"job_id": fit_job} and note["body"]["kind"] == "candidate_lock"
-    assert calls <= 6
+    assert json.loads(note["body"]["text"]) == {"job_id": fit_job, "selection": rule}
+    assert note["body"]["kind"] == "candidate_lock" and note["body"]["incumbent"]["version"] == 1
+    assert calls <= 7
 
     # a retry of the submission replays every step: no second note or claim
     again = tool("submit_candidate", command_key="sub-1", investigation_id=inv, job_id=fit_job,
-                 statement="the fit improves on the reference", scope={"task": "demo", "population": "visible validation"})
+                 statement="the fit improves on the reference", scope=scope, selection=rule)
     assert again["claim_id"] == sub["claim_id"] and again["lock_note_id"] == sub["lock_note_id"]
 
     # R15: the key binds the whole request; adding an assessment is a conflict before any step, and starts nothing
     with pytest.raises(ToolFailure) as exc:
         tool("submit_candidate", command_key="sub-1", investigation_id=inv, job_id=fit_job,
-             statement="the fit improves on the reference", scope={"task": "demo", "population": "visible validation"},
+             statement="the fit improves on the reference", scope=scope, selection=rule,
              assessment={"success_rule_id": "r1", "baseline": {"job_id": fit_job}, "seeds": [1]})
     assert exc.value.code == "COMMAND_KEY_CONFLICT" and exc.value.details["step"] == "submit"
     assert lab.q(lab.admin, "list_records", {"kind": "assessment_request"}, project=pid) == []

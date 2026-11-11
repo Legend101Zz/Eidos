@@ -82,9 +82,12 @@ Effect tools (executed in order only after the lab accepts your decision):
   export_model {checkpoint_artifact_id, behavior_check_job_id}; record_note {kind, text, evidence_refs}
   To lock a candidate: record_note {kind: "candidate_lock", text: "{\\"job_id\\": \\"<job>\\"}"}, the text being exactly
     that JSON naming the selected training job, or any text with exactly one job in evidence_refs. A lock that names no
-    job cannot be assessed. The text may add "selection": {"metric", "split": "validation"|"training-cv", "direction"}
-    (the selection rule, fixed once recorded) and "scored_by": "<job>". With a rule, a new lock must beat the incumbent
-    on it (recorded receipts decide, refused otherwise); no lock changes after a plan is frozen or an assessment requested.
+    job cannot be assessed. A lock needs the selection rule first: a "selection_rule" note, or "selection" in the lock's
+    JSON: {"metric", "split": "validation"|"training-cv", "direction", "scorer": "<component whose receipt scores a
+    candidate>", "data": {"inputs": {...}, "config"?: {...}}, "reproduce_within"?}. It is fixed once recorded; only that
+    scorer's receipts on that data count (never held-out data; a lock cannot name its own scorer job). A re-lock must
+    beat the incumbent on it, both scored, the challenger run after the rule (refused otherwise); no lock changes after
+    a plan is frozen or an assessment requested.
 Batches: calls run in order, and any argument of a later call can be {"$ref": "call[<i>].<field>"}, an earlier call of
   the SAME decision's result, filled in when the later call runs. So one decision can author, train, infer and score:
   [author_source {files}, run_component {inputs: {source: {"$ref": "call[0].artifact_id"}}, ...}, run_component {inputs:
@@ -107,7 +110,9 @@ Diagnose, then sweep, then challenge. (1) After the baseline, eidos.diagnose.bas
   cross-validates finalists within train and returns a ranked evidence_table and best_recipe (with a reproduce command).
   (3) Targeted challengers: a command sweep (config.command argv over a grid or seeded random space, seeds/folds, budget
   max_trials or max_seconds, stopping rule) or authored candidates testing the top hypothesis's prediction. All three
-  are exploratory: no claim, no test data. Lock the winner before confirming it.
+  are exploratory: no claim, no test data. Lock the winner before confirming it. Then: record the selection rule, lock
+  the incumbent, run challenger rounds while the pinned facts say exploration continues, reproduce the incumbent
+  (purpose "reproduction"), assess or submit it, and conclude before the deadline.
 Control actions: wait_for_jobs (sleep until admitted work finishes), request_input, conclude {summary, scope, claim?},
   stop. claim = {disposition: "candidate"|"confirmed"|"null"|"abstain", claim_id?, point_estimate: {metric, value or
   baseline+candidate, split?, direction?: "higher_is_better"|"lower_is_better"} (value means improvement: positive is
@@ -256,7 +261,7 @@ PINNED_BUDGETS: dict[str, tuple[int, float, int]] = {
     "revision": (900, 0.02, 900), "model": (400, 0.01, 400), "charter": (3000, 0.06, 3000), "steering": (4000, 0.07, 1200),
     "inputs": (3000, 0.05, 3000), "task": (2000, 0.04, 2000), "notes": (3000, 0.05, 3000), "budget": (1500, 0.03, 1500),
     "wall": (500, 0.06, 500), "baseline": (1200, 0.03, 1200), "lock": (1500, 0.03, 800), "success_rules": (1500, 0.03, 1500),
-    "environments": (6000, 0.10, 900), "failures": (6000, 0.10, 400), "assessment": (2400, 0.04, 700), "search": (1500, 0.03, 600),
+    "environments": (6000, 0.10, 900), "failures": (6000, 0.10, 400), "assessment": (2400, 0.04, 700), "search": (2400, 0.04, 600),
     "batches": (1000, 0.02, 500), "exploration": (1600, 0.04, 600)}
 HEAD_SECTIONS = ("revision", "model", "charter", "steering", "inputs", "task", "notes", "budget")
 FACT_SECTIONS = ("wall", "baseline", "lock", "exploration", "assessment", "success_rules", "environments", "search", "batches", "failures")
@@ -413,8 +418,9 @@ def _exploration_facts(view: dict[str, Any]) -> list[str]:
                    "Run a challenger round (a batch of alternatives), score each on the selection rule, and re-lock "
                    "only a challenger that beats the incumbent; the lab refuses any other re-lock.")
     else:
-        out.append("- Exploration: no incumbent yet. Beat the baseline, then lock your best candidate with the "
-                   f"selection rule. Allowance left: {'; '.join(allowance) or 'no limit'}.")
+        out.append("- Exploration: no incumbent yet. Diagnose the baseline (eidos.diagnose.baseline-errors), run one broad "
+                   "template sweep (eidos.search.recipe-sweep), then lock your best candidate with the selection rule. "
+                   f"Allowance left: {'; '.join(allowance) or 'no limit'}.")
     return out
 
 
@@ -476,12 +482,12 @@ def _assessment_facts(view: dict[str, Any]) -> list[str]:
 def _sweep_facts(view: dict[str, Any]) -> list[str]:
     """Baseline diagnoses (ADR 0024) and recipe sweeps (ADR 0022) of this investigation, whose rows the job window can
     otherwise drop."""
-    out = []
+    diagnoses, out = [], []
     for j in view.get("jobs") or []:
         if str(j.get("component") or "").startswith(DIAGNOSIS_COMPONENT):
             receipt = j.get("receipt") if isinstance(j.get("receipt"), dict) else {}
             report = [o["artifact_id"] for o in j.get("outputs", []) if o.get("slot") == "report"]
-            out.append(f"- Diagnosis {j['id']} ({j.get('status')}): report {report[0] if report else None}, top hypothesis "
+            diagnoses.append(f"- Diagnosis {j['id']} ({j.get('status')}): report {report[0] if report else None}, top hypothesis "
                        f"{receipt.get('top_hypothesis')}, ranked {json.dumps(receipt.get('hypotheses'))}. Exploratory: test "
                        "its prediction (and falsifier) with a sweep before changing architecture.")
             continue
@@ -491,7 +497,9 @@ def _sweep_facts(view: dict[str, Any]) -> list[str]:
         metrics = (j.get("receipt") or {}).get("metrics") if isinstance(j.get("receipt"), dict) else None
         out.append(f"- Sweep {j['id']} ({j.get('status')}): {json.dumps(outputs, sort_keys=True)}"
                    + (f", metrics {json.dumps(metrics, sort_keys=True)}" if metrics else "") + ". Exploratory: lock the winner before confirming it.")
-    return out[-4:]
+    # H1: the latest diagnosis first, then the three latest sweeps, so later sweeps never push the diagnosis out (the
+    # section keeps its lines in order within its budget)
+    return diagnoses[-1:] + out[-3:]
 
 
 def _batch_facts(view: dict[str, Any]) -> list[str]:

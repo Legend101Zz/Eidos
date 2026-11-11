@@ -304,9 +304,12 @@ WORKFLOW_TOOLS: tuple[Tool, ...] = (
          "Submit a selected candidate for confirmation in one call: records the candidate_lock on its succeeded job, files "
          "the 'improves' claim and, with assessment (assess_candidate arguments such as success_rule_id, baseline "
          "{job_id}, seeds, data_provenance), requests its assessment. Returns the claim's derived state; "
-         "'candidate-submitted' is a complete result without a held-out verdict.",
+         "'candidate-submitted' is a complete result without a held-out verdict. A lock needs the selection rule "
+         "(ADR 0023): a recorded selection_rule note, or selection here.",
          (P("investigation_id", "s", required=True), P("job_id", "s", "The candidate's recorded training job.", True),
           P("statement", "s", required=True), P("scope", "o", "Non-empty: model/task/population.", True),
+          P("selection", "o", "If no rule is recorded: {metric, split: validation|training-cv, direction, scorer, data "
+            "{inputs}, reproduce_within?}; fixed once recorded."),
           P("assessment", "o")), grant="propose", composite=True),
 )
 TOOLS = TOOLS + WORKFLOW_TOOLS

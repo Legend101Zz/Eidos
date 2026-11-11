@@ -13,10 +13,12 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
 
 from eidos.application.service import Ctx
 from eidos.domain import exploration as rules
+from eidos.domain import turns as turn_rules
 from eidos.domain.assessment import candidate_lock_job_id
 from eidos.domain.errors import Invalid
 
@@ -126,6 +128,35 @@ def exploration_state(ctx: Ctx, inv: Any, *, completion: dict[str, Any] | None =
     if st.get("pending_challengers"):
         st["pending_outputs"] = rules.pending_outputs(jobs, st["pending_challengers"])
     return st
+
+
+def check_admission(ctx: Ctx, inv_id: str | None, purpose: str, lock: dict[str, Any]) -> float | None:
+    """ADR 0023 for exploratory work admitted outside a decision: the MCP batch path and direct calls (ADR 0025, H1).
+    The same rules as ``accept_decision``, from the state at admission: once exploration has stopped (selection frozen,
+    a ceiling, the search limit, the wall or token hold-back) a new ``open-search`` or ``hypothesis-test`` job is
+    refused, unless it reads an output of a pending challenger (it finishes an admitted round, R14 #6). While
+    exploration runs, returns when it must end (the start of the hold-back), so the job's wall can be capped there
+    (R14 #4); otherwise None. A decision's effects are checked when the decision is accepted, not here."""
+    if not inv_id or ctx.admission or purpose not in rules.REFUSED_WHEN_FINALIZING:
+        return None
+    inv = ctx.tx.require("investigation", inv_id)
+    wall = inv.body.get("wall")
+    completion = turn_rules.completion_state(wall["deadline_unix"], time.time(), wall["conclude_threshold_seconds"]) \
+        if wall else None
+    st = exploration_state(ctx, inv, completion=completion, budgets=ctx.tx.budgets(f"inv:{inv.id}"))
+    if st["phase"] != "finalize":
+        return rules.exploration_deadline_unix(st, completion)
+    pending = set(st.get("pending_outputs") or [])
+    inputs = {str(i.get("artifact_id")) for i in (lock.get("inputs") or {}).values() if isinstance(i, dict)}
+    if pending and inputs & pending:
+        return None
+    inc = st.get("incumbent") or {}
+    raise Invalid(f"exploration has stopped ({st.get('stop')}): no new challengers. Reproduce the incumbent with purpose "
+                  "\"reproduction\", export, assess or conclude",
+                  details={"stop": st.get("stop"), "purpose": purpose, "allowance": st.get("allowance"),
+                           "incumbent": {k: inc.get(k) for k in ("version", "job_id", "evidence", "reproduced_by")}
+                           if inc else None},
+                  next_action="Run the incumbent's reproduction (purpose reproduction), or submit or conclude.")
 
 
 def _check_rule_provenance(ctx: Ctx, inv: Any, rule: dict[str, Any]) -> None:
