@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from study.common import DEVELOPMENT, read_json, write_json
-from study.grade_block import check_bundle_paths, grade_block, grade_run, reproduction_command, success_rule
+from study.grade_block import check_bundle_paths, digest, grade_block, grade_run, reproduction_command, success_rule
 from study.launcher import plan, version_guard
 
 
@@ -104,6 +104,64 @@ class GradingBoundaryTests(unittest.TestCase):
             result = grade_run(self.run, self.root / "grading")
         self.assertEqual(result["status"], "incident")
         self.assertFalse(result["verified_success"])
+
+    def test_reproduction_and_confirmation_use_the_declared_checkpoint(self):
+        out = self.run / "out"
+        write_json(self.run / "arm.json", dict(arm=4, card="D03", run_index=1, block_id="control"))
+        checkpoint = "candidate-weights.bin"
+        candidate = {
+            "code_path": "project.py",
+            "model_path": checkpoint,
+            "predictions_path": "validation.npz",
+            "environment_lock": "environment.txt",
+            "reproduce_command": [
+                "python", "project.py", "train", "--inputs", "{inputs}", "--out", "{out}", "--seed", "{seed}",
+            ],
+        }
+        for key in ("code_path", "model_path", "predictions_path", "environment_lock"):
+            path = out / candidate[key]
+            path.write_text(key)
+            candidate[key.removesuffix("_path") + "_sha256"] = digest(path)
+        write_json(out / "answer.json", {
+            "task_id": "D03", "status": "improvement_claimed", "claim_type": "recipe_improvement",
+            "evidence": [], "candidate": candidate,
+        })
+
+        def dev_command(script, *args):
+            if script == "package_task.py":
+                args[-1].mkdir()
+
+        def fresh_check(workspace, code, model, validation_inputs, locked_validation, test_inputs):
+            self.assertEqual(model, workspace / "candidate" / checkpoint)
+            return {"fresh_process_export_equal": True, "prediction_path": str(workspace / "fresh.npz")}
+
+        def train_candidate(workspace, command):
+            seed_output = Path(command[command.index("--out") + 1])
+            (seed_output / "model.pt").write_text("decoy")
+            if seed_output.parent.parent.parent.name == "complete":
+                (seed_output / checkpoint).write_text("declared checkpoint")
+
+        def infer(workspace, code, model, test_inputs, prediction):
+            self.assertEqual(model.name, checkpoint)
+            self.assertEqual(model.read_text(), "declared checkpoint")
+
+        with (
+            patch("study.grade_block.dev_command", side_effect=dev_command),
+            patch("study.grade_block.research_python", return_value="python"),
+            patch("study.grade_block.make_inputs", side_effect=lambda _, path: path.write_text("inputs")),
+            patch("study.grade_block.fresh_check", side_effect=fresh_check),
+            patch("study.grade_block.candidate_command", side_effect=train_candidate),
+            patch("study.grade_block.infer", side_effect=infer),
+            patch("study.grade_block.score", return_value={"gain": 0.03}),
+            patch("subprocess.run"),
+        ):
+            complete = grade_run(self.run, self.root / "complete" / "grading")
+            self.assertTrue(complete["verified_success"], complete)
+            self.assertEqual([item["seed"] for item in complete["reproduction"]], [23, 37])
+            missing = grade_run(self.run, self.root / "missing" / "grading")
+            self.assertFalse(missing["verified_success"], missing)
+            self.assertEqual(missing["status"], "invalid_output")
+            self.assertIn(checkpoint, missing["reason"])
 
     def test_unfinished_block_cannot_be_graded(self):
         path = self.root / "block_record.json"

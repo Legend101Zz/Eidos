@@ -27,6 +27,7 @@ from typing import Any
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
+from eidos.application.handlers.finalization_evidence import sanitize
 from eidos.batches import ACTIVE_JOB_STATUSES, BatchRunner
 from eidos.client import LabClient, LabError
 from eidos.domain.redaction import redact_value
@@ -319,16 +320,31 @@ class InvestigatorActivities:
             **({"finalization_turn_id": turn["id"]} if turn["spec"].get("evidence_allowlist") is not None else {})}, project=p)["components"]
         if turn["spec"].get("evidence_allowlist") is not None:
             catalog = [c for c in catalog if c["ref"] in turn["spec"]["evidence_allowlist"].get("components", [])]
-        packed = pack(view, catalog, policy=turn["spec"].get("context_policy") or POLICY_V1)
+        blocked = self._model_evidence_exclusions(p, turn, view)
+        model_view = view
+        model_catalog = catalog
+        attestation = (view.get("charter") or {}).get("held_out")
+        if blocked:
+            model_view = {**view}
+            if charter := view.get("charter"):
+                held = attestation or {}
+                model_view["charter"] = {**charter, "held_out": {"labels": bool(held.get("labels")), "splits": bool(held.get("splits"))}}
+            inv = view["investigation"]
+            model_view["investigation"] = {**inv, "body": {k: sanitize(v, blocked) for k, v in inv["body"].items()}}
+            model_view = sanitize(model_view, blocked)
+            model_catalog = sanitize(catalog, blocked)
+        packed = pack(model_view, model_catalog, policy=turn["spec"].get("context_policy") or POLICY_V1)
         if turn["spec"].get("finalization"):
             # Exact recovery evidence is supplied independently of context-policy windowing.
-            packed["text"] += "\n\n## Bounded autonomous finalization\n" + json.dumps(
+            packed["text"] += "\n\n## Bounded autonomous finalization\n" + json.dumps(sanitize(
                 {**turn["spec"]["finalization"], "remaining_budget": view["budgets"],
-                 "remaining_wall": view.get("completion")}, sort_keys=True, default=str)
+                 "remaining_wall": view.get("completion")}, blocked), sort_keys=True, default=str)
             packed["chars"] = len(packed["text"])
         # The source manifest includes the catalog snapshot so offline replays see exactly what was
         # installed at the horizon, not components published later.
-        src_bytes = json.dumps({**view, "catalog": catalog}, sort_keys=True, default=str).encode()
+        src_bytes = json.dumps({**model_view, "catalog": model_catalog,
+                                **({"audit_held_out_attestation": attestation} if attestation else {})},
+                               sort_keys=True, default=str).encode()
         digest = hashlib.sha256(src_bytes + packed["text"].encode()).hexdigest()[:24]
         src = self.inv.upload(p, data=src_bytes, media_type="application/json",
                               schema="investigation-view/1", role="context", name=f"source-{a['turn_id']}",
@@ -343,6 +359,11 @@ class InvestigatorActivities:
             "horizon": turn["horizon"], "chars": packed["chars"]}, project=p, key=f"ctxrec:{a['turn_id']}:{digest}")
         rec = self.wf.query("get_turn", {"turn_id": a["turn_id"]}, project=p)["context"]  # first write wins
         return {"context_artifact_id": rec["context_artifact_id"], "chars": rec.get("chars")}
+
+    def _model_evidence_exclusions(self, project: str, turn: dict, view: dict) -> set[str]:
+        if not (view.get("charter") or {}).get("held_out") and turn["spec"].get("evidence_allowlist") is None:
+            return set()
+        return set(self.inv.query("model_evidence_exclusions", {"turn_id": turn["id"]}, project=project)["excluded"])
 
     def _turn_so_far(self, p: str, turn: dict) -> list[dict]:
         out = []
@@ -439,10 +460,16 @@ class InvestigatorActivities:
             limits["deadline_seconds"] = min(float(limits.get("deadline_seconds") or 600),
                                                max(0.01, turn_boundary(turn["spec"]["completion"]) - time.time()))
         abort = DecisionAbort(decision_deadline(started, float(limits.get("deadline_seconds") or 0)))
+        view.pop("audit_held_out_attestation", None)  # internal source provenance is never a runtime input
+        blocked = self._model_evidence_exclusions(p, turn, view)
+        finalization = {"turn_id": turn["id"]} if turn["spec"].get("evidence_allowlist") is not None else None
+        turn_so_far = self._turn_so_far(p, turn)
         req = DecisionRequest(turn_id=a["turn_id"], slot=a["slot"], context=context_text,
-                              turn_so_far=self._turn_so_far(p, turn), limits=limits, settings=cfg,
-                              read_tools=self._read_tools(p, finalization=({"turn_id": turn["id"]} if turn["spec"].get("evidence_allowlist") is not None else None),
-                                                          conclude_only=bool(turn["spec"].get("finalization"))), view=view, abort=abort)
+                              turn_so_far=sanitize(turn_so_far, blocked) if blocked else turn_so_far, limits=limits, settings=cfg,
+                              read_tools=self._read_tools(p, finalization=finalization,
+                                                          evidence_turn_id=turn["id"] if blocked and not finalization else None,
+                                                          blocked=blocked, conclude_only=bool(turn["spec"].get("finalization"))),
+                              view=view, abort=abort)
 
         def aborted() -> dict:
             if abort.reason == "activity-cancelled" or _activity_cancelled():
@@ -518,8 +545,10 @@ class InvestigatorActivities:
         status = self.wf.query("get_record", {"kind": "investigation", "id": investigation_id}, project=p).get("status")
         return None if status in (None, "active") else f"investigation-{status}"
 
-    def _read_tools(self, p: str, *, finalization: dict | None = None, conclude_only: bool = False) -> dict:
-        isolation = {"finalization_turn_id": finalization["turn_id"]} if finalization else {}
+    def _read_tools(self, p: str, *, finalization: dict | None = None, evidence_turn_id: str | None = None,
+                    blocked: set[str] | None = None, conclude_only: bool = False) -> dict:
+        isolation = ({"finalization_turn_id": finalization["turn_id"]} if finalization else
+                     {"evidence_turn_id": evidence_turn_id} if evidence_turn_id else {})
         tools: dict[str, Any] = {
             "inspect_evidence": lambda artifact_id, max_bytes=8192: self.inv.query(
                 "artifact_preview", {"artifact_id": artifact_id, "max_bytes": max_bytes, **isolation}, project=p),
@@ -529,6 +558,14 @@ class InvestigatorActivities:
                 "describe_component", {"component_ref": component_ref, **isolation}, project=p),
             "get_job": lambda job_id: redact_value(self.inv.query("get_job", {"job_id": job_id, "include_lock": False, **isolation}, project=p)),
         }
+        if blocked:
+            def guard(read):
+                def guarded(*args, **kwargs):
+                    result = sanitize(read(*args, **kwargs), blocked)
+                    return result if result is not None else {"error": "evidence contains restricted provenance"}
+                return guarded
+
+            tools = {name: guard(read) for name, read in tools.items()}
         return {k: v for k, v in tools.items() if not conclude_only or k != "search_components"}
 
     # -- effects (ADR 0022: a decision's calls run in order; dependent calls wait for what they name) ----------
@@ -694,7 +731,7 @@ class InvestigatorActivities:
     def mark_needs_input(self, a: dict) -> dict:
         return self.wf.command("mark_needs_input", {"investigation_id": a["investigation_id"], "reason": a.get("reason"),
                                "refused_turns": a.get("refused_turns", 0),
-                               **{k: a[k] for k in ("code", "details") if a.get(k)}}, project=a["project_id"],
+                               **{k: a[k] for k in ("code", "details", "terminal") if a.get(k)}}, project=a["project_id"],
                                key=f"needs-input:{a['investigation_id']}:{a.get('turn_counter')}:"
                                    f"{activity.info().workflow_run_id}")["result"]
 
@@ -728,4 +765,6 @@ class InvestigatorActivities:
                             project=a["project_id"],
                             # per run (F5): a completion refused for a run that lost the turn is not the owner's receipt
                             key=f"complete:{a['turn_id']}:{getattr(activity.info(), 'workflow_run_id', '') or ''}")
-        return {"status": r["result"].get("status")}
+        result = r["result"]
+        return {"status": result.get("status"),
+                **({"controller_abstention": result["controller_abstention"]} if result.get("controller_abstention") else {})}

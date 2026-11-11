@@ -166,8 +166,12 @@ All gates must pass on the same commit. Evidence files are in `docs/release/evid
 | Runtime deadline exhaustion never fabricates a model wait; cancellation and uncertain spend remain accounted | `test_decision_abort.py`, `test_in_flight_estimate.py`, `test_provider_resilience.py` |
 | One autonomous finalization after repeated refusals/runtime exhaustion; immediate exploration-boundary transition | `tests/integration/test_r4_finalization_workflows.py` |
 | Finalization reports the locked incumbent and provenance; no training, authoring, re-lock or rule changes | `tests/integration/test_r4_finalization.py` |
-| Failed finalization leaves structured input-needed and an export receipt; no independent evidence is invented | `tests/integration/test_r4_finalization.py` |
+| Failed default finalization produces a terminal controller abstention and export receipt with failed investigator outcome; operator policy retains input-needed | `tests/integration/test_r4_finalization.py` |
 | Wrong scorer ports are refused before rule recording; recorded rules stay immutable | `tests/integration/test_r4_finalization.py`, `test_r14_selection_e2e.py` |
+| Slow provider still allows a durable conclusion before the export margin | `tests/integration/test_failed_turn_e2e.py` |
+| All context policies exclude held-out provenance in exploratory, ordinary and recovery model input | `tests/integration/test_r4_finalization.py` |
+| Default healthy path completes reproduction, independent assessment and conclusion | `tests/integration/test_r3_arm4_combined_workflow.py` |
+| Recovered provider failures, terminal 429/quota classification and declared confirmation checkpoint | `tests/integration/test_provider_resilience_workflow.py`, `study/eidos_arms/test_contract.py`, `study/tests/test_grading.py` |
 
 Policy and limits: ADRs 0026 and 0027. All new model behavior tests use fake providers; no pilot records are changed.
 

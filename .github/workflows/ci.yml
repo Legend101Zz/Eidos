@@ -41,6 +41,8 @@ jobs:
       - name: shellcheck (errors) over CI, qualification, journey and ops scripts
         run: shellcheck -S error scripts/ci/*.sh scripts/qualify/*.sh scripts/qualify/mcp_clients/*.sh scripts/journeys/*.sh tests/journeys/*.sh tests/ops/*.sh
       - run: uv run pytest tests/unit -q
+      - name: Offline study arm and grader contracts
+        run: EIDOS_RESEARCH_PYTHON="$PWD/.venv/bin/python" uv run python -m unittest study.eidos_arms.test_contract study.eidos_arms.test_parity study.tests.test_grading
       - run: uv run pytest tests/mcp tests/reporting -q   # the live-lab MCP test is covered by the e2e-journey job
 
   integration:

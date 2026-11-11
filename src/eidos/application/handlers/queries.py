@@ -401,6 +401,16 @@ def assessment_inputs(ctx: Ctx, p: dict) -> dict:
     return {"plan_id": plan.id, "plan_digest": plan.digest, "plan": plan.body, "arms": arms}
 
 
+@query("model_evidence_exclusions")
+def model_evidence_exclusions(ctx: Ctx, p: dict) -> dict:
+    """Identifiers and digests to suppress when assembling a model request."""
+    turn = ctx.tx.get_turn(p["turn_id"])
+    if not turn or turn["project_id"] != ctx.project_id:
+        raise Forbidden("model evidence policy requires its admitted turn")
+    inv = ctx.tx.require("investigation", turn["investigation_id"])
+    return {"excluded": sorted(finalization_evidence.excluded(ctx, inv, include_digests=True))}
+
+
 @query("finalization_view")
 def finalization_view(ctx: Ctx, p: dict) -> dict:
     turn = ctx.tx.get_turn(p["turn_id"])

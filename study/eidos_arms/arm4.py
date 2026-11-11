@@ -181,7 +181,8 @@ def run(run_dir, meta):
             valid = False
             write_json(run_dir / 'validation_error.json', {'error': str(exc)})
         status, incident = classify(observed or shown, receipts, models, expired.is_set(), valid)
-        return {'status': status, 'incident_reason': incident, 'tokens': tokens, 'billed_usd': billed,
+        controller_abstention = (shown.get('body') or {}).get('controller_abstention')
+        return {'status': status, **({'controller_abstention': controller_abstention} if controller_abstention else {}), 'incident_reason': incident, 'tokens': tokens, 'billed_usd': billed,
                 'started_at': began_at,
                 'model_ids_seen': models, 'agent_claim': agent_claim, 'transcript': 'transcript.jsonl',
                 'project': project, 'investigation_id': inv, 'selected_job': selected,

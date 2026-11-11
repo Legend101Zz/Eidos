@@ -22,6 +22,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -96,12 +97,16 @@ class FakeProvider:
                 with outer.lock:
                     outer.requests.append({"path": self.path, "body": json.loads(raw or b"{}")})
                     status, body = outer.script.pop(0) if outer.script else outer.default
-                data = json.dumps(body).encode()
+                delay = body.get("_fixture_delay_seconds", 0)
+                if delay:
+                    time.sleep(delay)
+                data = json.dumps({k: v for k, v in body.items() if k != "_fixture_delay_seconds"}).encode()
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
-                self.wfile.write(data)
+                with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+                    self.wfile.write(data)
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.server.daemon_threads = True
@@ -184,13 +189,14 @@ async def until(what: str, probe, timeout: float = 55.0, every: float = 0.3):
 
 
 @contextlib.asynccontextmanager
-async def running(env, lab, prov: FakeProvider, **workflow_args):
+async def running(env, lab, prov: FakeProvider, *, investigator_options=None, **workflow_args):
     """Start the real investigation coordinator against ``prov`` and terminate it at the end."""
     pid, _, _ = setup(lab)  # project, environment, component and charter of the turn-recovery tests
     inv = lab.cmd(lab.admin, "start_investigation", {
         "question": "q", "charter_id": f"charter:s{pid}", "limits": {"model_tokens": 1e6, "trials": 100},
         "investigator": {"runtime": "pydantic-ai", "model": "openai-compatible:fake", "finalization": "operator",
-                         "settings": {"max_tokens_per_decision": 120_000}}}, project=pid)["result"]["investigation_id"]
+                         "settings": {"max_tokens_per_decision": 120_000},
+                         **(investigator_options or {})}}, project=pid)["result"]["investigation_id"]
     acts = InvestigatorActivities(
         ShimClient(lab, lab.principal(f"inv-{pid}", ["investigator"], [pid])),
         ShimClient(lab, lab.principal(f"wf-{pid}", ["workflow"], [pid])),
@@ -396,3 +402,48 @@ async def test_a_persistent_retryable_failure_stops_after_the_bounded_automatic_
         # And then it waits for the operator: no further turn, no further request.
         await asyncio.sleep(3)
         assert run.stop_reasons() == ["error"] * 3 and prov.count == 9
+
+
+async def test_slow_provider_still_records_a_conclusion_before_export_margin(env, lab, provider):
+    export_margin = 5.0  # arm-4 adapter's WATCHDOG_MARGIN_SECONDS, tested at its registration boundary
+    status, delayed = decision_reply(ASK, "delayed-exploration")
+    conclude = decision_reply({
+        "rationale": "no eligible locked candidate",
+        "calls": [],
+        "control": {"action": "conclude", "summary": "Abstain because no candidate was locked.",
+                    "claim_json": json.dumps({"disposition": "abstain"})},
+    }, "conclusion")
+    fake = provider([(status, {**delayed, "_fixture_delay_seconds": 8})], conclude)
+    options = {"finalization": "autonomous", "wall_seconds": 15.0, "conclude_threshold_seconds": 9.0}
+    async with running(env, lab, fake, investigator_options=options) as run:
+        wall = run.view()["body"]["wall"]
+        result = await asyncio.wait_for(run.handle.result(), 25)
+        assert result["status"] == "finished" and result["reason"] == "concluded"
+        shown = run.view()
+        assert shown["status"] == "concluded" and shown["body"]["conclusion"]["claim_state"]["state"] == "abstained"
+        (closure,) = [event for event in run.events("turn.completed") if event["body"]["stop_reason"] == "concluded"]
+        written_at = datetime.fromisoformat(closure["created_at"]).timestamp()
+        watchdog_deadline = wall["deadline_unix"] + export_margin
+        assert watchdog_deadline - written_at > export_margin
+        assert run.view()["needs_input"] is None
+        assert run.stop_reasons()[-1] == "concluded" and fake.count == 2
+
+
+async def test_failed_default_recovery_finishes_with_an_attributed_controller_abstention(env, lab, provider):
+    invalid = decision_reply({
+        "rationale": "an empty wait is not admissible",
+        "calls": [],
+        "control": {"action": "wait_for_jobs", "summary": "scripted refused wait"},
+    })
+    fake = provider([], invalid)
+    async with running(env, lab, fake, investigator_options={"finalization": "autonomous"}) as run:
+        result = await asyncio.wait_for(run.handle.result(), 20)
+        assert result["status"] == "abstained" and result["reason"] == "controller-abstained"
+        shown = run.view()
+        assert shown["status"] == "stopped" and shown["needs_input"] is None
+        assert "conclusion" not in shown["body"]
+        abstention = shown["body"]["controller_abstention"]
+        assert abstention["author"] == "controller" and abstention["investigator_concluded"] is False
+        assert shown["finalization_export_receipt"]["controller_abstention"] == abstention
+        assert len(run.events("investigation.controller_abstained")) == 1
+        assert not run.events("investigation.needs_input")

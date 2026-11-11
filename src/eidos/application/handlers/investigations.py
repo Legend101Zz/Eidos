@@ -188,7 +188,7 @@ def revise_question(ctx: Ctx, p: dict) -> dict:
             "effective": "next-turn"}
 
 
-def _set_state(ctx: Ctx, p: dict, status: str, etype: str) -> dict:
+def _set_state(ctx: Ctx, p: dict, status: str, etype: str, *, controller_abstention: dict | None = None) -> dict:
     inv = ctx.tx.require("investigation", p["investigation_id"], lock=True)
     policy = p.get("running_job_policy", "drain")
     if policy not in RUNNING_JOB_POLICIES:
@@ -197,6 +197,10 @@ def _set_state(ctx: Ctx, p: dict, status: str, etype: str) -> dict:
         raise StaleRevision(f"investigation at revision {inv.revision}", details={"observed_revision": inv.revision})
     body = dict(inv.body)
     body["control"] = {"status": status, "running_job_policy": policy, "by": ctx.principal.id}
+    if status == "active":
+        body.pop("controller_abstention", None)
+    elif controller_abstention is not None:
+        body["controller_abstention"] = controller_abstention
     rec = ctx.tx.put_record("investigation", inv.id, ctx.project_id, body, created_by=ctx.principal.id, status=status)
     _clear_needs_input(ctx, inv, status, etype.split(".")[-1])
     affected = []
@@ -241,6 +245,20 @@ def _bounded_details(details: Any) -> dict:
     return {"truncated": True, "preview": json.dumps(details, default=str)[:NEEDS_INPUT_DETAILS_BYTES]}
 
 
+def _record_controller_abstention(ctx: Ctx, inv, *, code: str, reason: str, failure: Any,
+                                  incumbent: dict | None, export_receipt: dict | None = None) -> dict | None:
+    """Close the default run without writing an investigator conclusion."""
+    if inv.status != "active" or inv.body["investigator"].get("finalization") == "operator":
+        return inv.body.get("controller_abstention")
+    abstention = {"schema": "controller-abstention/1", "author": "controller", "code": code,
+                  "reason": reason, "failure": failure, "incumbent": incumbent,
+                  "investigator_concluded": False, "export_receipt": export_receipt}
+    _set_state(ctx, {"investigation_id": inv.id, "running_job_policy": "cancel"}, "stopped", "investigation.stopped",
+               controller_abstention=abstention)
+    ctx.event("investigation.controller_abstained", inv.id, abstention, investigation_id=inv.id)
+    return abstention
+
+
 @command("mark_needs_input", "turn")
 def mark_needs_input(ctx: Ctx, p: dict) -> dict:
     """The coordinator surfaces an investigation it will not continue on its own: durable and visible (investigation
@@ -254,6 +272,16 @@ def mark_needs_input(ctx: Ctx, p: dict) -> dict:
     if code in ("turn-failed", "provider-unavailable"):  # F5 (A2): a turn the failed child left open is closed and settled
         close_abandoned_turn(ctx, p["investigation_id"], (p.get("details") or {}).get("failure"))
     inv = ctx.tx.require("investigation", p["investigation_id"], lock=True)
+    if inv.body.get("controller_abstention"):
+        return {"investigation_id": inv.id, "controller_abstention": inv.body["controller_abstention"]}
+    if p.get("terminal") and inv.status == "active" and inv.body["investigator"].get("finalization") != "operator":
+        incumbent = exploration.final_incumbent(ctx, inv)
+        if incumbent and incumbent.get("job_id"):
+            details = p.get("details") or {}
+            abstention = _record_controller_abstention(
+                ctx, inv, code=code, reason=str(p.get("reason", ""))[:300],
+                failure=_bounded_details(redact_value(details.get("failure"))), incumbent=incumbent)
+            return {"investigation_id": inv.id, "controller_abstention": abstention}
     if (inv.labels or {}).get("needs_input"):
         # F5 (A1): every needs-input wait gets its own cursor. An operator event that ended an earlier wait without
         # clearing the mark (e.g. a charter amendment) is behind it and never counts as news again.
@@ -281,24 +309,28 @@ def reconcile_finalization(ctx: Ctx, p: dict) -> dict:
     final = ctx.tx.get_record(FINALIZATION_KIND, p["investigation_id"])
     if final is None:
         return {"finalization": False}
-    if not final.body.get("turn_id"):
-        if final.status != "finished" and not p.get("failure"):
-            return {"finalization": False}  # pending admission, no failed child: its one turn can still begin
-        if final.status != "finished":
-            inv = ctx.tx.require("investigation", p["investigation_id"], lock=True)
-            _fail_pending_finalization(ctx, inv, "child-failed-before-begin-turn", p["failure"])
-        return {"finalization": True, "turn_id": None, "investigator_concluded": False,
-                "export_receipt": {"kind": "finalization_export_receipt", "id": p["investigation_id"]}}
-    turn = _turn(ctx, final.body["turn_id"], lock=True)
-    if turn["status"] == "open":
-        failure = p.get("failure") or {"error_type": "coordinator-restarted", "retryable": False,
-                                       "message": "active finalization child was abandoned"}
-        close_abandoned_turn(ctx, p["investigation_id"], failure)
-    receipt = ctx.tx.get_record("finalization_export_receipt", p["investigation_id"])
-    return {"finalization": True, "turn_id": turn["id"],
-            "investigator_concluded": bool(receipt and receipt.body.get("investigator_concluded")),
-            "stop_reason": receipt.body.get("stop_reason") if receipt else None,
-            "export_receipt": {"kind": "finalization_export_receipt", "id": p["investigation_id"]}}
+    inv_id = p["investigation_id"]
+    inv = ctx.tx.require("investigation", inv_id)
+    if final.status == "finished" and inv.status == "active" and (inv.body.get("control") or {}).get("status") == "active":
+        return {"finalization": False}  # explicit operator resume after the one-shot attempt
+    turn_id = final.body.get("turn_id")
+    if not turn_id and final.status != "finished":
+        if not p.get("failure"):
+            return {"finalization": False}  # pending admission, no failed child
+        inv = ctx.tx.require("investigation", inv_id, lock=True)
+        _fail_pending_finalization(ctx, inv, "child-failed-before-begin-turn", p["failure"])
+    elif turn_id:
+        turn = _turn(ctx, turn_id, lock=True)
+        if turn["status"] == "open":
+            failure = p.get("failure") or {"error_type": "coordinator-restarted", "retryable": False,
+                                           "message": "active finalization child was abandoned"}
+            close_abandoned_turn(ctx, inv_id, failure)
+    receipt = ctx.tx.get_record("finalization_export_receipt", inv_id)
+    body = receipt.body if receipt else {}
+    return {"finalization": True, "turn_id": turn_id,
+            "investigator_concluded": bool(body.get("investigator_concluded")), "stop_reason": body.get("stop_reason"),
+            "export_receipt": {"kind": "finalization_export_receipt", "id": inv_id},
+            **({"controller_abstention": body["controller_abstention"]} if body.get("controller_abstention") else {})}
 
 
 @command("record_turn_retry", "turn")
@@ -338,6 +370,8 @@ ORDINARY_FINALIZATION_KIND = "investigation_finalization_phase"
 def _enter_finalization(ctx: Ctx, inv, trigger: str, runtime_outcome: Any = None) -> dict:
     prior = ctx.tx.get_record(FINALIZATION_KIND, inv.id)
     if prior:
+        if prior.status == "finished":
+            return {"enabled": False, "reason": "bounded finalization already completed"}
         return dict(prior.body)
     if inv.body["investigator"].get("finalization", "autonomous") == "operator":
         return {"enabled": False}
@@ -387,15 +421,25 @@ def _fail_pending_finalization(ctx: Ctx, inv, reason: str, failure: dict | None 
                "investigator_concluded": False, "incumbent": exploration.final_incumbent(ctx, inv),
                "failure": _bounded_details(redact_value(failure)) if failure else {"kind": "finalization-not-admitted", "reason": reason},
                "provenance_limits": "Controller export only; no investigator conclusion or new confirmation."}
+    _finish_finalization(ctx, inv, final, receipt, reason)
+
+
+def _finish_finalization(ctx: Ctx, inv, final, receipt: dict, reason: str) -> dict | None:
+    abstention = None
+    if not receipt["investigator_concluded"] and reason != "cancelled":
+        abstention = _record_controller_abstention(
+            ctx, inv, code="finalization-failed", reason=reason, failure=receipt["failure"],
+            incumbent=receipt.get("incumbent"),
+            export_receipt={"kind": "finalization_export_receipt", "id": inv.id})
+        if abstention:
+            receipt["controller_abstention"] = abstention
     ctx.tx.put_record("finalization_export_receipt", inv.id, ctx.project_id, receipt,
                       created_by=ctx.principal.id, status="recorded")
     ctx.tx.put_record(FINALIZATION_KIND, inv.id, ctx.project_id,
                       {**final.body, "status": "finished", "export_receipt_ref": inv.id},
                       created_by=ctx.principal.id, status="finished")
-    mark_needs_input(ctx, {"investigation_id": inv.id, "code": "finalization-failed", "reason": reason,
-                          "details": {"failure": receipt["failure"], "export_receipt": {
-                              "kind": "finalization_export_receipt", "id": inv.id}}})
     ctx.event("investigation.finalization_finished", inv.id, receipt, investigation_id=inv.id)
+    return abstention
 
 
 def _finalization_context(ctx: Ctx, inv, state: dict, finalization: dict) -> dict:
@@ -468,7 +512,9 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
             return {"started": False, "reason": "budget-exhausted", "dimension": dim}
     finalization = ctx.tx.get_record(FINALIZATION_KIND, inv.id)
     if finalization and (finalization.body.get("turn_id") or finalization.status == "finished"):
-        return {"started": False, "reason": "finalization-exhausted"}
+        if finalization.status != "finished" or (inv.body.get("control") or {}).get("status") != "active":
+            return {"started": False, "reason": "finalization-exhausted"}
+        finalization = None  # explicit resume does not grant another bounded recovery
     if "turns" in budgets:
         remaining_turns = budgets["turns"]["limit_amount"] - budgets["turns"]["used"] - budgets["turns"]["reserved"]
         if remaining_turns < 1 and finalization:
@@ -499,7 +545,7 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
     if (completion or {}).get("conclude_now"):
         _enter_finalization(ctx, inv, "ordinary-finalization-time-exhausted")
     finalization = ctx.tx.get_record(FINALIZATION_KIND, inv.id)
-    if finalization:
+    if finalization and finalization.status != "finished":
         final = {**finalization.body, "turn_id": tid, "status": "running"}
         ctx.tx.put_record(FINALIZATION_KIND, inv.id, ctx.project_id, final,
                           created_by=ctx.principal.id, status="running")
@@ -511,7 +557,7 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
             spec["limits"]["deadline_seconds"] = max(1, min(
                 int(cfg.get("turn_deadline_seconds", 600)), int(completion["remaining_seconds"])))
     spec["exploration"] = exploration_rules.compact(state)
-    if finalization or spec.get("finalization_phase"):
+    if spec.get("finalization") or spec.get("finalization_phase"):
         from eidos.application.handlers import finalization_evidence
         spec["evidence_allowlist"] = (spec.get("finalization") or {}).get("evidence_allowlist") or \
             finalization_evidence.allowlist(ctx, inv, exploration._jobs(ctx, inv.id))
@@ -1264,7 +1310,10 @@ def record_model_usage(ctx: Ctx, p: dict) -> dict:
 def complete_turn(ctx: Ctx, p: dict) -> dict:
     turn = _turn(ctx, p["turn_id"], lock=True)
     if turn["status"] != "open":
-        return {"turn_id": turn["id"], "status": turn["status"], "already_closed": True}
+        receipt = ctx.tx.get_record("finalization_export_receipt", turn["investigation_id"])
+        abstention = receipt.body.get("controller_abstention") if receipt and receipt.body.get("turn_id") == turn["id"] else None
+        return {"turn_id": turn["id"], "status": turn["status"], "already_closed": True,
+                **({"controller_abstention": abstention} if abstention else {})}
     refused = _execution_refused(ctx, turn, str(p.get("execution") or ""))
     if refused:  # F5 (C1): a run that lost the turn to a resuming run never closes it under the new owner
         return {"turn_id": turn["id"], "status": turn["status"], "superseded": refused}
@@ -1337,7 +1386,9 @@ def _close_turn(ctx: Ctx, turn: dict, p: dict) -> dict:
                   investigation_id=inv_id)
         ctx.tx.put_record("investigation", inv_id, ctx.project_id, body, created_by=ctx.principal.id,
                           status="concluded")
+    abstention = None
     if turn["spec"].get("finalization"):
+        inv = ctx.tx.require("investigation", inv_id, lock=True)
         final = ctx.tx.require(FINALIZATION_KIND, inv_id)
         receipt = {"schema": "finalization-export-receipt/1", "investigation_id": inv_id,
                    "turn_id": turn["id"], "locked_candidate": turn["spec"]["finalization"].get("locked_candidate"),
@@ -1353,22 +1404,13 @@ def _close_turn(ctx: Ctx, turn: dict, p: dict) -> dict:
                    "investigator_concluded": reason == "concluded" and not control_refused,
                    "stop_reason": reason, "failure": failure or ({"kind": "finalization-incomplete", "reason": reason}
                                                                  if reason != "concluded" else None)}
-        ctx.tx.put_record("finalization_export_receipt", inv_id, ctx.project_id, receipt,
-                          created_by=ctx.principal.id, status="recorded")
-        ctx.tx.put_record(FINALIZATION_KIND, inv_id, ctx.project_id,
-                          {**final.body, "status": "finished", "export_receipt_ref": inv_id},
-                          created_by=ctx.principal.id, status="finished")
-        if not receipt["investigator_concluded"] and reason != "cancelled":
-            mark_needs_input(ctx, {"investigation_id": inv_id, "code": "finalization-failed",
-                                  "reason": "bounded autonomous finalization did not conclude",
-                                  "details": {"failure": receipt["failure"], "export_receipt": {
-                                      "kind": "finalization_export_receipt", "id": inv_id}}})
-        ctx.event("investigation.finalization_finished", inv_id, receipt, investigation_id=inv_id)
+        abstention = _finish_finalization(ctx, inv, final, receipt, reason)
     ctx.event("turn.completed", turn["id"], {"stop_reason": reason, "status": status,
                                              **({"failure": failure} if failure else {}),
                                              **({"control_refused": control_refused} if control_refused else {})},
               investigation_id=inv_id)
-    return {"turn_id": turn["id"], "status": status}
+    return {"turn_id": turn["id"], "status": status,
+            **({"controller_abstention": abstention} if abstention else {})}
 
 
 def _turn(ctx: Ctx, tid: str, *, lock: bool = False) -> dict:

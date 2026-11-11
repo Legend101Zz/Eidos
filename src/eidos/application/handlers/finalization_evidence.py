@@ -12,7 +12,7 @@ from eidos.application.service import Ctx
 from eidos.domain.errors import Forbidden
 
 
-def excluded(ctx: Ctx, inv) -> set[str]:
+def excluded(ctx: Ctx, inv, *, include_digests: bool = False) -> set[str]:
     ref = inv.body.get("charter_ref") or {}
     charter = ctx.tx.get_record("charter", ref["id"], ref.get("revision")) if ref.get("id") else None
     held = (charter.body.get("held_out") or {}) if charter else {}
@@ -45,7 +45,7 @@ def excluded(ctx: Ctx, inv) -> set[str]:
         blocked.update(dst for src, dst in edges if src in blocked)
         digests.update(a["digest"] for a in artifacts if a["id"] in blocked)
         if before == (len(blocked), len(digests)):
-            return blocked
+            return blocked | digests if include_digests else blocked
 
 
 def allowlist(ctx: Ctx, inv, jobs: list[dict]) -> dict:
@@ -87,14 +87,22 @@ def allowlist(ctx: Ctx, inv, jobs: list[dict]) -> dict:
 
 
 def read_allowlist(ctx: Ctx, params: dict) -> dict | None:
-    tid = params.get("finalization_turn_id")
+    tid = params.get("finalization_turn_id") or params.get("evidence_turn_id")
     if not tid:
         return None
     turn = ctx.tx.get_turn(tid)
     if not turn or turn["project_id"] != ctx.project_id:
-        raise Forbidden("finalization evidence read requires its admitted turn")
+        raise Forbidden("evidence read requires its admitted turn")
     allowed = turn["spec"].get("evidence_allowlist") or {}
     inv = ctx.tx.require("investigation", turn["investigation_id"])
+    if params.get("evidence_turn_id") and turn["spec"].get("evidence_allowlist") is None:
+        # Exploration retains project evidence access except for held-out provenance and internal model traces.
+        allowed = {
+            "jobs": [job["id"] for job in ctx.tx.list_jobs(ctx.project_id, limit=1_000_000)],
+            "artifacts": [art["id"] for art in ctx.tx.list_artifacts(ctx.project_id, limit=1_000_000)
+                          if art.get("schema") not in {"investigation-view/1", "packed-context/1", "model-response/1"}],
+            "components": [r.id for r in ctx.tx.list_records(ctx.project_id, "component_release", status="active", limit=100_000)],
+        }
     if turn["spec"].get("finalization_phase") and not turn["spec"].get("finalization"):
         # Ordinary finalization can admit reproduction/export/confirmation work during this same turn.
         # Its durable jobs extend the relevant evidence set; recovery's snapshot stays fixed.
@@ -166,5 +174,5 @@ def sanitize(value: Any, blocked: set[str]) -> Any:
     if isinstance(value, dict):
         if any(isinstance(v, str) and denied(v) for v in value.values()):
             return None
-        return {k: sanitize(v, blocked) for k, v in value.items()}
+        return {k: sanitize(v, blocked) for k, v in value.items() if not (isinstance(k, str) and denied(k))}
     return value

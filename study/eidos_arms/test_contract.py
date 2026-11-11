@@ -39,7 +39,23 @@ class Receipts(unittest.TestCase):
         self.assertEqual(classify({}, [], [], True)[0], 'timeout')
         self.assertEqual(classify({'needs_input': {'reason': 'budget-exhausted'}}, [], [])[0], 'token_budget')
         self.assertEqual(classify({'needs_input': {'reason': 'invalid proposals'}}, [], [])[0], 'crash')
+        # Pilot-3 addendum 2: a recovered 429 followed by successful calls does not decide a later behavioural stop.
+        recovered = [{'calls': 1}, {'error': 'ModelRateLimitError: status_code: 429', 'failed_request': {'status_code': 429}},
+                     {'calls': 2}]
+        self.assertEqual(classify({'status': 'active', 'needs_input': {'code': 'refused-proposals'}}, recovered, [])[0], 'crash')
+        self.assertEqual(classify({'status': 'active', 'needs_input': {'code': 'turn-failed'}}, recovered[:2], [])[0], 'incident')
         self.assertEqual(classify({'status': 'concluded'}, [], [], answer_valid=False)[0], 'invalid_output')
+
+
+    def test_controller_abstention_preserves_failure_and_terminal_provider_incidents(self):
+        abstention = {'status': 'stopped', 'body': {'controller_abstention': {
+            'author': 'controller', 'code': 'finalization-failed', 'investigator_concluded': False}}}
+        self.assertEqual(classify(abstention, [], [])[0], 'crash')
+        rate_limit = {'error': 'HTTP 429'}
+        self.assertEqual(classify(abstention, [rate_limit, {'calls': 0, 'runtime_outcome': 'deadline'}], [])[0], 'incident')
+        self.assertEqual(classify(abstention, [rate_limit, {'calls': 2}], [])[0], 'crash')
+        abstention['body']['controller_abstention']['code'] = 'provider-unavailable'
+        self.assertEqual(classify(abstention, [], [])[0], 'incident')
 
 
 class Selection(unittest.TestCase):

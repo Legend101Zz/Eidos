@@ -40,6 +40,18 @@ def _locked(scene, **settings):
     return inv, job
 
 
+def _controller_abstention(scene, inv, job):
+    shown = scene.q('get_investigation', {'investigation_id': inv})
+    assert shown['status'] == 'stopped' and shown['needs_input'] is None
+    assert 'conclusion' not in shown['body']
+    abstention = shown['body']['controller_abstention']
+    assert abstention['author'] == 'controller' and abstention['investigator_concluded'] is False
+    assert abstention['reason'] and abstention['incumbent']['job_id'] == job
+    (event,) = scene.events(inv, 'investigation.controller_abstained')
+    assert event['body'] == abstention
+    return shown, abstention
+
+
 def test_refusals_finalize_the_locked_incumbent_with_provenance_and_separate_usage(scene):
     inv, job = _locked(scene, wall_seconds=1800)
     refusals = []
@@ -131,12 +143,12 @@ def test_failed_finalization_has_structured_failure_and_export_receipt_and_never
     _entered(scene, inv)
     turn = scene.begin(inv)
     _complete(scene.lab, scene.pid, turn['turn_id'], 'runtime-bounded', {})
-    shown = scene.q('get_investigation', {'investigation_id': inv})
-    assert shown['status'] == 'active' and shown['needs_input']['code'] == 'finalization-failed'
+    shown, abstention = _controller_abstention(scene, inv, job)
     receipt = shown['finalization_export_receipt']
+    assert receipt['controller_abstention'] == abstention
     assert receipt['investigator_concluded'] is False and receipt['incumbent']['job_id'] == job
     assert receipt['failure']['reason'] == 'runtime-bounded'
-    assert scene.cmd('begin_turn', {'investigation_id': inv})['reason'] == 'finalization-exhausted'
+    assert scene.cmd('begin_turn', {'investigation_id': inv})['reason'].startswith('investigation is stopped')
 
 
 def test_rule_wrong_scorer_port_is_refused_before_recording_and_correct_rule_stays_immutable(scene):
@@ -207,8 +219,8 @@ def test_unadmitted_finalization_at_original_wall_deadline_has_failure_export(sc
     wall = scene.q('get_investigation', {'investigation_id': inv})['body']['wall']
     monkeypatch.setattr('eidos.application.handlers.investigations.time.time', lambda: wall['deadline_unix'] + 1)
     assert scene.cmd('begin_turn', {'investigation_id': inv})['started'] is False
-    shown = scene.q('get_investigation', {'investigation_id': inv})
-    assert shown['needs_input']['code'] == 'finalization-failed'
+    shown, abstention = _controller_abstention(scene, inv, job)
+    assert abstention['reason'] == 'wall-deadline-reached'
     assert shown['finalization_export_receipt']['incumbent']['job_id'] == job
     assert shown['finalization_export_receipt']['investigator_concluded'] is False
 
@@ -287,18 +299,19 @@ def test_abandoned_finalization_is_closed_durably_before_retry_or_restart(scene,
     receipt = shown['finalization_export_receipt']
     assert receipt['incumbent']['job_id'] == job and receipt['investigator_concluded'] is False
     assert receipt['failure']['error_type'] == failure_kind
-    assert shown['needs_input']['code'] == 'finalization-failed'
+    assert receipt['controller_abstention'] == _controller_abstention(scene, inv, job)[1]
+    assert recovered['controller_abstention'] == receipt['controller_abstention']
     assert scene.q('get_turn', {'turn_id': turn['turn_id']})['status'] == 'failed'
     # A new coordinator/worker sees the same terminal recovery, without replaying a model turn.
     again = scene.cmd('reconcile_finalization', {'investigation_id': inv})
     assert again == recovered
-    assert scene.cmd('begin_turn', {'investigation_id': inv})['reason'] == 'finalization-exhausted'
+    assert scene.cmd('begin_turn', {'investigation_id': inv})['reason'].startswith('investigation is stopped')
     assert scene.q('get_investigation', {'investigation_id': inv})['finalization_export_receipt'] == receipt
 
 
-@pytest.mark.parametrize('recovery', [True, False])
+@pytest.mark.parametrize('phase', ['exploration', 'ordinary', 'recovery'])
 @pytest.mark.parametrize('context_policy', ['context-policy/1', 'context-policy/2', 'context-policy/3'])
-def test_finalization_denies_direct_and_transitively_derived_held_out_reads_and_context(lab, recovery, context_policy):
+def test_model_context_and_reads_deny_held_out_provenance_across_phases(lab, phase, context_policy):
     import hashlib
 
     from eidos.client import LabError
@@ -313,14 +326,16 @@ def test_finalization_denies_direct_and_transitively_derived_held_out_reads_and_
     derived = sc.job(inv, ref=sc.infer, inputs={'predictions': sc.output(direct)}, metrics={'secret-derived': 1})
     # The provenance chain can cross the investigation boundary.
     outside = sc.job(None, ref=sc.infer, inputs={'predictions': sc.output(derived)})
-    if recovery:
+    if phase == 'recovery':
         _entered(sc, inv)
-    else:
+    elif phase == 'ordinary':
         sc.cmd('enter_finalization', {'investigation_id': inv, 'trigger': 'exploration-boundary'})
     turn = sc.begin(inv)
     principal = lab.principal(f'inv-{sc.pid}', ['investigator'], [sc.pid])
     acts = InvestigatorActivities(ShimClient(lab, principal), ShimClient(lab, sc.wf))
-    tools = acts._read_tools(sc.pid, finalization={'turn_id': turn['turn_id']}, conclude_only=recovery)
+    scope = ({'evidence_turn_id': turn['turn_id']} if phase == 'exploration' else
+             {'finalization': {'turn_id': turn['turn_id']}})
+    tools = acts._read_tools(sc.pid, **scope, conclude_only=phase == 'recovery')
     assert tools['get_job'](safe)['id'] == safe
     assert tools['inspect_evidence'](sc.output(safe))['available']
     for aid in [held, sc.output(direct), sc.output(derived), sc.output(outside)]:
@@ -331,18 +346,27 @@ def test_finalization_denies_direct_and_transitively_derived_held_out_reads_and_
             tools['get_job'](jid)
     # A guessed id outside the durable evidence allowlist is also denied.
     unrelated = sc.job(None)
-    with pytest.raises(LabError):
-        tools['get_job'](unrelated)
+    if phase == 'exploration':
+        assert tools['get_job'](unrelated)['id'] == unrelated
+    else:
+        with pytest.raises(LabError):
+            tools['get_job'](unrelated)
     base = {'project_id': sc.pid, 'investigation_id': inv, 'turn_id': turn['turn_id']}
     _env(1).run(acts.build_context, base)
     context = sc.q('get_turn', {'turn_id': turn['turn_id']})['context']
     art = sc.q('get_artifact', {'artifact_id': context['context_artifact_id']})
     packed = Path(lab.store.path_for(art['digest'])).read_text()
     source_art = sc.q('get_artifact', {'artifact_id': context['source_manifest_artifact_id']})
-    source = Path(lab.store.path_for(source_art['digest'])).read_text()
-    for forbidden in [direct, derived, 'secret-direct', 'secret-derived', held, sc.output(direct), sc.output(derived)]:
-        assert forbidden not in packed and forbidden not in source
-    assert safe in packed and safe in source
+    source = json.loads(Path(lab.store.path_for(source_art['digest'])).read_text())
+    assert source.pop('audit_held_out_attestation') == {'labels': [digest]}
+    with pytest.raises(LabError):
+        tools['inspect_evidence'](context['source_manifest_artifact_id'])
+    derived_digest = sc.q('get_artifact', {'artifact_id': sc.output(derived)})['digest']
+    serialized = json.dumps(source)
+    for forbidden in [digest, derived_digest, direct, derived, 'secret-direct', 'secret-derived',
+                      held, sc.output(direct), sc.output(derived)]:
+        assert forbidden not in packed and forbidden not in serialized
+    assert safe in packed and safe in serialized
 
 
 def test_ordinary_finalization_can_read_a_lock_that_predates_the_investigation(scene):
@@ -369,9 +393,9 @@ def test_child_failure_before_begin_turn_closes_pending_recovery_and_fences_a_la
     shown = scene.q('get_investigation', {'investigation_id': inv})
     assert shown['finalization_export_receipt']['failure'] == failure
     assert shown['finalization_export_receipt']['incumbent']['job_id'] == job
-    assert shown['needs_input']['code'] == 'finalization-failed'
+    assert result['controller_abstention'] == _controller_abstention(scene, inv, job)[1]
     # The child begin activity may arrive late, after its workflow timed out: it must not reopen recovery.
-    assert scene.cmd('begin_turn', {'investigation_id': inv})['reason'] == 'finalization-exhausted'
+    assert scene.cmd('begin_turn', {'investigation_id': inv})['reason'].startswith('investigation is stopped')
     assert scene.cmd('reconcile_finalization', {'investigation_id': inv}) == result
 
 
@@ -387,3 +411,66 @@ def test_reconciliation_preserves_a_conclusion_committed_before_the_child_failed
     shown = scene.q('get_investigation', {'investigation_id': inv})
     assert shown['status'] == 'concluded' and shown['needs_input'] is None
     assert shown['finalization_export_receipt']['investigator_concluded'] is True
+
+
+def test_explicit_resume_after_controller_abstention_allows_ordinary_turn_without_new_recovery(scene):
+    inv, job = _locked(scene)
+    _entered(scene, inv)
+    turn = scene.begin(inv)
+    _complete(scene.lab, scene.pid, turn['turn_id'], 'runtime-bounded', {})
+    _, abstention = _controller_abstention(scene, inv, job)
+    scene.cmd('resume_investigation', {'investigation_id': inv})
+    assert scene.cmd('reconcile_finalization', {'investigation_id': inv}) == {'finalization': False}
+    assert 'finalization' not in scene.begin(inv)['spec']
+    assert _entered(scene, inv)['enabled'] is False
+    shown = scene.q('get_investigation', {'investigation_id': inv})
+    assert shown['status'] == 'active' and 'controller_abstention' not in shown['body']
+    assert shown['finalization_export_receipt']['controller_abstention'] == abstention
+
+
+@pytest.mark.parametrize('policy', ['operator', 'autonomous'])
+def test_terminal_quota_with_lock_preserves_provider_failure_under_each_policy(scene, policy):
+    inv = scene.investigation(finalization=policy)
+    scene.rule(inv)
+    job = scene.job(inv, metrics={'accuracy': .9})
+    scene.lock(inv, job)
+    failure = {'error_type': 'PROVIDER_QUOTA_EXHAUSTED', 'provider': {'kind': 'quota-exhausted', 'status': 429}}
+    result = scene.cmd('mark_needs_input', {'investigation_id': inv, 'code': 'provider-unavailable',
+        'reason': 'provider quota exhausted', 'terminal': True, 'details': {'failure': failure}})
+    if policy == 'operator':
+        assert result['needs_input']['code'] == 'provider-unavailable'
+    else:
+        _, abstention = _controller_abstention(scene, inv, job)
+        assert result['controller_abstention'] == abstention and abstention['failure'] == failure
+
+
+def test_same_turn_model_feedback_omits_held_out_digest(lab):
+    import hashlib
+
+    held_digest = hashlib.sha256(b'labels fixture').hexdigest()
+    scene = Scene(lab, held_out={'labels': [held_digest]})
+    inv = scene.investigation()
+    turn = scene.begin(inv)
+    prompts = []
+
+    def provider(messages, _):
+        prompts.append('\n'.join(str(part.content) for message in messages for part in message.parts
+                                 if part.part_kind == 'user-prompt'))
+        observation = held_digest if len(prompts) == 1 else 'visible follow-up'
+        calls = [{'tool': 'record_note', 'args_json': json.dumps({'kind': 'observation', 'text': observation})}]
+        return ModelResponse(parts=[TextPart(json.dumps({'rationale': 'fixture', 'calls': calls}))],
+                             usage=RequestUsage(input_tokens=100, output_tokens=20))
+
+    principal = scene.lab.principal(f'inv-{scene.pid}', ['investigator'], [scene.pid])
+    acts = InvestigatorActivities(ShimClient(scene.lab, principal), ShimClient(scene.lab, scene.wf),
+        runtime_overrides={'runtime': 'pydantic-ai', 'output_mode': 'json', 'model': 'openai-compatible:fake',
+                          '_model_object': FunctionModel(provider)})
+    base = {'project_id': scene.pid, 'investigation_id': inv, 'turn_id': turn['turn_id']}
+    _env(1).run(acts.build_context, base)
+    assert _env(1, activity_id='decide-0').run(acts.decide, {**base, 'slot': 0})['accepted']
+    second = _env(1, activity_id='decide-1').run(acts.decide, {**base, 'slot': 1})
+    assert second['accepted'], second
+    assert len(prompts) == 2 and 'This turn so far' in prompts[-1]
+    assert 'record_note' in prompts[-1]
+    assert all(held_digest not in prompt for prompt in prompts)
+    assert held_digest in json.dumps(scene.q('get_turn', {'turn_id': turn['turn_id']})['decisions'])
