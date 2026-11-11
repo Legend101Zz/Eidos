@@ -23,6 +23,8 @@ EXPECTED = {
     "freeze_evidence_plan", "launch_evidence_plan", "get_claim", "get_evidence_plan", "get_assessment",
     "plan_branch", "launch_branch", "qualify_protocol", "promote_protocol", "get_investigation", "get_run",
     "list_events", "compare_trials", "cancel_run", "get_artifact_access", "assess_candidate",
+    # ADR 0025: the compact workflow
+    "upload_source", "run_batch", "wait_status", "submit_candidate",
 }
 
 
@@ -56,7 +58,7 @@ def body(result):
 async def test_tool_list_is_the_stable_set(client):
     tools = (await client.list_tools()).tools
     assert {t.name for t in tools} == EXPECTED
-    assert len(tools) == len(TOOLS) == 35
+    assert len(tools) == len(TOOLS) == 39
     by = {t.name: t for t in tools}
     for t in tools:
         schema = t.input_schema

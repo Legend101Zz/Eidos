@@ -16,15 +16,11 @@ from typing import Any
 
 _T = {"s": "string", "i": "integer", "n": "number", "b": "boolean", "o": "object", "a": "array"}
 
-COMMAND_KEY_DOC = (
-    "Caller-chosen idempotency key (required, <=200 chars). Retry after a lost reply with the SAME key and "
-    "the SAME arguments: the lab returns the original receipt. The same key with different arguments is "
-    "rejected with COMMAND_KEY_CONFLICT. Use a fresh key for an intentionally new operation."
-)
-EXPECTED_REVISION_DOC = (
-    "Optional optimistic-concurrency guard: the revision of the record you last read. A mismatch is "
-    "rejected with STALE_REVISION and the observed revision."
-)
+# ADR 0025: the semantics of these shared fields are stated once, in the server instructions; each schema carries a
+# short reminder only (this boilerplate was repeated on every mutating tool).
+COMMAND_KEY_DOC = "Idempotency key: retry with the same key and arguments to get the original receipt."
+EXPECTED_REVISION_DOC = "Revision you last read; a mismatch is STALE_REVISION."
+PAYLOAD_DOC = "Other documented fields of the operation."
 
 
 @dataclass(frozen=True)
@@ -46,6 +42,7 @@ class Tool:
     fixed: dict[str, Any] = field(default_factory=dict)  # constant payload fields (e.g. record kind)
     rename: dict[str, str] = field(default_factory=dict)  # tool arg name -> payload key
     grant: str = ""
+    composite: bool = False  # ADR 0025: implemented by the adapter from several lab calls (eidos.mcp.workflow)
 
     @property
     def mutating(self) -> bool:
@@ -69,14 +66,13 @@ class Tool:
             props[p.name] = d
             if p.required:
                 required.append(p.name)
-        props["payload"] = {"type": "object", "description": "Additional documented fields of the underlying "
-                            "domain operation not listed above; named arguments take precedence."}
+        if not self.composite:
+            props["payload"] = {"type": "object", "description": PAYLOAD_DOC}
         return {"type": "object", "properties": props, "required": required, "additionalProperties": False}
 
     def description(self) -> str:
-        tail = f" [grant: {self.grant}]" if self.grant else ""
-        kind = "Mutating command" if self.mutating else "Read-only query"
-        return f"{self.doc} ({kind} `{self.target}`.{tail})"
+        # Read-only vs mutating is in the tool annotations; the grant is the one fact worth repeating here.
+        return f"{self.doc} [grant: {self.grant}]" if self.grant else self.doc
 
 
 def P(name: str, type_: str, doc: str = "", required: bool = False) -> Param:
@@ -275,6 +271,40 @@ TOOLS: tuple[Tool, ...] = (
           P("representation", "s", "metadata | preview | content"), P("max_bytes", "i")),
          grant="artifact:read"),
 )
+
+# ADR 0025: the compact research workflow for external agents (eidos.mcp.workflow). Same lab operations, fewer calls.
+WORKFLOW_TOOLS: tuple[Tool, ...] = (
+    Tool("upload_source", "command", "register_artifact",
+         "Store project files as an immutable source-bundle/1 artifact (no separate HTTP upload or metadata). Use the "
+         "returned artifact_id as run_component inputs.source.",
+         (P("files", "o", "Relative path -> file text.", True), P("name", "s"), P("investigation_id", "s")),
+         grant="artifact:write", composite=True),
+    Tool("run_batch", "command", "batch",
+         "Run up to 12 calls in order in one request (ADR 0022 batches). An argument may be {\"$ref\": \"call[i].field\"} "
+         "or {\"$ref\": \"call[i].outputs.<slot>\"} of an earlier call; a job reference waits for its success, a failed "
+         "dependency skips its dependents. Jobs run one at a time. Calls: upload_source, run_component, plan_trial, "
+         "launch_trial, plan_branch, launch_branch, validate_component, publish_component, file_claim, "
+         "draft_evidence_plan, freeze_evidence_plan, launch_evidence_plan, assess_candidate. Returns compact receipts "
+         "and job summaries; status 'pending' means call again with the same command_key and calls.",
+         (P("calls", "a", "[{tool, args}]; args as for that tool, without project/command_key.", True),
+          P("investigation_id", "s", "Default for calls that take one."),
+          P("wait_seconds", "i", "Max wait for dependencies in this request (default 20, max 50).")),
+         grant="per call", composite=True),
+    Tool("wait_status", "query", "status",
+         "Wait up to wait_seconds (default 20, max 50) for jobs to end and a plan to finish, then summarize them: "
+         "status, output artifact ids, small receipts; with claim_id its derived state, with investigation_id its status.",
+         (P("job_ids", "a"), P("plan_id", "s"), P("claim_id", "s"), P("investigation_id", "s"),
+          P("wait_seconds", "i", "0 = no wait.")), grant="project:read", composite=True),
+    Tool("submit_candidate", "command", "submit",
+         "Submit a selected candidate for confirmation in one call: records the candidate_lock on its succeeded job, files "
+         "the 'improves' claim and, with assessment (assess_candidate arguments such as success_rule_id, baseline "
+         "{job_id}, seeds, data_provenance), requests its assessment. Returns the claim's derived state; "
+         "'candidate-submitted' is a complete result without a held-out verdict.",
+         (P("investigation_id", "s", required=True), P("job_id", "s", "The candidate's recorded training job.", True),
+          P("statement", "s", required=True), P("scope", "o", "Non-empty: model/task/population.", True),
+          P("assessment", "o")), grant="propose", composite=True),
+)
+TOOLS = TOOLS + WORKFLOW_TOOLS
 
 BY_NAME: dict[str, Tool] = {t.name: t for t in TOOLS}
 assert len(BY_NAME) == len(TOOLS)

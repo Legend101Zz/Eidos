@@ -190,12 +190,15 @@ def parse_ref(text: str) -> tuple[int, str] | None:
     return (int(m.group(1)), m.group(2)) if m else None
 
 
-def _ref_field_allowed(tool: str, field: str) -> bool:
-    return field in RESULT_FIELDS.get(tool, ()) or (field.startswith("outputs.") and tool in JOB_TOOLS)
-
-
 def _validate_refs(calls: list[dict[str, Any]]) -> None:
-    """ADR 0022: every reference must parse, and name an existing earlier call and a field that call produces."""
+    validate_refs(calls)
+
+
+def validate_refs(calls: list[dict[str, Any]], *, result_fields: dict[str, tuple[str, ...]] | None = None,
+                  job_tools: tuple[str, ...] = JOB_TOOLS) -> None:
+    """ADR 0022: every reference must parse, and name an existing earlier call and a field that call produces. Sets each
+    call's ``depends_on``. The MCP adapter (ADR 0025) passes its own vocabulary's result fields and job tools."""
+    fields_of = RESULT_FIELDS if result_fields is None else result_fields
     for i, c in enumerate(calls):
         c.pop("depends_on", None)  # derived here; a proposal never states its own dependencies
         depends: set[int] = set()
@@ -217,8 +220,8 @@ def _validate_refs(calls: list[dict[str, Any]]) -> None:
                               "depend only on earlier calls, so a cycle cannot be written",
                               details={"call": i, "path": path, "ref": text})
             tool = calls[target]["tool"]
-            if not _ref_field_allowed(tool, field):
-                allowed = [*RESULT_FIELDS.get(tool, ()), *(["outputs.<slot>"] if tool in JOB_TOOLS else [])]
+            if not (field in fields_of.get(tool, ()) or (field.startswith("outputs.") and tool in job_tools)):
+                allowed = [*fields_of.get(tool, ()), *(["outputs.<slot>"] if tool in job_tools else [])]
                 raise Invalid(f"call {i} ({c['tool']}): {path}: {text!r} names no result of {tool}; it produces {allowed}",
                               details={"call": i, "path": path, "ref": text, "allowed": allowed})
             depends.add(target)
