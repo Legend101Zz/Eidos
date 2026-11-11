@@ -113,7 +113,6 @@ def to_proposal(d: Decision) -> dict[str, Any]:
 
 def no_effect_proposal(outcome: str) -> dict[str, Any]:
     """Historical wire fixture for the retired fabricated-wait representation."""
-    """The explicit no-effect decision the runtime writes when a model produced nothing usable within the bounds."""
     return {"rationale": f"no usable decision ({outcome}); no effects proposed", "calls": [],
             "control": {"action": "wait_for_jobs", "summary": outcome, "bounded_outcome": outcome}}
 
