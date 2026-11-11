@@ -121,6 +121,7 @@ def replay_slot(slot):
     ("N03-r1", "N03-r1"),
     ("N03-r3", "N03-r3"),
     ("N04-r2", "N04-r2"),
+    ("N04-r3", "N04-r3"),
 ])
 async def test_recorded_failure_tail_reaches_controller_abstention(env, lab, monkeypatch, fixture_name, block):  # noqa: F811
     fixture = json.loads((FIXTURES / f"{fixture_name}.json").read_text())
