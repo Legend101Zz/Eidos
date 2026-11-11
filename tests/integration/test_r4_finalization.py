@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from pydantic_ai.messages import ModelResponse, TextPart
@@ -336,9 +337,9 @@ def test_finalization_denies_direct_and_transitively_derived_held_out_reads_and_
     _env(1).run(acts.build_context, base)
     context = sc.q('get_turn', {'turn_id': turn['turn_id']})['context']
     art = sc.q('get_artifact', {'artifact_id': context['context_artifact_id']})
-    packed = lab.store.path_for(art['digest']).read_text()
+    packed = Path(lab.store.path_for(art['digest'])).read_text()
     source_art = sc.q('get_artifact', {'artifact_id': context['source_manifest_artifact_id']})
-    source = lab.store.path_for(source_art['digest']).read_text()
+    source = Path(lab.store.path_for(source_art['digest'])).read_text()
     for forbidden in [direct, derived, 'secret-direct', 'secret-derived', held, sc.output(direct), sc.output(derived)]:
         assert forbidden not in packed and forbidden not in source
     assert safe in packed and safe in source
