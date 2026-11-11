@@ -552,6 +552,9 @@ def test_a_scripted_fake_provider_drives_the_arm4_workflow_through_the_real_acti
     assert shown["needs_input"] is None and not scene.events(inv, "investigation.finalization_started")
     assert len(provider.prompts) == len(provider.script)
     assert all(labels_digest not in prompt and labels not in prompt for prompt in provider.prompts)
+    assert assessment["assessment_id"] not in provider.prompts[-1]
+    assert "outcome protocol-passed" not in provider.prompts[-1] and "health intact" not in provider.prompts[-1]
+    assert "Independent assessment recorded. Its outcome is sealed" in provider.prompts[-1]
 
     # the pinned facts of the last turn's context (the model's own prompt): baseline, incumbent v2, allowance, diagnosis
     facts = pinned_facts(provider.prompts[-1])

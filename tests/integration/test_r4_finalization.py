@@ -474,3 +474,50 @@ def test_same_turn_model_feedback_omits_held_out_digest(lab):
     assert 'record_note' in prompts[-1]
     assert all(held_digest not in prompt for prompt in prompts)
     assert held_digest in json.dumps(scene.q('get_turn', {'turn_id': turn['turn_id']})['decisions'])
+
+
+def test_legacy_persisted_context_is_reprojected_before_provider_request(lab):
+    import hashlib
+
+    raw = b'{"legacy-held-out": [1, 0, 1]}'
+    digest, size = lab.store.put_bytes(raw)
+    assert digest == hashlib.sha256(raw).hexdigest()
+    scene = Scene(lab, held_out={'labels': [digest]})
+    held = scene.cmd('register_artifact', {'digest': digest, 'size': size, 'media_type': 'application/json',
+        'schema': 'class-predictions/1', 'role': 'input'})['artifact_id']
+    inv, safe = _locked(scene)
+    derived = scene.job(inv, ref=scene.infer, inputs={'predictions': held}, metrics={'legacy-secret-metric': 1})
+    turn = scene.begin(inv)
+    stored_turn = scene.q('get_turn', {'turn_id': turn['turn_id']})
+    view = scene.q('investigation_view', {'investigation_id': inv, 'horizon': stored_turn['horizon']})
+    assert any(job['id'] == derived for job in view['jobs'])
+
+    def artifact(payload, schema, media_type):
+        sha, size = lab.store.put_bytes(payload)
+        return scene.cmd('register_artifact', {'digest': sha, 'size': size, 'media_type': media_type,
+            'schema': schema, 'role': 'context'})['artifact_id']
+
+    old_source = artifact(json.dumps({**view, 'catalog': []}).encode(), 'investigation-view/1', 'application/json')
+    old_packed = artifact(f'{derived} legacy-secret-metric {digest}'.encode(), 'packed-context/1', 'text/plain')
+    scene.cmd('record_turn_context', {'turn_id': turn['turn_id'], 'horizon': stored_turn['horizon'],
+        'source_manifest_artifact_id': old_source, 'context_artifact_id': old_packed})
+
+    prompts = []
+
+    def provider(messages, _):
+        prompts.extend(str(part.content) for message in messages for part in message.parts
+                       if part.part_kind == 'user-prompt')
+        return ModelResponse(parts=[TextPart(json.dumps({
+            'rationale': 'visible result', 'calls': [], 'control': {'action': 'conclude', 'summary': 'visible only'},
+        }))], usage=RequestUsage(input_tokens=100, output_tokens=20))
+
+    principal = scene.lab.principal(f'inv-{scene.pid}', ['investigator'], [scene.pid])
+    acts = InvestigatorActivities(ShimClient(scene.lab, principal), ShimClient(scene.lab, scene.wf),
+        runtime_overrides={'runtime': 'pydantic-ai', 'output_mode': 'json', 'model': 'openai-compatible:fake',
+                          '_model_object': FunctionModel(provider)})
+    base = {'project_id': scene.pid, 'investigation_id': inv, 'turn_id': turn['turn_id']}
+    assert _env(1).run(acts.build_context, base)['reused']
+    assert _env(1).run(acts.decide, {**base, 'slot': 0})['accepted']
+    assert prompts and safe in prompts[0]
+    assert all(value not in prompts[0] for value in (derived, digest, held, 'legacy-secret-metric'))
+    assert scene.q('get_turn', {'turn_id': turn['turn_id']})['context']['context_artifact_id'] == old_packed

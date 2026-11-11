@@ -27,7 +27,7 @@ from typing import Any
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from eidos.application.handlers.finalization_evidence import sanitize
+from eidos.application.handlers.finalization_evidence import model_projection, sanitize
 from eidos.batches import ACTIVE_JOB_STATUSES, BatchRunner
 from eidos.client import LabClient, LabError
 from eidos.domain.redaction import redact_value
@@ -321,28 +321,12 @@ class InvestigatorActivities:
         if turn["spec"].get("evidence_allowlist") is not None:
             catalog = [c for c in catalog if c["ref"] in turn["spec"]["evidence_allowlist"].get("components", [])]
         blocked = self._model_evidence_exclusions(p, turn, view)
-        model_view = view
-        model_catalog = catalog
+        model_view, model_catalog = model_projection(view, catalog, blocked)
         attestation = (view.get("charter") or {}).get("held_out")
-        if blocked:
-            model_view = {**view}
-            if charter := view.get("charter"):
-                held = attestation or {}
-                model_view["charter"] = {**charter, "held_out": {"labels": bool(held.get("labels")), "splits": bool(held.get("splits"))}}
-            inv = view["investigation"]
-            model_view["investigation"] = {**inv, "body": {k: sanitize(v, blocked) for k, v in inv["body"].items()}}
-            model_view = sanitize(model_view, blocked)
-            model_catalog = sanitize(catalog, blocked)
-        packed = pack(model_view, model_catalog, policy=turn["spec"].get("context_policy") or POLICY_V1)
-        if turn["spec"].get("finalization"):
-            # Exact recovery evidence is supplied independently of context-policy windowing.
-            packed["text"] += "\n\n## Bounded autonomous finalization\n" + json.dumps(sanitize(
-                {**turn["spec"]["finalization"], "remaining_budget": view["budgets"],
-                 "remaining_wall": view.get("completion")}, blocked), sort_keys=True, default=str)
-            packed["chars"] = len(packed["text"])
+        packed = self._pack_model_context(turn, model_view, model_catalog, blocked)
         # The source manifest includes the catalog snapshot so offline replays see exactly what was
         # installed at the horizon, not components published later.
-        src_bytes = json.dumps({**model_view, "catalog": model_catalog,
+        src_bytes = json.dumps({**model_view, "catalog": model_catalog, "model_evidence_projected": bool(blocked),
                                 **({"audit_held_out_attestation": attestation} if attestation else {})},
                                sort_keys=True, default=str).encode()
         digest = hashlib.sha256(src_bytes + packed["text"].encode()).hexdigest()[:24]
@@ -359,6 +343,17 @@ class InvestigatorActivities:
             "horizon": turn["horizon"], "chars": packed["chars"]}, project=p, key=f"ctxrec:{a['turn_id']}:{digest}")
         rec = self.wf.query("get_turn", {"turn_id": a["turn_id"]}, project=p)["context"]  # first write wins
         return {"context_artifact_id": rec["context_artifact_id"], "chars": rec.get("chars")}
+
+    @staticmethod
+    def _pack_model_context(turn: dict, view: dict, catalog: list, blocked: set[str]) -> dict:
+        packed = pack(view, catalog, policy=turn["spec"].get("context_policy") or POLICY_V1)
+        if turn["spec"].get("finalization"):
+            # Exact recovery evidence is supplied independently of context-policy windowing.
+            packed["text"] += "\n\n## Bounded autonomous finalization\n" + json.dumps(sanitize(
+                {**turn["spec"]["finalization"], "remaining_budget": view["budgets"],
+                 "remaining_wall": view.get("completion")}, blocked), sort_keys=True, default=str)
+            packed["chars"] = len(packed["text"])
+        return packed
 
     def _model_evidence_exclusions(self, project: str, turn: dict, view: dict) -> set[str]:
         if not (view.get("charter") or {}).get("held_out") and turn["spec"].get("evidence_allowlist") is None:
@@ -461,7 +456,15 @@ class InvestigatorActivities:
                                                max(0.01, turn_boundary(turn["spec"]["completion"]) - time.time()))
         abort = DecisionAbort(decision_deadline(started, float(limits.get("deadline_seconds") or 0)))
         view.pop("audit_held_out_attestation", None)  # internal source provenance is never a runtime input
+        projected = view.pop("model_evidence_projected", False)
         blocked = self._model_evidence_exclusions(p, turn, view)
+        if blocked and not projected:
+            # Older workers persisted context before the held-out projection existed.
+            # Rebuild from its immutable horizon without replacing the audit artifacts.
+            catalog = view.pop("catalog", [])
+            view, catalog = model_projection(view, catalog, blocked)
+            context_text = self._pack_model_context(turn, view, catalog, blocked)["text"]
+            view["catalog"] = catalog
         finalization = {"turn_id": turn["id"]} if turn["spec"].get("evidence_allowlist") is not None else None
         turn_so_far = self._turn_so_far(p, turn)
         req = DecisionRequest(turn_id=a["turn_id"], slot=a["slot"], context=context_text,

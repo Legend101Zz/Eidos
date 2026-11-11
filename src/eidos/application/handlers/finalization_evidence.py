@@ -162,6 +162,39 @@ def safe_view(view: dict[str, Any], allowed: dict, *, blocked: set[str] | None =
     return sanitize(out, denied)
 
 
+
+def model_projection(view: dict, catalog: list, blocked: set[str]) -> tuple[dict, list]:
+    """Return the model-facing projection of a recorded view and catalog."""
+    if not blocked:
+        return view, catalog
+    projected = {**view}
+    inv = view["investigation"]
+    inv_body = {k: sanitize(v, blocked) for k, v in inv["body"].items()}
+    projected["investigation"] = {**inv, "body": inv_body}
+    if charter := view.get("charter"):
+        held = charter.get("held_out") or {}
+        projected["charter"] = {**charter, "held_out": {
+            "labels": bool(held.get("labels")), "splits": bool(held.get("splits"))}}
+        if held.get("labels") or held.get("splits"):
+            _hide_assessment_outcomes(projected)
+    return sanitize(projected, blocked), sanitize(catalog, blocked)
+
+
+def _hide_assessment_outcomes(view: dict) -> None:
+    """Preserve prospective handles and completion without sending assessor outcomes to the model."""
+    state = view.get("claim_state") or {}
+    plans = view.get("evidence_plans") or []
+    assessed = any(plan.get("status") == "assessed" for plan in plans) or bool(state.get("assessments_considered"))
+    view["claim_state"] = {"assessment_result_withheld": True} if assessed else {}
+    view["investigation"]["body"].pop("conclusion", None)
+    view["evidence_plans"] = [{k: plan.get(k) for k in (
+        "plan_id", "status", "claim", "success_rule_ref", "obligations")} for plan in plans]
+    view["assessment_requests"] = [{k: request.get(k) for k in ("request_id", "status", "plan_id", "path")}
+                                   for request in view.get("assessment_requests") or []]
+    view["claims"] = [{k: claim.get(k) for k in ("id", "statement")} for claim in view.get("claims") or []]
+    view["events"] = [event for event in view.get("events") or [] if not str(event.get("type")).startswith("assessment.")]
+
+
 def sanitize(value: Any, blocked: set[str]) -> Any:
     """Drop records that directly name excluded provenance; recursively sanitize their containers."""
     def denied(text: str) -> bool:

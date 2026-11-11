@@ -58,6 +58,14 @@ class Receipts(unittest.TestCase):
         self.assertEqual(classify(abstention, [], [])[0], 'incident')
 
 
+    def test_recorded_terminal_quota_is_a_study_incident(self):
+        root = Path(__file__).parents[2]
+        fixture = root / 'tests/fixtures/deadline/pilot-3/N02-r2-terminal-quota.json'
+        record = json.loads(fixture.read_text())
+        usage = record['receipt']['body']['usage']
+        self.assertEqual(classify({'status': 'stopped'}, [usage], [])[0], record['source']['recorded_outcome'])
+
+
 class Selection(unittest.TestCase):
     def setUp(self):
         self.jobs = {}

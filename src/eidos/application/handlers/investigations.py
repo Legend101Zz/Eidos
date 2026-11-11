@@ -276,11 +276,13 @@ def mark_needs_input(ctx: Ctx, p: dict) -> dict:
         return {"investigation_id": inv.id, "controller_abstention": inv.body["controller_abstention"]}
     if p.get("terminal") and inv.status == "active" and inv.body["investigator"].get("finalization") != "operator":
         incumbent = exploration.final_incumbent(ctx, inv)
-        if incumbent and incumbent.get("job_id"):
-            details = p.get("details") or {}
+        details = p.get("details") or {}
+        failure = _bounded_details(redact_value(details.get("failure")))
+        terminal_rate_limit = code == "provider-unavailable" or (failure.get("provider") or {}).get("status") == 429
+        if (incumbent and incumbent.get("job_id")) or terminal_rate_limit:
             abstention = _record_controller_abstention(
                 ctx, inv, code=code, reason=str(p.get("reason", ""))[:300],
-                failure=_bounded_details(redact_value(details.get("failure"))), incumbent=incumbent)
+                failure=failure, incumbent=incumbent)
             return {"investigation_id": inv.id, "controller_abstention": abstention}
     if (inv.labels or {}).get("needs_input"):
         # F5 (A1): every needs-input wait gets its own cursor. An operator event that ended an earlier wait without

@@ -480,7 +480,9 @@ def _assessment_facts(view: dict[str, Any]) -> list[str]:
     out: list[str] = []
     state = view.get("claim_state") or {}
     chosen = state.get("assessment_id")
-    if chosen:  # derived by the conclusion's rules: current claim revision, plan eligibility, a failure outweighs a pass
+    if state.get("assessment_result_withheld"):
+        out.append("- Independent assessment recorded. Its outcome is sealed and the ledger derives the final claim state.")
+    elif chosen:  # derived by the conclusion's rules: current claim revision, plan eligibility, a failure outweighs a pass
         a: dict[str, Any] = next((x for x in state.get("assessments_considered") or [] if x.get("id") == chosen), {})
         out.append(f"- Candidate state: {state.get('state')} (claim {state.get('claim_id')} revision {state.get('claim_revision')}, "
                    f"plan {state.get('plan_id')}, assessment {chosen}, outcome {a.get('outcome')}, conformance "

@@ -6,7 +6,7 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 - Preserve ordinary finalization's reproduction/export/confirmation under the default policy; admit conclude-only recovery separately and handle disabled operator admission without deadline loops (R18).
 - Isolate direct and derived held-out evidence in model prompts, same-turn feedback and read results across exploration and finalization. Preserve the original charter attestation in internal audit metadata.
-- Replay the six verified historical N01-r2 responses and usage receipts through the coordinator.
+- Replay the four verified historical pilot-3 crash tails through the coordinator and preserve terminal quota classification from its recorded provider receipt.
 
 - **Deadline admission (ADR 0026).** Valid read follow-ups can use the actual remaining decision/turn time with a durable-write margin; HTTP and total request timeouts fit that boundary. Runtime deadline exhaustion is explicit telemetry/control, never a fabricated model wait. The exploration boundary transitions to finalization without sleeping through hold-back.
 - **Bounded autonomous finalization (ADR 0027).** Default autonomous policy admits one read-only conclude/stop turn after repeated refusals, runtime exhaustion or exploration completion, inside the original wall/token envelope and separately accounted. It reports the fixed incumbent and evidence limitations, or abstains. A failed recovery ends the default run with a separately attributed controller abstention and a structured export receipt. The investigator outcome remains failed, and operator policy remains available.

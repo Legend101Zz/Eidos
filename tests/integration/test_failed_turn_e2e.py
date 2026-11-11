@@ -447,3 +447,18 @@ async def test_failed_default_recovery_finishes_with_an_attributed_controller_ab
         assert shown["finalization_export_receipt"]["controller_abstention"] == abstention
         assert len(run.events("investigation.controller_abstained")) == 1
         assert not run.events("investigation.needs_input")
+
+
+async def test_default_quota_before_any_lock_is_a_terminal_provider_abstention(env, lab, provider):
+    quota = (429, {"error": {"message": "provider quota exhausted, usage limit exceeded", "code": "2056"}})
+    fake = provider([quota], quota)
+    async with running(env, lab, fake, investigator_options={"finalization": "autonomous"}) as run:
+        result = await asyncio.wait_for(run.handle.result(), 20)
+        assert result["status"] == "abstained" and result["reason"] == "controller-abstained"
+        shown = run.view()
+        assert shown["status"] == "stopped" and shown["needs_input"] is None
+        abstention = shown["body"]["controller_abstention"]
+        assert abstention["incumbent"] is None and abstention["code"] == "provider-unavailable"
+        assert abstention["failure"]["provider"]["kind"] == "quota-exhausted"
+        assert abstention["investigator_concluded"] is False
+        assert fake.count == 1 and not run.events("investigation.turn_retry_scheduled")
