@@ -51,6 +51,36 @@ CONTROL_TOOLS = ("wait_for_jobs", "request_input", "conclude", "stop")
 READ_TOOLS = ("inspect_evidence", "search_components", "describe_component", "get_job", "read_artifact")
 STOP_REASONS = ("calls-exhausted", "invalid-proposals", "waiting", "input-requested", "concluded", "budget-exhausted",
                 "deadline", "cancelled", "error", "stale-revision")
+CONCLUDING_ACTIONS = ("conclude", "stop")
+
+
+# ADR 0020: the wall reserved for the conclusion, unless the investigation configures its own threshold.
+CONCLUDE_FRACTION = 0.10
+MIN_CONCLUDE_SECONDS = 60.0
+MAX_CONCLUDE_SECONDS = 600.0
+MIN_TURN_SECONDS = 10
+WALL_REACHED = "wall-deadline-reached"
+
+
+def conclude_threshold(wall_seconds: float, configured: float | None = None) -> float:
+    if configured is not None:
+        return max(0.0, float(configured))
+    return min(MAX_CONCLUDE_SECONDS, max(MIN_CONCLUDE_SECONDS, CONCLUDE_FRACTION * float(wall_seconds)))
+
+
+def completion_state(deadline_unix: float, now: float, threshold: float) -> dict[str, Any]:
+    """The turn's view of the investigation's wall deadline: recorded in the turn spec and shown to the investigator."""
+    remaining = float(deadline_unix) - now
+    return {"deadline_unix": float(deadline_unix), "remaining_seconds": round(remaining, 3),
+            "conclude_threshold_seconds": float(threshold), "conclude_now": remaining <= threshold}
+
+
+def turn_seconds(configured: int, completion: dict[str, Any]) -> int:
+    """How long a decision of this turn may take. Earlier turns stop where the conclusion's reserve begins, so the
+    last turn still has its time; the concluding turn may use what is left."""
+    remaining = float(completion["remaining_seconds"])
+    usable = remaining if completion["conclude_now"] else remaining - float(completion["conclude_threshold_seconds"])
+    return max(MIN_TURN_SECONDS, min(int(configured), int(usable)))
 
 
 def check_payload(obj: Any, *, limit: int = WORKFLOW_PAYLOAD_LIMIT, what: str = "payload") -> int:

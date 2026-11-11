@@ -1,8 +1,9 @@
 {
   "id": "eidos.task.score-regression",
-  "release": "1.0.1",
+  "release": "1.0.2",
   "implements": "regression-score/1",
   "kind": "artifact-op",
+  "dependencies": ["numpy"],
   "entry": "score:run",
   "summary": "Score finite numeric predictions (npz ids/predictions) against a labelled split (npz ids/y) the investigator is allowed to see; strict ID/shape/finiteness checks; reports MSE, RMSE and MAE with per-example squared and absolute error.",
   "scientific_effects": [

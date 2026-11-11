@@ -1,0 +1,97 @@
+# 0020: Investigator reliability and completion
+
+Status: accepted (2026-11-11, round-2 improvement E1). Extends ADR 0007 and ADR 0019 (bounded retries, no silent
+stalls) and the context policy of the design. The numbers come from the diagnosis of development pilot 1
+(`tickets/D1-REPORT.md`, §1, §3 and recommendations 1, 2, 7, 8), which are expected effects to test in the next
+pilot, not measured gains from this change.
+
+## Evidence
+
+- Pilot D02-r2: 18 of 22 failed jobs were `ModuleNotFoundError: numpy` in environment `lab`, which was registered
+  without its packages. D12-r2 made seven such baseline attempts. The investigator kept asserting that `default` had
+  failed, because the job views did not show the environment.
+- Job failure context kept the first 1200 characters of the message and dropped the exception type and any stderr.
+- Run r2's context reached the 60,000-character limit by turns 17 to 18, and baseline facts fell out of the 25-job
+  window, so baseline work recurred.
+- r2 had a 0.9833-validation candidate but ran out of wall time repeating work; r3 under-claimed. Nothing told the
+  investigator how much time was left or reserved time for its conclusion.
+
+## Decision 1: capability metadata and admission preflight
+
+`register_environment` records `capabilities` (`environment-capabilities/1`): the interpreter digest and, for each
+key module (numpy, torch, sklearn, joblib, scipy) and each declared requirement, whether it imports and its version.
+It also records the project's declared `requirements`.
+
+The probe (`eidos.runtime.env_probe`) runs in the process that registers the environment, on the host that holds the
+interpreter, in the job allowlist environment with `-I`. It is not run by the API handler: the application layer may
+not depend on the runtime, and the handler must not execute a caller-supplied path. CLI registration
+(`project register-env`, the lab environment), task-bundle import and the pilot's study setup all use it.
+
+Admission (`resolve_lock`, so every run, trial, branch and evidence arm) refuses, before the job row exists, a job
+whose component `dependencies` or project requirements the environment measurably lacks
+(`ENVIRONMENT_PREFLIGHT_REFUSED`, HTTP 422) with a message that names the environment and packages. Refusals are
+recorded twice: the investigator's decision receipt, and an `admission.refused` event written after the command's
+transaction rolls back, so they survive the rollback and appear in later contexts.
+
+Refusal needs positive evidence. An environment whose probe failed or never ran is reported as unprobed and is never
+refused. Only the key modules of a lock file are checked, and without their versions: a lock file pins transitive
+packages exactly, and another patch release is not an incompatibility. A `requirements.txt` is checked in full.
+Components that run the project's code (`project-command/1`) also carry the project's declared requirements; other
+components do not, so assessor infrastructure is unaffected. `eidos-*` packages are provided by the launcher.
+
+`eidos.task.score-classification` and `eidos.task.score-regression` now declare numpy (releases 1.0.2).
+`eidos.task.paired-classification-report` still does not: its release is pinned by the template, and a failure there
+is reported through the actionable-failure path until the template release is next revised.
+
+Limits: capabilities are a snapshot taken at registration. If an interpreter changes afterwards, the environment must
+be registered again.
+
+## Decision 2: failures the investigator can act on
+
+Job failure context now includes the exception type (the innermost one a traceback or message reports, because a
+project subprocess's error is wrapped by the component) and a bounded stderr tail. The runner stores up to 3000
+characters of the process's stderr with a failed job; the context shows the last 800, passed through the same
+secret-shaped redaction as the rest of the policy.
+
+Repeated failures are grouped across the whole run by component, environment, exception and detail, and shown as
+"X failed 3× in environment lab with ModuleNotFoundError numpy". Preflight refusals are grouped the same way.
+
+## Decision 3: context policy 2, a pinned facts block
+
+`context-policy/2` has a pinned block that survives truncation and the 25-job window: the baseline job and metric, the
+current lock, the charter's success rule, environments and capabilities, known failures and the wall time. Sections
+are then filled in order of value (recent jobs, plans, results, created artifacts, claims, approved protocols, catalog)
+until the budget is spent, so catalog boilerplate goes first. Everything left out is listed in `omissions`.
+
+`context-policy/1` stays available for replay and for investigations started before this change; a turn records and
+uses the policy in its spec. The baseline comes from a note of kind `baseline` when one exists, otherwise the first
+successful reproduction job. The lock comes from the latest note of kind `candidate_lock` or `lock`.
+
+## Decision 4: versioned playbook
+
+`investigator-playbook/1` is part of the system prompt (now `investigator-prompt/2`, recorded with each decision):
+baseline without authoring source, quick wins, early lock, fresh-seed reproduction, assessment or submission,
+deadline-aware stopping, and null handling. It has no task-specific remedies and does not weaken a success rule.
+
+## Decision 5: deadline-aware completion
+
+An investigation may set `investigator.wall_seconds` and `investigator.conclude_threshold_seconds` (default 10% of
+the wall, within 60 to 600 s). The wall deadline is fixed at start, on the lab's clock, and recorded in the
+investigation body and each turn spec (`completion`).
+
+- Remaining wall time is in the pinned facts every turn.
+- Once the reserve begins, the context says CONCLUDE NOW, the coordinator stops waiting and starts the next turn at
+  once, a decision that neither concludes nor stops is refused (a runtime's bounded no-effect outcome is exempt), and
+  no new compute is admitted (`CONCLUDE_REQUIRED`). The independent assessment of a frozen plan is exempt.
+- Earlier turns stop where the reserve begins, and the concluding turn may use what is left, so the conclusion keeps
+  its time. A job's `wall_seconds` is reduced to fit before the reserve; the lock records what it ran with.
+- A failed-turn backoff and the decide activity's retries are bounded by the remaining wall time. At the deadline
+  `begin_turn` refuses (`wall-deadline-reached`) and the coordinator surfaces that as needs-input.
+
+Scope: without `wall_seconds` nothing changes. Infrastructure retries of a job (lost workers) are not bounded by the
+wall; the outer stop at the deadline covers those.
+
+## Consequences
+
+Assessment rules, evidence obligations, freezing and the independent assessor are untouched. A preflight refusal
+cannot admit anything, and a wall-time refusal only removes work; neither can turn a failed result into a passed one.

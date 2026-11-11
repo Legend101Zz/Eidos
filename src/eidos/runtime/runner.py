@@ -67,6 +67,9 @@ def _ts(value) -> float:
         return time.time()
 
 
+STDERR_TAIL_CHARS = 3000
+
+
 class RetryableAttemptError(Exception):
     """Infrastructure failure; a new attempt (new epoch) may succeed."""
 
@@ -418,7 +421,12 @@ class AttemptRunner:
         if (ctx.get("stop_requested") or (man.receipt or {}).get("stopped_early")) and man.status == "succeeded":
             receipt = {**(man.receipt or {}), "stopped_by_policy": "checkpoint-and-stop"}
             return self._finish(project, ctx, "cancelled", receipt, None)
-        return self._finish(project, ctx, man.status, man.receipt, man.error, final=man.status == "failed")
+        error = man.error
+        if man.status == "failed" and isinstance(error, dict) and "stderr_tail" not in error:
+            # ADR 0020: the process's own stderr (e.g. a project subprocess's traceback), bounded here and when packed
+            error = {**error, "stderr_tail": (adir / "stderr.log").read_text(errors="replace")[-STDERR_TAIL_CHARS:]
+                     if (adir / "stderr.log").exists() else ""}
+        return self._finish(project, ctx, man.status, man.receipt, error, final=man.status == "failed")
 
     def _publish_verified(self, project: str, ctx: dict, manifest: dict, staging: Path) -> list[dict] | None:
         """Publish; if the lab refuses because staged bytes are missing or changed (storage lag, a damaged

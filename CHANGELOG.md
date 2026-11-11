@@ -2,6 +2,27 @@
 
 All notable changes to Eidos. Tags are annotated, created only on CI-green commits, and never moved. Development tags `eidos-v0.x` were freezes, not releases.
 
+## Unreleased: 1.2.0
+
+Investigator reliability and completion (ADR 0020, from the diagnosis of development pilot 1).
+
+- **Environment preflight.** Registration records a capability probe (interpreter digest, key modules, versions) and
+  the project's declared requirements. Admission refuses a job whose component or project declares what the environment
+  measurably lacks (`ENVIRONMENT_PREFLIGHT_REFUSED`), and records an `admission.refused` event. An unprobed environment
+  is never refused. `eidos.task.score-classification` and `score-regression` 1.0.2 declare numpy.
+- **Job views show the environment** (`investigation_view`, `get_job` with or without the lock, `list_jobs`).
+- **Actionable failures.** Failure context includes the exception type and a bounded, redacted stderr tail. Failed job
+  records keep up to 3000 characters of stderr.
+- **`context-policy/2`.** A pinned facts block (baseline, lock, success rule, environments and capabilities, known
+  failures, wall time) survives truncation and the job window; repeated failures read "failed 3× in environment X with
+  ModuleNotFoundError numpy"; the catalog is dropped first and every omission is logged. `context-policy/1` remains for
+  replay and older investigations.
+- **`investigator-playbook/1`** in the system prompt (`investigator-prompt/2`): baseline without source, quick wins,
+  early lock, fresh-seed reproduction, assessment or submission, deadline-aware stopping, null handling.
+- **Deadline-aware completion.** Optional `investigator.wall_seconds` and `conclude_threshold_seconds`: turns and jobs
+  stop before the conclusion's reserve, the investigator is told to conclude and a conclusion is required once it
+  starts, retries are bounded by the remaining wall time, and the deadline surfaces as `wall-deadline-reached`.
+
 ## Unreleased / 1.1.1
 
 Reasoning models through OpenAI-compatible endpoints (ADR 0016). Measured with MiniMax-M3.1-Flash through

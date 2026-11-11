@@ -83,14 +83,10 @@ def import_bundle(client: Any, project: str, bundle: Path, *, python: str, inves
 
 
 def _inspect_env(python: str, root: Path) -> dict[str, Any]:
-    code = ("import json,platform\nfrom importlib import metadata\n"
-            "inst={d.metadata['Name'].lower().replace('_','-'):d.version for d in metadata.distributions() if d.metadata['Name']}\n"
-            "print(json.dumps({'python_version':platform.python_version(),'installed':inst,'platform':platform.platform()}))")
-    r = subprocess.run(env=_job_env(), args=[python, "-c", code], capture_output=True, text=True, cwd=root, timeout=120)
-    if r.returncode != 0:
-        raise RuntimeError(f"cannot inspect project interpreter: {r.stderr[-500:]}")
-    info = json.loads(r.stdout)
-    info["lock_digest"] = "sha256:" + hashlib.sha256(json.dumps(info["installed"], sort_keys=True).encode()).hexdigest()
+    from eidos.runtime.env_probe import probe_environment
+    info = probe_environment(python, project_root=root)
+    if info["capabilities"]["status"] != "ok":
+        raise RuntimeError(f"cannot inspect project interpreter: {info['capabilities'].get('error')}")
     return info
 
 

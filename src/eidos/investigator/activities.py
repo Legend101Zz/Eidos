@@ -27,7 +27,7 @@ from temporalio.exceptions import ApplicationError
 
 from eidos.client import LabClient, LabError
 from eidos.domain.turns import EFFECT_TOOLS, WORKFLOW_PAYLOAD_LIMIT, check_payload
-from eidos.investigator.context import pack
+from eidos.investigator.context import POLICY_V1, pack
 from eidos.investigator.runtime import (
     DecisionAbort,
     DecisionAborted,
@@ -209,7 +209,8 @@ class InvestigatorActivities:
             return {"started": False, "reason": r.get("reason")}
         lim = r["spec"]["limits"]
         return {"started": True, "turn_id": r["turn_id"], "max_model_calls": lim["max_model_calls"],
-                "resumed": r.get("resumed", False), "model_timeout": lim.get("deadline_seconds", 300)}
+                "resumed": r.get("resumed", False), "model_timeout": lim.get("deadline_seconds", 300),
+                **({"completion": r["spec"]["completion"]} if r["spec"].get("completion") else {})}
 
     @activity.defn(name="build_context")
     @_hb
@@ -221,8 +222,10 @@ class InvestigatorActivities:
         view = self.inv.query("investigation_view", {"investigation_id": a["investigation_id"], "horizon": turn["horizon"]},
                               project=p)
         view["budgets"] = turn["spec"].get("budgets")  # immutable snapshot taken at begin_turn
+        if turn["spec"].get("completion"):
+            view["completion"] = turn["spec"]["completion"]  # likewise (ADR 0020)
         catalog = self.inv.query("search_components", {"limit": 100, "as_of_horizon": turn["horizon"]}, project=p)["components"]
-        packed = pack(view, catalog)
+        packed = pack(view, catalog, policy=turn["spec"].get("context_policy") or POLICY_V1)
         # The source manifest includes the catalog snapshot so offline replays see exactly what was
         # installed at the horizon, not components published later.
         src_bytes = json.dumps({**view, "catalog": catalog}, sort_keys=True, default=str).encode()

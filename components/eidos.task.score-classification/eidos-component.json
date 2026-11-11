@@ -1,8 +1,9 @@
 {
   "id": "eidos.task.score-classification",
-  "release": "1.0.1",
+  "release": "1.0.2",
   "implements": "classification-score/1",
   "kind": "artifact-op",
+  "dependencies": ["numpy"],
   "entry": "score:run",
   "summary": "Score integer class predictions (npz ids/predictions) against a labelled split (npz ids/y) the investigator is allowed to see; strict ID/shape/range checks; per-example correctness for paired comparisons.",
   "scientific_effects": [
