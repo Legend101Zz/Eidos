@@ -1,4 +1,4 @@
-"""Ordinary supplied baseline for the D03–D06 investigator bundles.
+"""Ordinary supplied baseline for the D03–D06 and N01–N04 investigator bundles.
 Only consumes supplied train/validation arrays; no development references/labels.
 """
 import argparse
@@ -42,9 +42,10 @@ def train(root, out, seed):
     if project == 'iris':
         mean, scale = x.mean(0), x.std(0).clamp_min(.001)
     kind = {'order': 'pool', 'forecast': 'last'}.get(project, 'linear')
-    steps = {'digits_shift':100, 'conditioning':160, 'forecast':0, 'order':60}[project]
+    prospective = task['task_id'] in ('N01', 'N02', 'N03', 'N04')
+    steps = 80 if prospective else {'digits_shift':100, 'conditioning':160, 'forecast':0, 'order':60}[project]
     model = Model(nin, nout, kind, mean, scale)
-    opt = torch.optim.Adam(model.parameters(), lr=.02)
+    opt = torch.optim.Adam(model.parameters(), lr=.01 if prospective else .02)
     for _ in range(steps):
         prediction = model(x)
         loss = nn.functional.cross_entropy(prediction, y) if task['task_type'] == 'classification' else nn.functional.mse_loss(prediction[:, 0], y)
