@@ -20,6 +20,7 @@ import sys
 import textwrap
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -954,7 +955,8 @@ def test_only_listed_files_reach_an_evaluation_and_test_files_stay_out(sweep, tm
     assert (m["has_project"], m["has_notes"], m["leaked_csv"], m["leaked_json"]) == (1.0, 1.0, 0.0, 0.0)
 
 
-@pytest.mark.parametrize("name", ["test.csv", "test.json", "heldout.npz", "hold_out.csv", "test_set.csv", "testset.csv"])
+@pytest.mark.parametrize("name", ["test.csv", "test.json", "heldout.npz", "hold_out.csv", "test_set.csv", "testset.csv",
+                                  "test1.csv", "testfeatures.csv", "x_test2.npy", "TestData.csv", "holdout3.npz"])
 def test_listing_a_held_out_file_is_refused(sweep, tmp_path, name):
     project = project_with_heldout(tmp_path)
     (project / name).write_text("x")
@@ -979,7 +981,8 @@ def test_a_listed_symlink_is_refused(sweep, tmp_path):
     refused(sweep(None, config, cwd=project), "not a regular file")
 
 
-@pytest.mark.parametrize("path", ["test.csv", "data/heldout.json", "holdout/x.npz"])
+@pytest.mark.parametrize("path", ["test.csv", "data/heldout.json", "holdout/x.npz",
+                                  "test1.csv", "data/testfeatures.csv", "test2/x.npz"])
 def test_a_source_bundle_cannot_carry_held_out_data(sweep, path):
     res = sweep(None, table_config([1.0]), files={"project.py": table_project([1.0]), path: "1,2"})
     refused(res, "named after a held-out split")
@@ -988,6 +991,57 @@ def test_a_source_bundle_cannot_carry_held_out_data(sweep, path):
 def test_a_source_bundle_may_carry_code_named_after_tests(sweep):
     res = sweep(None, table_config([1.0]), files={"project.py": table_project([1.0]), "test_helpers.py": "x = 1"})
     assert res.ok, res.manifest.error
+
+
+@pytest.mark.parametrize("path", ["test_helpers.py", "testfeatures.py", "x_test2.py", "tests/conftest.py", "test2/util.py",
+                                  "holdout3.md", "heldout_notes.toml", "run_test1.sh"])
+def test_the_code_suffix_exemption_still_lets_test_named_source_files_into_a_bundle(sweep, path):
+    """Code, notes and config may carry a test-like name (the data guard is about data files); the file is bundled."""
+    res = sweep(None, table_config([1.0]), files={"project.py": table_project([1.0]), path: "x = 1"})
+    assert res.ok, res.manifest.error
+
+
+@pytest.mark.parametrize("path", ["latest.csv", "data/contest.csv", "attested.json", "protest/x.npz", "greatest_hits.npy"])
+def test_a_source_bundle_may_carry_data_whose_name_merely_contains_test(sweep, path):
+    res = sweep(None, table_config([1.0]), files={"project.py": table_project([1.0]), path: "1,2"})
+    assert res.ok, res.manifest.error
+
+
+@pytest.mark.parametrize("name", ["test1.csv", "testfeatures.csv", "x_test2.npy", "TestData.csv", "holdout3.npz", "heldout1.json",
+                                  "myTestSplit2.csv", "test.csv", "hold_out.csv"])
+def test_a_data_file_name_with_a_word_beginning_test_holdout_or_heldout_is_held_out(name):
+    assert load_sweep_module()._names_heldout_file(name)
+
+
+@pytest.mark.parametrize("name", ["latest.csv", "contest.csv", "attested.json", "protest.npz", "data.csv", "greatest_hits.csv"])
+def test_a_data_file_name_that_merely_contains_test_is_not_held_out(name):
+    assert not load_sweep_module()._names_heldout_file(name)
+
+
+COPY_SEEN = textwrap.dedent(
+    """
+    import json, os, sys
+    a = dict(zip(sys.argv[1::2], sys.argv[2::2]))
+    names = ("latest.csv", "contest.csv", "attested.csv", "test1.csv", "testfeatures.csv", "x_test2.npy", "TestData.csv")
+    m = {"seen_%d" % i: float(os.path.exists(n)) for i, n in enumerate(names)}  # metric names must not read as held-out
+    m["validation_score"] = 1.0
+    json.dump(m, open(a["--out"] + "/receipt.json", "w"))
+    """
+)
+
+
+def test_benign_names_that_merely_contain_test_are_copied_and_test_like_files_stay_out(sweep, tmp_path):
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "project.py").write_text(COPY_SEEN)
+    for name in ("latest.csv", "contest.csv", "attested.csv", "test1.csv", "testfeatures.csv", "x_test2.npy", "TestData.csv"):
+        (project / name).write_text("1,2\n")
+    config = make_config(["--out", "{out}"], {"x": {"values": [1]}})
+    config["command"]["copy"] = ["project.py", "latest.csv", "contest.csv", "attested.csv"]
+    res = sweep(None, config, cwd=project)
+    assert res.ok, res.manifest.error
+    m = res.json("evidence_table")["recipes"][0]["evaluations"][0]["metrics"]
+    assert [m["seen_%d" % i] for i in range(7)] == [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0]  # the three benign files only
 
 
 # -- every evaluation is its own process group: stopped and reaped on timeout, stop request and cancellation ------------
@@ -1137,6 +1191,109 @@ def load_sweep_module():
     return module
 
 
+# -- every evaluation has its own directory, and a work directory that cannot be prepared costs one evaluation ----------------
+def unit_config():
+    return {"command": {"argv": ["python", "project.py", *FORMULA_ARGV]},
+            "objective": {"metric": "validation_score", "direction": "maximize"}}
+
+
+UNIT_FILES = {"project.py": FORMULA}
+UNIT_PARAMS = [{"lr": 0.2, "depth": 1}, {"lr": 0.1, "depth": 2}]  # the first is the formula's optimum
+
+
+def unit_evaluate(module, root, index, seed=11, fold=0, parameters=None):
+    return module._evaluate(root, index, seed, fold, 1, parameters or UNIT_PARAMS[0], unit_config(), {}, None, UNIT_FILES,
+                            30, [], lambda: False)
+
+
+def unit_search(module, root, *, seeds=(11,)):
+    return module._search(list(UNIT_PARAMS), len(UNIT_PARAMS), unit_config(), inputs={}, reader=None, source_files=UNIT_FILES,
+                          seeds=list(seeds), folds=1, budget={"max_trials": 10}, stopping={"rule": "none"},
+                          context=SimpleNamespace(stop_requested=lambda: False), root=root, secrets=[], started=time.time())
+
+
+@pytest.mark.parametrize("index", [0, "screen-0003"], ids=["numbered-recipe", "stage-labelled-recipe"])
+def test_evaluating_the_same_recipe_seed_and_fold_twice_gives_each_its_own_directory(tmp_path, index):
+    module, root = load_sweep_module(), tmp_path / "sweep"
+    label = index if isinstance(index, str) else "%04d" % index
+    first = unit_evaluate(module, root, index)
+    first_dir = root / ("trial-%s-s11-f0" % label)
+    (first_dir / "out" / "marker.txt").write_text("first")  # a second evaluation must not reuse or clear this directory
+    second = unit_evaluate(module, root, index)
+    third = unit_evaluate(module, root, index)
+    want = formula(0.2, 1, 11, 0)
+    for record in (first, second, third):
+        assert record["status"] == "ok" and (record["seed"], record["fold"]) == (11, 0)
+        assert record["metrics"]["validation_score"] == approx(want)
+    assert sorted(d.name for d in root.iterdir()) == sorted(
+        "trial-%s-s11-f0%s" % (label, suffix) for suffix in ("", "-r2", "-r3"))
+    assert (first_dir / "out" / "marker.txt").read_text() == "first"
+    for d in root.iterdir():  # each ran in its own work directory and wrote its own receipt
+        assert (d / "out" / "receipt.json").is_file() and (d / "work" / "project.py").is_file()
+        assert (d / "out" / "marker.txt").exists() == (d == first_dir)
+
+
+def test_a_different_seed_or_fold_does_not_get_a_retry_suffix(tmp_path):
+    module, root = load_sweep_module(), tmp_path / "sweep"
+    for seed, fold in [(11, 0), (11, 1), (12, 0)]:
+        assert unit_evaluate(module, root, 0, seed=seed, fold=fold)["status"] == "ok"
+    assert sorted(d.name for d in root.iterdir()) == ["trial-0000-s11-f0", "trial-0000-s11-f1", "trial-0000-s12-f0"]
+
+
+def failing_second_preparation(module, monkeypatch, *, fail_on=2):
+    """Make the fail_on-th preparation of a working directory raise OSError, as a full disk would."""
+    real, calls = module._prepare_work, {"n": 0}
+
+    def prepare(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == fail_on:
+            raise OSError(28, "No space left on device")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(module, "_prepare_work", prepare)
+    return calls
+
+
+def test_an_os_error_preparing_the_work_directory_is_a_failed_evaluation_not_an_aborted_sweep(tmp_path, monkeypatch):
+    module = load_sweep_module()
+    failing_second_preparation(module, monkeypatch)
+    rows, stop_reason = unit_search(module, tmp_path / "sweep")
+    assert stop_reason == "space-exhausted" and [r["index"] for r in rows] == [0, 1]
+    first, second = rows
+    assert first["status"] == "ok" and first["evaluations"][0]["status"] == "ok"
+    assert first["objective"]["mean"] == approx(formula(0.2, 1, 11, 0))  # the evidence gathered before the failure is kept
+    (evaluation,) = second["evaluations"]
+    assert second["status"] == "failed" and evaluation["status"] == "failed"
+    assert (evaluation["seed"], evaluation["fold"]) == (11, 0)
+    assert "could not prepare the working directory" in evaluation["error"] and "No space left on device" in evaluation["error"]
+    assert second["error"] == evaluation["error"] and second["rank"] is None and "metrics" not in evaluation
+    ranked = module._ranked(rows, "maximize")  # the failed recipe is recorded unranked, the first still wins
+    assert [(r["index"], r["rank"]) for r in ranked] == [(0, 1), (1, None)]
+    assert module._evidence_digest(rows).startswith("sha256:")
+
+
+def test_a_work_directory_failure_between_seeds_fails_that_recipe_and_the_sweep_goes_on(tmp_path, monkeypatch):
+    module = load_sweep_module()
+    failing_second_preparation(module, monkeypatch)
+    rows, stop_reason = unit_search(module, tmp_path / "sweep", seeds=(1, 2, 3))
+    assert stop_reason == "space-exhausted" and [r["status"] for r in rows] == ["failed", "ok"]
+    assert [e["status"] for e in rows[0]["evaluations"]] == ["ok", "failed", "ok"]  # the other seeds still ran
+    assert [e["status"] for e in rows[1]["evaluations"]] == ["ok"] * 3
+    assert "could not prepare the working directory" in rows[0]["error"]
+
+
+def test_a_work_directory_that_cannot_be_built_fails_every_recipe_but_the_job_still_succeeds(sweep):
+    """End to end: 'a' is a file in the bundle and 'a/b' needs it to be a directory, so no work directory can be made."""
+    files = {"project.py": table_project([1.0, 2.0]), "a": "x", "a/b": "y"}
+    res = sweep(None, table_config([1.0, 2.0]), files=files)
+    assert res.ok, res.manifest.error
+    table = res.json("evidence_table")
+    assert table["counts"] == {"space_size": 2, "evaluated": 2, "usable": 0, "failed": 2}
+    for row in table["recipes"]:
+        assert row["status"] == "failed" and "could not prepare the working directory" in row["evaluations"][0]["error"]
+    assert res.json("best_recipe")["status"] == "none"
+
+
 @pytest.mark.parametrize("line", [
     "Authorization: Bearer abcdefgh12345678", "api_key=abcd1234efgh", 'OPENAI_API_KEY="abcd1234efgh"', "password: hunter2hunter2",
     "ghp_abcdefghijklmnopqrstuvwxyz012345", "sk-abcdefghijklmnop", "AKIAABCDEFGHIJKLMNOP", "eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.c2lnbmF0dXJl",
@@ -1273,6 +1430,15 @@ REFUSALS = [
     ("log-from-zero", _random_param({"low": 0, "high": 1, "log": True}), "low > 0"),
     ("low-above-high", _random_param({"low": 2, "high": 1}), "low above high"),
 ]
+
+
+@pytest.mark.parametrize("seeds", [[11, 11], [3, 5, 3], [0, 0]])
+def test_a_repeated_seed_in_the_seed_policy_is_refused_before_anything_runs(sweep, seeds):
+    """A repeated seed re-measures the same thing and would count it twice in the mean and the standard deviation."""
+    res = sweep(table_project([1.0, 2.0]), table_config([1.0, 2.0], seeds=seeds))
+    refused(res, "seed_policy.seeds", "must not repeat a seed")
+    assert not list(Path(res.invocation.scratch_dir).rglob("trial-*"))
+    assert "evidence_table" not in res.slots() and "best_recipe" not in res.slots()
 
 
 @pytest.mark.parametrize("mutate, fragment", [(m, f) for _, m, f in REFUSALS], ids=[r[0] for r in REFUSALS])

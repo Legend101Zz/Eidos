@@ -589,6 +589,8 @@ REFUSALS = {
     "negative-finalists": (tpl(finalists=-1), {}, ["finalists"]),
     "seeds-not-integers": (tpl(seeds=["a"]), {}, ["template.seeds"]),
     "seeds-bool": (tpl(seeds=[True]), {}, ["template.seeds"]),
+    "seeds-repeated": (tpl(seeds=[11, 11]), {}, ["template.seeds", "must not repeat a seed"]),
+    "seeds-repeated-apart": (tpl(seeds=[3, 8, 3]), {}, ["template.seeds", "must not repeat a seed"]),
     "template-not-an-object": ("quick", {}, ["template must be an object"]),
     "with-command": (tpl(), {"config": BAD_COMMAND}, ["a template builds its own", "command"]),
     "with-space": (tpl(), {"config": SPACE}, ["a template builds its own", "space"]),

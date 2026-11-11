@@ -147,7 +147,7 @@ if spec.get("predictions"):  # the baseline's predictions, written to the file i
         flip = side_rng.random(n) < 0.3
         pred = np.where(flip, side_rng.integers(0, k, size=n), yv)
     order = np.arange(n)[::-1][spec.get("drop_predictions", 0):]
-    np.savez(out + "/predictions.npz", ids=ids_va[order], predictions=pred[order])
+    np.savez(out + "/predictions.npz", ids=ids_va[order], **{spec.get("predictions_key", "predictions"): pred[order]})
     meta["pred"] = pred.tolist()
     meta["pred_file_order"] = pred[order].tolist()
 if spec.get("groups_port"):  # a separate groups file whose rows are shuffled and may leave ids out
@@ -493,6 +493,89 @@ def test_names_that_merely_contain_test_are_not_mistaken_for_a_heldout_split(lab
     res, report, data = lab.diagnose(kind="sequence", seed=1, extra_arrays=names, config={"group_keys": names})
     assert sorted(report["error_slices"]["by_group"]) == sorted(names)
     assert "report" in res.slots() and "test" not in set(res.invocation.inputs)
+
+
+@pytest.mark.parametrize("name", ["test_predictions", "testPredictions", "x_test1", "holdout_scores"])
+@pytest.mark.parametrize("exists", [True, False], ids=["array-exists", "array-absent"])
+def test_a_prediction_key_that_names_a_heldout_split_is_refused(lab, name, exists):
+    """prediction_key is an array name this diagnosis would open, so it gets the same held-out check as the others
+    (it used to be read unchecked)."""
+    spec = {"predictions_key": name} if exists else {}
+    data = lab.data(kind="sequence", seed=1, predictions=True, **spec)
+    res = lab.run(data, {"prediction_key": name}, ("train", "validation", "predictions"))
+    refused(res, "names a held-out split", repr(name))
+
+
+@pytest.mark.parametrize("name", ["test_labels", "testGroups", "x_test1", "heldout_site"])
+@pytest.mark.parametrize("exists", [True, False], ids=["array-exists", "array-absent"])
+def test_a_groups_key_that_names_a_heldout_split_is_refused(lab, name, exists):
+    spec = {"groups_port": name} if exists else {"groups_port": "region"}
+    data = lab.data(kind="sequence", seed=1, **spec)
+    res = lab.run(data, {"groups_key": name}, ("train", "validation", "groups"))
+    refused(res, "names a held-out split", repr(name))
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        pytest.param({"prediction_key": "test_predictions"}, id="prediction_key"),
+        pytest.param({"groups_key": "test_labels"}, id="groups_key"),
+        pytest.param({"x_key": "test_x"}, id="x_key"),
+        pytest.param({"group_keys": ["site", "testfeatures"]}, id="group_keys"),
+    ],
+)
+def test_a_heldout_array_name_is_refused_before_any_input_is_opened(lab, config):
+    """Every input here is garbage bytes, not an npz: reading any of them would fail with a different error. The
+    refusal is the held-out one, so the names are judged first."""
+    garbage = lab.tmp_path / "garbage.npz"
+    garbage.write_bytes(b"not an npz file at all \x00\x01\x02")
+    inputs = {port: (garbage, NPZ) for port in ("train", "validation", "predictions", "groups")}
+    lab.count += 1
+    res = run_component(lab.tmp_path, NAME, ENTRY, inputs=inputs, config=config, python=NUMPY_PY, label=f"run{lab.count}")
+    message = refused(res, "names a held-out split")
+    assert "Traceback" not in message and "KeyError" not in message
+    # the same garbage under benign names is NOT stopped by the name check: it fails later, on reading the file
+    benign = {"prediction_key": "latest_predictions", "groups_key": "contest", "x_key": "latest_x", "group_keys": ["contest"]}
+    lab.count += 1
+    res = run_component(lab.tmp_path, NAME, ENTRY, inputs=inputs, config={k: benign[k] for k in config}, python=NUMPY_PY,
+                        label=f"run{lab.count}")
+    assert res.manifest.status == "failed" and "held-out" not in res.manifest.error["message"]
+
+
+@pytest.mark.parametrize("name", ["testfeatures", "x_test1", "holdout2", "TestLabels", "heldout3", "test1", "myTestSplit2"])
+@pytest.mark.parametrize("exists", [True, False], ids=["array-exists", "array-absent"])
+def test_a_group_key_with_a_word_beginning_test_or_holdout_is_refused(lab, name, exists):
+    spec = {"extra_arrays": [name]} if exists else {}
+    data = lab.data(kind="sequence", seed=1, **spec)
+    res = lab.run(data, {"group_keys": ["site", name]})
+    refused(res, "names a held-out split", repr(name))
+
+
+@pytest.mark.parametrize("name", ["testfeatures", "x_test1", "holdout2", "TestLabels"])
+@pytest.mark.parametrize("key", ["x_key", "y_key", "ids_key"])
+def test_an_array_key_with_a_word_beginning_test_or_holdout_is_refused(lab, key, name):
+    res = lab.run(lab.data(kind="sequence", seed=1), {key: name})
+    refused(res, "names a held-out split", repr(name))
+
+
+def test_benign_prediction_and_groups_keys_are_read_not_refused(lab):
+    """latest_predictions and contest merely contain the letters test: they must work, with real arrays under them."""
+    data = lab.data(kind="sequence", seed=2, predictions=True, predictions_key="latest_predictions", groups_port="contest")
+    ports = ("train", "validation", "predictions", "groups")
+    res = lab.run(data, {"prediction_key": "latest_predictions", "groups_key": "contest"}, ports)
+    assert res.ok, res.manifest.error
+    report = res.json("report")
+    y, pred, ids = data.meta["y"], data.meta["pred"], data.meta["ids"]
+    expected = error_stats(y, pred, range(len(y)))
+    overall = report["error_slices"]["overall"]
+    assert (overall["n"], overall["errors"]) == (expected["n"], expected["errors"]) and expected["errors"] > 0
+    assert "input port predictions" in report["error_slices"]["source"]
+    label = [data.meta["group_of"][str(i)] for i in ids]
+    groups = report["error_slices"]["by_group"]["groups:contest"]
+    assert sorted(groups) == ["east", "north", "south"]
+    for g in groups:
+        want = error_stats(y, pred, [i for i, v in enumerate(label) if v == g])
+        assert (groups[g]["n"], groups[g]["errors"]) == (want["n"], want["errors"]), g
 
 
 def test_no_test_file_is_ever_needed(lab):
