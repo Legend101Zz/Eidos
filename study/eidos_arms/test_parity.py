@@ -100,14 +100,20 @@ class FinalOutcomes(unittest.TestCase):
                     self.assertEqual(run_claude(root, arm)['status'], 'invalid_output')
 
     def test_incident_timeout_and_budget_still_take_precedence(self):
-        final = {'type': 'result', 'is_error': False, 'result': 'Answer written.'}
+        # Pilot-2 addendum 1 and pilot-3 addendum 2: a provider failure decides a run only when it is the
+        # terminal event (no valid final result after it). Recovered failures are covered by
+        # test_recovered_errors_then_valid_abstention_are_ok_in_every_arm.
         shown = {'status': 'concluded', 'turns': [{'stop_reason': 'error'}, {'stop_reason': 'concluded'}]}
+        stopped = {'status': 'active', 'needs_input': {'code': 'turn-failed'}, 'turns': [{'stop_reason': 'error'}]}
         for error in ('HTTP 429', 'HTTP 503', 'quota exhausted'):
             for arm in (1, 2, 3):
                 with self.subTest(arm=arm, error=error), tempfile.TemporaryDirectory() as d:
+                    final = {'type': 'result', 'is_error': True, 'result': error}
                     rec = self.coding_run(Path(d), arm, [{'type': 'error', 'error': error}, final])
                     self.assertEqual(rec['status'], 'incident')
-            self.assertEqual(classify(shown, [{'error': error}], [])[0], 'incident')
+            self.assertEqual(classify(stopped, [{'calls': 1}, {'error': error}], [])[0], 'incident')
+            self.assertEqual(classify(stopped | {'needs_input': {'code': 'refused-proposals'}},
+                                      [{'error': error}, {'calls': 2}], [])[0], 'crash')
         self.assertEqual(classify(shown, [{'error': 'Request timeout'}], [], timed_out=True)[0], 'timeout')
         budget = {**shown, 'turns': [*shown['turns'], {'stop_reason': 'budget-exhausted'}]}
         self.assertEqual(classify(budget, [], [])[0], 'token_budget')

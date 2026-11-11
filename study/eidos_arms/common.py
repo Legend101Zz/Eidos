@@ -206,7 +206,11 @@ def classify(shown, receipts, models, timed_out=False, answer_valid=True):
     # Pilot-2 addendum 1 (symmetric with arms 1-3): a recovered provider failure never decides the run.
     # A concluded investigation with a valid answer is ok; a provider failure is an incident only if the
     # investigation ended without concluding (timeouts and budget stops keep their own status).
-    provider_failure = bool(failures) and any(_provider_incident(r, timed_out) for r in failures)
+    # Pilot-3 addendum 2: the provider failure must be the terminal event, as for arms 1-3 (whose final
+    # result must itself be the API error). An earlier failure the investigator recovered from, followed by
+    # successful model calls, never turns a later behavioural stop (e.g. refused proposals) into an incident.
+    last = receipts[-1] if receipts else {}
+    provider_failure = bool(last.get('failed_request') or last.get('error')) and _provider_incident(last, timed_out)
     if timed_out:
         return 'timeout', None
     if any(t.get('stop_reason') == 'budget-exhausted' for t in shown.get('turns', [])) or (
