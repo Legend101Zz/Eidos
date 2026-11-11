@@ -92,3 +92,6 @@ Source references: `src/eidos/domain/charter.py` (rule types),
 `components/eidos.assessors.paired-ci/paired_ci/assess.py` (supported metrics),
 `src/eidos/orchestration/activities.py` (evidence collection),
 `docs/dev-runs/e2e-journey.md` and `docs/release/evidence/a8-sonnet-*.json`.
+
+## Pilot 2
+D03 and D06 use classification-report/1:accuracy with eidos.task.paired-classification-report and paired-ci@1.2.0, at 0.01 and 0.30. The CI lower bound must reach the card bar. D04 and D05 require baseline RMSE minus candidate RMSE >= 0.5, including fresh seeds. No built-in assessor supports RMSE reduction (paired-ci supports classification and paired reports). Their charters remain exploration-only; local and GitHub evaluators enforce RMSE and reproduction. No classification surrogate is substituted. This is a material arm-4 capability gap.

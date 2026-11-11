@@ -19,6 +19,9 @@ RUNNER = 'eidos.qualification-runner@1.0.0'
 
 
 def prepare(c, project, run_dir):
+    from study.common import read_json
+    card = read_json(run_dir / "arm.json")["card"]
+    assessor = "eidos.assessors.paired-ci@1.2.0" if card in ("D03", "D06") else ASSESSOR
     from eidos.cli.main import builtin_component_dirs, install_component
     c.command('register_environment', {'name': 'lab', 'python_executable': lab.python(),
               'project_root': str(run_dir / 'task'), 'python_version': sys.version.split()[0],
@@ -35,7 +38,7 @@ def prepare(c, project, run_dir):
     assessor_suite = json.loads((dirs['eidos.assessors.paired-ci'] / 'controls/suite.json').read_text())
     # These requests only test planning/refusal, and do not run the named training recipes.
     base = {'claim': {'kind': 'improves', 'statement': 'Authored planning control'},
-            'success_rule_id': 'practical-accuracy-gain', 'assessor': {'ref': ASSESSOR},
+            'success_rule_id': 'practical-accuracy-gain', 'assessor': {'ref': assessor},
             'seeds': [11, 23, 37], 'common_train': {'steps': 1}, 'common_evaluate': {},
             'evaluation': {'split': 'validation'}, 'budget': {'steps': 1},
             'required_isolation': {'profile': 'dev:same-user', 'controls': []},
@@ -54,7 +57,7 @@ def prepare(c, project, run_dir):
              'expected_outcome': 'refused', 'expect_refusal': True,
              'input': {'inputs': {'request': {**planted, 'min_effect': 0}}}}]}
     receipts = []
-    for name, ref, runner, suite in [('assessor', ASSESSOR, RUNNER, assessor_suite),
+    for name, ref, runner, suite in [('assessor', assessor, RUNNER, assessor_suite),
                                     ('template', TEMPLATE, result['component_ref'], template_suite)]:
         sid = c.command('register_control_suite', {'suite_id': 'suite:pilot-' + name, 'suite': suite},
                         project=project)['result']['suite_id']

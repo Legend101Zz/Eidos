@@ -50,7 +50,7 @@ def analyze(design_path, results_path, out):
                         bool(r.get("card_success", r.get("verified_success", False))) for r in subset
                     ),
                     verified_successes=sum(bool(r.get("verified_success")) for r in subset),
-                    primary_eligible=card == "D02",
+                    primary_eligible=card in {"D02","D03","D04","D05","D06"},
                 )
             )
         counts = Counter(r.get("status", "missing") for r in outcomes)
@@ -78,7 +78,7 @@ def analyze(design_path, results_path, out):
     lines = [
         "# Development pilot — descriptive only",
         "",
-        "Only D02 is in the improvement stratum. D01 reports operational equality; D12 reports",
+        "D02–D06 are in the improvement stratum. D01 reports operational equality; D12 reports",
         "null correctness (never a primary improvement success). Missing assignments remain in n.",
         "",
         "The draft interval is exploratory; these data cannot establish practical superiority.",

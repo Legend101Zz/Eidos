@@ -164,7 +164,7 @@ def grade_run(run_dir, grading_dir, block_incident=None, expected_meta=None):
         task=meta["card"],
         run=meta["run_index"],
         arm=meta["arm"],
-        primary_eligible=meta["card"] == "D02",
+        primary_eligible=meta["card"] in {"D02","D03","D04","D05","D06"},
         verified_success=False,
         card_success=False,
         status="invalid_output",
@@ -278,10 +278,7 @@ def grade_run(run_dir, grading_dir, block_incident=None, expected_meta=None):
                 # Cards specify no critical slices. Enforce their actual data/CPU/format boundaries;
                 # do not invent a slice threshold from the protocol's explicitly draft defaults.
                 guardrails = digest(test_inputs) == expected_hash
-                if meta["card"] == "D02" and answer["claim_type"] in {
-                    "recipe_improvement",
-                    "architecture_improvement",
-                }:
+                if meta["card"] in {"D03","D04","D05","D06"} or (meta["card"] == "D02" and answer["claim_type"] in {"recipe_improvement", "architecture_improvement"}):
                     for seed in card["seeds"][1:]:
                         output = workspace / f"confirmation-{seed}"
                         output.mkdir()
