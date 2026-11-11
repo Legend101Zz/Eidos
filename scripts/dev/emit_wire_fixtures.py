@@ -3,8 +3,10 @@
     python scripts/dev/emit_wire_fixtures.py           # (re)write tests/fixtures/wire/v<major>/*.json
     python scripts/dev/emit_wire_fixtures.py --check   # exit 1 if the emitted messages differ
 
-Runs in the server dev environment: the worker fixtures come from ``eidos-wire`` and ``eidos-worker-sdk``, and the
-decision-proposal fixtures from the investigator runtime's own ``to_proposal`` and ``no_effect_proposal``.
+Runs in any environment that has ``eidos-wire`` and ``eidos-worker-sdk`` (Python 3.9+, standard library
+only): the server dev environment and the worker-compat matrix (Python 3.9, pydantic<2) both use it. Only the server
+environment can write the decision-proposal fixtures, from the investigator runtime's own ``to_proposal`` and
+``no_effect_proposal``; a worker environment has no runtime and takes the committed ones as they are.
 
 Valid fixtures come from ``eidos_worker.testing.make_invocation``, ``eidos_worker.run.execute`` and
 ``eidos_wire.load_manifest`` on ``tests/fixtures/wire/component``. ``*-newer-minor`` fixtures add unknown
@@ -83,9 +85,18 @@ def _attempt(entry: str, base: Path) -> dict[str, Any]:
     }
 
 
+DECISION_FIXTURES = ("decision-proposal", "decision-proposal-conclude", "decision-proposal-conclude-scope-text",
+                     "decision-proposal-bounded-outcome")
+
+
 def _runtime_decisions() -> dict[str, Any]:
     """Decision proposals as the investigator runtime writes them, through its own conversion (ADR 0022, addendum R11)."""
-    from eidos.investigator.pydantic_ai_runtime import Call, Control, Decision, no_effect_proposal, to_proposal
+    try:
+        from eidos.investigator.pydantic_ai_runtime import Call, Control, Decision, no_effect_proposal, to_proposal
+    except ModuleNotFoundError as exc:
+        if exc.name != "eidos":  # the server package is present and broken: never hide that behind the committed files
+            raise
+        return {name: json.loads((OUT / f"{name}.json").read_text()) for name in DECISION_FIXTURES}
 
     def call(tool: str, args: dict[str, Any]) -> Call:
         return Call(tool=tool, args_json=json.dumps(args, sort_keys=True))
