@@ -73,6 +73,7 @@ class WorkflowLab:
                                             "confirmed": False}
         self.claim_assessments: list[dict] = []
         self.investigations: dict[str, dict] = {}
+        self.records: dict[tuple[str, str], dict] = {}  # (kind, id) -> record body, read by get_record
         # test hooks
         self.command_errors: dict[str, tuple[LabError, bool]] = {}  # command -> (error, once)
         self.on_query: Callable[[str, dict], None] | None = None
@@ -307,6 +308,11 @@ class WorkflowClient:
                 return {"id": params["claim_id"], "revision": claim["revision"],
                         "claim_state": copy.deepcopy(lab.claim_state),
                         "assessments": copy.deepcopy(lab.claim_assessments)}
+            if name == "get_record":
+                body = lab.records.get((params["kind"], params["id"]))
+                if body is None:
+                    raise LabError(404, {"code": "NOT_FOUND", "message": f"{params['kind']} not found", "next_action": ""})
+                return {"kind": params["kind"], "id": params["id"], "revision": 1, "body": copy.deepcopy(body)}
             if name == "get_investigation":
                 inv = params["investigation_id"]
                 return {"id": inv, "revision": 3, "status": "active", "needs_input": None, "turns": [], "jobs": [],

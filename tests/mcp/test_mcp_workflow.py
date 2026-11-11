@@ -159,16 +159,18 @@ async def test_full_loop_in_four_calls(client, lab):
     # what reached the lab: only ordinary commands and uploads, with keys derived from the caller's
     assert [(c.kind, c.key) for c in lab.effects()] == [
         ("upload", "up-1"), ("command", "b1:batch"), ("command", "b1:0"), ("command", "b1:1"), ("command", "b1:2"),
-        ("command", "sub-1:lock"), ("command", "sub-1:claim"), ("command", "sub-1:assess")]
+        ("command", "sub-1:submit"), ("command", "sub-1:lock"), ("command", "sub-1:claim"), ("command", "sub-1:assess")]
     assert [c.name for c in lab.commands()] == ["record_note", "run_component", "run_component", "run_component",
-                                                "record_note", "file_claim", "assess_candidate"]
+                                                "record_note", "record_note", "file_claim", "assess_candidate"]
     assert all(c.token == "good-token" and c.project == P for c in lab.effects())
-    batch_note, lock_note = lab.notes
+    batch_note, submit_note, lock_note = lab.notes
     assert batch_note["kind"] == "mcp-batch" and batch_note["investigation_id"] == INV
     plan = json.loads(batch_note["text"])
     assert plan["command_key"] == "b1" and [c["tool"] for c in plan["calls"]] == ["run_component"] * 3
     assert [c["depends_on"] for c in plan["calls"]] == [[], [0], []]  # recorded with its references, before any effect
     assert lab.effects()[1].name == "record_note"
+    assert submit_note["kind"] == "mcp-submission" and submit_note["investigation_id"] == INV
+    assert json.loads(submit_note["text"])["assessment"] is True
     assert lock_note["kind"] == "candidate_lock" and lock_note["investigation_id"] == INV
     assert json.loads(lock_note["text"]) == {"job_id": train_job}
     claim = lab.claims[submitted["claim_id"]]["payload"]
@@ -539,6 +541,78 @@ async def test_an_invalid_batch_is_refused_before_any_effect(lab, calls, code):
     assert lab.effects() == [] and lab.jobs == {} and lab.notes == []  # not even the batch note
 
 
+# -- one investigation per batch (R15 finding 1) -------------------------------------------------------------------------------
+
+def plan(**kw):
+    return {"tool": "plan_trial", "args": {"component_ref": TRAIN, **kw}}
+
+
+def launch(trial_id, **kw):
+    return {"tool": "launch_trial", "args": {"trial_id": trial_id, **kw}}
+
+
+SCORE_A_MODEL = {"model": ref("call[0].outputs.model")}
+CROSS_INVESTIGATION_BATCHES = [
+    # (id, batch investigation_id, calls, the refused call, whether it references across)
+    ("named-ref-across", None, [rc(investigation_id="inv_a"), rc(inputs=SCORE_A_MODEL, investigation_id="inv_b")], 1, True),
+    ("payload-ref-across", None, [rc(investigation_id="inv_a"),
+                                  rc(inputs=SCORE_A_MODEL, payload={"investigation_id": "inv_b"})], 1, True),
+    ("payload-overrides-batch-default", INV, [rc(), rc(inputs=SCORE_A_MODEL, payload={"investigation_id": "inv_b"})],
+     1, False),
+    ("named-overrides-batch-default", INV, [rc(), rc(inputs=SCORE_A_MODEL, investigation_id="inv_b")], 1, True),
+    ("first-call-differs-from-batch", INV, [rc(investigation_id="inv_b"), rc(inputs=SCORE_A_MODEL)], 0, True),
+    ("ref-from-no-investigation", None, [rc(investigation_id="inv_a"), rc(inputs=SCORE_A_MODEL)], 1, True),
+    ("unreferenced-calls-in-two-investigations", None, [rc(investigation_id="inv_a"), rc(investigation_id="inv_b")],
+     1, False),
+    ("launch-of-a-trial-planned-elsewhere", None, [plan(investigation_id="inv_a"),
+                                                   launch(ref("call[0].trial_id"), payload={"investigation_id": "inv_b"})],
+     1, False),
+    ("launch-inherits-and-is-used-across", None, [plan(investigation_id="inv_a"), launch(ref("call[0].trial_id")),
+                                                  rc(inputs={"m": ref("call[1].outputs.model")},
+                                                     investigation_id="inv_b")], 2, True),
+    ("literal-trial-of-another-investigation", INV, [launch("trial_b"), rc(inputs={"m": ref("call[0].outputs.model")})],
+     0, True),
+]
+
+
+@pytest.mark.parametrize("inv,calls,refused,crossing", [c[1:] for c in CROSS_INVESTIGATION_BATCHES],
+                         ids=[c[0] for c in CROSS_INVESTIGATION_BATCHES])
+async def test_a_batch_has_one_investigation_and_no_ref_crosses_one(lab, inv, calls, refused, crossing):
+    lab.records[("trial", "trial_b")] = {"investigation_id": "inv_b"}
+    server = build_server(lab.client, Credentials("good-token"))
+    async with Client(server) as client:
+        e = err(await client.call_tool("run_batch", batch("x", calls, **({"investigation_id": inv} if inv else {}))))
+    assert e["code"] == "INVESTIGATION_MISMATCH" and e["details"]["call"] == refused
+    assert ("references" in e["details"]) is crossing and ("referenced across" in e["message"]) is crossing
+    assert lab.effects() == [] and lab.jobs == {} and lab.notes == []  # refused before the batch note
+
+
+@sessioned
+async def test_a_ref_across_investigations_names_both_calls(client, lab):
+    e = err(await client.call_tool("run_batch", batch("x", [rc(investigation_id="inv_a"),
+                                                            rc(inputs=SCORE_A_MODEL, investigation_id="inv_b")])))
+    assert e["details"] == {"call": 1, "investigation_id": "inv_b", "batch_investigation_id": "inv_a",
+                            "references": [0]}
+    assert "inv_a" in e["message"] and "inv_b" in e["message"] and lab.effects() == []
+
+
+@sessioned
+async def test_one_investigation_named_anywhere_runs_and_launches_inherit_it(client, lab):
+    lab.records[("trial", "trial_a")] = {"investigation_id": "inv_a"}
+    calls = [plan(payload={"investigation_id": "inv_a"}), launch(ref("call[0].trial_id")), launch("trial_a"),
+             rc(inputs={"m": ref("call[1].outputs.model")}, investigation_id="inv_a")]
+    r = ok(await client.call_tool("run_batch", batch("one", calls, wait_seconds=0)))
+    assert r["status"] == "done" and all(c["ok"] for c in r["calls"])
+    assert lab.notes[0]["kind"] == "mcp-batch" and lab.notes[0]["investigation_id"] == "inv_a"
+    assert lab.commands("run_component")[0].payload["investigation_id"] == "inv_a"
+
+
+@sessioned
+async def test_a_batch_without_any_investigation_still_runs(client, lab):
+    r = ok(await client.call_tool("run_batch", batch("none", [rc(), rc(inputs=SCORE_A_MODEL)], wait_seconds=0)))
+    assert r["status"] == "done" and lab.notes[0]["investigation_id"] is None
+
+
 @pytest.mark.parametrize("args,code", [
     ({"calls": "x"}, "INVALID_ARGUMENTS"), ({"calls": {"tool": "run_component"}}, "INVALID_ARGUMENTS"),
     ({}, "INVALID_ARGUMENTS"), ({"calls": [rc()], "wait_seconds": "x"}, "INVALID_ARGUMENTS"),
@@ -646,10 +720,10 @@ async def test_a_refused_assessment_is_reported_and_the_claim_stays_candidate_su
     a = r["assessment"]
     assert a["status"] == "refused" and "plan_id" not in a
     assert [x["code"] for x in a["reasons"]] == ["SEEDS_NOT_FRESH", "NO_BASELINE"]
-    assert len(a["reasons"][1]["message"]) == 200
+    assert a["reasons"][1]["message"] == "m" * 500  # R15: reasons are kept whole
     assert r["claim"]["state"] == "candidate-submitted" and r["claim"]["confirmed"] is False
     assert "next" not in r  # nothing is running to wait for
-    assert lab.keys() == ["s1:lock", "s1:claim", "s1:assess"]
+    assert lab.keys() == ["s1:submit", "s1:lock", "s1:claim", "s1:assess"]
 
 
 @sessioned
@@ -661,7 +735,7 @@ async def test_a_launched_assessment_returns_its_plan_and_a_next_hint(client, la
     assert "wait_status" in r["next"] and "plan_id" in r["next"] and "claim_id" in r["next"]
     assert r["claim"] == {"claim_id": r["claim_id"], "revision": 1, "state": "candidate-submitted",
                           "label": "Candidate submitted", "confirmed": False, "assessments": []}
-    assert r["lock_note_id"] == "note_1" and r["candidate_job_id"] == job
+    assert r["lock_note_id"] == "note_2" and r["candidate_job_id"] == job
 
 
 @sessioned
@@ -669,8 +743,8 @@ async def test_submitting_without_an_assessment_files_the_claim_only(client, lab
     job = lab.start_job(TRAIN)
     r = ok(await client.call_tool("submit_candidate", submit(job)))
     assert "assessment" not in r and "next" not in r and r["claim"]["state"] == "candidate-submitted"
-    assert lab.keys() == ["s1:lock", "s1:claim"] and lab.commands("assess_candidate") == []
-    assert lab.commands("record_note")[0].payload == {
+    assert lab.keys() == ["s1:submit", "s1:lock", "s1:claim"] and lab.commands("assess_candidate") == []
+    assert lab.commands("record_note")[1].payload == {
         "investigation_id": INV, "kind": "candidate_lock", "text": json.dumps({"job_id": job}), "evidence_refs": [job]}
 
 
@@ -704,10 +778,10 @@ async def test_a_retry_with_the_same_key_replays_every_step(client, lab):
     executed = lab.executed
     second = ok(await client.call_tool("submit_candidate", args))
     assert second == first  # same note, claim, plan: nothing new
-    assert lab.executed == executed and len(lab.notes) == 1 and len(lab.claims) == 1
-    retries = lab.commands()[3:]
-    assert [(c.key, c.outcome) for c in retries] == [("s1:lock", "replayed"), ("s1:claim", "replayed"),
-                                                     ("s1:assess", "replayed")]
+    assert lab.executed == executed and len(lab.notes) == 2 and len(lab.claims) == 1
+    retries = lab.commands()[4:]
+    assert [(c.key, c.outcome) for c in retries] == [("s1:submit", "replayed"), ("s1:lock", "replayed"),
+                                                     ("s1:claim", "replayed"), ("s1:assess", "replayed")]
 
 
 @sessioned
@@ -718,24 +792,52 @@ async def test_a_failed_step_names_itself_and_the_retry_resumes_after_the_commit
     e = err(await client.call_tool("submit_candidate", submit(job, assessment=ASSESSMENT)))
     assert e["code"] == "INVALID_SCOPE" and "file_claim" in e["message"] and "scope" in e["message"]
     assert e["details"] == {"step": "claim", "field": "scope"} and "same command_key" in e["next_action"]
-    assert len(lab.notes) == 1 and lab.claims == {} and lab.commands("assess_candidate") == []  # the lock committed
+    assert len(lab.notes) == 2 and lab.claims == {} and lab.commands("assess_candidate") == []  # the lock committed
     r = ok(await client.call_tool("submit_candidate", submit(job, assessment=ASSESSMENT)))
     assert r["claim"]["state"] == "candidate-submitted" and r["assessment"]["status"] == "launched"
     assert [(c.key, c.outcome) for c in lab.commands()] == [
-        ("s1:lock", "committed"), ("s1:claim", "error"), ("s1:lock", "replayed"), ("s1:claim", "committed"),
-        ("s1:assess", "committed")]
+        ("s1:submit", "committed"), ("s1:lock", "committed"), ("s1:claim", "error"), ("s1:submit", "replayed"),
+        ("s1:lock", "replayed"), ("s1:claim", "committed"), ("s1:assess", "committed")]
 
 
 @sessioned
-async def test_the_same_submit_key_for_another_candidate_is_a_conflict_at_the_lock(client, lab):
+async def test_the_same_submit_key_for_another_candidate_is_a_conflict_before_any_step(client, lab):
     first, other = lab.start_job(TRAIN), lab.start_job(TRAIN)
     ok(await client.call_tool("submit_candidate", submit(first)))
-    committed = lab.executed
+    committed, calls = lab.executed, len(lab.commands())
     e = err(await client.call_tool("submit_candidate", submit(other)))
-    assert e["code"] == "COMMAND_KEY_CONFLICT" and e["details"]["step"] == "lock"
+    assert e["code"] == "COMMAND_KEY_CONFLICT" and e["details"]["step"] == "submit"
     assert lab.executed == committed and len(lab.claims) == 1
     e = err(await client.call_tool("submit_candidate", submit(first, statement="a different statement")))
-    assert e["code"] == "COMMAND_KEY_CONFLICT" and e["details"]["step"] == "claim" and lab.executed == committed
+    assert e["code"] == "COMMAND_KEY_CONFLICT" and e["details"]["step"] == "submit" and lab.executed == committed
+    assert [c.key for c in lab.commands()[calls:]] == ["s1:submit", "s1:submit"]  # no lock or claim replayed
+
+
+@pytest.mark.parametrize("first,retry", [
+    ({}, {"assessment": ASSESSMENT}),  # adding an assessment to a committed submission does not start one
+    ({"assessment": ASSESSMENT}, {}),  # dropping it does not silently omit its result
+    ({"assessment": ASSESSMENT}, {"assessment": {**ASSESSMENT, "seeds": [3, 4]}}),
+    ({"assessment": ASSESSMENT}, {"assessment": ASSESSMENT, "scope": {"model": "m", "task": "other"}}),
+], ids=["assessment-added", "assessment-dropped", "assessment-changed", "scope-changed"])
+async def test_the_submit_key_binds_the_whole_request_before_any_step(lab, first, retry):
+    """R15 finding 2: a changed request under the same key is COMMAND_KEY_CONFLICT, with nothing replayed."""
+    job = lab.start_job(TRAIN)
+    server = build_server(lab.client, Credentials("good-token"))
+    async with Client(server) as client:
+        ok(await client.call_tool("submit_candidate", submit(job, **first)))
+        committed, calls, assessments = lab.executed, len(lab.commands()), len(lab.commands("assess_candidate"))
+        e = err(await client.call_tool("submit_candidate", submit(job, **retry)))  # the whole retried request
+    assert e["code"] == "COMMAND_KEY_CONFLICT" and e["details"]["step"] == "submit"
+    assert lab.executed == committed and len(lab.commands("assess_candidate")) == assessments
+    assert [(c.key, c.outcome) for c in lab.commands()[calls:]] == [("s1:submit", "conflict")]  # no partial replay
+
+
+@sessioned
+async def test_an_empty_assessment_is_the_same_request_as_none(client, lab):
+    job = lab.start_job(TRAIN)
+    first = ok(await client.call_tool("submit_candidate", submit(job)))
+    again = ok(await client.call_tool("submit_candidate", submit(job, assessment={})))
+    assert again == first and lab.commands("assess_candidate") == []
 
 
 @pytest.mark.parametrize("missing", ["investigation_id", "job_id", "statement", "scope", "command_key"])
@@ -987,6 +1089,34 @@ def test_compact_receipts_replace_large_results_with_what_the_call_produced():
                                              "details": {"d": "z" * 2000}}})
     assert r["replayed"] is True and r["error"]["code"] == "E" and len(r["error"]["message"]) == 300
     assert len(r["error"]["next_action"]) == 200 and "details" not in r["error"]
+
+
+def test_a_large_refusal_keeps_its_reasons_in_the_compact_receipt():
+    """R15 finding 3: a refusal is a successful command whose reasons are the answer; compaction never drops them."""
+    reasons = [{"code": f"R{i}", "message": f"reason {i}: " + "m" * 300, "details": {"field": f"f{i}"}} for i in range(6)]
+    reasons.append({"code": "BIG", "message": "x", "details": {"seeds": list(range(400))}})
+    refusal = {"request_id": "req_9", "status": "refused", "exploratory": False, "reasons": reasons}
+    assert len(json.dumps(refusal)) > workflow.SMALL_JSON
+    r = workflow._compact_receipt({"index": 3, "tool": "assess_candidate", "ok": True, "result": refusal})
+    out = r["result"]
+    assert out["status"] == "refused" and out["request_id"] == "req_9" and out["exploratory"] is False
+    assert [x["code"] for x in out["reasons"]] == [*(f"R{i}" for i in range(6)), "BIG"]
+    assert out["reasons"][0] == reasons[0]  # code, whole message and small details
+    assert out["reasons"][-1]["details"] == {"keys": ["seeds"]}  # only an oversized details object is summarized
+
+
+@sessioned
+async def test_a_refused_assessment_in_a_batch_returns_every_reason(client, lab):
+    job = lab.start_job(TRAIN)
+    lab.add_claim("claim_x")
+    lab.refuse_assessment(*[(f"RULE_{i}", f"rule {i} failed: " + "why " * 60) for i in range(5)])
+    call = {"tool": "assess_candidate", "args": {**ASSESSMENT, "claim_id": "claim_x", "candidate": {"job_id": job}}}
+    r = ok(await client.call_tool("run_batch", batch("ra", [call], investigation_id=INV, wait_seconds=0)))
+    result = r["calls"][0]["result"]
+    assert r["calls"][0]["ok"] is True and result["status"] == "refused" and result["truncated"] is True
+    assert [x["code"] for x in result["reasons"]] == [f"RULE_{i}" for i in range(5)]
+    assert all(x["message"].startswith(f"rule {i} failed") and len(x["message"]) > 200
+               for i, x in enumerate(result["reasons"]))
 
 
 # -- schema size regressions (ADR 0025: tools/list is paid for on every session) ---------------------------------------------------------

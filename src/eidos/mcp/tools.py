@@ -292,7 +292,7 @@ WORKFLOW_TOOLS: tuple[Tool, ...] = (
          "draft_evidence_plan, freeze_evidence_plan, launch_evidence_plan, assess_candidate. Returns compact receipts "
          "and job summaries; status 'pending' means call again with the same command_key and calls.",
          (P("calls", "a", "[{tool, args}]; args as for that tool, without project/command_key.", True),
-          P("investigation_id", "s", "Default for calls that take one."),
+          P("investigation_id", "s", "The batch's one investigation (calls may omit it)."),
           P("wait_seconds", "i", "Max wait for dependencies in this request (default 20, max 50).")),
          grant="per call", composite=True),
     Tool("wait_status", "query", "status",

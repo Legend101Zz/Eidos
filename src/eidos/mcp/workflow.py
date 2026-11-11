@@ -19,7 +19,15 @@ from typing import Any
 from eidos.batches import ACTIVE_JOB_STATUSES, TERMINAL_JOB_STATUSES, BatchRunner
 from eidos.client import LabError
 from eidos.domain.errors import Invalid
-from eidos.domain.turns import LITERAL_ARGS, PLAN_TOOLS, REF_KEY, RESULT_FIELDS, iter_refs, validate_refs
+from eidos.domain.turns import (
+    LITERAL_ARGS,
+    PLAN_TOOLS,
+    REF_KEY,
+    RESULT_FIELDS,
+    iter_refs,
+    parse_ref,
+    validate_refs,
+)
 
 SOURCE_MEDIA_TYPE = "application/vnd.eidos.source-bundle+json"
 SOURCE_SCHEMA = "source-bundle/1"
@@ -40,6 +48,10 @@ BATCH_RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     "upload_source": ("artifact_id",), "validate_component": ("job_id",),
 }
 BATCH_ARGS_FORBIDDEN = ("project", "command_key", "expected_revision")
+# Calls without an investigation_id of their own: they run in the scope of the record they launch (R15).
+LAUNCH_SCOPE = {"launch_trial": ("trial_id", "trial"), "launch_branch": ("trial_id", "trial"),
+                "freeze_evidence_plan": ("plan_id", "evidence_plan"), "launch_evidence_plan": ("plan_id", "evidence_plan")}
+REFUSAL_REASONS = 50  # reasons kept in a compact refusal (a refusal lists each failed rule once; there are fewer)
 _PLACEHOLDER = {"string": "ref", "integer": 0, "number": 0, "boolean": False, "object": {}, "array": []}
 
 
@@ -77,10 +89,27 @@ def job_summary(job: dict) -> dict[str, Any]:
     return out
 
 
+def refusal_reasons(reasons: Any) -> list[dict[str, Any]]:
+    """Every reason of a recorded refusal, compactly: its code, its message and its details (when small). These are what
+    the caller acts on, so a compact receipt never drops them (R15)."""
+    out = []
+    for r in (reasons if isinstance(reasons, list) else [])[:REFUSAL_REASONS]:
+        if not isinstance(r, dict):
+            continue
+        reason: dict[str, Any] = {"code": r.get("code"), "message": str(r.get("message", ""))[:500]}
+        if r.get("details"):
+            reason["details"] = r["details"] if _small(r["details"]) else {"keys": sorted(r["details"])[:20]}
+        out.append(reason)
+    return out
+
+
 def _compact_result(tool: str, result: Any) -> Any:
     if _small(result) or not isinstance(result, dict):
         return result
-    keep = {k: result[k] for k in (*BATCH_RESULT_FIELDS.get(tool, ()), "status") if k in result}
+    keep = {k: result[k] for k in (*BATCH_RESULT_FIELDS.get(tool, ()), "status", "request_id", "exploratory")
+            if k in result}
+    if result.get("reasons"):  # a recorded refusal (assess_candidate): its reasons are the answer
+        keep["reasons"] = refusal_reasons(result["reasons"])
     return {**keep, "truncated": True}
 
 
@@ -209,6 +238,75 @@ def validate_batch(calls: Any, investigation_id: str | None, client: Any = None,
     return out
 
 
+def _arg(args: dict[str, Any], name: str) -> Any:
+    """An argument as the lab receives it: a named argument wins over the same key in ``payload`` (``build_call``)."""
+    payload = args.get("payload")
+    given = payload.get(name) if isinstance(payload, dict) else None
+    return args.get(name) if args.get(name) is not None else given
+
+
+def batch_investigation(calls: list[dict[str, Any]], investigation_id: str | None, client: Any = None,
+                        project: str | None = None) -> str | None:
+    """The one investigation a batch runs in (R15): every call's effective scope, named or through ``payload``, must be
+    the batch's, so no ``$ref`` can carry one investigation's evidence into a call charged to another. A launch takes the
+    scope of what it launches: the referenced call's, or the planned trial's own record. A literal evidence plan id is
+    not read here (a plan read is an exposure); the lab runs such a plan in its own scope, and only its id can flow on.
+    Returns the batch's investigation (None: the project, outside any investigation)."""
+    unknown = object()
+    scopes: list[Any] = []
+    for i, c in enumerate(calls):
+        tool, args = c["tool"], c["args"]
+        named, payload = args.get("investigation_id"), args.get("payload")
+        given = payload.get("investigation_id") if isinstance(payload, dict) else None
+        if named is not None and given is not None and named != given:
+            raise WorkflowFailure("INVESTIGATION_MISMATCH", f"call {i} ({tool}): investigation_id {named!r} and "
+                                  f"payload.investigation_id {given!r} disagree", "Name one investigation per batch.",
+                                  {"call": i})
+        explicit = named if named is not None else given
+        scope: Any = unknown if explicit is None and tool in LAUNCH_SCOPE else explicit
+        if tool in LAUNCH_SCOPE:
+            field, kind = LAUNCH_SCOPE[tool]
+            target = _arg(args, field)
+            launched: Any = unknown
+            if isinstance(target, dict) and REF_KEY in target:
+                parsed = parse_ref(str(target[REF_KEY]))
+                launched = scopes[parsed[0]] if parsed else unknown
+            elif isinstance(target, str) and kind == "trial" and client is not None:
+                try:
+                    record = client.query("get_record", {"kind": kind, "id": target}, project=project)
+                except LabError:
+                    record = None  # the launch itself is refused by the lab
+                body = record.get("body") if isinstance(record, dict) else None
+                launched = body.get("investigation_id") if isinstance(body, dict) else unknown
+            if launched is not unknown and explicit is not None and launched != explicit:
+                raise WorkflowFailure("INVESTIGATION_MISMATCH", f"call {i} ({tool}): {field} runs in investigation "
+                                      f"{launched!r}, not {explicit!r}", "Name one investigation per batch.",
+                                      {"call": i, "investigation_id": launched})
+            if launched is not unknown:
+                scope = launched
+        scopes.append(scope)
+    known = [(i, s) for i, s in enumerate(scopes) if s is not unknown]
+    effective = investigation_id if investigation_id is not None else (known[0][1] if known else None)
+    for i, s in known:
+        if s != effective:
+            crossing = sorted({*(d for d in calls[i].get("depends_on") or [] if scopes[d] is not unknown and
+                                 scopes[d] != s),
+                               *(j for j, c in enumerate(calls) if i in (c.get("depends_on") or []) and
+                                 scopes[j] is not unknown and scopes[j] != s)})
+            what = f"; it is referenced across investigations with call(s) {crossing}" if crossing else ""
+            raise WorkflowFailure("INVESTIGATION_MISMATCH",
+                                  f"call {i} ({calls[i]['tool']}) runs in {_scope_text(s)}, but this batch runs in "
+                                  f"{_scope_text(effective)}{what}; a batch has one investigation",
+                                  "Set run_batch investigation_id and leave it out of the calls, or split the batch.",
+                                  {"call": i, "investigation_id": s, "batch_investigation_id": effective,
+                                   **({"references": crossing} if crossing else {})})
+    return effective
+
+
+def _scope_text(scope: str | None) -> str:
+    return f"investigation {scope!r}" if scope is not None else "no investigation"
+
+
 def iter_has_ref(value: Any) -> bool:
     if isinstance(value, dict):
         return REF_KEY in value or any(iter_has_ref(v) for v in value.values())
@@ -222,8 +320,8 @@ def run_batch(client: Any, project: str, key: str, args: dict[str, Any], *, poll
     for a job after ``wait_seconds``: calling again with the same key and calls replays what was committed and goes on."""
     from eidos.mcp.tools import BY_NAME, build_call  # noqa: PLC0415
 
-    inv = args.get("investigation_id")
-    calls = validate_batch(args.get("calls"), inv, client, project)
+    calls = validate_batch(args.get("calls"), args.get("investigation_id"), client, project)
+    inv = batch_investigation(calls, args.get("investigation_id"), client, project)
     keyed = [{**c, "index": i, "command_key": f"{key}:{i}"} for i, c in enumerate(calls)]
     digest = hashlib.sha256(json.dumps(calls, sort_keys=True, default=str).encode()).hexdigest()
     # Prospective record of the whole batch, references included, before any effect (as an accepted decision is). The
@@ -356,27 +454,33 @@ def submit_candidate(client: Any, project: str, key: str, args: dict[str, Any]) 
                                       "committed steps replay."),
                                   {"step": suffix, **(exc.error.get("details") or {})}) from exc
 
+    assessment = args.get("assessment") or None  # {} asks for nothing, as an absent assessment does
+    if assessment is not None and not isinstance(assessment, dict):
+        raise WorkflowFailure("INVALID_ARGUMENTS", "assessment must be an object of assess_candidate arguments")
     job = client.query("get_job", {"job_id": job_id, "include_lock": False}, project=project)
     if job.get("status") != "succeeded":
         raise WorkflowFailure("CANDIDATE_NOT_READY", f"job {job_id} is {job.get('status')}; a candidate is a succeeded job",
                               "wait_status {job_ids: [job_id]} first.", {"job_id": job_id, "status": job.get("status")})
+    # R15: the key binds the whole normalized submission before any step, so a retry that adds, drops or changes
+    # anything (the assessment included) is COMMAND_KEY_CONFLICT here, with nothing replayed or started.
+    request = {"investigation_id": inv, "job_id": job_id, "statement": args["statement"], "scope": args["scope"],
+               "assessment": assessment}
+    digest = hashlib.sha256(json.dumps(request, sort_keys=True, default=str).encode()).hexdigest()
+    step("record_note", {"investigation_id": inv, "kind": "mcp-submission", "status": "recorded",
+                         "text": json.dumps({"command_key": key, "request_sha256": digest,
+                                             "assessment": assessment is not None}, sort_keys=True)}, "submit")
     lock = step("record_note", {"investigation_id": inv, "kind": "candidate_lock", "text": json.dumps({"job_id": job_id}),
                                 "evidence_refs": [job_id]}, "lock")
     claim = step("file_claim", {"statement": args["statement"], "kind": "improves", "scope": args["scope"],
                                 "investigation_id": inv}, "claim")
     claim_id = claim["result"]["claim_id"]
     out: dict[str, Any] = {"candidate_job_id": job_id, "lock_note_id": lock["result"].get("note_id"), "claim_id": claim_id}
-    assessment = args.get("assessment")
-    if assessment:
-        if not isinstance(assessment, dict):
-            raise WorkflowFailure("INVALID_ARGUMENTS", "assessment must be an object of assess_candidate arguments")
-        request = {**assessment, "claim_id": claim_id, "candidate": {"job_id": job_id}, "investigation_id": inv}
-        a = step("assess_candidate", request, "assess")["result"]
+    if assessment is not None:
+        assess = {**assessment, "claim_id": claim_id, "candidate": {"job_id": job_id}, "investigation_id": inv}
+        a = step("assess_candidate", assess, "assess")["result"]
         out["assessment"] = {k: a.get(k) for k in ("status", "plan_id", "request_id", "exploratory") if a.get(k) is not None}
-        reasons = a.get("reasons") or []
-        if reasons:
-            out["assessment"]["reasons"] = [{"code": r.get("code"), "message": str(r.get("message", ""))[:200]}
-                                            for r in reasons if isinstance(r, dict)][:8]
+        if a.get("reasons"):
+            out["assessment"]["reasons"] = refusal_reasons(a["reasons"])
     out["claim"] = claim_summary(client.query("get_claim", {"claim_id": claim_id}, project=project))
     if (out.get("assessment") or {}).get("plan_id"):
         out["next"] = "wait_status {plan_id, claim_id}: the assessment runs by itself."

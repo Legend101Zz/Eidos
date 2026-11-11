@@ -20,6 +20,11 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
   instructions; tool text results are compact JSON. `tools/list` is 39,726 bytes for 39 tools (was 46,387 for 35).
 - **Session reuse.** The study's `mcp_http.py` reuses one MCP session (also across invocations, through a 0600 state
   file without the token), re-initializing once if the server forgets it, and prints each result once.
+- **Review R15.** A batch runs in one investigation: a call's scope may be named or set in `payload`, and launches take
+  their trial's scope. A call outside it, or a `$ref` across investigations, is `INVESTIGATION_MISMATCH` before any
+  effect. `submit_candidate` binds its whole normalized request, assessment included, to the key with a `<key>:submit`
+  record before any step, so a changed retry is `COMMAND_KEY_CONFLICT` with nothing replayed. Compact receipts of a
+  refused assessment keep every reason.
 
 ## Unreleased: 1.2.0
 

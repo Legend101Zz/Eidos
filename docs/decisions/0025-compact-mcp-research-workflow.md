@@ -28,7 +28,7 @@ operation, and the lab validates every step exactly as it validates a single MCP
 | `upload_source` | `files` (relative path → text) become an immutable `source-bundle/1` artifact through the lab's upload route, with the same bytes, media type, schema and role as the investigator's `author_source`. Absolute paths, `..` and non-text contents are refused before upload. | the call's `command_key` |
 | `run_batch` | Up to 12 calls in order, with ADR 0022 references (`{"$ref": "call[i].field"}` or `call[i].outputs.<slot>`). | `<key>:<i>` per call; `<key>:batch` for the record |
 | `wait_status` | Waits at most 50 s (default 20) for named jobs to end and a plan to have no active job, then summarizes them; with `claim_id` the derived claim state; with `investigation_id` its status. Read-only. | none |
-| `submit_candidate` | Checks that the candidate's job succeeded, records `candidate_lock` `{"job_id"}`, files the `improves` claim and, with `assessment` (the `assess_candidate` arguments), requests its assessment; returns the claim state the lab derives. | `<key>:lock`, `<key>:claim`, `<key>:assess` |
+| `submit_candidate` | Checks that the candidate's job succeeded, records `candidate_lock` `{"job_id"}`, files the `improves` claim and, with `assessment` (the `assess_candidate` arguments), requests its assessment; returns the claim state the lab derives. | `<key>:submit` for the record, `<key>:lock`, `<key>:claim`, `<key>:assess` |
 
 ### Batches use the investigator's executor
 
@@ -99,6 +99,26 @@ URL and token, never the token). A session the server no longer knows (HTTP 404,
 re-initialized once and the request re-sent; the server did not process it. The CLI prints the result once (without the
 `content` text that repeats `structuredContent`). Native MCP clients are unaffected. `--new-session` forces a fresh
 session.
+
+## Addendum (review R15)
+
+- **One investigation per batch.** A call's investigation may be named or set through `payload.investigation_id`;
+  the two must agree. A launch (`launch_trial`, `launch_branch`) runs in its trial's scope: the referenced planning call's,
+  or for a literal trial id the trial record's own (`get_record`, not a sensitive read). Every call's effective scope must
+  be the batch's (`run_batch.investigation_id`, otherwise the first call that has one; none means the project), so no
+  `$ref` carries one investigation's evidence into a call charged to another. Otherwise `INVESTIGATION_MISMATCH`
+  before any effect, with `details.references` when a reference crosses. The `mcp-batch` note is recorded in that
+  investigation. A literal evidence-plan id in `freeze_evidence_plan`/`launch_evidence_plan` is not read (a plan read
+  is an exposure); the lab runs that plan in its own scope, and only its id can flow on.
+- **The submission key binds the whole request.** `submit_candidate` first checks `assessment` is an object, then
+  records a `record_note` of kind `mcp-submission` keyed `<key>:submit` with the SHA-256 of the normalized request
+  (`investigation_id`, `job_id`, `statement`, `scope`, `assessment`; an empty assessment equals none). This is before the
+  lock, claim and assessment. A retry that adds, drops or changes anything, the assessment included, is
+  `COMMAND_KEY_CONFLICT` at that step, and nothing is replayed or started; the same request replays every step.
+- **Refusals keep their reasons.** A refused `assess_candidate` is a successful command, so a compact batch receipt of
+  a refusal larger than 800 characters keeps `status`, `request_id`, `exploratory` and every reason: code, message (up
+  to 500 characters) and details (or their keys, if over 800 characters). `submit_candidate` reports reasons the same way
+  (it kept 8 reasons of 200 characters).
 
 ## What does not change
 
