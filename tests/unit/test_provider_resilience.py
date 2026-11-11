@@ -140,10 +140,6 @@ def test_rate_limits_and_overload_are_transient_not_quota(status, body):
     assert failure["kind"] == "transient" and failure["status"] == status
 
 
-@pytest.mark.xfail(strict=True, reason="QUOTA_EXHAUSTED's 'usage limit' alternative also matches pydantic-ai's own "
-                   "UsageLimitExceeded message ('... see the docs on usage limits for budget-aware patterns'), so a "
-                   "local request-limit hit is classified as provider quota exhaustion (non-retryable "
-                   "PROVIDER_QUOTA_EXHAUSTED, the investigation marked provider-unavailable)")
 def test_pydantic_ais_own_usage_limit_error_is_not_provider_quota():
     from pydantic_ai.exceptions import UsageLimitExceeded
     exc = UsageLimitExceeded("The next request would exceed the request_limit of 1. Consider raising the limit, or "

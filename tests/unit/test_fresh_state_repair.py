@@ -292,10 +292,6 @@ def test_the_fresh_state_request_must_fit_the_token_envelope():
     assert res.proposal["control"]["bounded_outcome"] == BOUNDED
 
 
-@pytest.mark.xfail(strict=True, reason="text mode counts a fresh-state repair that the token envelope refused: the "
-                   "refusal handler un-counts a re-ask that was not sent (report['reasks'] -= ...) but not "
-                   "report['fresh_state_repairs'] / ['fresh_state'], which the continue before it had already "
-                   "written. Tool mode resets fresh_state_repairs to 0 in the same case (_tool_fresh_state).")
 def test_a_fresh_state_repair_refused_by_the_token_envelope_is_not_counted():
     limit, cap = envelope_for_refusing_the_fresh_request()
     script = scripted(["not json"])
@@ -383,11 +379,6 @@ def test_tool_mode_fresh_state_run_respects_max_requests_per_decision(max_reques
     assert_bounded(res)
 
 
-@pytest.mark.xfail(strict=True, reason="_tool_fresh_state does not handle UsageLimitExceeded: with 3 requests allowed, "
-                   "the fresh run gets request_limit=1 and its garbage reply needs an output retry, so pydantic-ai "
-                   "raises UsageLimitExceeded (not UnexpectedModelBehavior). It falls to model_call_failed, and "
-                   "provider_failure reads 'usage limits' in pydantic-ai's own message as QUOTA_EXHAUSTED: a "
-                   "non-retryable provider-quota failure instead of the bounded structured-output-invalid outcome.")
 def test_tool_mode_with_one_request_left_for_the_fresh_run_ends_bounded_not_in_an_exception():
     script = scripted(["garbage"])
     res = PydanticAIRuntime({"_model_object": script.model, "model": "function:test",

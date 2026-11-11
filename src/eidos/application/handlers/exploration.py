@@ -120,17 +120,16 @@ def check_note(ctx: Ctx, inv_id: str, body: dict[str, Any]) -> dict[str, Any] | 
             raise Invalid("the selection rule is fixed once recorded; a lock cannot change it",
                           details={"rule": rule, "note_id": existing[1] if existing else None, "proposed": proposed})
         rule = rule or proposed
-    if frozen(ctx, inv_id):
-        raise Invalid("the selection is frozen: an evidence plan was frozen or an assessment requested for this "
-                      "investigation, so the incumbent cannot change (assessor feedback never selects)",
-                      details={"job_id": job_id},
-                      next_action="Assess or conclude with the locked candidate.")
     jobs = _jobs(ctx, inv_id)
     versions = rules.lock_versions(notes, candidate_lock_job_id)
     previous = versions[-1] if versions else None
     scored_by = (rules.note_json(body) or {}).get("scored_by")
     evidence = rules.selection_evidence(jobs, job_id, rule, scored_by if isinstance(scored_by, str) else None) \
         if rule else None
+    if (previous is None or previous["job_id"] != job_id) and frozen(ctx, inv_id):  # re-naming the incumbent is fine
+        raise Invalid("the selection is frozen: an evidence plan was frozen or an assessment requested for this "
+                      "investigation, so the incumbent cannot change (assessor feedback never selects)",
+                      details={"job_id": job_id}, next_action="Assess or conclude with the locked candidate.")
     if previous is None:
         return {"version": 1, "job_id": job_id, "evidence": evidence, "basis": "first-lock", "rule": rule}
     if previous["job_id"] == job_id:

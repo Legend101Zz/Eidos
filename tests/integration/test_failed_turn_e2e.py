@@ -288,7 +288,7 @@ async def test_a_retryable_provider_error_is_retried_automatically_and_recovers(
         # The retry was recorded on the ledger before its backoff, with the reason.
         [retry] = run.events("investigation.turn_retry_scheduled")
         assert retry["body"]["attempt"] == 1 and retry["body"]["max_attempts"] == 2
-        assert retry["body"]["delay_seconds"] == 1.0
+        assert 1.0 <= retry["body"]["delay_seconds"] <= 1.2  # ADR 0023: up to 20 % deterministic jitter
         assert retry["body"]["failed_turn_id"] == view["turns"][0]["id"]
         assert retry["body"]["failure"]["retryable"] is True
         assert retry["body"]["failure"]["error_type"] == "MODEL_CALL_FAILED"
@@ -385,7 +385,8 @@ async def test_a_persistent_retryable_failure_stops_after_the_bounded_automatic_
         assert ni["details"]["turn_id"] == view["turns"][-1]["id"]
         # Each automatic retry was on the ledger before its backoff, which doubles (base 1 s here).
         retries = [e["body"] for e in run.events("investigation.turn_retry_scheduled")]
-        assert [(r["attempt"], r["delay_seconds"]) for r in retries] == [(1, 1.0), (2, 2.0)]
+        assert [r["attempt"] for r in retries] == [1, 2]  # base 1 s, doubling, up to 20 % jitter (ADR 0023)
+        assert 1.0 <= retries[0]["delay_seconds"] <= 1.2 and 2.0 <= retries[1]["delay_seconds"] <= 2.4
         assert [r["failed_turn_id"] for r in retries] == [t["id"] for t in view["turns"][:-1]]
         # Every failed turn says why on its turn.completed event; three Temporal attempts of decide per turn.
         completed = run.events("turn.completed")

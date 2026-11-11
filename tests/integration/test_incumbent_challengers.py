@@ -508,8 +508,6 @@ def test_another_investigations_frozen_plan_does_not_freeze_this_one(scene):
     assert scene.lock(inv, b)["incumbent"]["version"] == 2
 
 
-@pytest.mark.xfail(strict=True, reason="check_note refuses any lock naming a job once the selection is frozen, even a "
-                   "re-lock of the incumbent itself; ADR 0023 says only a lock that changes the incumbent is refused")
 def test_relocking_the_incumbent_itself_after_the_freeze_changes_nothing_and_is_not_refused(scene):
     inv = scene.investigation()
     a = scene.accuracy_job(inv, 0.7)

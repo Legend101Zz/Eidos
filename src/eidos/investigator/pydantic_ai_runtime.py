@@ -625,6 +625,7 @@ class PydanticAIRuntime:
         # a runaway reply, which carries no answer; its tokens and its request still count.
         billed: list = []
         reask_pending = False  # counted only once the re-ask request is actually made
+        fresh_pending: dict[str, Any] | None = None  # likewise for a fresh-state repair (ADR 0023)
         runaway_pending = False  # likewise for the runaway re-ask
         while True:
             used = len(billed)
@@ -641,6 +642,10 @@ class PydanticAIRuntime:
             runaway_now, runaway_pending = runaway_pending, False
             if runaway_now:
                 report["runaway_reasks"] += 1
+            fresh_now, fresh_pending = fresh_pending, None
+            if fresh_now is not None:
+                report["fresh_state_repairs"] += 1
+                report["fresh_state"].append(fresh_now)
             with capture_run_messages() as captured:
                 try:
                     run = agent.run_sync(
@@ -651,6 +656,9 @@ class PydanticAIRuntime:
                 except EnvelopeRefused as exc:  # not started: nothing billed, a re-ask that was not sent is not counted
                     report["reasks"] -= int(reask_now)
                     report["runaway_reasks"] -= int(runaway_now)
+                    if fresh_now is not None:  # a fresh-state repair that was not sent is not counted
+                        report["fresh_state_repairs"] -= 1
+                        report["fresh_state"].pop()
                     outcome = "reasoning-runaway" if runaway_now else (
                         "structured-output-invalid" if report["errors"] and not report["valid"]
                         else "request-budget-exhausted")
@@ -695,8 +703,7 @@ class PydanticAIRuntime:
                 if (report["reasks"] >= 1 or report["fresh_state_repairs"]) and fresh_left > 0 and used < max_requests:
                     # ADR 0023: still malformed after the re-ask: ask again from a fresh state (bounded, recorded)
                     fresh_left -= 1
-                    report["fresh_state_repairs"] += 1
-                    report["fresh_state"].append({"request": used + 1, "after_error": msg[:300]})
+                    fresh_pending = {"request": used + 1, "after_error": msg[:300]}  # counted once it is sent
                     history = []
                     message = fresh_message + "\n\n" + FRESH_STATE_NOTE.format(error=msg[:300])
                     continue
@@ -937,7 +944,7 @@ class PydanticAIRuntime:
         the original prompt and a note of the error, no earlier replies, no read tools, within the requests left. A
         reply still invalid ends in the bounded no-effect ``structured-output-invalid``; every request is billed."""
         from pydantic_ai import capture_run_messages
-        from pydantic_ai.exceptions import UnexpectedModelBehavior
+        from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
         from pydantic_ai.messages import ModelResponse
         from pydantic_ai.usage import UsageLimits
         billed = [m for m in messages if isinstance(m, ModelResponse)]
@@ -967,12 +974,13 @@ class PydanticAIRuntime:
                                             self.config.get("output_retries", 1)))), model_settings=settings or None)
             except EnvelopeRefused as exc:  # not started: nothing billed
                 report["fresh_state_repairs"] = 0
+                report["fresh_state"] = []
                 return bounded(f"decision token envelope: {exc}", messages)
             except (DecisionAborted, ModelCallFailed):
                 raise
             except Exception as exc:  # noqa: BLE001
                 billed.extend(m for m in fresh if isinstance(m, ModelResponse) and m not in billed)
-                if isinstance(exc, UnexpectedModelBehavior):
+                if isinstance(exc, (UnexpectedModelBehavior, UsageLimitExceeded)):  # invalid within the requests left
                     report["errors"].append(str(exc)[:300])
                     return bounded(f"structured output invalid after a fresh-state repair: {str(exc)[:200]}",
                                    messages + list(fresh))
