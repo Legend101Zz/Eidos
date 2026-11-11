@@ -119,7 +119,7 @@ def _request(**over):
     req = {
         "claim": {"kind": "improves", "statement": "s", "scope": {"builder": "OrderedSwitchNet"}},
         "success_rule_id": "early-repair",
-        "assessor": {"ref": "eidos.assessors.paired-ci@1.0.0"},
+        "assessor": {"ref": "eidos.assessors.paired-ci@1.2.0"},
         "seeds": [1, 2, 3],
         "evaluation": {"split": "test", "data_seed": 9, "pairs": 100},
         "baseline": {},

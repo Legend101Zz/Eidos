@@ -8,6 +8,42 @@ Reasoning models through OpenAI-compatible endpoints (ADR 0016). Measured with M
 its OpenAI-compatible endpoint at 16384 output tokens and a 300 s request timeout: `json` 8/8 (was 5/8 at the 4096
 cap and 6/8 at 16384 tokens / 120 s), `tool` 6/8 (was 4/8); `docs/release/evidence/g4-111-minimax-m31flash-*.json`.
 
+### Ordinary classification accuracy evidence path (ADR 0018)
+- **New built-in component `eidos.task.paired-classification-report@1.0.0`** (lab environment, installed by
+  `lab project create`). Takes the baseline's and the candidate's held-out predictions and the labels (JSON, JSONL,
+  CSV or NPZ), aligns them by example id and fails closed on any id mismatch, duplicate, or null, boolean,
+  non-integral or non-finite value. Emits one arm's rows `{example_id, cluster, role, label, prediction}` in slot
+  `predictions`; config `role` and `cluster` (the training seed).
+- **`eidos.assessors.paired-ci@1.2.0`: two-way (training seed x held-out example) interval** (ADR 0018 section 6,
+  review R4). Every seed is scored on the same held-out examples, so the seed-only interval of 1.0.0 and 1.1.0
+  omitted example variance: three seeds improving on the same 3 of 100 examples gave CI [0.03, 0.03] and passed
+  `min_effect` 0.02. 1.2.0 uses variance by seed plus variance by example (Cameron-Gelbach-Miller without subtracting
+  the intersection: conservative, never negative) with a Student t critical value on Welch-Satterthwaite degrees of
+  freedom, for the target and the guardrails and for both metric families; that example is now `inconclusive`
+  (CI [-0.0040, 0.0640]). One seed without `cluster_by`: the plain paired t-interval over examples; with
+  `cluster_by` one seed stays unbounded. The pre-existing path has the same flaw: 1.0.0 with `reference-accuracy`
+  on `main`'s train/evaluate template (shared `data_seed` pairs) passes the same example; its recorded results are
+  not changed (`evaluate_success_rule` keeps the original interval by default; new `interval=` argument), and
+  plans pinned to 1.0.0 with several seeds should be re-assessed with 1.2.0. The evaluation records `interval`;
+  the effect records `method`, `seeds`, `examples`, `variance_components`, `df`. New dependency-free Student t
+  quantile in `eidos.domain.stats`. Paired-report author controls were resized (not weakened) for the
+  conservative interval. Regression tests: `tests/unit/test_two_way_interval.py`; coverage simulation:
+  `scripts/research/two_way_interval_coverage.py` (two-way 0.945-0.993 vs seed-only 0.53-0.88 at nominal 0.95).
+- **`eidos.assessors.paired-ci@1.1.0`: metric `accuracy`** (superseded by 1.2.0 before release) (identity `classification-report/1:accuracy`, any number
+  of classes). The assessor recomputes correctness from label and prediction; it refuses unmatched example ids
+  between the arms, label disagreements, a row role that differs from its arm, rows from several seeds under a
+  plan without `cluster_by`, and a rule whose guardrails need a different row family. An arm with a failed report
+  job is assessed (inconclusive, conformance incomplete) rather than refused, so the plan always gets a verdict. `both-correct-rate` and
+  `reference-accuracy` are unchanged. Three new literal author controls (planted gain, identical arms, small noisy
+  sample → inconclusive) and four fixtures. Previous release: 1.0.0 (references updated).
+- **`eidos.templates.improves-under-budget@1.2.0`: `classification` request.** From two training jobs' held-out
+  predictions (per training seed) and a labels artifact to a draft with one report job per arm and seed. Several
+  seeds → `cluster_by: "seed"`; one seed → `cluster_by: null`, disclosed as "seed variance not estimated" and listed
+  as an unresolved alternative. Unpaired seeds are refused. The catalog summaries and method cards describe the
+  path; `docs/release/SUPPORTED.md` lists the assessable metrics.
+- `components/build_assessor_fixtures.py` regenerates the assessor fixtures and control suite again (it had drifted
+  from the committed fixtures' `required_isolation`).
+
 ### Post-pilot robustness (ADR 0017)
 - **MCP arguments re-encoded by a client or provider.** The MCP adapter undoes exactly two unambiguous shapes, only
   where a schema it holds says what the value must be (the tool's input schema; for `config`, the release's

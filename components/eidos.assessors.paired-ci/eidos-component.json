@@ -1,6 +1,6 @@
 {
   "id": "eidos.assessors.paired-ci",
-  "release": "1.0.0",
+  "release": "1.2.0",
   "implements": "protocol-assessment/1",
   "kind": "assessment",
   "entry": "paired_ci.assess:run",
@@ -31,7 +31,11 @@
     "fixtures/planted-effect.json",
     "fixtures/null-effect.json",
     "fixtures/duplicate-unit.json",
-    "fixtures/unknown-arm.json"
+    "fixtures/unknown-arm.json",
+    "fixtures/accuracy-planted.json",
+    "fixtures/accuracy-null.json",
+    "fixtures/accuracy-id-mismatch.json",
+    "fixtures/accuracy-one-seed.json"
   ],
   "receipt": [
     "outcome",
@@ -54,6 +58,12 @@
       "numerator": "reference correct",
       "denominator": "pairs",
       "unit": "pair"
+    },
+    "accuracy": {
+      "identity": "classification-report/1:accuracy",
+      "numerator": "examples whose prediction equals the label (recomputed from each classification row)",
+      "denominator": "held-out examples",
+      "unit": "example"
     }
   },
   "cost": {
@@ -64,5 +74,6 @@
     "eidos-lab"
   ],
   "license": "Apache-2.0",
-  "control_suite": "controls/suite.json"
+  "control_suite": "controls/suite.json",
+  "summary": "Independent protocol assessor: paired difference under the frozen plan's charter rule, with a conservative two-way (training seed x held-out example) interval and a Student t critical value; one seed reduces to the plain paired t-interval over examples. Metrics: paired-report/1 both-correct-rate and reference-accuracy (reference/variant pair rows), and classification-report/1:accuracy (ordinary multiclass accuracy from eidos.task.paired-classification-report rows; strict example-id match across arms)."
 }

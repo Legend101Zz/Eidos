@@ -187,7 +187,9 @@ TOOLS: tuple[Tool, ...] = (
          grant="propose"),
     Tool("draft_evidence_plan", "command", "draft_evidence_plan",
          "Compile a draft evidence plan against the pinned charter; success rules come from the charter, "
-         "any threshold in the draft is rejected (THRESHOLD_OVERRIDE).",
+         "any threshold in the draft is rejected (THRESHOLD_OVERRIDE). For ordinary (multiclass) accuracy from "
+         "existing held-out predictions, build the draft with eidos.templates.improves-under-budget@1.2.0's "
+         "'classification' request (see its describe_component card).",
          (P("claim_id", "s", required=True), P("charter_id", "s", required=True),
           P("template_ref", "s", required=True), P("draft", "o"), P("draft_artifact_id", "s"),
           P("claim_revision", "i"), P("charter_revision", "i"), P("plan_id", "s"), P("investigation_id", "s")),

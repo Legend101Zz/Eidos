@@ -79,6 +79,156 @@ def paired_difference(
             "confidence": confidence, "se": se}
 
 
+def _log_beta(a: float, b: float) -> float:
+    return math.lgamma(a) + math.lgamma(b) - math.lgamma(a + b)
+
+
+def _beta_cf(a: float, b: float, x: float) -> float:
+    """Continued fraction for the regularized incomplete beta (modified Lentz)."""
+    tiny, qab, qap, qam = 1e-300, a + b, a + 1.0, a - 1.0
+    c, d = 1.0, 1.0 - qab * x / qap
+    d = 1.0 / (d if abs(d) > tiny else tiny)
+    h = d
+    for m in range(1, 1000):
+        m2 = 2 * m
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        d = 1.0 / (d if abs(d) > tiny else tiny)
+        c = 1.0 + aa / c if abs(1.0 + aa / c) > tiny else tiny
+        h *= d * c
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        d = 1.0 / (d if abs(d) > tiny else tiny)
+        c = 1.0 + aa / c if abs(1.0 + aa / c) > tiny else tiny
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < 1e-15:
+            break
+    return h
+
+
+def regularized_beta(x: float, a: float, b: float) -> float:
+    """I_x(a, b) for a, b > 0 and 0 <= x <= 1."""
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    front = math.exp(a * math.log(x) + b * math.log1p(-x) - _log_beta(a, b))
+    if x < (a + 1.0) / (a + b + 2.0):
+        return front * _beta_cf(a, b, x) / a
+    return 1.0 - math.exp(b * math.log1p(-x) + a * math.log(x) - _log_beta(a, b)) * _beta_cf(b, a, 1.0 - x) / b
+
+
+def student_t_cdf(t: float, df: float) -> float:
+    if math.isinf(df):
+        return 0.5 * math.erfc(-t / math.sqrt(2.0))
+    tail = 0.5 * regularized_beta(df / (df + t * t), df / 2.0, 0.5)
+    return 1.0 - tail if t >= 0 else tail
+
+
+def student_t_quantile(p: float, df: float) -> float:
+    """Inverse Student t CDF for real df > 0 (df = inf gives the normal quantile); bisection to 1e-12."""
+    if not 0 < p < 1:
+        raise ValueError("p must be in (0, 1)")
+    if not df > 0:
+        raise ValueError("df must be > 0")
+    if math.isinf(df) or df > 1e7:
+        return normal_quantile(p)
+    if p < 0.5:
+        return -student_t_quantile(1.0 - p, df)
+    lo, hi = 0.0, max(1.0, normal_quantile(p))
+    while student_t_cdf(hi, df) < p:
+        lo, hi = hi, hi * 2.0
+        if hi > 1e12:
+            return math.inf
+    for _ in range(200):
+        mid = (lo + hi) / 2.0
+        if student_t_cdf(mid, df) < p:
+            lo = mid
+        else:
+            hi = mid
+        if hi - lo <= 1e-12 * max(1.0, hi):
+            break
+    return (lo + hi) / 2.0
+
+
+def _cluster_sum_variance(resid: Sequence[float], groups: Sequence[str]) -> tuple[float, int]:
+    """One-way cluster-robust variance of the grand mean, with the G/(G-1) small-sample factor."""
+    n = len(resid)
+    sums: dict[str, float] = defaultdict(float)
+    for r, g in zip(resid, groups, strict=True):
+        sums[g] += r
+    count = len(sums)
+    if count < 2:
+        return float("nan"), count
+    return (count / (count - 1)) * sum(s * s for s in sums.values()) / (n * n), count
+
+
+TWO_WAY_METHOD = "two-way-seed-example-t/1"
+
+
+def two_way_paired_difference(
+    diffs: Sequence[float], seeds: Sequence[str], examples: Sequence[str], confidence: float = 0.95,
+    *, require_seed_variance: bool = False,
+) -> dict:
+    """Mean paired difference with an interval for a crossed (training seed x held-out example) design.
+
+    ``diffs[i]`` is candidate minus baseline for the unit scored by training seed ``seeds[i]`` on held-out
+    example ``examples[i]``. Every seed scores the same held-out examples, so seed clusters are correlated
+    through the examples and a seed-only clustered interval understates the variance (ADR 0018, F3b).
+
+    Variance: the two-way cluster-robust estimator of Cameron, Gelbach and Miller (2011) *without*
+    subtracting the seed-by-example intersection term, i.e. ``V = V_seed + V_example`` where each term is
+    the one-way cluster-robust variance of the grand mean (with the G/(G-1) factor). For a balanced design
+    these are ``var(seed means)/S`` and ``var(example means over seeds)/N``. Under the additive model
+    ``d = mu + a_seed + b_example + e`` their expectation is ``sigma_a^2/S + sigma_b^2/N + 2 sigma_e^2/(SN)``,
+    the true variance plus ``sigma_e^2/(SN) >= 0``: conservative, never negative, and never smaller than
+    either one-way variance. Critical value: Student t with Welch-Satterthwaite degrees of freedom from the
+    components (S-1 and N-1), so few seeds widen the interval.
+
+    One seed: training-seed variance cannot be estimated (``seed_variance_estimated`` is false) and the
+    interval reduces to the plain paired t-interval over examples, unless ``require_seed_variance`` (the
+    plan declares ``cluster_by``, i.e. a conclusion across training seeds), when it is unbounded. Fewer than
+    two examples: unbounded.
+    """
+    n = len(diffs)
+    if n == 0:
+        raise ValueError("no paired units")
+    mean = sum(diffs) / n
+    resid = [d - mean for d in diffs]
+    v_seed, n_seeds = _cluster_sum_variance(resid, seeds)
+    v_example, n_examples = _cluster_sum_variance(resid, examples)
+    seed_estimated = n_seeds >= 2
+    terms: list[tuple[float, int]] = []
+    if seed_estimated:
+        terms.append((v_seed, n_seeds - 1))
+    if n_examples >= 2:
+        terms.append((v_example, n_examples - 1))
+    else:
+        v_example = float("nan")
+    var = float("nan") if n_examples < 2 or (require_seed_variance and not seed_estimated) else sum(
+        v for v, _ in terms)
+    df: float = float("nan")
+    if var == var:
+        denom = sum(v * v / k for v, k in terms)
+        df = var * var / denom if denom > 0 else math.inf
+    if var != var or var < 0:
+        se, lo, hi = float("nan"), float("-inf"), float("inf")
+    else:
+        se = math.sqrt(var)
+        q = student_t_quantile(0.5 + confidence / 2, df) if se > 0 else 0.0
+        lo, hi = mean - q * se, mean + q * se
+    return {
+        "estimate": mean, "ci_low": lo, "ci_high": hi, "units": n,
+        "independent_units": min(n_seeds, n_examples) if seed_estimated else n_examples,
+        "confidence": confidence, "se": se, "method": TWO_WAY_METHOD,
+        "seeds": n_seeds, "examples": n_examples, "seed_variance_estimated": seed_estimated,
+        "variance_components": {"seed": v_seed if seed_estimated else None,
+                                "example": v_example if v_example == v_example else None},
+        "df": None if df != df or math.isinf(df) else df,
+    }
+
+
 def proportion(values: Iterable[int]) -> tuple[int, int]:
     vals = list(values)
     return sum(vals), len(vals)
