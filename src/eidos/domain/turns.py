@@ -65,6 +65,10 @@ _REF = re.compile(REF_PATTERN)
 # Calls that admit a job. They queue sequentially under the one-CPU policy (a decision may ask for concurrency only under
 # an explicit resource policy the project allows), and a reference to one of them means "after it has succeeded".
 JOB_TOOLS = ("run_component", "launch_trial", "launch_branch", "author_component")
+# Calls that admit several evidence-arm jobs over time. ADR 0022 addendum R11: they use the same CPU allowance as JOB_TOOLS
+# and hold it until the plan's last job has ended; ``plan_id`` is known at launch, so a reference to one does not wait.
+PLAN_TOOLS = ("launch_evidence_plan",)
+COMPUTE_TOOLS = (*JOB_TOOLS, *PLAN_TOOLS)
 # What each tool's receipt can be asked for. Jobs also expose outputs.<slot> once they have succeeded.
 RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     "run_component": ("job_id", "trial_id", "lock_digest", "component"),

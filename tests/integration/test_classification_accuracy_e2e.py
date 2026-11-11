@@ -247,8 +247,20 @@ def _predictions(flow: Flow, artifact_id: str) -> list[dict]:
     return json.loads(Path(flow.lab.store.path_for(art["digest"])).read_text())
 
 
-def _run_plan_jobs(flow: Flow, jobs: dict[str, list[str]]) -> dict[str, dict]:
-    return {job_id: flow.run(job_id) for arm in ("baseline", "candidate") for job_id in jobs[arm]}
+def _plan_jobs(flow: Flow, plan_id: str) -> dict[str, list[str]]:
+    return flow.lab.q(flow.lab.admin, "get_record", {"kind": "evidence_plan", "id": plan_id},
+                      project=flow.pid)["body"]["launch"]["jobs"]
+
+
+def _run_plan_jobs(flow: Flow, plan_id: str) -> dict[str, dict]:
+    """Run a launched plan's jobs in the order the lab admits them: one at a time, each after the previous one ended."""
+    finished: dict[str, dict] = {}
+    while True:
+        jobs = _plan_jobs(flow, plan_id)
+        waiting = [j for arm in ("baseline", "candidate") for j in jobs.get(arm, []) if j not in finished]
+        if not waiting:
+            return finished
+        finished[waiting[0]] = flow.run(waiting[0])
 
 
 # -----------------------------------------------------------------------------------------------------------
@@ -269,9 +281,11 @@ def test_two_training_jobs_and_heldout_predictions_reach_an_accuracy_verdict(lab
         assert spec["component"] == f"{REPORT}@1.0.0" and spec["config"] == {"role": arm, "cluster": SEED}
         assert spec["inputs"] == {"baseline": baseline, "candidate": candidate, "labels": labels}
     plan_id, jobs = flow.freeze_and_launch(made["artifact_id"])
-    assert {arm: len(ids) for arm, ids in jobs.items()} == {"baseline": 1, "candidate": 1}
+    assert {arm: len(ids) for arm, ids in jobs.items()} == {"baseline": 1}  # one job at a time (ADR 0022 addendum R11)
 
-    finished = _run_plan_jobs(flow, jobs)
+    finished = _run_plan_jobs(flow, plan_id)
+    jobs = _plan_jobs(flow, plan_id)
+    assert {arm: len(ids) for arm, ids in jobs.items()} == {"baseline": 1, "candidate": 1}
     for arm, (job_id,) in jobs.items():
         done = finished[job_id]
         assert done["status"] == "succeeded", done.get("terminal")
@@ -306,7 +320,8 @@ def test_a_candidate_missing_one_heldout_id_fails_closed_and_cannot_pass(lab, tm
 
     made = flow.draft(baseline, short_candidate, labels)  # planning cannot see the ids; the report jobs do
     plan_id, jobs = flow.freeze_and_launch(made["artifact_id"])
-    finished = _run_plan_jobs(flow, jobs)
+    finished = _run_plan_jobs(flow, plan_id)
+    jobs = _plan_jobs(flow, plan_id)
     for arm, (job_id,) in jobs.items():  # each arm checks the whole three-way alignment, so both refuse
         done = finished[job_id]
         assert done["status"] == "failed", (arm, done.get("terminal"))
@@ -337,7 +352,7 @@ def test_equal_recipes_have_zero_gain_and_the_protocol_fails(lab, tmp_path):
     labels = flow.artifact(flow.labels(), "class-labels/1")
     made = flow.draft(baseline, candidate, labels)
     plan_id, jobs = flow.freeze_and_launch(made["artifact_id"])
-    for done in _run_plan_jobs(flow, jobs).values():
+    for done in _run_plan_jobs(flow, plan_id).values():
         assert done["status"] == "succeeded", done.get("terminal")
     assert flow.plan_status(plan_id) == "awaiting-assessment"
 

@@ -42,6 +42,7 @@
     "action": "wait_for_jobs",
     "summary": "scores arrive when the batch finishes"
   },
+  "hypotheses": [],
   "purpose": "open-search",
   "rationale": "author, train, then score the checkpoint"
 }

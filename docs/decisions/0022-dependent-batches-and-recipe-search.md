@@ -77,3 +77,38 @@ toolkit has the same component, and is installed for arm 4 alongside `eidos.proj
 - A seconds budget ends the search by wall clock, so a re-run with only a seconds budget need not evaluate the same
   recipes.
 - No live measurement yet of search density in a pilot; the expected effect is a hypothesis.
+
+## Addendum R11 (review of 0a75804)
+
+**Evidence plans and the CPU allowance.** A launched plan was outside the batch's scheduling and admitted every ready arm
+at once, so a decision could run CPU work in parallel under the default one-CPU policy. Now:
+
+- `launch_evidence_plan` admits within `max_concurrent_jobs` (default 1, more only if the project's resource policy
+  allows it); the plan's other steps are admitted in the transaction that ends each job. A direct launch, through the
+  CLI or MCP, is under the same limit. Operators who want parallel arms set the project policy and ask for it.
+- A decision's plan starts only when the batch has no running job and holds the decision's whole allowance until the last
+  of its jobs has ended, so compute calls after it wait. The executor passes the decision's checked allowance to the launch
+  and ignores any value in the model's arguments.
+- Because the next step is admitted in the transaction that ends the previous one, "no active job for this plan" is an
+  exact test that the plan has finished. The batch uses it through `list_jobs {plan_id, statuses}`, so polling does not read
+  the sensitive plan record or log an exposure.
+- Serial admission must not outrun an operator's control, since arms not yet admitted cannot be cancelled like admitted
+  ones. A paused investigation admits nothing until it resumes (`resume_investigation` then advances its plans). A stop,
+  or a question change with a stopping policy, blocks the plan's unadmitted steps with the reason, and any running jobs
+  follow the control's own policy. The plan then completes as incomplete, as cancelled arms made it complete before.
+- A reference to a launched plan's `plan_id` does not wait: that value is known at launch.
+- An assessor run after a plan's jobs is outside the batch's allowance, as it was.
+
+**Sweep execution.** Each evaluation is a new session and process group, stopped and reaped as a group on every exit path.
+SIGTERM to the worker stops the active group first, because the launcher's signal to the worker's group no longer reaches
+it. A SIGKILL of the worker cannot be intercepted, so the group would outlive the worker on the same-user profile; the
+sealed profile's PID namespace ends with the worker. Evaluations get an allowlisted environment and their own `HOME` and
+`TMPDIR`. Failure text is redacted (the sweep's non-inherited environment values, then common credential shapes) before
+it is cut to a tail. Without a source bundle, `command.copy` is required, and held-out-named files are refused there and
+in source bundles.
+
+**Decision schema.** `DecisionControl` used to ignore `scope`, `scope_text` and `bounded_outcome`, so the published schema
+could not carry a structured answer. (The review's "rejected" is not what happened: the model ignores unknown fields, and
+dropping them was the defect.) They are now carried. `to_proposal` keeps a scope that is not a JSON object as `scope_text`,
+so `scope` is always an object. Decision fixtures are emitted from `to_proposal` and `no_effect_proposal`.
+

@@ -17,6 +17,21 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
   rule. It records every recipe in a ranked evidence table and the best recipe. Exploratory; no claim, no test data.
 - New wire schema `decision-proposal` and fixtures. Tool guide updated.
 
+### Review fixes E3b (review R11 of 0a75804, ADR 0022 addendum R11)
+- **Evidence plans use the one-CPU allowance.** `launch_evidence_plan` admits one job at a time, or the
+  `max_concurrent_jobs` it asks for if the project's resource policy allows that, and the next step is admitted when a
+  job ends. In a decision, a plan waits for an idle batch and holds its whole allowance until its last job has ended.
+  The launch result's `jobs` now lists only the jobs admitted so far.
+- **Sweep evaluations are process groups.** Each is stopped and reaped as a whole group on a timeout, a stop request,
+  cancellation, or a normal exit that left workers behind.
+- **Sweep evaluations cannot publish inherited credentials.** They run in a scrubbed environment, and failure text is
+  redacted before it reaches the table.
+- **The sweep copies no project file implicitly.** Without a source bundle, `command.copy` must list the files, and files
+  named after a held-out split are refused, there and in a source bundle.
+- **`DecisionControl` carries `scope`, `scope_text` and `bounded_outcome`**, which the runtime writes and the published
+  schema dropped. A scope the model wrote that is not a JSON object is kept as `scope_text`. The decision fixtures now
+  come from the runtime's own conversion.
+
 ## Unreleased / 1.1.1
 
 Reasoning models through OpenAI-compatible endpoints (ADR 0016). Measured with MiniMax-M3.1-Flash through

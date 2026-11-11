@@ -1,0 +1,14 @@
+{
+  "calls": [],
+  "control": {
+    "action": "conclude",
+    "scope": {
+      "answer": "B",
+      "model": "candidate"
+    },
+    "summary": "the answer is B"
+  },
+  "hypotheses": [],
+  "purpose": "open-search",
+  "rationale": "the evidence answers the question"
+}

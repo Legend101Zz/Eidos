@@ -70,7 +70,8 @@ Batches: calls run in order, and any argument of a later call can be {"$ref": "c
   succeeded. If it fails, the calls that need it are not run and are recorded DEPENDENCY_FAILED; independent calls still
   run. References name earlier calls only; component_ref, environment and purpose stay literal. Unknown references are
   refused before anything runs. Jobs of one decision run one at a time (one CPU); several at once need "resource_policy":
-  {"max_concurrent_jobs": n} and a project resource policy that allows n.
+  {"max_concurrent_jobs": n} and a project resource policy that allows n. launch_evidence_plan uses the same allowance:
+  its jobs run one at a time, and the calls after it that start compute wait until its last job has ended.
 Search: eidos.search.recipe-sweep runs one project command over a parameter space (grid, or random with a seed) on
   visible validation, with seeds/folds, a budget (max_trials or max_seconds) and a stopping rule, and returns a ranked
   evidence_table and best_recipe. It is exploratory: no claim, no test data. Lock the winner before confirming it.

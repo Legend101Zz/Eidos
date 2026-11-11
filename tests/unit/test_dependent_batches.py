@@ -381,7 +381,8 @@ class FakeLab:
         if name == "get_job":
             return self._poll(params["job_id"])
         if name == "list_jobs":
-            return [copy.deepcopy(j) for j in self.jobs.values() if j["status"] in params["statuses"]]
+            return [copy.deepcopy(j) for j in self.jobs.values() if j["status"] in params["statuses"]
+                    and params.get("plan_id") in (None, j.get("plan_id"))]
         if name == "get_record":
             assert params["kind"] == "investigation"
             return {"id": params["id"], "status": self.investigation_status}
@@ -423,6 +424,11 @@ class FakeLab:
         self.effects.append({"name": name, "args": copy.deepcopy(payload), "key": key})
         n = len(self.effects)
         out: dict[str, Any] = {}
+        if name == "launch_evidence_plan":
+            plan_id = payload["plan_id"]
+            job_id = f"plan-job-{len(self.jobs) + 1}"
+            self.jobs[job_id] = {"id": job_id, "status": "running", "outputs": [], "terminal": None, "plan_id": plan_id}
+            return {"plan_id": plan_id, "jobs": {"baseline": [job_id]}, "pending_steps": 1}
         if name in JOB_COMMANDS:
             job_id = f"job-{len(self.jobs) + 1}"
             self.jobs[job_id] = {"id": job_id, "status": "running", "outputs": [], "terminal": None}
@@ -780,6 +786,81 @@ def test_a_pause_while_waiting_is_a_stop_too():
     out = execute(activities(lab, wait_slice=10.0))
     assert out["stopped"] == "investigation-paused"
     assert lab.receipts[-1]["error"]["details"] == {"reason": "investigation-paused"}
+
+
+# -- evidence plans use the same CPU allowance (ADR 0022 addendum R11) ----------------------------------------------------
+def launch_plan(**args: Any) -> dict:
+    return {"tool": "launch_evidence_plan", "args": {"plan_id": "plan-1", **args}}
+
+
+def test_a_plan_waits_for_a_running_job_of_the_batch():
+    lab = FakeLab([train(), launch_plan()])
+    acts = activities(lab)
+    out = execute(acts)
+    assert out["pending"] is True and out["next_call"] == 1
+    assert lab.executed("launch_evidence_plan") == []
+    lab.finish("job-1")
+    assert "pending" not in execute(acts, continuation=out["continuation"])
+    assert lab.executed("launch_evidence_plan")[0]["args"]["max_concurrent_jobs"] == 1
+
+
+def test_compute_after_a_plan_waits_for_the_plans_last_job():
+    lab = FakeLab([launch_plan(), train()])
+    acts = activities(lab)
+    out = execute(acts)
+    assert out["pending"] is True and out["next_call"] == 1 and lab.executed("run_component") == []
+    # the plan's next step takes over in the same transaction that ended the previous one: still the plan's allowance
+    lab.jobs["plan-job-1"]["status"] = "succeeded"
+    lab.jobs["plan-job-2"] = {"id": "plan-job-2", "status": "running", "outputs": [], "terminal": None, "plan_id": "plan-1"}
+    assert execute(acts, continuation=1)["pending"] is True and lab.executed("run_component") == []
+    lab.jobs["plan-job-2"]["status"] = "failed"  # a failed plan job ends the plan's claim like any other end
+    assert "pending" not in execute(acts, continuation=2)
+    assert len(lab.executed("run_component")) == 1
+
+
+def test_a_plan_is_not_a_job_dependency_and_its_plan_id_needs_no_wait():
+    lab = FakeLab([launch_plan(), note(ref(0, "plan_id"))])
+    out = execute(activities(lab, wait_slice=10.0))
+    assert [s["ok"] for s in out["summary"]] == [True, True] and lab.executed("record_note")[0]["args"]["text"] == "plan-1"
+
+
+def test_a_plan_has_no_output_slots_to_reference():
+    with pytest.raises(Invalid, match="names no result"):
+        accept([launch_plan(), train(x=ref(0, "outputs.table"))])
+
+
+@pytest.mark.parametrize("policy, launched", [(None, 1), ({"max_concurrent_jobs": 2}, 2)])
+def test_a_plan_launch_carries_the_decisions_allowance_not_the_models_own_argument(policy, launched):
+    lab = FakeLab([launch_plan(max_concurrent_jobs=99)], resource_policy=policy)
+    assert "pending" not in execute(activities(lab, wait_slice=10.0))
+    assert lab.executed("launch_evidence_plan")[0]["args"]["max_concurrent_jobs"] == launched
+
+
+def test_under_concurrency_a_plan_still_starts_only_on_an_idle_batch_and_holds_it():
+    lab = FakeLab([train(), launch_plan(), train()], resource_policy={"max_concurrent_jobs": 2})
+    acts = activities(lab)
+    out = execute(acts)
+    assert out["next_call"] == 1 and lab.executed("launch_evidence_plan") == []  # one job of two running: the plan waits
+    lab.finish("job-1")
+    out = execute(acts, continuation=1)
+    assert out["next_call"] == 2 and len(lab.executed("run_component")) == 1  # the plan holds both slots
+    lab.jobs["plan-job-2"]["status"] = "succeeded"
+    assert "pending" not in execute(acts, continuation=2)
+
+
+def test_the_final_slice_names_the_plans_running_jobs():
+    lab = FakeLab([launch_plan(), train()])
+    out = execute(activities(lab), final=True)
+    assert "pending" not in out
+    last = lab.receipts[-1]
+    assert last["code"] == "BATCH_DEADLINE" and last["error"]["details"]["running_jobs"] == ["plan-job-1"]
+
+
+def test_wait_for_jobs_after_a_plan_whose_jobs_all_finished_leaves_something_to_wait_for():
+    lab = FakeLab([launch_plan()], control={"action": "wait_for_jobs"})
+    lab.on_query["list_jobs"] = lambda params: lab.jobs["plan-job-1"].update(status="succeeded")  # done before the wait
+    out = execute(activities(lab, wait_slice=10.0))
+    assert lab.queries["list_jobs"] == 1 and "nothing_outstanding" not in out
 
 
 # -- wait_for_jobs after a batch ----------------------------------------------------------------------------------------

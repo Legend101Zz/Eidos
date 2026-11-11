@@ -4,7 +4,7 @@
  "implements": "recipe-search/1",
  "kind": "artifact-op",
  "entry": "recipe_sweep:run",
- "summary": "Exploratory recipe search on visible validation. Runs a project command once per recipe x seed x fold in a private work dir: config.command.argv (\"python\" or an absolute path first; {work} {out} {seed} {fold} {folds} {params_json} {recipe} and {param.NAME} substituted), which writes numeric metrics to {out}/receipt.json. config.space is grid or random (with a seed), config.seed_policy gives seeds and folds, config.budget needs max_trials or max_seconds, config.stopping is none, patience or target. Outputs: evidence_table (every recipe, ranked, with its metrics) and best_recipe. No claim and no test data; lock the winner before independent confirmation.",
+ "summary": "Exploratory recipe search on visible validation. Runs a project command once per recipe x seed x fold in a private work dir: config.command.argv (\"python\" or an absolute path first; {work} {out} {seed} {fold} {folds} {params_json} {recipe} and {param.NAME} substituted), which writes numeric metrics to {out}/receipt.json. config.space is grid or random (with a seed), config.seed_policy gives seeds and folds, config.budget needs max_trials or max_seconds, config.stopping is none, patience or target. Outputs: evidence_table (every recipe, ranked, with its metrics) and best_recipe. Without a source bundle, config.command.copy must list the project files to copy. Each evaluation runs in a scrubbed environment and its own process group. No claim and no test data; lock the winner before independent confirmation.",
  "scientific_effects": [
   "change-weights"
  ],
@@ -71,7 +71,8 @@
       "type": "array",
       "items": {
        "type": "string"
-      }
+      },
+      "description": "plain file names copied from the project directory into each work dir; required without a source bundle. Nothing is copied implicitly, and a file named after a test or held-out split is refused."
      },
      "metrics_file": {
       "type": "string",

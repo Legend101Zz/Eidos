@@ -8,9 +8,11 @@ import hashlib
 import itertools
 import json
 import math
+import os
 import random
 import re
 import shutil
+import signal
 import statistics
 import subprocess
 import sys
@@ -25,9 +27,32 @@ SUFFIX_BY_MEDIA = {"application/x-npz": ".npz", "application/json": ".json", "te
 MAX_COPY_BYTES = 2 << 20
 MAX_RANDOM_DRAWS = 100000
 TAIL_CHARS = 1500
+TAIL_READ_BYTES = 64 << 10
+# An evaluation that outlives its time gets this long after SIGTERM before SIGKILL (below the launcher's own grace).
+GROUP_GRACE_SECONDS = 2.0
+GROUP_KILL_WAIT_SECONDS = 3.0
+# What an evaluation inherits; everything else (provider keys, cloud credentials, lab tokens) is dropped. HOME and TMPDIR
+# are its own directories, so a tool's default path does not reach the real home directory's credentials.
+ENV_ALLOW = ("PATH", "LANG", "TZ", "PYTHONHASHSEED", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+             "CUDA_VISIBLE_DEVICES", "PYTORCH_ENABLE_MPS_FALLBACK", "PYTORCH_MPS_HIGH_WATERMARK_RATIO")
+ENV_ALLOW_PREFIXES = ("LC_",)
+MIN_SECRET_VALUE_CHARS = 8
+REDACTED = "[REDACTED]"
+_SECRET_PATTERNS = (
+    (re.compile(r"(?i)\b(authorization\s*:\s*)?(bearer|basic)\s+[A-Za-z0-9._~+/=\-]{8,}"), REDACTED),
+    (re.compile(r"(?i)([A-Za-z0-9_.\-]*(?:api[_\-]?key|access[_\-]?key|secret|token|passw(?:or)?d|credential)"
+                r"[A-Za-z0-9_.\-]*[\"']?\s*[:=]\s*)[\"']?[^\s\"',;]+"), r"\1" + REDACTED),
+    (re.compile(r"\b(?:sk|pk|rk|ghp|gho|ghs|ghu|github_pat|glpat|hf|xox[abprs])[-_][A-Za-z0-9_\-]{8,}"), REDACTED),
+    (re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"), REDACTED),
+    (re.compile(r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]*"), REDACTED),
+    (re.compile(r"(?<![A-Za-z0-9_\-])[A-Za-z0-9_\-]{32,}(?![A-Za-z0-9_\-])"), REDACTED),
+    (re.compile(r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{40,}={1,2}"), REDACTED),
+)
+# A source-bundle file may be named after the held-out split only if it is code; data under such a name is refused.
+SOURCE_CODE_SUFFIXES = (".py", ".sh", ".md", ".toml")
 _PARAM = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _PLACEHOLDER = re.compile(r"\{[A-Za-z_][A-Za-z0-9_.]*\}")
-_HELDOUT = re.compile(r"(^|[^a-z0-9])(test|hold[_\- ]?out|held[_\- ]?out)([^a-z0-9]|$)")
+_HELDOUT = re.compile(r"(^|[^a-z0-9])(test(?:set|data|split)?|hold[_\- ]?out|held[_\- ]?out)([^a-z0-9]|$)")
 _CAMEL = re.compile(r"([a-z0-9])([A-Z])")
 
 
@@ -137,6 +162,33 @@ def _argv(command, substitutions):
     return argv
 
 
+def _check_project_files(command, source_files):
+    """What an evaluation's working directory may hold besides the ports: a source bundle, or an explicit list of project
+    files. Nothing is copied implicitly, and neither route can bring in a file named after the held-out split."""
+    if source_files is not None:
+        for rel in source_files:
+            parts = str(rel).replace("\\", "/").split("/")
+            if any(_names_heldout(part) for part in parts) and Path(parts[-1]).suffix not in SOURCE_CODE_SUFFIXES:
+                raise SweepConfigError("source bundle file %r is named after a held-out split; this search uses visible "
+                                       "validation only" % rel)
+        return
+    allow = command.get("copy")
+    if not isinstance(allow, list) or not allow:
+        raise SweepConfigError("without a source bundle, command.copy must list the project files to copy (plain file "
+                               "names): nothing is copied implicitly, so held-out data cannot reach an evaluation")
+    for name in allow:
+        if not isinstance(name, str) or not name or "/" in name or "\\" in name or name.startswith("."):
+            raise SweepConfigError("command.copy entry %r must be a plain file name" % (name,))
+        if _names_heldout(name):
+            raise SweepConfigError("command.copy entry %r is named after a held-out split; this search uses visible "
+                                   "validation only" % name)
+        path = Path.cwd() / name
+        if path.is_symlink() or not path.is_file():
+            raise SweepConfigError("command.copy entry %r is not a regular file in the project directory" % name)
+        if path.stat().st_size > MAX_COPY_BYTES:
+            raise SweepConfigError("command.copy entry %r is larger than %d bytes; pass data through a port" % (name, MAX_COPY_BYTES))
+
+
 def _prepare_work(work, inputs, reader, command, source_files):
     work.mkdir(parents=True)
     if source_files is not None:
@@ -146,14 +198,9 @@ def _prepare_work(work, inputs, reader, command, source_files):
                 raise SweepConfigError("source bundle path escapes the working directory: %r" % rel)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(text)
-    else:
-        allow = command.get("copy")
-        for p in sorted(Path.cwd().iterdir()):
-            if not p.is_file() or p.is_symlink() or p.stat().st_size > MAX_COPY_BYTES:
-                continue
-            if (allow is not None and p.name not in allow) or (allow is None and p.suffix in (".npz", ".pt", ".pth")):
-                continue
-            shutil.copyfile(p, work / p.name)
+    else:  # _check_project_files has vetted these names
+        for name in command["copy"]:
+            shutil.copyfile(Path.cwd() / name, work / name)
     names = dict(command.get("files") or {})
     for port, binding in inputs.items():
         if port == "source":
@@ -162,6 +209,111 @@ def _prepare_work(work, inputs, reader, command, source_files):
         if "/" in name or name.startswith("."):
             raise SweepConfigError("file name for %s must be a plain name" % port)
         shutil.copyfile(reader.path(port), work / name)
+
+
+# -- running a command: a scrubbed environment, its own process group, redacted output -------------------------------
+def _scrubbed_env(home, tmp):
+    env = {k: v for k, v in os.environ.items() if k in ENV_ALLOW or k.startswith(ENV_ALLOW_PREFIXES)}
+    env.update(HOME=str(home), TMPDIR=str(tmp))
+    return env
+
+
+def _secret_values():
+    """Values of the variables an evaluation does not inherit, longest first: none of them may appear in published text."""
+    values = {v for k, v in os.environ.items()
+              if not (k in ENV_ALLOW or k.startswith(ENV_ALLOW_PREFIXES)) and len(v) >= MIN_SECRET_VALUE_CHARS}
+    return sorted(values, key=len, reverse=True)
+
+
+def _redact(text, secrets):
+    for value in secrets:
+        text = text.replace(value, REDACTED)
+    for pattern, replacement in _SECRET_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def _stderr_tail(path, secrets):
+    """The end of a command's stderr, redacted BEFORE it is cut so a secret cannot survive as a fragment."""
+    with open(str(path), "rb") as fh:
+        fh.seek(max(0, os.fstat(fh.fileno()).st_size - TAIL_READ_BYTES))
+        text = fh.read().decode("utf-8", "replace")
+    return _redact(text, secrets)[-TAIL_CHARS:]
+
+
+def _group_alive(pgid):
+    try:
+        os.killpg(pgid, 0)
+    except (ProcessLookupError, PermissionError):  # PermissionError: macOS, when only zombies are left
+        return False
+    return True
+
+
+def _signal_group(pgid, sig):
+    try:
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def _group_gone(proc, within):
+    deadline = time.monotonic() + within
+    while True:
+        proc.poll()  # reaps the group's leader, which would otherwise count as a member until it is waited for
+        if not _group_alive(proc.pid):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.02)
+
+
+def _stop_group(proc):
+    """SIGTERM the whole process group, SIGKILL what outlives the grace period, reap the leader and wait until no member
+    is left. True when the group is gone (a command's workers can then not overlap the next evaluation)."""
+    if _group_gone(proc, 0):
+        return True
+    _signal_group(proc.pid, signal.SIGTERM)
+    if _group_gone(proc, GROUP_GRACE_SECONDS):
+        return True
+    _signal_group(proc.pid, signal.SIGKILL)
+    return _group_gone(proc, GROUP_KILL_WAIT_SECONDS)
+
+
+_active_evaluation = None  # the running command's Popen, for the SIGTERM handler
+
+
+def _on_sigterm(signum, frame):
+    """The launcher cancels a job with SIGTERM to the worker's process group, which an evaluation has left."""
+    if _active_evaluation is not None:
+        _stop_group(_active_evaluation)
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
+def _run_group(argv, work, env, stderr_path, timeout, stop_requested):
+    """Run ``argv`` as the leader of a new process group. Returns (``exited``, ``timeout`` or ``cancelled``, exit code,
+    whether the group is gone); on every path, a normal exit included, the group has been stopped when it returns. Only a
+    member stuck in the kernel, or a zombie nothing reaps (a container without an init), can outlive SIGKILL."""
+    global _active_evaluation
+    deadline = time.monotonic() + timeout
+    with open(str(stderr_path), "wb") as err:  # a file, not a pipe: a straggler holding it open cannot block the wait
+        proc = subprocess.Popen(argv, cwd=str(work), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=err, start_new_session=True)
+    _active_evaluation = proc
+    outcome = "exited"
+    try:
+        while proc.poll() is None:
+            if stop_requested():
+                outcome = "cancelled"
+                break
+            if time.monotonic() >= deadline:
+                outcome = "timeout"
+                break
+            time.sleep(0.02)
+    finally:
+        gone = _stop_group(proc)
+        _active_evaluation = None
+    return outcome, proc.returncode, gone
 
 
 def _metrics(out_dir, metrics_file):
@@ -186,7 +338,7 @@ def _metrics(out_dir, metrics_file):
     return metrics, sorted(nonfinite)
 
 
-def _evaluate(root, index, seed, fold, n_folds, parameters, cfg, inputs, reader, source_files, timeout):
+def _evaluate(root, index, seed, fold, n_folds, parameters, cfg, inputs, reader, source_files, timeout, secrets, stop):
     """One recipe x seed x fold. Returns its record; a failure of the project's command is data, not a sweep failure."""
     command = cfg["command"]
     base = root / ("trial-%04d-s%s-f%d" % (index, seed, fold))
@@ -202,15 +354,22 @@ def _evaluate(root, index, seed, fold, n_folds, parameters, cfg, inputs, reader,
         subst["{recipe}"] = str(recipe_path)
     argv = _argv(command, subst)
     record = {"seed": seed, "fold": fold}
+    home = base / "home"
+    home.mkdir()
+    stderr_path = base / "stderr.log"
     started = time.time()
-    try:
-        proc = subprocess.run(argv, cwd=str(work), capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        record.update(status="timeout", error="stopped after %.1f s" % timeout, seconds=round(time.time() - started, 3))
-        return record
+    outcome, returncode, gone = _run_group(argv, work, _scrubbed_env(home, home), stderr_path, timeout, stop)
     record["seconds"] = round(time.time() - started, 3)
-    if proc.returncode != 0:
-        record.update(status="failed", error="exit %d: %s" % (proc.returncode, proc.stderr[-TAIL_CHARS:]))
+    if not gone:
+        record["process_group_lingering"] = True
+    if outcome == "timeout":
+        record.update(status="timeout", error="stopped after %.1f s" % timeout)
+        return record
+    if outcome == "cancelled":
+        record.update(status="cancelled", error="stopped: the job was asked to stop")
+        return record
+    if returncode != 0:
+        record.update(status="failed", error="exit %d: %s" % (returncode, _stderr_tail(stderr_path, secrets)))
         return record
     try:
         metrics, nonfinite = _metrics(out, command.get("metrics_file", "receipt.json"))
@@ -334,11 +493,17 @@ def run(inputs, config, *, reader, writer, context):
     candidates, space_size = _candidates(config.get("space") or {}, budget)
     seeds, folds = _seeds_folds(config, context)
     source_files = reader.json("source").get("files") if "source" in inputs else None
+    _check_project_files(config["command"], source_files)
+    secrets = _secret_values()
     root = Path(context.scratch_dir) / "sweep"
     root.mkdir(parents=True, exist_ok=True)
     direction, metric = objective["direction"], objective["metric"]
     max_trials, max_seconds = budget.get("max_trials"), budget.get("max_seconds")
     per_eval = float(config["command"].get("timeout_seconds", 600))
+    try:
+        previous_sigterm = signal.signal(signal.SIGTERM, _on_sigterm)
+    except ValueError:  # not the main thread: only the runner's cooperative stop can reach this search
+        previous_sigterm = None
     started = time.time()
     rows, best, stale, stop_reason, index = [], None, 0, "space-exhausted", 0
 
@@ -353,6 +518,9 @@ def run(inputs, config, *, reader, writer, context):
         if left is not None and left <= 0:
             stop_reason = "budget-seconds"
             break
+        if context.stop_requested():
+            stop_reason = "stop-requested"
+            break
         evaluations, timed_out = [], False
         for seed, fold in itertools.product(seeds, range(folds)):
             left = remaining()
@@ -361,7 +529,9 @@ def run(inputs, config, *, reader, writer, context):
                 break
             timeout = per_eval if left is None else min(per_eval, left)
             evaluations.append(_evaluate(root, index, seed, fold, folds, parameters, config, inputs, reader,
-                                         source_files, timeout))
+                                         source_files, timeout, secrets, context.stop_requested))
+            if evaluations[-1]["status"] == "cancelled":
+                break
         if timed_out and not evaluations:
             stop_reason = "budget-seconds"
             break
@@ -371,6 +541,9 @@ def run(inputs, config, *, reader, writer, context):
                        metrics={})
         rows.append(row)
         index += 1
+        if any(e["status"] == "cancelled" for e in evaluations):
+            stop_reason = "stop-requested"
+            break
         if timed_out:
             stop_reason = "budget-seconds"
             break
@@ -388,11 +561,13 @@ def run(inputs, config, *, reader, writer, context):
     else:
         if max_trials is not None and index >= int(max_trials) and (space_size is None or index < space_size):
             stop_reason = "budget-trials"
+    if previous_sigterm is not None:
+        signal.signal(signal.SIGTERM, previous_sigterm)
     ranked = _ranked(rows, direction)
     usable = [r for r in ranked if r["status"] == "ok"]
     winner = usable[0] if usable else None
-    disclaimer = ("Exploratory selection on visible validation. No claim is made and no test data was read. Lock the "
-                  "winner before independent confirmation.")
+    disclaimer = ("Exploratory selection on visible validation. No claim is made and no test data was given to the "
+                  "evaluations. Lock the winner before independent confirmation.")
     table = {"schema": TABLE_SCHEMA, "exploratory": True, "claim": None, "selection_split": "visible-validation",
              "disclaimer": disclaimer, "objective": objective, "space": config.get("space"),
              "seed_policy": {"seeds": seeds, "folds": folds}, "budget": budget, "stopping": stopping,

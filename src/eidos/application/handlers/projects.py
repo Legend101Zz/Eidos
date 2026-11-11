@@ -21,6 +21,22 @@ def get_profile(ctx: Ctx, *, lock: bool = False):
     return ctx.tx.require("profile", profile_id(ctx.project_id), lock=lock)
 
 
+def checked_concurrency(ctx: Ctx, wanted: Any) -> int:
+    """ADR 0022: how many jobs may run at once for work that asked for ``wanted``. One, unless the request is explicit AND
+    the project's policy (``policy.resources.max_concurrent_jobs``, an operator setting) allows that much."""
+    if wanted is None:
+        return 1
+    if not isinstance(wanted, int) or isinstance(wanted, bool) or wanted < 1:
+        raise Invalid("max_concurrent_jobs must be an integer >= 1")
+    if wanted == 1:
+        return 1
+    allowed = int(((get_profile(ctx).body.get("policy") or {}).get("resources") or {}).get("max_concurrent_jobs") or 1)
+    if wanted > allowed:
+        raise Invalid(f"max_concurrent_jobs is {wanted}, but this project's resource policy allows {allowed}: jobs queue "
+                      "sequentially", details={"requested": wanted, "allowed": allowed})
+    return wanted
+
+
 def new_profile_revision(ctx: Ctx, body: dict[str, Any], *, expected_revision: int | None, reason: str):
     rec = ctx.tx.put_record("profile", profile_id(ctx.project_id), ctx.project_id, body, created_by=ctx.principal.id,
                             status="active", expected_revision=expected_revision)

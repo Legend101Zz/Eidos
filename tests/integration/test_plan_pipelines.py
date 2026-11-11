@@ -7,6 +7,8 @@ import uuid
 
 import pytest
 
+from eidos.domain.errors import Invalid
+
 pytestmark = pytest.mark.pg
 
 CHARTER = {
@@ -18,7 +20,7 @@ CHARTER = {
 }
 
 
-def _setup(lab):
+def _setup(lab, *, with_investigation=False):
     from test_command_path import _publish, project
     pid = project(lab)
     lab.cmd(lab.admin, "register_environment", {"name": "lab", "python_executable": sys.executable,
@@ -51,8 +53,11 @@ def _setup(lab):
              "seed_policy": {"seeds": [1, 2]},
              "arms": [{"id": "baseline", "role": "baseline", "runs": runs("baseline")},
                       {"id": "candidate", "role": "candidate", "runs": runs("candidate")}]}
+    inv = (lab.cmd(lab.admin, "start_investigation", {"question": "q"}, project=pid)["result"]["investigation_id"]
+           if with_investigation else None)
     plan = lab.cmd(lab.admin, "draft_evidence_plan", {"claim_id": claim["claim_id"], "charter_id": "charter:pipe",
-                   "template_ref": "p.tmpl@1.0.0", "draft": draft}, project=pid)["result"]
+                   "template_ref": "p.tmpl@1.0.0", "draft": draft, **({"investigation_id": inv} if inv else {})},
+                   project=pid)["result"]
     lab.cmd(lab.admin, "freeze_evidence_plan", {"plan_id": plan["plan_id"]}, project=pid)
     return pid, plan["plan_id"]
 
@@ -73,31 +78,107 @@ def _finish(lab, pid, launcher, job, status="succeeded", slot=None):
             project=pid)
 
 
+def _launch(lab, pid, plan_id):
+    return lab.q(lab.admin, "get_record", {"kind": "evidence_plan", "id": plan_id}, project=pid)["body"]["launch"]
+
+
+def _active(lab, pid, launch):
+    return [k for k, j in launch["steps"].items()
+            if lab.q(lab.admin, "get_job", {"job_id": j}, project=pid)["status"] not in ("succeeded", "failed", "cancelled")]
+
+
 def test_pipeline_admits_steps_in_order_resolves_refs_and_blocks_on_failure(lab):
     pid, plan_id = _setup(lab)
     r = lab.cmd(lab.admin, "launch_evidence_plan", {"plan_id": plan_id}, project=pid)["result"]
-    assert sum(len(v) for v in r["jobs"].values()) == 4 and r["pending_steps"] == 4  # only train steps are roots
+    # ADR 0022 addendum R11: one job at a time under the default policy, the rest admitted as earlier ones end
+    assert r["jobs"] == {"baseline": [r["jobs"]["baseline"][0]]} and r["pending_steps"] == 7 and r["max_concurrent_jobs"] == 1
     launcher = lab.principal(f"l-{pid}", ["launcher"], [pid])
-    plan = lab.q(lab.admin, "get_record", {"kind": "evidence_plan", "id": plan_id}, project=pid)["body"]
-    steps = plan["launch"]["steps"]
-    _finish(lab, pid, launcher, steps["baseline/baseline.s1.train"], slot="checkpoint")
-    plan = lab.q(lab.admin, "get_record", {"kind": "evidence_plan", "id": plan_id}, project=pid)
-    ev = plan["body"]["launch"]["steps"]["baseline/baseline.s1.evaluate"]
+    steps = _launch(lab, pid, plan_id)["steps"]
+    train_job = steps["baseline/baseline.s1.train"]
+    _finish(lab, pid, launcher, train_job, slot="checkpoint")
+    steps = _launch(lab, pid, plan_id)["steps"]
+    ev = steps["baseline/baseline.s1.evaluate"]
     job = lab.q(lab.admin, "get_job", {"job_id": ev}, project=pid)
-    train_out = lab.q(lab.admin, "get_job", {"job_id": steps["baseline/baseline.s1.train"]}, project=pid)["outputs"][0]
+    train_out = lab.q(lab.admin, "get_job", {"job_id": train_job}, project=pid)["outputs"][0]
     assert job["lock"]["inputs"]["checkpoint"]["artifact_id"] == train_out["artifact_id"]
     assert job["lock"]["step"] == "baseline.s1.evaluate" and job["lock"]["cluster"] == "1"
-    _finish(lab, pid, launcher, steps["candidate/candidate.s2.train"], status="failed")
+    assert _active(lab, pid, _launch(lab, pid, plan_id)) == ["baseline/baseline.s1.evaluate"]
+    # run the rest in order, failing one training step: its evaluation is blocked, the others still run, one at a time
+    while True:
+        launch = _launch(lab, pid, plan_id)
+        active = _active(lab, pid, launch)
+        assert len(active) <= 1, active
+        if not active:
+            break
+        key = active[0]
+        if key == "candidate/candidate.s2.train":
+            _finish(lab, pid, launcher, launch["steps"][key], status="failed")
+        else:
+            _finish(lab, pid, launcher, launch["steps"][key], slot="checkpoint" if key.endswith("train") else "predictions")
     plan = lab.q(lab.admin, "get_record", {"kind": "evidence_plan", "id": plan_id}, project=pid)
-    assert "candidate/candidate.s2.evaluate" in plan["body"]["launch"]["blocked"]
-    # finish everything else; the plan then requests assessment even though one arm is incomplete
-    for key in ("baseline/baseline.s2.train", "candidate/candidate.s1.train"):
-        _finish(lab, pid, launcher, steps[key], slot="checkpoint")
-    plan = lab.q(lab.admin, "get_record", {"kind": "evidence_plan", "id": plan_id}, project=pid)
-    for key, jid in plan["body"]["launch"]["steps"].items():
-        if key.endswith("evaluate") and lab.q(lab.admin, "get_job", {"job_id": jid}, project=pid)["status"] == "admitted":
-            _finish(lab, pid, launcher, jid, slot="predictions")
-    plan = lab.q(lab.admin, "get_record", {"kind": "evidence_plan", "id": plan_id}, project=pid)
+    assert plan["body"]["launch"]["blocked"]["candidate/candidate.s2.evaluate"].startswith("predecessor")
     assert plan["status"] == "awaiting-assessment"
     inputs = lab.q(lab.admin, "assessment_inputs", {"plan_id": plan_id}, project=pid)
     assert inputs["arms"]["baseline"]["status"] == "succeeded" and inputs["arms"]["candidate"]["status"] == "incomplete"
+
+
+def test_plan_concurrency_needs_the_projects_resource_policy(lab):
+    pid, plan_id = _setup(lab)
+    with pytest.raises(Invalid, match="resource policy allows 1"):
+        lab.cmd(lab.admin, "launch_evidence_plan", {"plan_id": plan_id, "max_concurrent_jobs": 3}, project=pid)
+    lab.cmd(lab.admin, "update_profile_policy", {"policy": {"resources": {"max_concurrent_jobs": 3}}}, project=pid)
+    r = lab.cmd(lab.admin, "launch_evidence_plan", {"plan_id": plan_id, "max_concurrent_jobs": 3}, project=pid)["result"]
+    assert sum(len(v) for v in r["jobs"].values()) == 3 and r["max_concurrent_jobs"] == 3
+    launcher = lab.principal(f"l-{pid}", ["launcher"], [pid])
+    launch = _launch(lab, pid, plan_id)
+    # the fourth root waits for a slot: ending one job admits exactly one more
+    assert len(_active(lab, pid, launch)) == 3
+    first = next(k for k in launch["steps"] if k.endswith("train"))
+    _finish(lab, pid, launcher, launch["steps"][first], slot="checkpoint")
+    assert len(_active(lab, pid, _launch(lab, pid, plan_id))) == 3
+
+
+def _investigation_plan(lab):
+    """The pipeline plan of ``_setup``, launched under an investigation (so operator controls reach it)."""
+    pid, plan_id = _setup(lab, with_investigation=True)
+    inv = lab.q(lab.admin, "get_record", {"kind": "evidence_plan", "id": plan_id}, project=pid)["body"]["investigation_id"]
+    lab.cmd(lab.admin, "launch_evidence_plan", {"plan_id": plan_id}, project=pid)
+    return pid, plan_id, inv, lab.principal(f"lc-{pid}", ["launcher"], [pid])
+
+
+def _status(lab, pid, plan_id):
+    return lab.q(lab.admin, "get_record", {"kind": "evidence_plan", "id": plan_id}, project=pid)["status"]
+
+
+def test_stopping_an_investigation_blocks_the_plans_steps_not_yet_admitted(lab):
+    pid, plan_id, inv, launcher = _investigation_plan(lab)
+    first = _launch(lab, pid, plan_id)["steps"]["baseline/baseline.s1.train"]
+    lab.cmd(lab.admin, "stop_investigation", {"investigation_id": inv, "running_job_policy": "drain"}, project=pid)
+    launch = _launch(lab, pid, plan_id)
+    assert len(launch["blocked"]) == 7 and set(launch["blocked"].values()) == {"the investigation was stopped"}
+    assert list(launch["steps"]) == ["baseline/baseline.s1.train"]  # the drained job runs on
+    _finish(lab, pid, launcher, first, slot="checkpoint")
+    assert list(_launch(lab, pid, plan_id)["steps"]) == ["baseline/baseline.s1.train"]  # nothing is admitted after a stop
+    assert _status(lab, pid, plan_id) == "awaiting-assessment"
+
+
+def test_a_paused_investigations_plan_admits_nothing_until_it_resumes(lab):
+    pid, plan_id, inv, launcher = _investigation_plan(lab)
+    first = _launch(lab, pid, plan_id)["steps"]["baseline/baseline.s1.train"]
+    lab.cmd(lab.admin, "pause_investigation", {"investigation_id": inv, "running_job_policy": "drain"}, project=pid)
+    _finish(lab, pid, launcher, first, slot="checkpoint")
+    launch = _launch(lab, pid, plan_id)
+    assert list(launch["steps"]) == ["baseline/baseline.s1.train"] and launch["blocked"] == {}
+    assert _status(lab, pid, plan_id) == "executing"
+    lab.cmd(lab.admin, "resume_investigation", {"investigation_id": inv}, project=pid)
+    assert _active(lab, pid, _launch(lab, pid, plan_id)) == ["baseline/baseline.s1.evaluate"]
+
+
+def test_a_question_change_that_cancels_work_blocks_the_rest_of_the_plan(lab):
+    pid, plan_id, inv, launcher = _investigation_plan(lab)
+    lab.cmd(lab.admin, "revise_question", {"investigation_id": inv, "question": "q2", "reason": "changed",
+                                           "running_job_policy": "cancel"}, project=pid)
+    launch = _launch(lab, pid, plan_id)
+    assert len(launch["blocked"]) == 7 and all("question" in v for v in launch["blocked"].values())
+    assert list(launch["steps"]) == ["baseline/baseline.s1.train"]
+

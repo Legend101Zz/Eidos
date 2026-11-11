@@ -125,6 +125,8 @@ def get_job(ctx: Ctx, p: dict) -> dict:
 @query("list_jobs")
 def list_jobs(ctx: Ctx, p: dict) -> list[dict]:
     rows = ctx.tx.list_jobs(ctx.project_id, investigation_id=p.get("investigation_id"), statuses=p.get("statuses"))
+    if p.get("plan_id"):  # the jobs one evidence plan has admitted
+        rows = [j for j in rows if j["lock"].get("plan_id") == p["plan_id"]]
     for j in rows:
         _expose_job(ctx, j)
     return [{"id": j["id"], "kind": j["kind"], "status": j["status"], "purpose": j["purpose"], "epoch": j["epoch"],

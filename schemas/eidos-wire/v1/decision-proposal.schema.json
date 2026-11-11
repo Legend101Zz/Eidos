@@ -81,6 +81,7 @@
       "type": "object"
     },
     "DecisionControl": {
+      "description": "How a decision ends its turn, with every field the investigator runtime writes.",
       "properties": {
         "action": {
           "anyOf": [
@@ -99,6 +100,46 @@
           ],
           "default": null,
           "title": "Action"
+        },
+        "bounded_outcome": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "why the runtime ended this decision without usable output",
+          "title": "Bounded Outcome"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "the structured scope of a conclusion (for example its answer)",
+          "title": "Scope"
+        },
+        "scope_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "a scope the model wrote that is not a JSON object, as written",
+          "title": "Scope Text"
         },
         "summary": {
           "default": "",

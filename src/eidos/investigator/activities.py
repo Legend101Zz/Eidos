@@ -27,9 +27,11 @@ from temporalio.exceptions import ApplicationError
 
 from eidos.client import LabClient, LabError
 from eidos.domain.turns import (
+    COMPUTE_TOOLS,
     EFFECT_TOOLS,
     JOB_TOOLS,
     MAX_CONCURRENT_JOBS_KEY,
+    PLAN_TOOLS,
     WORKFLOW_PAYLOAD_LIMIT,
     check_payload,
     resolve_refs,
@@ -72,6 +74,7 @@ def _heartbeating(every: float = 5.0):
 BATCH_WAIT_SLICE_SECONDS = 45.0
 BATCH_POLL_SECONDS = 0.5
 TERMINAL_JOB_STATUSES = ("succeeded", "failed", "cancelled", "pruned")
+ACTIVE_JOB_STATUSES = ["admitted", "queued", "running", "reconciling", "cancel-requested"]
 
 
 # ADR 0017: a decision is aborted (its in-flight provider request abandoned) when the investigation stops or pauses,
@@ -487,7 +490,7 @@ class InvestigatorActivities:
                 receipts.append(r)  # the effects before it ran; this one and the rest were refused
                 return self._finish_decision(p, a, dec, receipts, stopped=why)
             receipts.append(r)
-            if r["ok"] and call["tool"] in JOB_TOOLS:
+            if r["ok"] and call["tool"] in COMPUTE_TOOLS:
                 batch.launched.append(r)
         return self._finish_decision(p, a, dec, receipts)
 
@@ -501,8 +504,11 @@ class InvestigatorActivities:
             return _not_run(call, "DEPENDENCY_FAILED", f"call {failed['index']} ({failed['tool']}) did not succeed",
                             depends_on=failed["index"], dependency_code=failed.get("code"))
         waiting_for = [d for d in deps if d["tool"] in JOB_TOOLS]
-        is_job = call["tool"] in JOB_TOOLS
-        if not waiting_for and not (is_job and len(batch.launched) >= batch.max_concurrent):
+        is_job = call["tool"] in COMPUTE_TOOLS
+        # addendum R11: a plan needs the decision's whole allowance, because its jobs share it; it starts on an idle batch
+        slots = batch.max_concurrent if call["tool"] in PLAN_TOOLS else 1
+        plan_launched = any(r["tool"] in PLAN_TOOLS for r in batch.launched)
+        if not waiting_for and not (is_job and (plan_launched or len(batch.launched) + slots > batch.max_concurrent)):
             return None
         while True:
             jobs = {d["index"]: self._batch_job(p, d) for d in waiting_for}
@@ -514,13 +520,12 @@ class InvestigatorActivities:
                                 depends_on=i, job_id=job["id"], job_status=job["status"],
                                 error=_job_error(job))
             ready = all(j["status"] == "succeeded" for j in jobs.values())
-            running = sum(1 for r in batch.launched if self._batch_job(p, r)["status"] not in TERMINAL_JOB_STATUSES)
-            if ready and (not is_job or running < batch.max_concurrent):
+            running, plan_open = self._batch_running(p, batch)
+            if ready and (not is_job or (not plan_open and len(running) + slots <= batch.max_concurrent)):
                 return None
             if batch.final:
                 return _not_run(call, "BATCH_DEADLINE", "the turn ran out of time waiting for this batch's jobs",
-                                running_jobs=[str(r["result"]["job_id"]) for r in batch.launched
-                                              if self._batch_job(p, r)["status"] not in TERMINAL_JOB_STATUSES])
+                                running_jobs=running)
             if _activity_cancelled():
                 return "activity-cancelled"
             reason = self._not_active(p, a["investigation_id"])
@@ -529,6 +534,20 @@ class InvestigatorActivities:
             if time.monotonic() >= batch.slice_ends:
                 return "pending"
             time.sleep(self.batch_poll)
+
+    def _batch_running(self, p: str, batch: _Batch) -> tuple[list[str], bool]:
+        """(the batch's active job ids, whether a launched plan still holds the whole CPU allowance; addendum R11). A plan's
+        next step is admitted in the transaction that ends its previous one, so a plan with no active job has finished."""
+        running, plan_open = [], False
+        for r in batch.launched:
+            if r["tool"] in PLAN_TOOLS:
+                jobs = self.wf.query("list_jobs", {"plan_id": r["result"]["plan_id"], "statuses": ACTIVE_JOB_STATUSES},
+                                     project=p)
+                running += [str(j["id"]) for j in jobs]
+                plan_open = plan_open or bool(jobs)
+            elif self._batch_job(p, r)["status"] not in TERMINAL_JOB_STATUSES:
+                running.append(str(r["result"]["job_id"]))
+        return running, plan_open
 
     def _batch_job(self, p: str, receipt: dict) -> dict:
         """The current record of a job this batch admitted (terminal states are final, so they are cached)."""
@@ -557,11 +576,10 @@ class InvestigatorActivities:
         # would park the investigation: report it so the turn treats it like a refused proposal (ADR 0007/0008).
         if (dec["body"].get("control") or {}).get("action") == "wait_for_jobs" and receipts:
             active = self.wf.query("list_jobs", {"investigation_id": a["investigation_id"],
-                                                 "statuses": ["admitted", "queued", "running", "cancel-requested"]},
-                                   project=p)
+                                                 "statuses": ACTIVE_JOB_STATUSES}, project=p)
             # ADR 0022: a batch's own jobs may all have finished already, sequentially. Their events are the news the
             # wait is for; only a decision that started nothing leaves nothing to wait for.
-            if not active and not any(r["ok"] and r["tool"] in JOB_TOOLS for r in receipts):
+            if not active and not any(r["ok"] and r["tool"] in COMPUTE_TOOLS for r in receipts):
                 out["nothing_outstanding"] = True
                 out["failed_calls"] = [{"tool": r["tool"], "code": r.get("code"),
                                         "message": str((r.get("error") or {}).get("message", ""))[:300]}
@@ -581,6 +599,8 @@ class InvestigatorActivities:
             except _UnresolvedRef as exc:
                 return _not_run(call, "REF_UNRESOLVED", str(exc), **exc.details)
             provenance = {"command_key": key, "depends_on": call["depends_on"], "resolved": used}
+        if batch is not None and call["tool"] in PLAN_TOOLS:  # the decision's checked allowance, not the model's own args
+            args[MAX_CONCURRENT_JOBS_KEY] = batch.max_concurrent
         result = self._run_effect(p, inv, turn_id, dec_id, call, args, admission)
         return {**result, **provenance} if provenance else result
 

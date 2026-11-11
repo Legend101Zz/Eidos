@@ -199,8 +199,9 @@ TOOLS: tuple[Tool, ...] = (
          "and the freeze grant or an auto-freeze policy.",
          (P("plan_id", "s", required=True),), grant="propose"),
     Tool("launch_evidence_plan", "command", "launch_evidence_plan",
-         "Launch a frozen plan: admits one job per arm and returns the job ids.",
-         (P("plan_id", "s", required=True),), grant="spend_compute"),
+         "Launch a frozen plan: its jobs run one at a time and are admitted as earlier ones end; returns the jobs admitted "
+         "so far. max_concurrent_jobs above 1 needs a project resource policy that allows it.",
+         (P("plan_id", "s", required=True), P("max_concurrent_jobs", "i")), grant="spend_compute"),
     Tool("get_claim", "query", "get_claim",
          "Claim with its assessments (outcome, conformance, evidence health) and support status.",
          (P("claim_id", "s", required=True), P("revision", "i")), grant="project:read"),

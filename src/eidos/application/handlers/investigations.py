@@ -164,6 +164,9 @@ def revise_question(ctx: Ctx, p: dict) -> dict:
             ctx.tx.update_job(job["id"], cancel_requested=True)
             ctx.tx.enqueue("job.cancel", f"cancel:{job['id']}", {"job_id": job["id"], "policy": policy})
         affected.append(job["id"])
+    if policy != "drain":  # ADR 0022 addendum R11: a plan's steps not yet admitted are ended like the jobs it had admitted
+        from eidos.application.handlers.evidence import reconsider_plans
+        reconsider_plans(ctx, inv.id, halt="the question was revised with a stopping policy")
     _clear_needs_input(ctx, inv, inv.status, "question-revised")
     ctx.event("investigation.question_revised", inv.id,
               {"question_revision": qrev, "revision": rec.revision, "by": ctx.principal.id, "policy": policy,
@@ -194,6 +197,9 @@ def _set_state(ctx: Ctx, p: dict, status: str, etype: str) -> dict:
             ctx.tx.update_job(job["id"], cancel_requested=True)
             ctx.tx.enqueue("job.cancel", f"cancel:{job['id']}", {"job_id": job["id"], "policy": policy})
             affected.append(job["id"])
+    if status in ("stopped", "active"):  # ADR 0022 addendum R11: a plan's unadmitted steps end, or may continue
+        from eidos.application.handlers.evidence import reconsider_plans
+        reconsider_plans(ctx, inv.id, halt="the investigation was stopped" if status == "stopped" else None)
     ctx.event(etype, inv.id, {"policy": policy, "affected_jobs": affected}, investigation_id=inv.id, wake=True)
     return {"investigation_id": inv.id, "revision": rec.revision, "status": status, "running_job_policy": policy,
             "affected_jobs": affected}
@@ -726,16 +732,9 @@ def _environment_names(ctx: Ctx) -> list[str]:
 
 def _check_resource_policy(ctx: Ctx, decision: dict) -> None:
     """ADR 0022: jobs of a decision run one at a time unless the decision asks for concurrency AND the project's policy
-    (``policy.resources.max_concurrent_jobs``, an operator setting) allows that much. A model cannot grant it itself."""
-    from eidos.application.handlers.projects import get_profile
-    wanted = int((decision.get("resource_policy") or {}).get(turn_rules.MAX_CONCURRENT_JOBS_KEY) or 1)
-    if wanted <= 1:
-        return
-    allowed = int(((get_profile(ctx).body.get("policy") or {}).get("resources") or {}).get(
-        turn_rules.MAX_CONCURRENT_JOBS_KEY) or 1)
-    if wanted > allowed:
-        raise Invalid(f"resource_policy.max_concurrent_jobs is {wanted}, but this project's resource policy allows "
-                      f"{allowed}: jobs of a decision queue sequentially", details={"requested": wanted, "allowed": allowed})
+    allows that much. A model cannot grant it itself."""
+    from eidos.application.handlers.projects import checked_concurrency
+    checked_concurrency(ctx, (decision.get("resource_policy") or {}).get(turn_rules.MAX_CONCURRENT_JOBS_KEY))
 
 
 def _check_component_contracts(ctx: Ctx, calls: list[dict]) -> None:

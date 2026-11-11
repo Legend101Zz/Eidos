@@ -223,9 +223,14 @@ class ResourcePolicy(BaseModel):
 
 
 class DecisionControl(BaseModel):
+    """How a decision ends its turn, with every field the investigator runtime writes."""
+
     model_config = _CONFIG
     action: Literal["wait_for_jobs", "request_input", "conclude", "stop"] | None = None
     summary: str = ""
+    scope: JsonObject | None = Field(default=None, description="the structured scope of a conclusion (for example its answer)")
+    scope_text: str | None = Field(default=None, description="a scope the model wrote that is not a JSON object, as written")
+    bounded_outcome: str | None = Field(default=None, description="why the runtime ended this decision without usable output")
 
 
 class DecisionProposal(BaseModel):

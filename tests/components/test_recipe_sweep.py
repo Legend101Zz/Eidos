@@ -8,13 +8,17 @@ expected values are re-derived here from the project's formula, never read back 
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import itertools
 import json
 import math
+import os
+import signal
 import statistics
 import subprocess
 import sys
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
@@ -914,21 +918,263 @@ def test_only_the_declared_ports_are_staged_and_each_run_has_a_private_work_dir(
     refused(sweep(STAGING, config, inputs=inputs), "plain name")
 
 
-def test_without_a_source_bundle_the_project_directory_is_copied_to_each_work_dir(sweep, tmp_path):
+HELDOUT_SEEN = textwrap.dedent(
+    """
+    import json, os, sys
+    a = dict(zip(sys.argv[1::2], sys.argv[2::2]))
+    m = {"has_project": float(os.path.exists("project.py")), "has_notes": float(os.path.exists("notes.txt")),
+         "leaked_csv": float(os.path.exists("test.csv")), "leaked_json": float(os.path.exists("test.json"))}
+    m["validation_score"] = 1.0
+    json.dump(m, open(a["--out"] + "/receipt.json", "w"))
+    """
+)
+
+
+def project_with_heldout(tmp_path):
     project = tmp_path / "proj"
     project.mkdir()
-    (project / "project.py").write_text(STAGING)
-    (project / "notes.txt").write_text("n")
-    (project / "data.npz").write_bytes(b"big")
+    (project / "project.py").write_text(HELDOUT_SEEN)
+    for name in ("test.csv", "test.json", "notes.txt"):
+        (project / name).write_text("id,label\n1,secret-label\n")
+    return project
+
+
+def test_without_a_source_bundle_nothing_is_copied_unless_it_is_listed(sweep, tmp_path):
+    refused(sweep(None, make_config(["--out", "{out}"], {"x": {"values": [1]}}), cwd=project_with_heldout(tmp_path)),
+            "command.copy must list the project files")
+
+
+def test_only_listed_files_reach_an_evaluation_and_test_files_stay_out(sweep, tmp_path):
+    project = project_with_heldout(tmp_path)
     config = make_config(["--out", "{out}"], {"x": {"values": [1]}})
+    config["command"]["copy"] = ["project.py", "notes.txt"]
     res = sweep(None, config, cwd=project)
     assert res.ok, res.manifest.error
     m = res.json("evidence_table")["recipes"][0]["evaluations"][0]["metrics"]
-    assert (m["has_project_py"], m["has_notes_txt"], m["has_data_npz"]) == (1.0, 1.0, 0.0)  # weights/arrays stay out
-    config["command"]["copy"] = ["project.py", "data.npz"]
-    res = sweep(None, config, cwd=project)
-    m = res.json("evidence_table")["recipes"][0]["evaluations"][0]["metrics"]
-    assert (m["has_project_py"], m["has_notes_txt"], m["has_data_npz"]) == (1.0, 0.0, 1.0)  # an allow-list wins
+    assert (m["has_project"], m["has_notes"], m["leaked_csv"], m["leaked_json"]) == (1.0, 1.0, 0.0, 0.0)
+
+
+@pytest.mark.parametrize("name", ["test.csv", "test.json", "heldout.npz", "hold_out.csv", "test_set.csv", "testset.csv"])
+def test_listing_a_held_out_file_is_refused(sweep, tmp_path, name):
+    project = project_with_heldout(tmp_path)
+    (project / name).write_text("x")
+    config = make_config(["--out", "{out}"], {"x": {"values": [1]}})
+    config["command"]["copy"] = ["project.py", name]
+    refused(sweep(None, config, cwd=project), "named after a held-out split")
+
+
+@pytest.mark.parametrize("entry, fragment", [("missing.py", "not a regular file"), ("../up.py", "plain file name"),
+                                              (".hidden", "plain file name"), (7, "plain file name")])
+def test_a_list_entry_must_be_a_regular_project_file(sweep, tmp_path, entry, fragment):
+    config = make_config(["--out", "{out}"], {"x": {"values": [1]}})
+    config["command"]["copy"] = ["project.py", entry]
+    refused(sweep(None, config, cwd=project_with_heldout(tmp_path)), fragment)
+
+
+def test_a_listed_symlink_is_refused(sweep, tmp_path):
+    project = project_with_heldout(tmp_path)
+    (project / "link.txt").symlink_to(project / "test.csv")
+    config = make_config(["--out", "{out}"], {"x": {"values": [1]}})
+    config["command"]["copy"] = ["project.py", "link.txt"]
+    refused(sweep(None, config, cwd=project), "not a regular file")
+
+
+@pytest.mark.parametrize("path", ["test.csv", "data/heldout.json", "holdout/x.npz"])
+def test_a_source_bundle_cannot_carry_held_out_data(sweep, path):
+    res = sweep(None, table_config([1.0]), files={"project.py": table_project([1.0]), path: "1,2"})
+    refused(res, "named after a held-out split")
+
+
+def test_a_source_bundle_may_carry_code_named_after_tests(sweep):
+    res = sweep(None, table_config([1.0]), files={"project.py": table_project([1.0]), "test_helpers.py": "x = 1"})
+    assert res.ok, res.manifest.error
+
+
+# -- every evaluation is its own process group: stopped and reaped on timeout, stop request and cancellation ------------
+FORKS = textwrap.dedent(
+    """
+    import json, os, signal, subprocess, sys, time
+    a = dict(zip(sys.argv[1::2], sys.argv[2::2]))
+    worker = "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(120)"
+    child = subprocess.Popen([sys.executable, "-c", worker], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    open(a["--pids"], "w").write(str(child.pid))
+    if a["--mode"] == "hang":
+        time.sleep(120)
+    json.dump({"validation_score": 1.0}, open(a["--out"] + "/receipt.json", "w"))
+    """
+)
+
+
+def alive(pid):
+    """Running, not a zombie: a container's init need not reap the worker the test orphaned."""
+    out = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True)
+    return out.returncode == 0 and bool(out.stdout.strip()) and not out.stdout.strip().startswith("Z")
+
+
+def fork_config(pids, mode, **command):
+    config = make_config(["--out", "{out}", "--pids", str(pids), "--mode", mode], {"x": {"values": [1]}})
+    config["command"].update(command)
+    return config
+
+
+def wait_for(predicate, seconds=20.0):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def test_timeout_kills_the_forked_workers_of_an_evaluation(sweep, tmp_path):
+    pids = tmp_path / "pid"
+    res = sweep(FORKS, fork_config(pids, "hang", timeout_seconds=1))
+    assert res.ok, res.manifest.error
+    assert res.json("evidence_table")["recipes"][0]["evaluations"][0]["status"] == "timeout"
+    assert not alive(int(pids.read_text()))  # it ignored SIGTERM: the group got SIGKILL too
+
+
+def test_a_normal_exit_leaves_no_worker_behind(sweep, tmp_path):
+    pids = tmp_path / "pid"
+    res = sweep(FORKS, fork_config(pids, "exit"))
+    assert res.ok, res.manifest.error
+    assert res.json("evidence_table")["recipes"][0]["status"] == "ok"
+    assert not alive(int(pids.read_text()))
+
+
+def start_worker(tmp_path, config):
+    root = tmp_path / "worker"
+    inv = make_invocation(root, ENTRY, inputs={"source": {"files": {"project.py": FORKS}}}, config=config,
+                          source_dir=COMPONENTS / NAME, component_id=NAME)
+    path = root / "invocation.json"
+    inv.write(path)
+    return inv, subprocess.Popen([sys.executable, "-m", "eidos_worker.run", str(path)], stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def test_sigterm_to_the_worker_stops_and_reaps_the_evaluation_group(tmp_path):
+    pids = tmp_path / "pid"
+    inv, worker = start_worker(tmp_path, fork_config(pids, "hang"))
+    try:
+        assert wait_for(lambda: pids.exists() and pids.read_text().strip()), "the evaluation did not start"
+        child = int(pids.read_text())
+        assert alive(child)
+        os.killpg(worker.pid, signal.SIGTERM)  # how the launcher cancels: the worker's group, not the evaluation's
+        assert worker.wait(timeout=20) == -signal.SIGTERM
+        assert wait_for(lambda: not alive(child)), "the evaluation's worker outlived the cancelled job"
+    finally:
+        worker.kill()
+        worker.wait()
+
+
+def test_the_runners_stop_request_stops_the_evaluation_and_ends_the_search(tmp_path):
+    from eidos_worker.context import STOP_FILE
+    pids = tmp_path / "pid"
+    inv, worker = start_worker(tmp_path, fork_config(pids, "hang"))
+    try:
+        assert wait_for(lambda: pids.exists() and pids.read_text().strip()), "the evaluation did not start"
+        child = int(pids.read_text())
+        Path(inv.scratch_dir, STOP_FILE).write_text("stop")
+        assert worker.wait(timeout=30) == 0
+        assert not alive(child)
+    finally:
+        worker.kill()
+        worker.wait()
+    result = Result(OutputManifest.read(inv.staging_dir), inv, "")
+    assert result.ok, result.manifest.error
+    table = result.json("evidence_table")
+    assert table["stop_reason"] == "stop-requested" and table["counts"]["usable"] == 0
+    assert table["recipes"][0]["evaluations"][0]["status"] == "cancelled" and table["recipes"][0]["rank"] is None
+
+
+# -- planted secrets: an evaluation does not inherit them, and failure text never carries them ----------------------------
+PLANTED = "sk-planted-0123456789abcdefGHIJ"
+LEAKS = textwrap.dedent(
+    """
+    import os, sys
+    a = dict(zip(sys.argv[1::2], sys.argv[2::2]))
+    sys.stderr.write("env=" + os.environ.get("PLANTED_API_TOKEN", "<absent>") + "\\n")
+    sys.stderr.write("HOME=" + os.environ.get("HOME", "") + "\\n")
+    if a["--file"] != "none":
+        sys.stderr.write("from-file=" + open(a["--file"]).read() + "\\n")
+    sys.exit(1)
+    """
+)
+
+
+def secret_free(res):
+    text = json.dumps([res.json("evidence_table"), res.json("best_recipe"), res.receipt])
+    return PLANTED not in text and PLANTED[:12] not in text, text
+
+
+def leak_config(path="none"):
+    return make_config(["--out", "{out}", "--file", str(path)], {"x": {"values": [1]}})
+
+
+def test_an_evaluation_does_not_inherit_the_workers_secret(sweep, monkeypatch):
+    monkeypatch.setenv("PLANTED_API_TOKEN", PLANTED)
+    res = sweep(LEAKS, leak_config())
+    assert res.ok, res.manifest.error
+    error = res.json("evidence_table")["recipes"][0]["evaluations"][0]["error"]
+    assert "env=<absent>" in error and "exit 1" in error
+    assert secret_free(res)[0]
+
+
+def test_a_secret_a_command_printed_anyway_is_redacted_before_publishing(sweep, monkeypatch, tmp_path):
+    monkeypatch.setenv("PLANTED_API_TOKEN", PLANTED)
+    secret_file = tmp_path / "secret.txt"
+    secret_file.write_text(PLANTED)
+    res = sweep(LEAKS, leak_config(secret_file))
+    assert res.ok, res.manifest.error
+    assert secret_free(res)[0]
+    assert "from-file=[REDACTED]" in res.json("evidence_table")["recipes"][0]["evaluations"][0]["error"]
+
+
+def load_sweep_module():
+    spec = importlib.util.spec_from_file_location("recipe_sweep_under_test", COMPONENTS / NAME / "recipe_sweep.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("line", [
+    "Authorization: Bearer abcdefgh12345678", "api_key=abcd1234efgh", 'OPENAI_API_KEY="abcd1234efgh"', "password: hunter2hunter2",
+    "ghp_abcdefghijklmnopqrstuvwxyz012345", "sk-abcdefghijklmnop", "AKIAABCDEFGHIJKLMNOP", "eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.c2lnbmF0dXJl",
+    "tok " + "A1b2C3d4" * 6])
+def test_credential_shapes_are_redacted(line):
+    assert load_sweep_module()._redact(line, []).count("[REDACTED]") >= 1
+    secret_body = line.split()[-1].split("=")[-1].strip('"')
+    assert secret_body not in load_sweep_module()._redact(line, [])
+
+
+def test_ordinary_errors_stay_readable():
+    text = "Traceback (most recent call last):\n  File \"/tmp/w/project.py\", line 3\nValueError: lr must be positive"
+    assert load_sweep_module()._redact(text, []) == text
+
+
+def test_redaction_happens_before_the_tail_is_cut(tmp_path):
+    sweep_module = load_sweep_module()
+    secret = "planted-" + "x7" * 20
+    # the tail cut would otherwise land inside the secret and publish its end
+    text = secret + "y" * (sweep_module.TAIL_CHARS - 5)
+    path = tmp_path / "stderr.log"
+    path.write_text(text)
+    tail = sweep_module._stderr_tail(path, [secret])
+    assert "x7x7" not in tail and len(tail) <= sweep_module.TAIL_CHARS
+
+
+def test_the_standalone_toolkit_path_does_not_leak_a_planted_secret(toolkit, tmp_path):
+    bundle = tmp_path / "bundle.json"
+    bundle.write_text(json.dumps({"files": {"project.py": LEAKS}}))
+    out = tmp_path / "toolkit-secret"
+    spec = {"inputs": {"source": {"file": str(bundle), "media_type": "application/json"}}, "config": leak_config()}
+    proc = run_toolkit(toolkit, tmp_path, NAME, "--args", json.dumps(spec), "--out", str(out),
+                       env={"PLANTED_API_TOKEN": PLANTED})
+    assert proc.returncode == 0, proc.stdout[-1500:] + proc.stderr[-1500:]
+    staging = out / "staging"
+    manifest = json.loads((staging / "eidos-output-manifest.json").read_text())
+    published = json.dumps(manifest) + "".join((staging / o["filename"]).read_text() for o in manifest["outputs"])
+    assert "env=<absent>" in published and PLANTED not in published
 
 
 @pytest.mark.parametrize("path", ["../evil.py", "/abs/evil.py", "a/../../evil.py"])
@@ -1056,10 +1302,10 @@ def bare_python():
     return str(candidate) if candidate.exists() else sys.executable
 
 
-def run_toolkit(toolkit, tmp_path, *args):
+def run_toolkit(toolkit, tmp_path, *args, env=None):
     """The copied run_component.py under a bare interpreter, with no PYTHONPATH and no lab on the path."""
     return subprocess.run([bare_python(), "-I", str(toolkit / "run_component.py"), *args], capture_output=True,
-                          text=True, timeout=240, cwd=str(tmp_path), env={"PATH": "/usr/bin:/bin"})
+                          text=True, timeout=240, cwd=str(tmp_path), env={"PATH": "/usr/bin:/bin", **(env or {})})
 
 
 def test_toolkit_contains_the_component_and_is_listed_in_its_coverage(toolkit):

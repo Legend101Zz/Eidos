@@ -1,0 +1,11 @@
+{
+  "calls": [],
+  "control": {
+    "action": "conclude",
+    "scope_text": "only the visible validation split",
+    "summary": "no positive claim"
+  },
+  "hypotheses": [],
+  "purpose": "open-search",
+  "rationale": "the scope was not JSON"
+}

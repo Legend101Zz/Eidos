@@ -87,14 +87,24 @@ def to_proposal(d: Decision) -> dict[str, Any]:
     out = d.model_dump(exclude_none=True)
     out["calls"] = [{"tool": c.tool, "args": json.loads(c.args_json)} for c in d.calls]
     if d.control is not None:
-        ctl = {"action": d.control.action, "summary": d.control.summary}
+        ctl: dict[str, Any] = {"action": d.control.action, "summary": d.control.summary}
         if d.control.scope_json:
             try:
-                ctl["scope"] = json.loads(d.control.scope_json)
+                scope = json.loads(d.control.scope_json)
             except ValueError:
+                scope = None
+            if isinstance(scope, dict):  # the published contract: a scope is an object, anything else stays as text
+                ctl["scope"] = scope
+            else:
                 ctl["scope_text"] = d.control.scope_json
         out["control"] = {k: v for k, v in ctl.items() if v is not None}
     return out
+
+
+def no_effect_proposal(outcome: str) -> dict[str, Any]:
+    """The explicit no-effect decision the runtime writes when a model produced nothing usable within the bounds."""
+    return {"rationale": f"no usable decision ({outcome}); no effects proposed", "calls": [],
+            "control": {"action": "wait_for_jobs", "summary": outcome, "bounded_outcome": outcome}}
 
 
 # How the decision is obtained (ADR 0014): "tool" = the provider's tool-call output (default; what Anthropic
@@ -468,9 +478,7 @@ class PydanticAIRuntime:
                                   possible_usage=usage) from exc
         usage["limit_reached"] = ("decision deadline: the in-flight request was abandoned" if exc.in_flight
                                   else "decision deadline: no further request was started")
-        proposal = {"rationale": "no usable decision (decision-deadline); no effects proposed", "calls": [],
-                    "control": {"action": "wait_for_jobs", "summary": "decision-deadline",
-                                "bounded_outcome": "decision-deadline"}}
+        proposal = no_effect_proposal("decision-deadline")
         return DecisionResult(proposal, usage, json.loads(_messages_json(responses)),
                               self._settings(usage, max_requests), PROMPT_REVISION)
 
@@ -721,8 +729,7 @@ class PydanticAIRuntime:
         usage["limit_reached"] = str(reason)[:300]
         report["repairs"] = sorted(set(report["repairs"]))
         usage["structured_output"] = report
-        proposal = {"rationale": f"no usable decision ({outcome}); no effects proposed", "calls": [],
-                    "control": {"action": "wait_for_jobs", "summary": outcome, "bounded_outcome": outcome}}
+        proposal = no_effect_proposal(outcome)
         return DecisionResult(proposal, usage, json.loads(_messages_json(messages)), self._settings(usage, max_requests),
                               PROMPT_REVISION)
 
@@ -825,9 +832,7 @@ class PydanticAIRuntime:
         usage["limit_reached"] = (f"reasoning runaway in the reserved final request (output cap "
                                   f"{output_cap(self.config)}) after the read-tool budget; no request left")
         usage["structured_output"] = report
-        proposal = {"rationale": "no usable decision (reasoning-runaway); no effects proposed", "calls": [],
-                    "control": {"action": "wait_for_jobs", "summary": "reasoning-runaway",
-                                "bounded_outcome": "reasoning-runaway"}}
+        proposal = no_effect_proposal("reasoning-runaway")
         history = _close_tool_calls([m for m in messages if m is not runaway])
         return DecisionResult(proposal, usage, json.loads(_messages_json(history)),
                               self._settings(usage, max_requests), PROMPT_REVISION)
@@ -850,9 +855,7 @@ class PydanticAIRuntime:
             usage = self._usage(billed)
             usage["limit_reached"] = reason[:300]
             usage["structured_output"] = report
-            proposal = {"rationale": "no usable decision (reasoning-runaway); no effects proposed", "calls": [],
-                        "control": {"action": "wait_for_jobs", "summary": "reasoning-runaway",
-                                    "bounded_outcome": "reasoning-runaway"}}
+            proposal = no_effect_proposal("reasoning-runaway")
             return DecisionResult(proposal, usage, json.loads(_messages_json(history)),
                                   self._settings(usage, max_requests), PROMPT_REVISION)
 
