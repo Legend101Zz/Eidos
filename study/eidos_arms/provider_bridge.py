@@ -15,7 +15,16 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from socketserver import TCPServer
 from urllib.parse import urlparse
+
+
+class LoopbackServer(ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer's getfqdn lookup can exhaust startup and wall deadlines on hosted runners.
+        TCPServer.server_bind(self)
+        self.server_name = 'localhost'
+        self.server_port = self.server_address[1]
 
 
 def serve(upstream, deadline, timeout, state):
@@ -23,6 +32,12 @@ def serve(upstream, deadline, timeout, state):
     parsed = urlparse(upstream)
     if parsed.scheme != 'https' or parsed.username or parsed.password:
         raise ValueError('configured upstream must be HTTPS without URL credentials')
+
+    audit = None
+    if audit_config := os.environ.get('EIDOS_EVAL_AUDIT_IDENTIFIERS'):
+        from study.evals.provider_audit import RequestAudit
+
+        audit = RequestAudit(audit_config, state)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -41,6 +56,8 @@ def serve(upstream, deadline, timeout, state):
                 self.send_error(400)
                 return
             body = self.rfile.read(length)
+            if audit is not None:
+                audit.scan(body)
             headers = {'Authorization': auth, 'Content-Type': 'application/json'}
             try:
                 with httpx.Client(timeout=min(timeout, max(.01, deadline - time.time()))) as client:
@@ -58,9 +75,10 @@ def serve(upstream, deadline, timeout, state):
                 # No exception/header/body logging: exceptions can carry request context.
                 self.close_connection = True
 
-    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    server = LoopbackServer(('127.0.0.1', 0), Handler)
     state.write_text(json.dumps({'pid': os.getpid(), 'upstream': upstream, 'deadline_unix': deadline,
-                                'base_url': f'http://127.0.0.1:{server.server_port}/v1'}))
+                                'base_url': f'http://127.0.0.1:{server.server_port}/v1',
+                                'eval_provider_audit': audit is not None}))
     timer = threading.Timer(max(0, deadline - time.time()), lambda: os._exit(124))
     timer.daemon = True
     timer.start()
@@ -70,11 +88,14 @@ def serve(upstream, deadline, timeout, state):
 def start(run_dir, upstream, deadline, timeout):
     from . import lab
     state = run_dir / 'provider_bridge.json'
+    environment = lab.environment()
+    if audit_config := os.environ.get('EIDOS_EVAL_AUDIT_IDENTIFIERS'):
+        environment['EIDOS_EVAL_AUDIT_IDENTIFIERS'] = audit_config
     with (run_dir / 'provider_bridge.log').open('ab') as log:
         process = subprocess.Popen([lab.python(), '-m', 'study.eidos_arms.provider_bridge',
             '--upstream', upstream, '--deadline', str(deadline), '--timeout', str(timeout),
             '--state', str(state)], cwd=Path(__file__).resolve().parents[2],
-            env=lab.environment(), stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+            env=environment, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
             start_new_session=True)
     for _ in range(100):
         if process.poll() is not None:

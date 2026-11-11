@@ -6,7 +6,7 @@ import time
 import unittest
 from pathlib import Path
 
-from .arm4 import select_job
+from .arm4 import observed_deadline, select_job
 from .common import classify, usage
 
 
@@ -27,6 +27,23 @@ class Receipts(unittest.TestCase):
         self.assertEqual(models, ['MiniMax-M3.1-Flash'])
         self.assertIsNone(billed)
         self.assertEqual(len(receipts), 2)
+
+    def test_observed_deadline_uses_registered_server_value(self):
+        self.assertEqual(observed_deadline(110.0, {'body': {'wall': {'deadline_unix': 105.5}}}),
+                         {'registered_lab_deadline_unix': 105.5, 'registered_margin_s': 4.5})
+        self.assertEqual(observed_deadline(110.0, {'body': {'wall': {'deadline_unix': 110.25}}}),
+                         {'registered_lab_deadline_unix': 110.25, 'registered_margin_s': -0.25})
+        self.assertIsNone(observed_deadline(110.0, {})['registered_lab_deadline_unix'])
+
+    def test_controller_abstention_preserves_terminal_outcome(self):
+        state = {'status': 'stopped', 'body': {'controller_abstention': {
+            'author': 'controller', 'code': 'finalization-failed', 'investigator_concluded': False}}}
+        failure = {'error': 'HTTP 429'}
+        bookkeeping = {'calls': 0, 'runtime_outcome': 'deadline'}
+        self.assertEqual(classify(state, [failure, bookkeeping], [])[0], 'incident')
+        self.assertEqual(classify(state, [failure, {'calls': 2}, bookkeeping], [])[0], 'crash')
+        state['body']['controller_abstention']['failure'] = {'reason': 'wall-deadline-reached'}
+        self.assertEqual(classify(state, [failure], [])[0], 'timeout')
 
     def test_incidents_take_precedence_over_timeout(self):
         # Pilot-2 addendum 1: a timeout keeps its status (symmetric with arms 1-3); a provider failure is an
@@ -137,6 +154,20 @@ class ClaudeStreaming(unittest.TestCase):
 
 
 class ProviderWall(unittest.TestCase):
+    def test_loopback_bridge_startup_avoids_dns(self):
+        from http.server import BaseHTTPRequestHandler
+        from unittest.mock import patch
+
+        from .provider_bridge import LoopbackServer
+
+        with patch('socket.getfqdn', side_effect=AssertionError('unexpected DNS lookup')):
+            server = LoopbackServer(('127.0.0.1', 0), BaseHTTPRequestHandler)
+            try:
+                self.assertEqual(server.server_name, 'localhost')
+                self.assertGreater(server.server_port, 0)
+            finally:
+                server.server_close()
+
     def test_deadline_exits_and_closes_a_blocked_request(self):
         from .provider_bridge import start
         with tempfile.TemporaryDirectory() as d:

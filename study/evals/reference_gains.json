@@ -1,0 +1,349 @@
+{
+  "schema_version": "eidos-reference-gains/1",
+  "arms": [
+    1,
+    2,
+    3
+  ],
+  "statistic": "median and min/max of verified numeric test gains, pooled over runs and coding arms",
+  "pilot3_snapshot": "Partial snapshot of locally completed grades. Regenerate as the pilot finishes",
+  "sources": [
+    {
+      "source": "pilot3/N01-r1/arm1/grade.json",
+      "sha256": "a5580e5ef5ff8774053cefd9b9ae04f3585eef50767629c1a0b8326e51b50e9d"
+    },
+    {
+      "source": "pilot3/N01-r1/arm2/grade.json",
+      "sha256": "9af7ad9eebec967e372588fa6eb9bbeec3dcf9539387bd3c44a3a7fc0d4d7953"
+    },
+    {
+      "source": "pilot3/N01-r1/arm3/grade.json",
+      "sha256": "118aaec1571ef238f116c150a3cd37b6c322b47e197639b4027aafa286ff10c3"
+    },
+    {
+      "source": "pilot3/N01-r2/arm1/grade.json",
+      "sha256": "92db385622a65a058371dee28e94a4e48e38a16ffe343d03fd48528513bf7e99"
+    },
+    {
+      "source": "pilot3/N01-r2/arm2/grade.json",
+      "sha256": "301513164cd669afefd0f3962e2e90728d5a0906b14fd7b589647e2c452c3d13"
+    },
+    {
+      "source": "pilot3/N01-r2/arm3/grade.json",
+      "sha256": "a69d59ea2a06c62b7a54d1beec64c812eaa9ef69504d50ce0396fd11a6bca3e8"
+    },
+    {
+      "source": "pilot3/N02-r1/arm1/grade.json",
+      "sha256": "9c003f8dcbcd80d9c27e4fdada8f1312dcc60a2d7f1b436ccb61d4fc5e672763"
+    },
+    {
+      "source": "pilot3/N02-r1/arm2/grade.json",
+      "sha256": "aec3020c7c1f191a20e64e97c417c8fd4fb5f6d4fee4685bb93f891a3aa129ad"
+    },
+    {
+      "source": "pilot3/N02-r1/arm3/grade.json",
+      "sha256": "42c2257adf8222440bb2c0b2b053cf003e247b83f595ba8ef124104a5b158a55"
+    },
+    {
+      "source": "pilot3/N03-r1/arm1/grade.json",
+      "sha256": "f2ef850519102f6f7c1b256064e7d59dafc8f1bdb7fda10e76a55ed4b07fc63a"
+    },
+    {
+      "source": "pilot3/N03-r1/arm2/grade.json",
+      "sha256": "03a97a84dcacde5c4f121554480da420a5291f43d29b052ba2b9110f1ec71b75"
+    },
+    {
+      "source": "pilot3/N03-r1/arm3/grade.json",
+      "sha256": "b8d5d5b6e58120909feef41725279b30590a91fe3836ba384892dc4f2091bdb0"
+    },
+    {
+      "source": "pilot3/N04-r1/arm1/grade.json",
+      "sha256": "44eab7493072f1ec75cbfed80a1e495b15430885005458aec4f8b9d12000cd8c"
+    },
+    {
+      "source": "pilot3/N04-r1/arm2/grade.json",
+      "sha256": "93c7ad1e802405d7db6bbaabbda238416551ba839b13489625c6757aeefcae2d"
+    },
+    {
+      "source": "pilot3/N04-r1/arm3/grade.json",
+      "sha256": "56c779b7e9f21b8218a9d558814852df1e0d6c2c1aff82f6bdbc14951cc7eb1b"
+    },
+    {
+      "source": "pilot3/N04-r2/arm1/grade.json",
+      "sha256": "aba875561cb9484e1a159b365990ba7aa6014774dec1a77bed83252ccc626cc5"
+    },
+    {
+      "source": "pilot3/N04-r2/arm2/grade.json",
+      "sha256": "52f26464b87c9fc2be1533479311ffac6be824d9bb30a7d30fd5f64c5cf2dd1f"
+    },
+    {
+      "source": "pilot3/N04-r2/arm3/grade.json",
+      "sha256": "7b43ae59c5b64cad53290c13e6950e7f2529594e4f5b7276209c39a924c0207c"
+    },
+    {
+      "source": "pilot2/results-corrected.json",
+      "sha256": "5fa9369f549ae4889a28e9bbf3256f5240ec7ef9069869c6e70a351ebe90b5a6"
+    }
+  ],
+  "cards": {
+    "N01": {
+      "median": 0.07017543859649122,
+      "range": [
+        0.061403508771929904,
+        0.07894736842105265
+      ],
+      "n": 6,
+      "samples": [
+        {
+          "arm": 1,
+          "run": 1,
+          "gain": 0.07017543859649122,
+          "source": "pilot3/N01-r1/arm1/grade.json"
+        },
+        {
+          "arm": 2,
+          "run": 1,
+          "gain": 0.07894736842105265,
+          "source": "pilot3/N01-r1/arm2/grade.json"
+        },
+        {
+          "arm": 3,
+          "run": 1,
+          "gain": 0.061403508771929904,
+          "source": "pilot3/N01-r1/arm3/grade.json"
+        },
+        {
+          "arm": 1,
+          "run": 2,
+          "gain": 0.07017543859649122,
+          "source": "pilot3/N01-r2/arm1/grade.json"
+        },
+        {
+          "arm": 2,
+          "run": 2,
+          "gain": 0.07017543859649122,
+          "source": "pilot3/N01-r2/arm2/grade.json"
+        },
+        {
+          "arm": 3,
+          "run": 2,
+          "gain": 0.07894736842105265,
+          "source": "pilot3/N01-r2/arm3/grade.json"
+        }
+      ],
+      "missing_reason": null
+    },
+    "N02": {
+      "median": 125.19005386253455,
+      "range": [
+        125.12706223071322,
+        125.27865233721737
+      ],
+      "n": 3,
+      "samples": [
+        {
+          "arm": 1,
+          "run": 1,
+          "gain": 125.12706223071322,
+          "source": "pilot3/N02-r1/arm1/grade.json"
+        },
+        {
+          "arm": 2,
+          "run": 1,
+          "gain": 125.19005386253455,
+          "source": "pilot3/N02-r1/arm2/grade.json"
+        },
+        {
+          "arm": 3,
+          "run": 1,
+          "gain": 125.27865233721737,
+          "source": "pilot3/N02-r1/arm3/grade.json"
+        }
+      ],
+      "missing_reason": null
+    },
+    "N03": {
+      "median": 9.87599912418174,
+      "range": [
+        9.844423168361105,
+        9.9888482578176
+      ],
+      "n": 3,
+      "samples": [
+        {
+          "arm": 1,
+          "run": 1,
+          "gain": 9.9888482578176,
+          "source": "pilot3/N03-r1/arm1/grade.json"
+        },
+        {
+          "arm": 2,
+          "run": 1,
+          "gain": 9.844423168361105,
+          "source": "pilot3/N03-r1/arm2/grade.json"
+        },
+        {
+          "arm": 3,
+          "run": 1,
+          "gain": 9.87599912418174,
+          "source": "pilot3/N03-r1/arm3/grade.json"
+        }
+      ],
+      "missing_reason": null
+    },
+    "N04": {
+      "median": 0.2375,
+      "range": [
+        0.21499999999999997,
+        0.2733333333333333
+      ],
+      "n": 4,
+      "samples": [
+        {
+          "arm": 1,
+          "run": 1,
+          "gain": 0.22999999999999998,
+          "source": "pilot3/N04-r1/arm1/grade.json"
+        },
+        {
+          "arm": 2,
+          "run": 1,
+          "gain": 0.2733333333333333,
+          "source": "pilot3/N04-r1/arm2/grade.json"
+        },
+        {
+          "arm": 3,
+          "run": 1,
+          "gain": 0.21499999999999997,
+          "source": "pilot3/N04-r1/arm3/grade.json"
+        },
+        {
+          "arm": 1,
+          "run": 2,
+          "gain": 0.245,
+          "source": "pilot3/N04-r2/arm1/grade.json"
+        }
+      ],
+      "missing_reason": null
+    },
+    "D02": {
+      "median": null,
+      "range": null,
+      "n": 0,
+      "samples": [],
+      "missing_reason": "No verified coding-arm grades for this card in the specified sources"
+    },
+    "D03": {
+      "median": 0.30000000000000004,
+      "range": [
+        0.28055555555555556,
+        0.3055555555555556
+      ],
+      "n": 7,
+      "samples": [
+        {
+          "arm": 1,
+          "run": 1,
+          "gain": 0.30000000000000004,
+          "source": "pilot2/results-corrected.json"
+        },
+        {
+          "arm": 2,
+          "run": 1,
+          "gain": 0.28055555555555556,
+          "source": "pilot2/results-corrected.json"
+        },
+        {
+          "arm": 1,
+          "run": 2,
+          "gain": 0.3027777777777778,
+          "source": "pilot2/results-corrected.json"
+        },
+        {
+          "arm": 2,
+          "run": 2,
+          "gain": 0.3027777777777778,
+          "source": "pilot2/results-corrected.json"
+        },
+        {
+          "arm": 3,
+          "run": 2,
+          "gain": 0.2944444444444445,
+          "source": "pilot2/results-corrected.json"
+        },
+        {
+          "arm": 1,
+          "run": 3,
+          "gain": 0.3055555555555556,
+          "source": "pilot2/results-corrected.json"
+        },
+        {
+          "arm": 2,
+          "run": 3,
+          "gain": 0.2861111111111111,
+          "source": "pilot2/results-corrected.json"
+        }
+      ],
+      "missing_reason": null
+    },
+    "D04": {
+      "median": 2.064604114822575,
+      "range": [
+        2.0646038772525026,
+        2.0646041172107044
+      ],
+      "n": 8,
+      "samples": [
+        {
+          "arm": 1,
+          "run": 1,
+          "gain": 2.064604103373382,
+          "source": "pilot2/results-corrected.json"
+        },
+        {
+          "arm": 2,
+          "run": 1,
+          "gain": 2.0646038772525026,
+          "source": "pilot2/results-corrected.json"
+        },
+        {
+          "arm": 3,
+          "run": 1,
+          "gain": 2.0646041172107044,
+          "source": "pilot2/results-corrected.json"
+        },
+        {
+          "arm": 1,
+          "run": 2,
+          "gain": 2.064604117210704,
+          "source": "pilot2/results-corrected.json"
+        },
+        {
+          "arm": 2,
+          "run": 2,
+          "gain": 2.064604103744319,
+          "source": "pilot2/results-corrected.json"
+        },
+        {
+          "arm": 3,
+          "run": 2,
+          "gain": 2.0646041172104965,
+          "source": "pilot2/results-corrected.json"
+        },
+        {
+          "arm": 1,
+          "run": 3,
+          "gain": 2.0646041172098144,
+          "source": "pilot2/results-corrected.json"
+        },
+        {
+          "arm": 2,
+          "run": 3,
+          "gain": 2.064604112435336,
+          "source": "pilot2/results-corrected.json"
+        }
+      ],
+      "missing_reason": null
+    }
+  }
+}
