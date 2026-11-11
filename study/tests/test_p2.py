@@ -24,6 +24,10 @@ class Pilot2(unittest.TestCase):
             np.savez(root/'a.npz',ids=ids,predictions=np.array([.25,-1.75]))
             np.savez(root/'b.npz',ids=ids[::-1],predictions=np.array([-1.75,.25]))
             self.assertTrue(equal_predictions(root/'a.npz',root/'b.npz'))
+            np.savez(root/'b.npz',ids=ids,predictions=np.array([.25000001,-1.75000001]))
+            self.assertTrue(equal_predictions(root/'a.npz',root/'b.npz'))
+            np.savez(root/'b.npz',ids=ids,predictions=np.array([.26,-1.75]))
+            self.assertFalse(equal_predictions(root/'a.npz',root/'b.npz'))
             np.savez(root/'b.npz',ids=ids,predictions=np.array([.25,float('nan')]))
             self.assertFalse(equal_predictions(root/'a.npz',root/'b.npz'))
     def test_package_allowlist(self):
