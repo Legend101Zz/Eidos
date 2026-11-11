@@ -24,6 +24,7 @@ POLICY_V1 = "context-policy/1"
 MAX_JOBS = 25
 MAX_CATALOG = 30
 SWEEP_COMPONENT = "eidos.search.recipe-sweep"
+DIAGNOSIS_COMPONENT = "eidos.diagnose.baseline-errors"  # ADR 0024
 BATCH_NOT_RUN_CODES = ("DEPENDENCY_FAILED", "REF_UNRESOLVED", "BATCH_DEADLINE")
 
 TOOL_GUIDE = """You are the Eidos investigator. Each turn you propose ONE decision as JSON:
@@ -96,9 +97,17 @@ Batches: calls run in order, and any argument of a later call can be {"$ref": "c
   refused before anything runs. Jobs of one decision run one at a time (one CPU); several at once need "resource_policy":
   {"max_concurrent_jobs": n} and a project resource policy that allows n. launch_evidence_plan and assess_candidate use the same
   allowance: their jobs run one at a time, and the calls after them that start compute wait until the last job has ended.
-Search: eidos.search.recipe-sweep runs one project command over a parameter space (grid, or random with a seed) on
-  visible validation, with seeds/folds, a budget (max_trials or max_seconds) and a stopping rule, and returns a ranked
-  evidence_table and best_recipe. It is exploratory: no claim, no test data. Lock the winner before confirming it.
+Diagnose, then sweep, then challenge. (1) After the baseline, eidos.diagnose.baseline-errors {inputs: {train, validation,
+  predictions?: <baseline's validation predictions npz>}} returns split statistics, error slices and probes that tell an
+  additive offset, a gain change, a feature-wise shift, a spatial/positional shift and information loss apart, as ranked
+  hypotheses with a prediction and a falsifier each. (2) A broad sweep in ONE call, no authored code:
+  eidos.search.recipe-sweep {inputs: {train, validation}, config: {template: {name: "quick"|"broad", task_type:
+  "classification"|"regression"}}} crosses none / train-fitted standardize / per-example center / per-example standardize
+  with linear, k-NN, kernel ridge, small MLP (and SVM, GBM when scikit-learn exists), screens all on validation,
+  cross-validates finalists within train and returns a ranked evidence_table and best_recipe (with a reproduce command).
+  (3) Targeted challengers: a command sweep (config.command argv over a grid or seeded random space, seeds/folds, budget
+  max_trials or max_seconds, stopping rule) or authored candidates testing the top hypothesis's prediction. All three
+  are exploratory: no claim, no test data. Lock the winner before confirming it.
 Control actions: wait_for_jobs (sleep until admitted work finishes), request_input, conclude {summary, scope, claim?},
   stop. claim = {disposition: "candidate"|"confirmed"|"null"|"abstain", claim_id?, point_estimate: {metric, value or
   baseline+candidate, split?, direction?: "higher_is_better"|"lower_is_better"} (value means improvement: positive is
@@ -465,16 +474,24 @@ def _assessment_facts(view: dict[str, Any]) -> list[str]:
 
 
 def _sweep_facts(view: dict[str, Any]) -> list[str]:
-    """Recipe sweeps of this investigation (ADR 0022), whose rows the job window can otherwise drop."""
+    """Baseline diagnoses (ADR 0024) and recipe sweeps (ADR 0022) of this investigation, whose rows the job window can
+    otherwise drop."""
     out = []
     for j in view.get("jobs") or []:
+        if str(j.get("component") or "").startswith(DIAGNOSIS_COMPONENT):
+            receipt = j.get("receipt") if isinstance(j.get("receipt"), dict) else {}
+            report = [o["artifact_id"] for o in j.get("outputs", []) if o.get("slot") == "report"]
+            out.append(f"- Diagnosis {j['id']} ({j.get('status')}): report {report[0] if report else None}, top hypothesis "
+                       f"{receipt.get('top_hypothesis')}, ranked {json.dumps(receipt.get('hypotheses'))}. Exploratory: test "
+                       "its prediction (and falsifier) with a sweep before changing architecture.")
+            continue
         if not str(j.get("component") or "").startswith(SWEEP_COMPONENT):
             continue
         outputs = {o["slot"]: o["artifact_id"] for o in j.get("outputs", []) if o.get("slot") in ("best_recipe", "evidence_table")}
         metrics = (j.get("receipt") or {}).get("metrics") if isinstance(j.get("receipt"), dict) else None
         out.append(f"- Sweep {j['id']} ({j.get('status')}): {json.dumps(outputs, sort_keys=True)}"
                    + (f", metrics {json.dumps(metrics, sort_keys=True)}" if metrics else "") + ". Exploratory: lock the winner before confirming it.")
-    return out[-3:]
+    return out[-4:]
 
 
 def _batch_facts(view: dict[str, Any]) -> list[str]:

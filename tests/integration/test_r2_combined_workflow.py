@@ -54,7 +54,7 @@ ROOT = Path(__file__).resolve().parents[2]
 WIRE_V1 = ROOT / "tests" / "fixtures" / "wire" / f"v{eidos_wire.WIRE_MAJOR}"
 DECISION_SCHEMA = ROOT / "schemas" / "eidos-wire" / f"v{eidos_wire.WIRE_MAJOR}" / "decision-proposal.schema.json"
 
-SWEEP_REF = "eidos.search.recipe-sweep@1.0.0"
+SWEEP_REF = "eidos.search.recipe-sweep@1.1.0"
 REFIT_REF = "proj.refit@1.0.0"
 RUN = {"environment": "lab", "isolation_profile": "dev:same-user"}
 # ADR 0023, R14: a lock needs the selection rule recorded first (scorer and selection data fixed before the results)

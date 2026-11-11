@@ -46,6 +46,38 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
   allowed in the finalize phase.
 - **Baseline** only from the project command or a `baseline` note, never from a `reproduction` purpose.
 
+### Baseline error analysis and typed sweep templates (ADR 0024, from the diagnosis of development pilot 2)
+
+- **`eidos.diagnose.baseline-errors@1.0.0`** (new, numpy): from train, validation and optional baseline predictions,
+  groups and task, a `baseline-diagnosis/1` report with split statistics, error slices (class or target quantile,
+  input-norm and input-mean quantile, groups), invariance probes (quick ridge and k-NN refits under none, per-example
+  centering, per-example standardization, split-wise standardization and shift-invariant features, with within-split
+  CV) and ranked hypotheses that tell an additive offset, a gain change, a feature-wise shift, a spatial or positional
+  shift and information loss apart, each with a prediction and a falsifier. Provenance and input digests recorded.
+  Reads no test data; exploratory.
+- **`eidos.search.recipe-sweep@1.1.0`: typed templates.** `config.template {name: quick|broad, ...}` runs a broad sweep in
+  one call with no authored code: preprocessing (none, train-fitted standardize, per-example center or standardize)
+  crossed with linear, k-NN, kernel ridge, small MLP, and SVM and GBM where scikit-learn exists (otherwise recorded as
+  skipped), screened on validation, finalists cross-validated within train, every attempted recipe recorded, a
+  reproduce command for the winner. Command sweeps are unchanged.
+- **Config contracts support `anyOf`**, so the sweep's schema accepts a template or a full command sweep and still
+  refuses neither.
+- **Investigator guide:** diagnose, then a template sweep, then targeted challengers; diagnosis jobs are pinned with
+  sweeps in the context. Method cards, author guide and toolkit coverage updated; arm 4 also installs the diagnosis
+  component; the standalone toolkit carries both.
+
+### Review R16 of G2 (ADR 0024 addendum)
+
+- **Diagnosis:** `prediction_key` and `groups_key` are checked against held-out names before any input is opened; array
+  names with a word beginning `test`, `holdout` or `heldout` are refused.
+- **Sweep 1.1.0:** repeated seeds are refused (`seed_policy.seeds`, `template.seeds`); every evaluation gets its own
+  directory and a working-directory error is recorded as that evaluation's failure, so the evidence table is still
+  written. `command.copy` entries and non-code source-bundle files with a word beginning `test`, `holdout` or `heldout`
+  (`test1.csv`, `testfeatures.csv`) are refused.
+- **`eidos.search.recipe-sweep@1.0.0` stays installable** beside 1.1.0 (`components/eidos.search.recipe-sweep@1.0.0/`,
+  byte-identical to the 1.0.0 release), so a fresh project resolves a pinned 1.0.0 reference. Arms publish it unbound;
+  the toolkit runs each release with its own module.
+
 ## Unreleased: 1.2.0
 
 ### Review R13 of the integrated round (ADR 0021 addendum)

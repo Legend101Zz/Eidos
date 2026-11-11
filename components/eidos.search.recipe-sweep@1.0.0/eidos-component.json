@@ -1,0 +1,236 @@
+{
+ "id": "eidos.search.recipe-sweep",
+ "release": "1.0.0",
+ "implements": "recipe-search/1",
+ "kind": "artifact-op",
+ "entry": "recipe_sweep:run",
+ "summary": "Exploratory recipe search on visible validation. Runs a project command once per recipe x seed x fold in a private work dir: config.command.argv (\"python\" or an absolute path first; {work} {out} {seed} {fold} {folds} {params_json} {recipe} and {param.NAME} substituted), which writes numeric metrics to {out}/receipt.json. config.space is grid or random (with a seed), config.seed_policy gives seeds and folds, config.budget needs max_trials or max_seconds, config.stopping is none, patience or target. Outputs: evidence_table (every recipe, ranked, with its metrics) and best_recipe. Without a source bundle, config.command.copy must list the project files to copy. Each evaluation runs in a scrubbed environment and its own process group. No claim and no test data; lock the winner before independent confirmation.",
+ "scientific_effects": [
+  "change-weights"
+ ],
+ "optional_inputs": {
+  "source": "source-bundle/1",
+  "train": "task-array/1",
+  "validation": "task-array/1",
+  "task": "task-manifest/1"
+ },
+ "output": {
+  "evidence_table": "recipe-sweep-table/1",
+  "best_recipe": "recipe-sweep-best/1"
+ },
+ "reads": [
+  "project files",
+  "declared inputs"
+ ],
+ "writes": [
+  "output:evidence_table",
+  "output:best_recipe"
+ ],
+ "isolation": "private-copy",
+ "card": "method-card.md",
+ "controls": [
+  "fixtures/grid.json",
+  "fixtures/refuses-unbounded.json",
+  "fixtures/refuses-test-metric.json"
+ ],
+ "receipt": [
+  "metrics",
+  "stop_reason",
+  "evidence_digest",
+  "best_recipe_id"
+ ],
+ "config_schema": {
+  "type": "object",
+  "required": [
+   "command",
+   "space",
+   "objective",
+   "budget"
+  ],
+  "properties": {
+   "command": {
+    "type": "object",
+    "required": [
+     "argv"
+    ],
+    "properties": {
+     "argv": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+       "type": "string"
+      },
+      "firstItemPattern": "^(python|/.+)$",
+      "description": "argument array, no shell; {work} {out} {seed} {fold} {folds} {params_json} {recipe} {param.NAME} substituted"
+     },
+     "files": {
+      "type": "object",
+      "description": "optional port->plain filename map; ports not listed are staged as <port><ext>"
+     },
+     "copy": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "plain file names copied from the project directory into each work dir; required without a source bundle. Nothing is copied implicitly, and a file named after a test or held-out split is refused."
+     },
+     "metrics_file": {
+      "type": "string",
+      "description": "JSON object of numeric metrics written under {out}; default receipt.json"
+     },
+     "timeout_seconds": {
+      "type": "number",
+      "minimum": 1
+     }
+    }
+   },
+   "recipe": {
+    "description": "optional recipe template: any JSON, with {\"$param\": NAME} replaced, written to {recipe} in the work dir"
+   },
+   "space": {
+    "type": "object",
+    "required": [
+     "mode",
+     "parameters"
+    ],
+    "properties": {
+     "mode": {
+      "type": "string",
+      "enum": [
+       "grid",
+       "random"
+      ]
+     },
+     "parameters": {
+      "type": "object",
+      "description": "name -> {values: [...]}, or for random also {low, high, log?, integer?}"
+     },
+     "seed": {
+      "type": "integer",
+      "description": "required for random search"
+     },
+     "samples": {
+      "type": "integer",
+      "minimum": 1
+     }
+    }
+   },
+   "objective": {
+    "type": "object",
+    "required": [
+     "metric"
+    ],
+    "properties": {
+     "metric": {
+      "type": "string",
+      "description": "a visible-validation metric from the command's receipt, e.g. validation_accuracy; a test or held-out metric is refused"
+     },
+     "direction": {
+      "type": "string",
+      "enum": [
+       "maximize",
+       "minimize"
+      ]
+     }
+    }
+   },
+   "seed_policy": {
+    "type": "object",
+    "properties": {
+     "seeds": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+       "type": "integer"
+      }
+     },
+     "folds": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "folds of the visible data; the command reads {fold} of {folds} and owns the split"
+     }
+    }
+   },
+   "budget": {
+    "type": "object",
+    "description": "at least one of max_trials (recipes) and max_seconds",
+    "properties": {
+     "max_trials": {
+      "type": "integer",
+      "minimum": 1
+     },
+     "max_seconds": {
+      "type": "number",
+      "minimum": 1
+     }
+    }
+   },
+   "stopping": {
+    "type": "object",
+    "properties": {
+     "rule": {
+      "type": "string",
+      "enum": [
+       "none",
+       "patience",
+       "target"
+      ]
+     },
+     "patience": {
+      "type": "integer",
+      "minimum": 1
+     },
+     "min_delta": {
+      "type": "number",
+      "minimum": 0
+     },
+     "target": {
+      "type": "number"
+     }
+    }
+   }
+  },
+  "examples": [
+   {
+    "command": {
+     "argv": [
+      "python",
+      "project.py",
+      "train",
+      "--inputs",
+      "{work}",
+      "--out",
+      "{out}",
+      "--seed",
+      "{seed}",
+      "--lr",
+      "{param.lr}"
+     ]
+    },
+    "space": {
+     "mode": "grid",
+     "parameters": {
+      "lr": {
+       "values": [
+        0.1,
+        0.01
+       ]
+      }
+     }
+    },
+    "objective": {
+     "metric": "validation_accuracy"
+    },
+    "seed_policy": {
+     "seeds": [
+      11,
+      23
+     ]
+    },
+    "budget": {
+     "max_trials": 20
+    }
+   }
+  ]
+ }
+}
