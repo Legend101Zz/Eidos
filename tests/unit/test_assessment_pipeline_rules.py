@@ -522,3 +522,21 @@ def test_a_held_out_plan_or_one_without_provenance_is_freezable():
     assert check_freezable(_plan(), template_approved=True, assessor_approved=True) is None
     assert check_freezable({"obligations": []}, template_approved=True, assessor_approved=True) is None
     assert check_freezable(_plan(data_provenance=None), template_approved=True, assessor_approved=True) is None
+
+
+# -- candidate_lock_job_id (R13) ----------------------------------------------------------------------------------------
+@pytest.mark.parametrize("note, job_id", [
+    ({"text": '{"job_id": "job_a"}'}, "job_a"),
+    ({"text": '{"job_id": "job_a"}', "evidence_refs": ["job_b"]}, "job_a"),
+    ({"text": "the lr=0.01 run is my candidate", "evidence_refs": ["job_a"]}, "job_a"),
+    ({"text": "see the job", "evidence_refs": [{"job_id": "job_a"}, "art_1"]}, "job_a"),
+    ({"text": "duplicates", "evidence_refs": ["job_a", {"job_id": "job_a"}]}, "job_a"),
+    ({"text": "two candidates", "evidence_refs": ["job_a", "job_b"]}, None),
+    ({"text": "prose naming job_a only"}, None),
+    ({"text": "{not json", "evidence_refs": ["art_1"]}, None),
+    ({"text": "[1]", "evidence_refs": None}, None),
+    ({"text": '{"job_id": 7}'}, None),
+    ({"text": None, "evidence_refs": "job_a"}, None),
+])
+def test_a_lock_names_a_job_by_its_text_or_a_single_job_in_evidence_refs(note, job_id):
+    assert A.candidate_lock_job_id(note) == job_id

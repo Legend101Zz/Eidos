@@ -163,6 +163,8 @@ def _confirmation_status(ctx: Ctx, plan: Any) -> dict:
                 raise Invalid(f"plan {other.id} already used this held-out data for confirmation: running another plan on "
                               "it would let results seen there choose this one. An operator must attest new held-out data",
                               details={"reason_code": "held-out-reused", "plan_id": other.id, "data_keys": sorted(reused)})
+        ev.check_prospective(plan.body, status=status, artifacts=artifacts,
+                             jobs=ctx.tx.list_jobs(ctx.project_id, limit=100000))
     return status
 
 

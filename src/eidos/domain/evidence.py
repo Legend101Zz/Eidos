@@ -11,7 +11,15 @@ import copy
 import math
 from typing import Any
 
-from eidos.domain.assessment import CHECKPOINT_SCHEMAS, PROVENANCE_HELD_OUT, RESULT_SCHEMAS, can_confirm
+from eidos.domain.assessment import (
+    CHECKPOINT_SCHEMAS,
+    PROVENANCE_HELD_OUT,
+    RESULT_SCHEMAS,
+    can_confirm,
+    job_seed,
+    recipe_identity,
+    seed_sort_key,
+)
 from eidos.domain.charter import charter_digest, find_rule, reject_threshold_overrides
 from eidos.domain.errors import Invalid, QualificationMissing
 from eidos.domain.stats import paired_difference, two_way_paired_difference
@@ -211,6 +219,58 @@ def confirmation_status(plan: dict[str, Any], *, charter: dict[str, Any], artifa
         charter_id = (plan.get("charter_ref") or {}).get("id")
         data_keys = [*(f"labels:{d}" for d in sorted(digests)), *(f"split:{charter_id}:{s}" for s in sorted(splits))]
     return {"eligible": not reasons, "reasons": reasons, "verified": verified, "data_keys": data_keys}
+
+
+def check_prospective(plan: dict[str, Any], *, status: dict[str, Any], artifacts: dict[str, dict[str, Any]],
+                      jobs: list[dict[str, Any]]) -> None:
+    """Refuse a plan verified as confirmation-eligible when what it would confirm was already used for selection (ADR 0021,
+    R13). Called at the freeze boundary, so it covers every plan, however it was drafted. ``status`` is this plan's
+    ``confirmation_status``; ``jobs`` are the project's recorded jobs.
+
+    The plan's held-out labels or splits must not be inputs of any earlier job, whatever its purpose: an exploratory plan's
+    jobs have purpose "confirmation" too. And no root step (one with no input from another step of the plan) may repeat a
+    recipe and seed that already ran. A second confirmation on the same data is refused before this, as held-out-reused."""
+    verified = status.get("verified") or {}
+    digests, splits = set(verified.get("labels_digests") or []), set(verified.get("evaluation_splits") or [])
+    exposed = []
+    for job in jobs:
+        lock = job["lock"]
+        evaluation = (lock.get("config") or {}).get("evaluation")
+        split = evaluation.get("split") if isinstance(evaluation, dict) else None
+        if any((binding or {}).get("digest") in digests for binding in (lock.get("inputs") or {}).values()) \
+                or (split and str(split) in splits):
+            exposed.append(job["id"])
+    if exposed:
+        raise Invalid("earlier jobs already read this held-out data, so their results could have chosen this plan: it is "
+                      "selection data and cannot confirm. Draft the plan without held-out data_provenance to measure it as "
+                      "exploratory, or have an operator attest new held-out data",
+                      details={"reason_code": "selection-exposed", "jobs": exposed[:10]})
+
+    literal = {(i["arm"], i["step"], i["port"]): i["artifact_id"] for i in literal_inputs(plan)}
+    steps: list[Any] = []
+    seeds: set[str] = set()
+    seen_by: list[str] = []
+    for step in plan_steps(plan):
+        spec = step["spec"]
+        inputs = spec.get("inputs") or {}
+        if any((step["arm"], step["id"], port) not in literal for port in inputs):
+            continue  # fed by an earlier step of this plan: it is fresh exactly when that step is
+        identity = recipe_identity({"component": {"ref": spec.get("component_ref") or spec.get("component")},
+                                    "inputs": {port: artifacts.get(literal[(step["arm"], step["id"], port)])
+                                               for port in inputs},
+                                    "config": spec.get("config")})
+        seed = job_seed(spec)
+        matches = [job for job in jobs if recipe_identity(job["lock"]) == identity
+                   and (seed is None or job_seed(job["lock"]) == seed)]
+        if matches:
+            steps.append(step["id"])
+            seen_by.extend(job["id"] for job in matches)
+            seeds.update(s for job in matches if (s := job_seed(job["lock"])) is not None)
+    if steps:
+        raise Invalid("this plan re-runs recipes and seeds that already ran, so their results were visible before it was "
+                      "frozen; choose seeds these recipes have not run",
+                      details={"reason_code": "seed-already-observed", "steps": steps[:10], "seeds": sorted(seeds, key=seed_sort_key),
+                               "jobs": list(dict.fromkeys(seen_by))[:10]})
 
 
 def check_conformance(plan: dict[str, Any], realized: dict[str, Any]) -> dict[str, Any]:

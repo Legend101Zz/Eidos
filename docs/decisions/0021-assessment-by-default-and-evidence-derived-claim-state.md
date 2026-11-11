@@ -196,3 +196,30 @@ job waits for it to succeed) and is refused as `observed-evidence`. `assess_cand
 scheduler: its jobs run one at a time and hold the decision's CPU allowance, and it takes the decision's checked
 `max_concurrent_jobs`. A refused `assess_candidate` is a recorded answer that admitted nothing, so it holds no allowance
 and gives a wait nothing to wait for. The decision schema carries `control.claim` beside `scope` and batch references.
+
+## Addendum (review R13): the freeze boundary covers every confirmation-eligible plan
+
+Review R13 found that `assess_candidate` checked prior use of labels and of recipes and seeds, but a plan drafted by hand
+reached `freeze_evidence_plan` without those checks. An investigator could therefore evaluate recipes on the attested
+labels, keep the favourable ones, and freeze a manual plan re-running them. The rules are now applied at the freeze
+boundary (`evidence.check_prospective`), for every plan verified as confirmation-eligible, however it was drafted:
+
+- **Data already used.** A plan's attested labels or evaluation splits must not be inputs of any earlier job of the
+  project, whatever its purpose: jobs of an exploratory plan have purpose `confirmation` too, and reserve no held-out
+  data. The refusal is `selection-exposed`.
+- **Recipes and seeds already run.** No root step of the plan (one with no input from another step of the plan) may
+  repeat a recipe and seed that already ran, by `recipe_identity`. An unseeded step whose recipe has run at all is
+  repeated, since nothing makes the rerun fresh. The refusal is `seed-already-observed`.
+
+Both are refused rather than marked exploratory: the plan declares held-out data, and running a plan with reused seeds
+would expose labels that are still clean. To measure such a plan, draft it without held-out `data_provenance`: it then
+stays exploratory as before. `held-out-reused` is still checked first. Evaluation splits are matched by name across the
+project, which errs towards refusal when two charters reuse a split name.
+
+The pinned candidate state in `investigation_view` is now `conclusion_claim_state` itself, as of the view's horizon, so
+it applies the current claim revision, plan eligibility and "an intact failure outweighs a pass". A pass on an exploratory
+plan can no longer be pinned as `protocol-passed`.
+
+A `candidate_lock` note identifies its job through JSON text `{"job_id": "<job>"}`, or through exactly one job in
+`evidence_refs`, so natural-language locks that cite one job can be assessed. A prose mention of a job does not identify
+it. The playbook and tool guide give this format, and the pinned lock says when a note names no job.

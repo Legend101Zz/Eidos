@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from eidos.application.handlers.assessment import conclusion_claim_state
 from eidos.application.handlers.components import catalog
 from eidos.application.handlers.investigations import confirm_scope, inv_scope
 from eidos.application.service import Ctx, query
@@ -486,6 +487,7 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
             "environments": environments, "environment_details": environment_details, "admission_refusals": refusals,
             "pinned_notes": pinned_notes, "created_artifacts": created[-50:], "call_results": call_results[-30:],
             "evidence_plans": plans[-10:],
+            "claim_state": conclusion_claim_state(ctx, inv, {}, cutoff_ts=cutoff_ts),
             "assessment_requests": requests[-10:],
             "approved_protocols": [{"release_ref": r, "scope": list(sc)} for r, sc in approved],
             "charter": charter, "jobs": jobs,

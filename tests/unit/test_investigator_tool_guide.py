@@ -43,3 +43,17 @@ def test_the_guide_says_abstaining_or_a_null_takes_precedence_and_that_a_value_i
 
 def test_the_guide_no_longer_offers_the_templates_classification_route_for_existing_predictions():
     assert "classification: {labels:" not in TOOL_GUIDE and "predictions: {baseline:" not in TOOL_GUIDE
+
+
+def test_the_guide_gives_the_exact_candidate_lock_format():
+    guide = flat(TOOL_GUIDE)
+    assert 'record_note {kind: "candidate_lock", text: "{\\"job_id\\": \\"<job>\\"}"}' in guide
+    assert "exactly one job in evidence_refs" in guide
+
+
+def test_the_playbook_gives_the_exact_candidate_lock_format():
+    from eidos.investigator.playbook import PLAYBOOK
+
+    playbook = flat(PLAYBOOK)
+    assert 'record_note with kind "candidate_lock" and text {"job_id": "<job>"}' in playbook
+    assert "exactly one job in evidence_refs" in playbook

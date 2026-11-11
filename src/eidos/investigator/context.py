@@ -11,7 +11,7 @@ import json
 import re
 from typing import Any
 
-from eidos.domain.assessment import lifecycle_state
+from eidos.domain.assessment import candidate_lock_job_id
 from eidos.domain.redaction import redact_text as _redact
 from eidos.domain.turns import CONTROL_TOOLS, EFFECT_TOOLS, MODEL_CONTEXT_CHAR_LIMIT
 from eidos_wire import canonical_json, sha256_bytes
@@ -76,6 +76,9 @@ Effect tools (executed in order only after the lab accepts your decision):
     expect its refusal, and conclude with disposition "candidate" and your validation point estimate. The outcome is
     "candidate submitted for confirmation" and the independent evaluator decides. That is a normal, complete result.
   export_model {checkpoint_artifact_id, behavior_check_job_id}; record_note {kind, text, evidence_refs}
+  To lock a candidate: record_note {kind: "candidate_lock", text: "{\\"job_id\\": \\"<job>\\"}"}, the text being exactly
+    that JSON naming the selected training job, or any text with exactly one job in evidence_refs. A lock that names no
+    job cannot be assessed.
 Batches: calls run in order, and any argument of a later call can be {"$ref": "call[<i>].<field>"}, an earlier call of
   the SAME decision's result, filled in when the later call runs. So one decision can author, train, infer and score:
   [author_source {files}, run_component {inputs: {source: {"$ref": "call[0].artifact_id"}}, ...}, run_component {inputs:
@@ -328,7 +331,11 @@ def _lock_fact(view: dict[str, Any]) -> list[str]:
     out = []
     locks = [n for n in (view.get("pinned_notes") or []) if n.get("kind") in ("candidate_lock", "lock")]
     if locks:
-        out.append(f"- Current lock ({locks[-1]['id']}, {len(locks)} recorded): {_redact(str(locks[-1].get('text') or ''))[:600]}")
+        latest = locks[-1]
+        usable = latest.get("kind") == "candidate_lock" and candidate_lock_job_id(latest) is not None
+        text = _redact(str(latest.get("text") or ""))[:600 if usable else 480]
+        out.append(f"- Current lock ({latest['id']}, {len(locks)} recorded): {text}" + ("" if usable else (
+            ' [names no job, so assess_candidate will refuse it: record_note kind "candidate_lock", text {"job_id": "<job>"}]')))
     active = [p for p in (view.get("evidence_plans") or []) if p.get("status") not in ("draft", "cancelled", None)]
     if active:
         pl = active[-1]
@@ -341,12 +348,17 @@ def _assessment_facts(view: dict[str, Any]) -> list[str]:
     """Where the candidate stands (ADR 0021): the state its claim would have now, and the route that remains."""
     plans = view.get("evidence_plans") or []
     out: list[str] = []
-    assessed = [p for p in plans if p.get("assessment")]
-    if assessed:
-        plan, a = assessed[-1], assessed[-1]["assessment"]
-        state = lifecycle_state(a.get("outcome"), a.get("conformance"), a.get("health"))
-        out.append(f"- Candidate state: {state} (plan {plan['plan_id']}, assessment {a.get('assessment_id')}, outcome "
-                   f"{a.get('outcome')}, conformance {a.get('conformance')}, health {a.get('health')})")
+    state = view.get("claim_state") or {}
+    chosen = state.get("assessment_id")
+    if chosen:  # derived by the conclusion's rules: current claim revision, plan eligibility, a failure outweighs a pass
+        a: dict[str, Any] = next((x for x in state.get("assessments_considered") or [] if x.get("id") == chosen), {})
+        out.append(f"- Candidate state: {state.get('state')} (claim {state.get('claim_id')} revision {state.get('claim_revision')}, "
+                   f"plan {state.get('plan_id')}, assessment {chosen}, outcome {a.get('outcome')}, conformance "
+                   f"{a.get('conformance')}, health {a.get('health')})")
+    elif any(p.get("assessment") for p in plans):
+        where = (f"no assessment of revision {state.get('claim_revision')} of claim {state.get('claim_id')}"
+                 if state.get("claim_id") else "no assessment of a current claim")
+        out.append(f"- Candidate state: candidate-submitted ({where}; an earlier assessment does not carry over)")
     else:
         out.append('- Candidate state: no assessment recorded. Concluding with claim disposition "candidate" records '
                    '"candidate submitted for confirmation".')

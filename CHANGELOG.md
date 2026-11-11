@@ -4,6 +4,16 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.2.0
 
+### Review R13 of the integrated round (ADR 0021 addendum)
+
+- **Freeze boundary.** `freeze_evidence_plan` refuses any confirmation-eligible plan, including manual plans, whose
+  attested labels or splits an earlier job already read (`selection-exposed`) or whose root steps repeat a recipe and
+  seed already run (`seed-already-observed`).
+- **Pinned candidate state.** `investigation_view` carries `claim_state`, derived by the conclusion's rules, and the
+  pinned facts use it: a pass on an exploratory plan or an earlier claim revision is never shown as `protocol-passed`.
+- **Candidate lock format.** The playbook and tool guide give the exact `candidate_lock` format, and assessment also
+  accepts a lock naming exactly one job in `evidence_refs`. The pinned lock says when a note names no job.
+
 ### Investigator reliability and completion (ADR 0020, from the diagnosis of development pilot 1)
 
 - **Environment preflight.** Registration records a capability probe (interpreter digest, key modules, versions) and
