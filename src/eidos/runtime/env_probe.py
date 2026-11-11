@@ -54,8 +54,18 @@ def prefixes():
             return [root] + ([sys.base_prefix] if shared else [])
     return [sys.prefix]
 
+def site_dirs():
+    # By hand first: Debian's site.py lists site-packages only when sys.prefix differs from sys.base_prefix, which -S prevents.
+    roots = prefixes()
+    version = "python%d.%d%s" % (sys.version_info[0], sys.version_info[1], "t" if "t" in getattr(sys, "abiflags", "") else "")
+    libdirs = [getattr(sys, "platlibdir", "lib"), "lib"]
+    out = [os.path.join(r, lib, version, "site-packages") for r in roots for lib in libdirs]
+    return [d for d in dict.fromkeys(out + site.getsitepackages(roots)) if os.path.isdir(d)]
+
 def search_path():
-    dirs = [d for d in site.getsitepackages(prefixes()) if os.path.isdir(d)]
+    dirs = site_dirs()
+    if not dirs:
+        sys.exit("no site directory found for this interpreter")  # a failed probe, not an empty inventory
     out = list(dirs)
     for d in dirs:  # the path lines of .pth files (legacy editable installs); their import lines are never run
         for name in sorted(os.listdir(d)):
