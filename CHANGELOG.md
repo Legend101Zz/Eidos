@@ -2,6 +2,34 @@
 
 All notable changes to Eidos. Tags are annotated, created only on CI-green commits, and never moved. Development tags `eidos-v0.x` were freezes, not releases.
 
+## Unreleased: 1.3.0
+
+### Incumbent and challengers, baseline identity, fresh-state repair, provider resilience (ADR 0023, G1)
+
+- **Incumbent plus challengers until the exploration deadline.** A selection rule (metric, `validation` or
+  `training-cv`, direction; optional `ceiling`, `max_rounds`) is recorded before the rounds it judges and is fixed. A
+  `candidate_lock` that changes the incumbent must beat it on that rule, read from recorded receipts (the lock job's
+  scorer lineage), else `record_note` refuses it; each change is versioned on its note and emitted as
+  `incumbent.changed`. No lock changes after a plan is frozen or an assessment requested.
+- **Exploration allowance and stops.** `begin_turn` records `spec.exploration`: challenger rounds, the wall and token
+  allowance after a hold-back for reproduction and export (before the conclusion reserve), and the phase. Exploration
+  stops at a perfect score, `patience_rounds` without improvement, a declared search limit, the hold-back, or the
+  selection freeze; then `accept_decision` refuses new open-search and hypothesis-test compute.
+- **`context-policy/3`** pins the rule, incumbent, rounds, allowance and phase, and reads the baseline from its durable
+  record. **`investigator-playbook/2`** (`investigator-prompt/3`) replaces "lock early, stop as soon as" with challenger
+  rounds. `context-policy/2` remains for replay.
+- **Baseline identity.** The lab records an investigation's first baseline job (project command without authored
+  source, or reproduction) and the first job that scored it (`investigation_baseline`; `baseline.recorded`,
+  `baseline.scored`). "Baseline: none recorded yet" no longer appears once a baseline has run.
+- **Fresh-state repair.** A reply still malformed after the schema re-ask (or the output retries in tool mode) gets a
+  bounded, counted, recorded request from a fresh state (`fresh_state_repairs`, default 1) before the bounded
+  no-effect outcome. Tool mode no longer turns persistent invalid output into a retried activity failure.
+- **Provider resilience.** Failures are classified (quota exhausted, transient, permanent). A transient failure's
+  `Retry-After` (with jitter, bounded by the time before the conclusion reserve) sets the next Temporal attempt's delay
+  and the turn retry's backoff; quota exhaustion (e.g. MiniMax 2056) is non-retryable and marks the investigation
+  needs-input with code `provider-unavailable` at once. Every attempt records its usage, uncertainty, elapsed time and
+  failure class. The study provider bridge forwards `Retry-After`.
+
 ## Unreleased: 1.2.0
 
 ### Review R13 of the integrated round (ADR 0021 addendum)

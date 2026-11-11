@@ -265,11 +265,12 @@ def reproduced(jobs: list[dict[str, Any]], job_id: str) -> str | None:
 
 def reproduction_jobs(jobs: list[dict[str, Any]], recipes_of: list[str]) -> set[str]:
     """Jobs that re-run the recipe of one of ``recipes_of`` (the baseline, every incumbent version), with the jobs that
-    read their outputs (inference, scoring): reproduction work, never a challenger."""
+    read their outputs or those of ``recipes_of`` themselves (inference, scoring): reproduction work, never a
+    challenger."""
     by_id = {j.get("id"): j for j in jobs}
     keys = {recipe_key(by_id[i]) for i in recipes_of if i in by_id}
     out = {str(j["id"]) for j in jobs if recipe_key(j) in keys and j.get("id") not in recipes_of}
-    for jid in list(out):
+    for jid in list(out) + [i for i in recipes_of if i in by_id]:  # scoring the incumbent is not a challenger either
         out |= {str(d["id"]) for d in lineage(jobs, jid)}
     return out
 

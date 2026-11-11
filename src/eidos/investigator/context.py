@@ -336,8 +336,9 @@ def _baseline_record_fact(view: dict[str, Any]) -> str | None:
     """ADR 0023: the durable baseline identity the lab recorded (the investigation's first baseline job and the job that
     scored it), overridden only by an explicit baseline note. Never inferred from the recent jobs."""
     named = [n for n in (view.get("pinned_notes") or []) if n.get("kind") == "baseline"]
-    if named:
-        return _baseline_fact(view)
+    noted = _baseline_fact(view) if named else None
+    if noted:  # a baseline note that names a job wins; one naming none does not hide the record
+        return noted
     rec = view.get("baseline_record")
     if not isinstance(rec, dict) or not rec.get("job_id"):
         return _baseline_fact(view)
