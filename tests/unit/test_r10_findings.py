@@ -220,7 +220,15 @@ def test_the_arm_registers_the_wall_time_actually_remaining(tmp_path, monkeypatc
         clock.now += 120.0  # setup after the envelope started: the deadline must not be counted again from here
         return bridge, {"base_url": "http://127.0.0.1:1", "upstream": "u"}
 
+    write_json = arm4.write_json
+
+    def delayed_setup_record(path, body):
+        if path.name == "setup.json":
+            clock.now += 9.0
+        return write_json(path, body)
+
     monkeypatch.setattr(arm4, "time", fake_time)
+    monkeypatch.setattr(arm4, "write_json", delayed_setup_record)
     monkeypatch.setattr(arm4.lab, "start", lambda: None)
     monkeypatch.setattr(arm4.lab, "client", lambda: client)
     monkeypatch.setattr(arm4, "prepare", lambda c, d, n: ("proj", {"charter_id": "c", "artifacts": {}, "task": {}}))
@@ -232,8 +240,9 @@ def test_the_arm_registers_the_wall_time_actually_remaining(tmp_path, monkeypatc
         arm4.run(tmp_path, {})
     name, payload = client.calls[0]
     assert name == "start_investigation"
-    expected = 3600 - 120 - arm4.WATCHDOG_MARGIN_SECONDS
+    expected = 3600 - 129 - arm4.WATCHDOG_MARGIN_SECONDS
     assert payload["investigator"]["wall_seconds"] == pytest.approx(expected)
+    assert payload["investigator"]["wall_deadline_unix"] == 10_000 + 3600 - arm4.WATCHDOG_MARGIN_SECONDS
     assert payload["investigator"]["wall_seconds"] < 3600 - 120  # strictly inside the watchdog's envelope
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import time
 import uuid
@@ -62,9 +63,21 @@ def start_investigation(ctx: Ctx, p: dict) -> dict:
             "investigator": investigator, "steering": [], "confirmation_envelope": p.get("confirmation_envelope", {}),
             "notes": p.get("notes", ""), "inputs": dict(p.get("inputs") or {}),
             "task": p.get("task")}
-    if investigator.get("wall_seconds"):  # ADR 0020: an optional wall limit, fixed when the investigation starts
-        wall = float(investigator["wall_seconds"])
-        body["wall"] = {"wall_seconds": wall, "deadline_unix": time.time() + wall,
+    absolute_deadline = investigator.get("wall_deadline_unix")
+    if investigator.get("wall_seconds") or absolute_deadline is not None:
+        wall = float(investigator.get("wall_seconds") or 0)
+        deadline = time.time() + wall
+        if absolute_deadline is not None:
+            try:
+                absolute_deadline = float(absolute_deadline)
+            except (TypeError, ValueError) as exc:
+                raise Invalid("investigator.wall_deadline_unix must be a finite timestamp") from exc
+            if not math.isfinite(absolute_deadline):
+                raise Invalid("investigator.wall_deadline_unix must be a finite timestamp")
+            if not math.isfinite(wall) or wall <= 0:
+                raise Invalid("an absolute wall deadline requires positive finite investigator.wall_seconds")
+            deadline = min(deadline, absolute_deadline)
+        body["wall"] = {"wall_seconds": wall, "deadline_unix": deadline,
                         "conclude_threshold_seconds": turn_rules.conclude_threshold(
                             wall, investigator.get("conclude_threshold_seconds"))}
     charter_id = p.get("charter_id")
@@ -519,7 +532,7 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
         finalization = None  # explicit resume does not grant another bounded recovery
     if "turns" in budgets:
         remaining_turns = budgets["turns"]["limit_amount"] - budgets["turns"]["used"] - budgets["turns"]["reserved"]
-        if remaining_turns < 1:
+        if remaining_turns < 1 and finalization:
             _fail_pending_finalization(ctx, inv, "turn-budget-exhausted")
             return {"started": False, "reason": "turn-budget-exhausted", "dimension": "turns"}
         ctx.tx.reserve(inv_scope(inv.id), "turns", 1, f"turn:{inv.id}:{seq}")
@@ -1314,7 +1327,12 @@ def complete_turn(ctx: Ctx, p: dict) -> dict:
     if turn["status"] != "open":
         receipt = ctx.tx.get_record("finalization_export_receipt", turn["investigation_id"])
         abstention = receipt.body.get("controller_abstention") if receipt and receipt.body.get("turn_id") == turn["id"] else None
+        refused = (turn.get("result") or {}).get("control_refused")
+        if not abstention and refused == turn_rules.WALL_REACHED:
+            inv = ctx.tx.require("investigation", turn["investigation_id"])
+            abstention = inv.body.get("controller_abstention")
         return {"turn_id": turn["id"], "status": turn["status"], "already_closed": True,
+                **({"control_refused": refused} if refused == turn_rules.WALL_REACHED else {}),
                 **({"controller_abstention": abstention} if abstention else {})}
     refused = _execution_refused(ctx, turn, str(p.get("execution") or ""))
     if refused:  # F5 (C1): a run that lost the turn to a resuming run never closes it under the new owner
@@ -1359,35 +1377,43 @@ def _close_turn(ctx: Ctx, turn: dict, p: dict) -> dict:
             control_refused = f"investigation-{inv.status}"
             if reason == "concluded":
                 reason = "cancelled"
-    status = "cancelled" if reason == "cancelled" else ("failed" if reason == "error" else "completed")
-    result = {"stop_reason": reason, "summary": str(p.get("summary", ""))[:4000], "receipts": p.get("receipts", []),
-              "unfinished_handles": p.get("unfinished_handles", []), "control": p.get("control"),
-              **({"control_refused": control_refused} if control_refused else {})}
-    if p.get("runtime_outcome"):
-        result["runtime_outcome"] = p["runtime_outcome"]
-    failure = _bounded_details(redact_value(p.get("failure"))) if reason == "error" else {}  # redacted before it is bounded
-    if failure:  # why the turn failed (ADR 0019): on the turn and on its turn.completed event
-        result["failure"] = failure
-    result["uncertain_model_reservations"] = release_turn_model_reservations(ctx, turn)
-    ctx.tx.update_turn(turn["id"], status=status, result=result)
+    uncertain = release_turn_model_reservations(ctx, turn)
     budgets = ctx.tx.budgets(inv_scope(inv_id))
     if "turns" in budgets:
         ctx.tx.settle(inv_scope(inv_id), "turns", reserved=1, actual=1, ref=turn["id"])
-    if control.get("action") in ("conclude", "stop") and not control_refused:
+    summary = str(p.get("summary", ""))[:4000]
+    if reason == "concluded" and control.get("action") in ("conclude", "stop") and not control_refused:
         from eidos.application.handlers.assessment import conclusion_claim_state
         from eidos.domain.assessment import CONCLUSION_SCHEMA
-        body = dict(inv.body)
-        # ADR 0021: the claim state comes from recorded evidence and assessor state, not the model's status.
+        # ADR 0021: the claim state comes from recorded evidence and assessor state.
         claim_state = conclusion_claim_state(ctx, inv, control)
-        body["conclusion"] = {"schema": CONCLUSION_SCHEMA, "turn_id": turn["id"],
-                              "summary": control.get("summary") or result["summary"], "scope": control.get("scope"),
-                              "action": control["action"], "claim_state": claim_state,
-                              "incumbent": exploration.final_incumbent(ctx, inv)}
-        ctx.event("assessment.claim_state", inv_id, {k: claim_state.get(k) for k in ("state", "confirmed", "claim_id",
-                                                                                   "assessment_id", "requested_disposition")},
-                  investigation_id=inv_id)
-        ctx.tx.put_record("investigation", inv_id, ctx.project_id, body, created_by=ctx.principal.id,
-                          status="concluded")
+        body = {**inv.body, "conclusion": {
+            "schema": CONCLUSION_SCHEMA, "turn_id": turn["id"], "summary": control.get("summary") or summary,
+            "scope": control.get("scope"), "action": control["action"], "claim_state": claim_state,
+            "incumbent": exploration.final_incumbent(ctx, inv),
+        }}
+        # Check under the investigation lock immediately before the durable conclusion write.
+        wall = inv.body.get("wall")
+        if wall and time.time() >= wall["deadline_unix"]:
+            control_refused = turn_rules.WALL_REACHED
+            reason = "deadline"
+        else:
+            ctx.tx.put_record("investigation", inv_id, ctx.project_id, body, created_by=ctx.principal.id,
+                              status="concluded")
+            ctx.event("assessment.claim_state", inv_id, {k: claim_state.get(k) for k in (
+                "state", "confirmed", "claim_id", "assessment_id", "requested_disposition")}, investigation_id=inv_id)
+    late_wall = control_refused == turn_rules.WALL_REACHED
+    status = "cancelled" if reason == "cancelled" else ("failed" if reason == "error" else "completed")
+    result = {"stop_reason": reason, "summary": summary, "receipts": p.get("receipts", []),
+              "unfinished_handles": p.get("unfinished_handles", []), "control": p.get("control"),
+              "uncertain_model_reservations": uncertain,
+              **({"control_refused": control_refused} if control_refused else {})}
+    if p.get("runtime_outcome"):
+        result["runtime_outcome"] = p["runtime_outcome"]
+    failure = _bounded_details(redact_value(p.get("failure"))) if reason == "error" else {}
+    if failure:
+        result["failure"] = failure
+    ctx.tx.update_turn(turn["id"], status=status, result=result)
     abstention = None
     if turn["spec"].get("finalization"):
         inv = ctx.tx.require("investigation", inv_id, lock=True)
@@ -1404,14 +1430,20 @@ def _close_turn(ctx: Ctx, turn: dict, p: dict) -> dict:
                    "incumbent": turn["spec"]["finalization"].get("incumbent"),
                    "provenance_limits": turn["spec"]["finalization"]["provenance_limits"],
                    "investigator_concluded": reason == "concluded" and not control_refused,
-                   "stop_reason": reason, "failure": failure or ({"kind": "finalization-incomplete", "reason": reason}
+                   "stop_reason": reason, "failure": failure or ({"kind": "finalization-incomplete",
+                                                                   "reason": turn_rules.WALL_REACHED if late_wall else reason}
                                                                  if reason != "concluded" else None)}
-        abstention = _finish_finalization(ctx, inv, final, receipt, reason)
+        abstention = _finish_finalization(ctx, inv, final, receipt, turn_rules.WALL_REACHED if late_wall else reason)
+    elif late_wall:
+        abstention = _record_controller_abstention(
+            ctx, inv, code="coordinator-stopped", reason=turn_rules.WALL_REACHED,
+            failure={"error_type": turn_rules.WALL_REACHED}, incumbent=exploration.final_incumbent(ctx, inv))
     ctx.event("turn.completed", turn["id"], {"stop_reason": reason, "status": status,
                                              **({"failure": failure} if failure else {}),
                                              **({"control_refused": control_refused} if control_refused else {})},
               investigation_id=inv_id)
     return {"turn_id": turn["id"], "status": status,
+            **({"control_refused": control_refused} if late_wall else {}),
             **({"controller_abstention": abstention} if abstention else {})}
 
 

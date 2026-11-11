@@ -653,7 +653,9 @@ class TurnWorkflow:
                                                    task_queue=INVESTIGATOR_QUEUE,
                                                    start_to_close_timeout=timedelta(seconds=60),
                                                    heartbeat_timeout=HB, retry_policy=SHORT)
-            if stop == "concluded" and (done or {}).get("status") == "cancelled" \
+            if stop == "concluded" and (done or {}).get("control_refused") == WALL_REACHED:
+                stop = WALL_REACHED
+            elif stop == "concluded" and (done or {}).get("status") == "cancelled" \
                     and workflow.patched("refused-execution-cancels-v1"):
                 # F5d (review R9): a stop or pause committed after execution but before completion; the lab refused
                 # the conclusion and closed the turn as cancelled, and the coordinator sees the same.

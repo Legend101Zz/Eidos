@@ -290,6 +290,8 @@ class InvestigatorActivities:
                                 key=f"begin:{a['investigation_id']}:{a['index']}:"
                                     f"{getattr(activity.info(), 'workflow_run_id', '') or ''}")["result"]
         except LabError as exc:
+            if exc.code == "BUDGET_EXHAUSTED" and (exc.error.get("details") or {}).get("dimension") == "turns":
+                return {"started": False, "reason": "turn-budget-exhausted"}
             raise _app_error(exc) from exc
         if not r.get("started"):
             return {"started": False, "reason": r.get("reason")}
@@ -770,4 +772,4 @@ class InvestigatorActivities:
                             key=f"complete:{a['turn_id']}:{getattr(activity.info(), 'workflow_run_id', '') or ''}")
         result = r["result"]
         return {"status": result.get("status"),
-                **({"controller_abstention": result["controller_abstention"]} if result.get("controller_abstention") else {})}
+                **{k: result[k] for k in ("control_refused", "controller_abstention") if result.get(k)}}

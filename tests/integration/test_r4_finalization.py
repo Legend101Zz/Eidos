@@ -521,3 +521,48 @@ def test_legacy_persisted_context_is_reprojected_before_provider_request(lab):
     assert prompts and safe in prompts[0]
     assert all(value not in prompts[0] for value in (derived, digest, held, 'legacy-secret-metric'))
     assert scene.q('get_turn', {'turn_id': turn['turn_id']})['context']['context_artifact_id'] == old_packed
+
+
+def test_absolute_wall_deadline_preserves_export_margin_after_registration_delay(scene, monkeypatch):
+    server_received_at = 10_007.0  # the controller calculated relative wall time at 10_000
+    outer_deadline = 10_035.0
+    monkeypatch.setattr('eidos.application.handlers.investigations.time.time', lambda: server_received_at)
+    inv = scene.investigation(wall_seconds=30, wall_deadline_unix=outer_deadline - 5)
+    assert scene.q('get_investigation', {'investigation_id': inv})['body']['wall']['deadline_unix'] == outer_deadline - 5
+    shorter = scene.investigation(wall_seconds=10, wall_deadline_unix=outer_deadline - 5)
+    assert scene.q('get_investigation', {'investigation_id': shorter})['body']['wall']['deadline_unix'] == server_received_at + 10
+    with pytest.raises(Invalid, match='finite timestamp'):
+        scene.investigation(wall_seconds=30, wall_deadline_unix='nan')
+    with pytest.raises(Invalid, match='positive finite investigator.wall_seconds'):
+        scene.investigation(wall_deadline_unix=outer_deadline - 5)
+
+
+@pytest.mark.parametrize("delay_point", ["queued", "claim-state"])
+def test_late_recovery_conclusion_preserves_lock_in_deadline_abstention(scene, monkeypatch, delay_point):
+    from eidos.application.handlers import assessment
+
+    inv, job = _locked(scene, wall_seconds=1800)
+    _entered(scene, inv)
+    turn = scene.begin(inv)
+    control = {'action': 'conclude', 'summary': 'Candidate locked and awaiting confirmation.',
+               'claim': {'disposition': 'candidate'}}
+    assert scene.propose(turn['turn_id'], 0, {'rationale': 'visible evidence', 'calls': [], 'control': control})['accepted']
+    deadline = scene.q('get_investigation', {'investigation_id': inv})['body']['wall']['deadline_unix']
+    now = [deadline + 1 if delay_point == "queued" else deadline - 1]
+    monkeypatch.setattr('eidos.application.handlers.investigations.time.time', lambda: now[0])
+    if delay_point == "claim-state":
+        compute_claim_state = assessment.conclusion_claim_state
+
+        def delayed_claim_state(*args, **kwargs):
+            result = compute_claim_state(*args, **kwargs)
+            now[0] = deadline + 1
+            return result
+
+        monkeypatch.setattr(assessment, "conclusion_claim_state", delayed_claim_state)
+    completion = _complete(scene.lab, scene.pid, turn['turn_id'], 'concluded', control)['result']
+    assert completion['control_refused'] == 'wall-deadline-reached'
+    shown, abstention = _controller_abstention(scene, inv, job)
+    assert completion['controller_abstention'] == abstention
+    receipt = shown['finalization_export_receipt']
+    assert receipt['stop_reason'] == 'deadline' and receipt['failure']['reason'] == 'wall-deadline-reached'
+    assert receipt['investigator_concluded'] is False
