@@ -386,6 +386,9 @@ class PydanticAIRuntime:
         self.config = config
         self.envelope: TokenEnvelope | None = None  # set per decision; every request of the decision passes it
         self.abort: DecisionAbort | None = None  # the decision's abort signal (stop, pause, cancellation, deadline)
+        # The decision's structured-output report so far (repairs, re-asks, reads, runaways); kept on an aborted
+        # decision too (F5, A3), so a runaway that arrived before a stop or deadline is never discarded.
+        self._report: dict[str, Any] | None = None
 
     def _model(self) -> Any:
         model = build_model(self.config)
@@ -427,6 +430,7 @@ class PydanticAIRuntime:
         self.envelope = TokenEnvelope(int(self.config.get("max_tokens_per_decision", 120_000)), output_cap(self.config),
                                       self._billing())
         self.abort = req.abort
+        self._report = None
         try:
             if mode != "tool":
                 return self._decide_text(req, mode)
@@ -444,6 +448,9 @@ class PydanticAIRuntime:
         max_requests = int(self.config.get("max_requests_per_decision", 8))
         responses = list(self.envelope.responses)
         usage = self._usage(responses)
+        if self._report is not None:  # F5 (A3): e.g. the runaway whose re-ask the stop or deadline prevented
+            usage["structured_output"] = {**self._report, **({"repairs": sorted(set(self._report["repairs"]))}
+                                                             if "repairs" in self._report else {})}
         usage["aborted"] = {"reason": exc.reason, "in_flight": exc.in_flight,
                             **({"abandoned_request": exc.abandoned} if exc.abandoned else {})}
         if exc.in_flight:
@@ -527,6 +534,7 @@ class PydanticAIRuntime:
         report: dict[str, Any] = {"mode": mode, "json_mode": bool(extra), "repairs": [], "reasks": 0,
                                   "errors": [], "valid": False, "read_requests": 0, "reads": [], "runaway": [],
                                   "runaway_reasks": 0}
+        self._report = report
         shape = so.JSON_SHAPE + ("\n\n" + so.read_shape(reads_allowed) if reads_allowed else "")
         instructions = SYSTEM + "\n\n" + shape
         agent = self._agent(req, with_tools=False, output_type=str, instructions=instructions)
@@ -759,8 +767,17 @@ class PydanticAIRuntime:
                                                   self._settings(usage, max_requests), PROMPT_REVISION)
                         except DecisionAborted:
                             raise
-                        except Exception:  # noqa: BLE001 - fall through to the bounded outcome below
-                            messages.extend(m for m in final_messages if m not in messages)
+                        except Exception as final_exc:  # noqa: BLE001 - fall through to the bounded outcome below
+                            from pydantic_ai.exceptions import UnexpectedModelBehavior
+                            from pydantic_ai.messages import ModelResponse
+                            new = [m for m in final_messages if m not in messages]
+                            messages.extend(new)
+                            last = [m for m in new if isinstance(m, ModelResponse)]
+                            if isinstance(final_exc, UnexpectedModelBehavior) and last and is_runaway(last[-1]):
+                                # F5 (A4): the reserved tool-free request ran away (reasoning only, output cap hit).
+                                # It was the last request of the decision, so there is no re-ask: recorded, and the
+                                # bounded outcome is reasoning-runaway, not request-budget-exhausted.
+                                return self._tool_budget_runaway(messages, last[-1], max_requests)
                 # A bounded outcome, not a lost failure: every billed request is reported and the
                 # slot ends with an explicit no-effect decision the next turn can see.
                 usage = self._usage(messages)
@@ -789,6 +806,26 @@ class PydanticAIRuntime:
         return DecisionResult(to_proposal(result.output), usage, raw, self._settings(usage, max_requests),
                               PROMPT_REVISION)
 
+    def _tool_budget_runaway(self, messages: list, runaway: Any, max_requests: int) -> DecisionResult:
+        """Tool mode: the reserved tool-free request after the read-tool budget ran away (F5, A4). No request is left
+        for a re-ask: the runaway is recorded and the decision ends in the bounded no-effect ``reasoning-runaway``."""
+        from pydantic_ai.messages import ModelResponse
+        billed = [m for m in messages if isinstance(m, ModelResponse)]
+        report: dict[str, Any] = {"mode": "tool", "runaway": [runaway_record(runaway, len(billed), False,
+                                                                             self._billing())], "runaway_reasks": 0}
+        self._report = report
+        usage = self._usage(messages)
+        usage["tool_budget_exhausted"] = True
+        usage["limit_reached"] = (f"reasoning runaway in the reserved final request (output cap "
+                                  f"{output_cap(self.config)}) after the read-tool budget; no request left")
+        usage["structured_output"] = report
+        proposal = {"rationale": "no usable decision (reasoning-runaway); no effects proposed", "calls": [],
+                    "control": {"action": "wait_for_jobs", "summary": "reasoning-runaway",
+                                "bounded_outcome": "reasoning-runaway"}}
+        history = _close_tool_calls([m for m in messages if m is not runaway])
+        return DecisionResult(proposal, usage, json.loads(_messages_json(history)),
+                              self._settings(usage, max_requests), PROMPT_REVISION)
+
     def _tool_runaway(self, req: DecisionRequest, messages: list, runaway: Any, max_requests: int,
                       settings: dict[str, Any]) -> DecisionResult:
         """Tool mode: the last response ran away (``is_runaway``). One concise request WITHOUT read tools over the
@@ -801,6 +838,7 @@ class PydanticAIRuntime:
         kept = _close_tool_calls([m for m in messages if m is not runaway])
         report: dict[str, Any] = {"mode": "tool", "runaway": [runaway_record(runaway, len(billed), False,
                                                                              self._billing())], "runaway_reasks": 0}
+        self._report = report
 
         def bounded(reason: str, history: list) -> DecisionResult:
             usage = self._usage(billed)

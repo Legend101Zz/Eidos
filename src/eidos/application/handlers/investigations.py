@@ -231,18 +231,27 @@ def mark_needs_input(ctx: Ctx, p: dict) -> dict:
     (``NEEDS_INPUT_CODES``: refused proposals after bounded retries, the coordinator stopped on a limit, or a turn
     failed with a non-retryable error or after its bounded automatic retries, ADR 0019); ``details`` is a bounded
     JSON object (for a failed turn: the turn, the error type and message, retryable, attempts)."""
-    inv = ctx.tx.require("investigation", p["investigation_id"], lock=True)
-    if (inv.labels or {}).get("needs_input"):
-        return {"investigation_id": inv.id, "needs_input": inv.labels["needs_input"], "already": True}
     code = p.get("code") or ("refused-proposals" if int(p.get("refused_turns", 0) or 0) else "coordinator-stopped")
     if code not in NEEDS_INPUT_CODES:
         raise Invalid(f"code must be one of {NEEDS_INPUT_CODES}")
+    if code == "turn-failed":  # F5 (A2): a turn the failed child left open is closed and settled, never resumed
+        close_abandoned_turn(ctx, p["investigation_id"], (p.get("details") or {}).get("failure"))
+    inv = ctx.tx.require("investigation", p["investigation_id"], lock=True)
+    if (inv.labels or {}).get("needs_input"):
+        # F5 (A1): every needs-input wait gets its own cursor. An operator event that ended an earlier wait without
+        # clearing the mark (e.g. a charter amendment) is behind it and never counts as news again.
+        mark = {**inv.labels["needs_input"], "cursor": ctx.tx.horizon()}
+        ctx.tx.set_status("investigation", inv.id, inv.status, labels={"needs_input": mark})
+        return {"investigation_id": inv.id, "needs_input": mark, "already": True, "cursor": mark["cursor"]}
     from datetime import UTC, datetime
     mark = {"since": datetime.now(UTC).isoformat(), "code": code, "reason": str(p.get("reason", ""))[:300],
             "refused_turns": int(p.get("refused_turns", 0)), "details": _bounded_details(p.get("details"))}
+    seq = ctx.event("investigation.needs_input", inv.id, mark, investigation_id=inv.id)
+    # F5 (A1): the coordinator waits only for operator events after this cursor (the mark's own event), not after
+    # the last turn's horizon, which does not move while turn workflows fail before creating a turn.
+    mark = {**mark, "cursor": seq}
     ctx.tx.set_status("investigation", inv.id, inv.status, labels={"needs_input": mark})
-    ctx.event("investigation.needs_input", inv.id, mark, investigation_id=inv.id)
-    return {"investigation_id": inv.id, "needs_input": mark, "already": False}
+    return {"investigation_id": inv.id, "needs_input": mark, "already": False, "cursor": seq}
 
 
 @command("record_turn_retry", "turn")
@@ -250,10 +259,13 @@ def record_turn_retry(ctx: Ctx, p: dict) -> dict:
     """The coordinator schedules a bounded automatic retry after a turn failed with a retryable error (ADR 0019):
     recorded before the backoff starts, so the wait is never silent (event ``investigation.turn_retry_scheduled``).
     The retried turn is an ordinary turn: it reserves the turns budget and its decisions reserve model budget."""
+    # F5 (A2): a turn workflow that failed (e.g. its execution timeout) can leave its turn open. The retry must be a
+    # new turn that reserves the turns budget, not a resumption of the abandoned one: close and settle it first.
+    closed = close_abandoned_turn(ctx, p["investigation_id"], p.get("failure"))
     inv = ctx.tx.require("investigation", p["investigation_id"])
-    body = {"failed_turn_id": p.get("failed_turn_id"), "attempt": int(p.get("attempt", 0)),
+    body = {"failed_turn_id": p.get("failed_turn_id") or closed, "attempt": int(p.get("attempt", 0)),
             "max_attempts": int(p.get("max_attempts", 0)), "delay_seconds": float(p.get("delay_seconds", 0)),
-            "failure": _bounded_details(p.get("failure"))}
+            "failure": _bounded_details(p.get("failure")), **({"closed_abandoned_turn": closed} if closed else {})}
     ctx.event("investigation.turn_retry_scheduled", inv.id, body, investigation_id=inv.id)
     return {"investigation_id": inv.id, **body}
 
@@ -711,6 +723,30 @@ def complete_turn(ctx: Ctx, p: dict) -> dict:
     turn = _turn(ctx, p["turn_id"], lock=True)
     if turn["status"] != "open":
         return {"turn_id": turn["id"], "status": turn["status"], "already_closed": True}
+    return _close_turn(ctx, turn, p)
+
+
+def close_abandoned_turn(ctx: Ctx, inv_id: str, failure: Any) -> str | None:
+    """Close the investigation's last turn if it is still open, as failed (F5, A2). Called by the coordinator's
+    failed-turn policy (ADR 0019) before an automatic retry or a needs-input wait: the turn's workflow failed (e.g.
+    its execution timeout) without completing it. Its open model reservations are charged as uncertain usage and its
+    turns reservation is settled, like any closing turn; a late acceptance from the abandoned workflow then finds the
+    turn closed and is refused. Lock order: the turn row (here), then the investigation row (callers)."""
+    last = ctx.tx.last_turn(inv_id)
+    if not last or last["status"] != "open":
+        return None
+    turn = _turn(ctx, last["id"], lock=True)
+    if turn["status"] != "open":
+        return None
+    why = {**_bounded_details(failure), "abandoned": True} if isinstance(failure, dict) else \
+        {"error_type": "turn-workflow-failed", "retryable": True, "abandoned": True}
+    _close_turn(ctx, turn, {"stop_reason": "error", "summary": "turn workflow failed; turn closed by the coordinator",
+                            "failure": why})
+    return turn["id"]
+
+
+def _close_turn(ctx: Ctx, turn: dict, p: dict) -> dict:
+    """Close an open turn (the caller holds its row lock): result, reservations, turns budget, event."""
     reason = p.get("stop_reason", "calls-exhausted")
     if reason not in turn_rules.STOP_REASONS:
         raise Invalid(f"stop_reason must be one of {turn_rules.STOP_REASONS}")

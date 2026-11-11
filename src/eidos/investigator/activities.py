@@ -462,10 +462,12 @@ class InvestigatorActivities:
         if inv["status"] != "active":
             return {"news": True, "reason": f"investigation is {inv['status']}"}
         horizon = max((t["horizon"] for t in inv["turns"]), default=0)
+        # F5 (A1): a needs-input wait passes the mark's cursor; only events after both count.
+        cursor = max(horizon, int(a.get("after") or 0))
         types = self.OPERATOR_TYPES if a.get("operator_only") else self.NEWS_TYPES
-        ev = self.wf.query("list_events", {"investigation_id": a["investigation_id"], "cursor": horizon,
+        ev = self.wf.query("list_events", {"investigation_id": a["investigation_id"], "cursor": cursor,
                                            "types": types, "limit": 1}, project=a["project_id"])
-        return {"news": bool(ev["events"]), "after_horizon": horizon}
+        return {"news": bool(ev["events"]), "after_horizon": horizon, "after": cursor}
 
     @activity.defn(name="mark_needs_input")
     def mark_needs_input(self, a: dict) -> dict:

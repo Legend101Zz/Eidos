@@ -112,6 +112,23 @@ cap and 6/8 at 16384 tokens / 120 s), `tool` 6/8 (was 4/8); `docs/release/eviden
   - A second runaway ends the decision in the explicit no-effect outcome `reasoning-runaway`.
   - Every runaway request counts against `max_requests_per_decision`, the token envelope and the usage receipt
     (`per_request`, `structured_output.runaway`, `runaway_reasks`). The default cap is unchanged.
+- **Review fixes (F5, group A) to the failed-turn policy and runaway recovery.**
+  - A needs-input wait now ends only on an operator event after the needs-input mark's own cursor (returned by
+    `mark_needs_input` and stored in the mark as `cursor`; refreshed when an existing mark is marked again). Before,
+    it compared with the last turn's horizon, which does not move while turn workflows fail before creating a turn:
+    one operator event stayed "news" on every check, so each wait ended at once, reset the failure counter and
+    allowed another batch of automatic retries.
+  - A turn left open by a failed turn workflow (e.g. its execution timeout) is closed as failed (`failure.abandoned`)
+    and settled before an automatic retry and before a `turn-failed` needs-input wait: its open model reservations
+    are charged as uncertain usage and its turns reservation is settled. Before, the retry resumed the open turn
+    and bypassed the turns reservation, so repeated attempts counted as one turn. A late acceptance from the
+    abandoned workflow is refused (`turn-closed`).
+  - An aborted decision (stop, pause, cancellation or decision deadline) keeps its structured-output report: a
+    runaway that arrived before the abort prevented the re-ask stays in `structured_output.runaway`.
+  - Tool mode: a runaway in the reserved tool-free request after the read-tool budget is recorded and ends in
+    `reasoning-runaway` (before: `request-budget-exhausted`, no runaway record).
+  - Tests: `tests/integration/test_f5_failed_turn_cursor.py`, `tests/unit/test_runaway_reasoning.py` (stop and
+    deadline after a runaway, runaway after the read budget).
 - `bounded()` (the decide/execute activity result guard) now truncates `reason` and `control`. Before, an oversized
   result kept them whole and still went over Temporal's payload limit, so every turn of the coordinator stress test
   had failed unnoticed.

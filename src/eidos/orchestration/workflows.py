@@ -98,8 +98,12 @@ class InvestigationWorkflow:
                 pass
             if workflow.info().get_current_history_length() > history_limit:
                 workflow.continue_as_new({**a, "rollovers": int(a.get("rollovers", 0)) + 1})
+            # F5 (A1): only operator events after the needs-input mark's cursor end the wait. The last turn's horizon
+            # does not move while turn workflows fail before creating a turn, so an event behind the mark would be
+            # news on every check and every wait would end at once (and reset the failed-turn counter).
             news = await workflow.execute_activity(
-                "check_news", {"investigation_id": inv, "project_id": a["project_id"], "operator_only": True},
+                "check_news", {"investigation_id": inv, "project_id": a["project_id"], "operator_only": True,
+                               **({"after": int(a["operator_cursor"])} if a.get("operator_cursor") else {})},
                 task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
             if news.get("news"):
                 return
@@ -170,13 +174,15 @@ class InvestigationWorkflow:
         details = {"turn_counter": counter, "turn_id": res.get("turn_id"), "failure": failure, "retryable": retryable,
                    "consecutive_failed_turns": failed_turns, "automatic_retries": failed_turns - 1,
                    "max_automatic_retries": MAX_FAILED_TURN_RETRIES}
-        await workflow.execute_activity(
+        marked = await workflow.execute_activity(
             "mark_needs_input", {"investigation_id": inv, "project_id": a["project_id"], "turn_counter": counter,
                                  "code": "turn-failed", "details": details,
                                  "reason": f"turn failed ({why}): {failure.get('error_type')}: "
                                            f"{str(failure.get('message', ''))[:200]}; steer, resume or stop"},
             task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
-        await self._wait_for_operator({**a, "turn_counter": counter, "needs_operator": "turn-failed"}, inv,
+        cursor = (marked or {}).get("cursor")
+        await self._wait_for_operator({**a, "turn_counter": counter, "needs_operator": "turn-failed",
+                                       **({"operator_cursor": int(cursor)} if cursor else {})}, inv,
                                       history_limit, idle, "needs operator input (turn failed)")
         return True
 
@@ -194,7 +200,7 @@ class InvestigationWorkflow:
             if a.get("needs_operator") == "turn-failed" and self._turns == 0:
                 # A rollover while a failed turn waits for the operator (ADR 0019): keep waiting, no turn without news.
                 await self._wait_for_operator(a, inv, history_limit, idle, "needs operator input (turn failed)")
-                a = {k: v for k, v in a.items() if k != "needs_operator"}
+                a = {k: v for k, v in a.items() if k not in ("needs_operator", "operator_cursor")}
                 failed_turns = 0
             if a.get("resume_wait") and self._turns == 0 and workflow.patched("quiet-rollover-keeps-waiting-v1"):
                 # Review 2: a rollover during a quiet wait used to start a model turn with no news and

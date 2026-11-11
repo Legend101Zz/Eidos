@@ -127,6 +127,26 @@ decision, reads included. Instead, within the same decision:
 - An invalid `runaway_reasoning_effort` is refused before the first request in every mode. Then no runaway request
   is billed and left out of the usage.
 
+## Review fixes (F5, review of f78ab41)
+
+1. **The needs-input wait has its own cursor.** `mark_needs_input` returns `cursor`, the sequence number of its
+   `investigation.needs_input` event (for an existing mark: the current event horizon, stored back in the mark).
+   The coordinator passes it to `check_news` (`after`), which counts only operator events after
+   `max(last turn horizon, cursor)`. The last turn's horizon alone is not enough: while turn workflows fail before
+   creating a turn it does not move, so an operator event behind it ended every wait and reset the failure counter.
+   An operator action taken before the mark is not taken as the answer to it; the mark is visible, so the operator
+   acts after it. The cursor survives a rollover (`operator_cursor` in the carried arguments).
+2. **An abandoned turn is closed, not resumed, by a retry.** `record_turn_retry` and `mark_needs_input` with code
+   `turn-failed` first close the investigation's last turn if it is still open (stop reason `error`,
+   `failure.abandoned`), with the same settlement as `complete_turn`: open model reservations charged as uncertain
+   usage, the turns reservation settled. The retry is then a new turn that reserves the turns budget. Lock order is
+   the turn row, then the investigation row (as in `complete_turn`).
+3. **Runaway records survive an abort.** The decision's structured-output report is kept on the runtime and attached
+   to the usage of an aborted decision (stop: `DecisionAborted.possible_usage`; deadline: the `decision-deadline`
+   result). Known nit: when the abort comes before the re-ask is sent, the report still counts `runaway_reasks: 1`.
+4. **Runaway in the reserved tool-free request** after the read-tool budget is recorded and ends in
+   `reasoning-runaway`; no request is left for a re-ask.
+
 ## Not done
 
 - No live measurement. Whether the re-ask converges for MiniMax-M3.1-Flash, and whether its endpoint accepts
