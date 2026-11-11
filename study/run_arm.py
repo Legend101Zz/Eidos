@@ -158,6 +158,7 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
     started, clock = utc_now(), time.monotonic()
     usage = UsageTracker()
     status, reason = "ok", None
+    last_incident = None  # pilot-2 addendum 1: provider failure seen; decided at the end
     transcript = root / "transcript.jsonl"
     process = None
     with transcript.open("w") as log:
@@ -178,7 +179,7 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
                 buffers[name] = b""
 
             def consume(line, name):
-                nonlocal status, reason
+                nonlocal status, reason, last_incident
                 text = line.decode("utf-8", errors="replace")
                 for name_of_secret in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
                     secret = env.get(name_of_secret)
@@ -203,8 +204,12 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
                 if status == "ok" and usage.tokens["total"] > token_limit:
                     status = "token_budget"
                 error = text if name == "stderr" else event_error(event)
-                if error and status == "ok" and incident_text(error):
-                    status, reason = "incident", error[:2000]
+                # Pilot-2 addendum 1: a provider 429/5xx text never stops a run while it is in progress, and the
+                # client's own retry notices (system/api_retry) are ignored. The run is an incident only if it
+                # then ends without a valid final result (decided after the stream ends).
+                retry_notice = event.get("type") == "system" and event.get("subtype") == "api_retry"
+                if error and not retry_notice and incident_text(error):
+                    last_incident = error[:2000]
 
             while selector.get_map():
                 if time.monotonic() - clock >= wall_s and status == "ok":
@@ -240,7 +245,10 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
             # A successful final result survives recovered tool/request errors and a
             # later process-exit error. The caller still validates out/answer.json.
             if status == "ok" and (not usage.final_seen or usage.final_is_error):
-                status = "crash"
+                if last_incident:
+                    status, reason = "incident", last_incident
+                else:
+                    status = "crash"
         except Exception as exc:
             if process is not None and process.poll() is None:
                 stop_process_tree(process)

@@ -201,8 +201,10 @@ def classify(shown, receipts, models, timed_out=False, answer_valid=True):
     # (study/run_arm.py incident_text). The old search over the whole failure JSON matched token
     # counts such as "output_tokens": 541 as a 5xx status. A request timeout without a provider
     # status is the system's own behaviour, not an incident.
-    if failures and any(_provider_incident(r, timed_out) for r in failures):
-        return 'incident', 'provider/infrastructure failure: ' + text[:1800]
+    # Pilot-2 addendum 1 (symmetric with arms 1-3): a recovered provider failure never decides the run.
+    # A concluded investigation with a valid answer is ok; a provider failure is an incident only if the
+    # investigation ended without concluding (timeouts and budget stops keep their own status).
+    provider_failure = bool(failures) and any(_provider_incident(r, timed_out) for r in failures)
     if timed_out:
         return 'timeout', None
     if any(t.get('stop_reason') == 'budget-exhausted' for t in shown.get('turns', [])) or (
@@ -212,4 +214,6 @@ def classify(shown, receipts, models, timed_out=False, answer_valid=True):
     # not by recovered request/turn errors. A controller fallback alone is not a conclusion.
     if shown.get('status') == 'concluded':
         return ('ok' if answer_valid else 'invalid_output'), None
+    if provider_failure:
+        return 'incident', 'provider/infrastructure failure: ' + text[:1800]
     return 'crash', 'investigator ended without a conclusion or requires operator input: ' + text[:1800]
