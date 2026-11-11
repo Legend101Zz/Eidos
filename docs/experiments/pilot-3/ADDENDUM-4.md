@@ -19,3 +19,15 @@ Both graders now confirm with the declared checkpoint's file name (`Path(model_p
 
 ## Effect on pilot 2 (erratum: see `docs/experiments/pilot-2/ADDENDUM-4.md`)
 The same defect produced the only arm-2 failure in pilot 2 (D03-r2, `model.joblib`). Corrected, arm 2 verifies 12/12, and the pilot-2 primary contrast arm 4 − arm 2 is 0.0, not +0.083.
+
+## Hosted grading infrastructure (added about 21:10 IST)
+**Every hosted grade from 13:48 to about 15:30 UTC (19:18–21:00 IST) failed before scoring**, in pilots 2 and 3 alike. GitHub-hosted runners could not resolve Ubuntu's package hosts (`azure.archive.ubuntu.com`, `archive.ubuntu.com` and `security.ubuntu.com`; `Temporary failure resolving`). The runtime install step failed, so every grade became `incident: scorer setup failed`. GitHub's status page reported no incident, and the hosts resolved normally elsewhere. No scoring logic was involved.
+
+Fixes in the grading repository:
+- **`9d94e85`:** candidate uploads are serialized with a file lock. Concurrent submissions sharing one store clone had lost a bundle upload (N03-r1 arm 3).
+- **`6213e57`:** apt retries, with a fallback to `archive.ubuntu.com`. This was insufficient on its own.
+- **`42de7ed`:** a host that does not resolve is looked up over DNS-over-HTTPS (1.1.1.1, reached by IP) and pinned in `/etc/hosts`. The hosts, packages, TLS verification and scoring are unchanged. The run logs show the pins being applied.
+
+**Verification:** N03-r1 arm 1 then graded on GitHub as a verified success, gain 9.98885, matching the local 9.98885.
+
+**Records:** every arm without a valid hosted grade (pilot 2: 8 arms; pilot 3: all graded blocks) is re-submitted. Results go to `github-sweep/` (pilot 2) and `github-sweep/` and `github-retry/` (pilot 3). Failed attempts stay on disk and in the Actions history.
