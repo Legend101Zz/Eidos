@@ -619,10 +619,18 @@ def test_exploration_deadline_without_a_wall_limit_holds_nothing_back():
 
 def test_exploration_deadline_is_none_when_the_turn_is_not_exploratory():
     finalize = run_state(frozen=True, completion=COMPLETION, wall_seconds=3600.0)
-    baseline = run_state(notes=[], note_turns={}, completion=COMPLETION, wall_seconds=3600.0)
-    assert (finalize["phase"], baseline["phase"]) == ("finalize", "baseline")
+    assert finalize["phase"] == "finalize"
     assert exploration_deadline_unix(finalize, COMPLETION) is None
-    assert exploration_deadline_unix(baseline, COMPLETION) is None
+
+
+def test_the_pre_lock_phase_is_bounded_by_the_exploration_deadline_too():
+    """H2 (R17 #3): before the first lock the allowance is being spent as well: a baseline turn ends where the
+    hold-back begins."""
+    baseline = run_state(notes=[], note_turns={}, completion=COMPLETION, wall_seconds=3600.0)
+    assert baseline["phase"] == "baseline"
+    hold = baseline["allowance"]["holdback_seconds"]
+    assert exploration_deadline_unix(baseline, COMPLETION) == pytest.approx(
+        COMPLETION["deadline_unix"] - COMPLETION["conclude_threshold_seconds"] - hold)
 
 
 def test_exploration_deadline_is_none_without_a_completion():

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from typing import Any
@@ -11,7 +12,7 @@ from eidos.application.handlers.components import catalog, env_for
 from eidos.application.handlers.investigations import check_exploration_allowed, inv_scope
 from eidos.application.handlers.projects import get_profile
 from eidos.application.service import Ctx, command
-from eidos.domain import branching, environments
+from eidos.domain import branching, environments, release_guards
 from eidos.domain import resolver as res
 from eidos.domain.errors import ConcludeRequired, Invalid, NotFound, PreflightRefused
 from eidos.domain.isolation import PROFILES
@@ -48,6 +49,7 @@ def admit_job(ctx: Ctx, *, kind: str, lock: dict, investigation_id: str | None, 
                        "lock_digest": digest, "created_by": ctx.principal.id})
     for port, inp in (lock.get("inputs") or {}).items():
         ctx.tx.add_lineage(ctx.project_id, inp["artifact_id"], jid, f"input:{port}")
+    exploration.record_admission(ctx, investigation_id, purpose, jid, lock)  # the shared round history (H2, R17 #1)
     seq = ctx.event("job.admitted", jid, {"kind": kind, "component": lock.get("component", {}).get("ref"),
                                           "purpose": purpose, "lock_digest": digest},
                     investigation_id=investigation_id)
@@ -92,6 +94,30 @@ def _inputs(ctx: Ctx, ids: dict[str, str]) -> dict[str, dict[str, Any]]:
                      "media_type": art["media_type"], "role": art["role"], "meta": art["meta"],
                      "access_class": art["access_class"]}
     return out
+
+
+def _check_release_guard(ctx: Ctx, ref: str, config: dict, inputs: dict[str, dict[str, Any]]) -> None:
+    """H2 (R17 #4): a release kept byte for byte for pinned references gets a later release's safety fix here, at the
+    invocation boundary (``domain.release_guards``): nothing is admitted with a configuration the fix refuses."""
+    if not release_guards.guarded(ref):
+        return
+    files: list[str] | None = None
+    src = inputs.get("source")
+    if src is not None:
+        try:
+            with open(ctx.store.path_for(src["digest"]), "rb") as fh:
+                bundle = json.load(fh)
+        except (OSError, ValueError):
+            bundle = None
+        listed = bundle.get("files") if isinstance(bundle, dict) else None
+        files = [str(k) for k in listed] if isinstance(listed, dict) else []
+    problems = release_guards.problems(ref, config, files)
+    if problems:
+        from eidos.domain.errors import ResolutionError
+        raise ResolutionError(f"{ref} would read held-out data: {problems[0]}",
+                              details={"consumer": ref, "problems": problems, "guard": "release-guard/1"},
+                              next_action="Rename or leave out the held-out file (pass visible data through a port), "
+                                          "or use the current release.")
 
 
 # Capabilities that the execution environment itself provides (the registered project adapter, the
@@ -254,6 +280,7 @@ def resolve_lock(ctx: Ctx, p: dict, *, extra_config: dict | None = None) -> dict
                               details={"consumer": p["component_ref"], "capability": missing_adapter[0]},
                               next_action="Register the environment with --adapter module:ATTR or pass config.adapter.")
     inputs = _inputs(ctx, p.get("inputs") or {})
+    _check_release_guard(ctx, target["ref"], {**(p.get("config") or {}), **(extra_config or {})}, inputs)
     prof = get_profile(ctx)
     adapters = [r for r in cat if r["status"] == "active" and "adapter" in r["manifest"]["implements"]]
     lock = res.resolve_invocation(

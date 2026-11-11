@@ -113,6 +113,18 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
   fallback). The arm-2 toolkit verification runs the diagnosis and a template sweep. The toolkit ships
   `eidos.domain.assessment`, which `paired-ci` needs standalone, and lists `eidos.task.paired-classification-report`.
 
+### Review R17 of the round-3 integration (H2; ADR 0023 and ADR 0024 addenda H2)
+
+- **MCP rounds count.** One shared round history covers investigator turns, MCP `run_batch` batches and locks recorded
+  by `submit_candidate`; `max_rounds`, patience and the ceiling stop MCP challengers as they stop the investigator's.
+  A batch is one round, checked as it began.
+- **`measurement-development` is gated** once exploration has stopped, like `open-search` and `hypothesis-test`; only
+  work that finishes an already admitted round is let through.
+- **The hold-back holds before the first lock.** The wall and token hold-back apply in the baseline phase; when they are
+  reached the investigation finalizes with `candidate: none` and the refusal says no candidate was locked.
+- **The pinned `recipe-sweep@1.0.0` cannot read held-out files.** The lab refuses test-, holdout- and heldout-prefixed
+  data files in its `command.copy` or source bundle at resolution; the release bytes are unchanged.
+
 ## Unreleased: 1.2.0
 
 ### Review R13 of the integrated round (ADR 0021 addendum)

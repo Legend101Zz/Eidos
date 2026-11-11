@@ -130,3 +130,13 @@ CI's component job installs scikit-learn in the project environment; the tests a
   study arms bind only the current release. The standalone toolkit lists both, and keeps `<id>@<release>` directories off
   its shared module path so each runs its own module. The pinned 1.0.0 is not patched: changing it would make it a
   different release. The fixes above are in 1.1.0; a study that wants them pins 1.1.0.
+
+## Addendum H2 (review R17 finding 4): the pinned 1.0.0 sweep is guarded at invocation
+
+`eidos.search.recipe-sweep@1.0.0` is kept byte for byte so pinned references resolve to the same bundle digest, which
+also kept its boundary-only held-out name check: `test1.csv` and `testfeatures.csv` passed `command.copy`. Its code
+cannot change without becoming another release, so the lab applies 1.1.0's file-name rule at the **invocation boundary**
+(`eidos.domain.release_guards`, called from `resolve_lock`): a job of a guarded release whose `command.copy` lists, or
+whose `source` bundle contains, a data file a word of whose name begins with `test`, `holdout` or `heldout` is refused
+before anything is admitted (`ResolutionError`, `guard: release-guard/1`). Configurations 1.1.0 accepts are unaffected,
+so sound pinned work runs as before, and the 1.0.0 bundle digest is unchanged.

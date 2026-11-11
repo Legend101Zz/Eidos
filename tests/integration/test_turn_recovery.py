@@ -166,10 +166,11 @@ def test_in_turn_model_budget_is_reserved_before_each_decision_and_released(lab)
     b = env.run(acts.begin_turn, {"investigation_id": inv, "project_id": pid, "index": 1})
     base = {"turn_id": b["turn_id"], "project_id": pid, "investigation_id": inv}
     env.run(acts.build_context, base)
-    # Leave room for one reservation (default envelope 120k tokens) but not two.
+    # Leave room for one reservation (default envelope 120k tokens) but not two, above the 150k token hold-back that
+    # protects finalization before the first lock too (H2, R17 #3).
     with lab.ledger.transaction() as tx:
         tx.project_id = pid
-        tx.reserve(f"inv:{inv}", "model_tokens", 1e6 - 150_000, "test:fill")
+        tx.reserve(f"inv:{inv}", "model_tokens", 1e6 - 300_000, "test:fill")
     d0 = env.run(acts.decide, {**base, "slot": 0})
     assert d0["accepted"]
     with lab.ledger.transaction() as tx:  # simulate a reservation leaked by a dead activity
@@ -183,7 +184,7 @@ def test_in_turn_model_budget_is_reserved_before_each_decision_and_released(lab)
     # (the whole open amount), not released as zero.
     assert turn["result"]["uncertain_model_reservations"]["model_tokens"] == 100_000
     b2 = lab.q(lab.admin, "budgets", {"investigation_id": inv}, project=pid)["budgets"]["model_tokens"]
-    assert b2["reserved"] == 1e6 - 150_000 and b2["used"] > 100_000  # only the test fill remains reserved
+    assert b2["reserved"] == 1e6 - 300_000 and b2["used"] > 100_000  # only the test fill remains reserved
     assert b2["uncertain"] == 100_000
 
 
@@ -226,9 +227,11 @@ def test_retried_decide_does_not_collide_with_its_own_dead_reservation(lab):
     b = env.run(acts.begin_turn, {"investigation_id": inv, "project_id": pid, "index": 1})
     base = {"turn_id": b["turn_id"], "project_id": pid, "investigation_id": inv}
     env.run(acts.build_context, base)
-    with lab.ledger.transaction() as tx:      # leave 270k of 1M: the dead attempt's 120k (now possibly used) + one more
+    # leave 420k of 1M: the dead attempt's 120k (now possibly used) + one more, above the 150k token hold-back that
+    # protects finalization before the first lock too (H2, R17 #3)
+    with lab.ledger.transaction() as tx:
         tx.project_id = pid
-        tx.reserve(f"inv:{inv}", "model_tokens", 1e6 - 270_000, "test:fill")
+        tx.reserve(f"inv:{inv}", "model_tokens", 1e6 - 420_000, "test:fill")
     wf = lab.principal(f"wf-{pid}", ["workflow"], [pid])
     lab.cmd(wf, "reserve_model_budget", {"turn_id": b["turn_id"], "slot": 0, "attempt": 1,
                                          "estimate": {"model_tokens": 120_000}}, project=pid)
@@ -237,13 +240,13 @@ def test_retried_decide_does_not_collide_with_its_own_dead_reservation(lab):
     d = env2.run(acts.decide, {**base, "slot": 0})
     assert d.get("reason") != "budget-exhausted", d
     bud = lab.q(lab.admin, "budgets", {"investigation_id": inv}, project=pid)["budgets"]["model_tokens"]
-    assert bud["uncertain"] == 120_000 and bud["reserved"] == 1e6 - 270_000, bud  # dead attempt: provisional, once
+    assert bud["uncertain"] == 120_000 and bud["reserved"] == 1e6 - 420_000, bud  # dead attempt: provisional, once
     # a late settlement from the dead attempt replaces the provisional charge and releases nothing more
     lab.cmd(wf, "record_model_usage", {"turn_id": b["turn_id"], "usage": {"input_tokens": 0, "output_tokens": 0},
                                        "reserved": {"model_tokens": 120_000},
                                        "reservation_ref": f"model:{b['turn_id']}:0:1"}, project=pid)
     bud = lab.q(lab.admin, "budgets", {"investigation_id": inv}, project=pid)["budgets"]["model_tokens"]
-    assert bud["reserved"] >= 1e6 - 270_000 - 1, bud   # the test fill is still held, not released twice
+    assert bud["reserved"] >= 1e6 - 420_000 - 1, bud   # the test fill is still held, not released twice
     assert bud["uncertain"] == 0 and bud["used"] < 120_000, bud  # it reported nothing: the provisional 120k is gone
 
 
