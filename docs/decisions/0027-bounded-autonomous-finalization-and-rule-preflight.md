@@ -1,0 +1,17 @@
+# ADR 0027: Bounded autonomous finalization and rule preflight
+
+Status: accepted (prospective)
+
+An investigation fixes `investigator.finalization` at start: `autonomous` (default) or `operator`. After repeated refused-proposal turns, a runtime deadline outcome, or the end of exploration, autonomous policy commits one finalization admission. Its durable record survives coordinator restarts and Continue-As-New. There is at most one finalization turn, with one decision slot; read round trips still count against the configured per-decision maximum. Operator policy keeps operator-driven recovery.
+
+The finalization snapshot supplies exact persisted refusal reasons and response references, runtime outcome, the locked incumbent and its source/job/output receipt identifiers, existing metrics and their inputs/configuration, recognized reproduction status, the fixed rule, remaining wall time and budgets. It requires reporting the locked candidate with provenance limitations, or honest abstention when none is eligible. The snapshot is supplied even if ordinary context windowing would omit older evidence.
+
+Finalization offers evidence reads (`get_job`, `inspect_evidence`, `describe_component`) and `conclude`/`stop` only. Catalog search is removed, the effect-call allowance is zero, and the command service independently validates that the action concludes or stops. No training, authoring, rule changes, candidate changes, new search or model-selected re-lock is possible through this turn. The original independent assessor still derives claim state; a validation observation, missing reproduction or missing held-out evidence cannot become a passed assessment.
+
+The turn uses the original wall deadline including the available hold-back. The runtime bounds every HTTP request to time left. Its reservation shrinks to the remaining original token/USD budget. Usage is charged through the existing ledger with `phase: finalization`, including failed/cancelled calls; this is separate accounting, never an added allowance. On failure the investigation needs input with structured failure and a durable `finalization_export_receipt` preserving the incumbent and its limitations. A controller receipt does not assert an investigator conclusion or scientific success.
+
+Before a selection rule is first recorded (including a first lock carrying one), its data input bindings must name ports in the scorer's published manifest. Unknown scorers or impossible bindings are refused before any immutable note is committed, naming actual ports. An unversioned scorer is checked against every active matching release; pin a release if contracts differ. Existing recorded rules remain immutable, including historical misbindings. Classification binds labels to `reference`, not the scientific split name `validation`. The guide also illustrates fresh-seed reproduction without fixing the intentionally varied seed in the selection rule.
+
+Every refused decision preserves its `response_artifact_id` for ordinary transcript export. Runtime outcomes use their own event/record and preserve their response reference separately from model errors.
+
+This is a disclosed prospective investigator policy, not a weaker validator or assessor. It provides an opportunity to report existing work within the same envelope; it cannot guarantee provider availability, eligible evidence, a conclusion, reproduction or independent success. Comparisons must disclose this policy and preserve comparable final-answer opportunities for other arms.

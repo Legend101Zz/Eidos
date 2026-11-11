@@ -52,7 +52,7 @@ BATCH_FINAL_MARGIN_SECONDS = 120
 FAILED_TURN_BACKOFF_SECONDS = 60
 MAX_FAILED_TURN_BACKOFF_SECONDS = 900
 TERMINAL_REASONS = ("concluded", "budget-exhausted", "max-turns-reached", "stopped", "investigation is stopped",
-                    "investigation is concluded", WALL_REACHED)
+                    "investigation is concluded", "finalization-exhausted", WALL_REACHED)
 
 
 def turn_failure(exc: ActivityError) -> dict[str, Any]:
@@ -127,7 +127,7 @@ class InvestigationWorkflow:
         """The poll interval, shortened so that a quiet wait ends when the conclusion's reserve begins (ADR 0020)."""
         if not completion:
             return idle
-        until = float(completion["deadline_unix"]) - float(completion["conclude_threshold_seconds"]) - workflow.now().timestamp()
+        until = turn_boundary(completion) - workflow.now().timestamp()
         return max(1, min(idle, int(until) + 1))
 
     async def _wait_for_operator(self, a: dict, inv: str, history_limit: int, idle: int,
@@ -308,6 +308,16 @@ class InvestigationWorkflow:
                     await self._surface_end(a, inv, counter, "three consecutive turn failures")
                     return {"status": "failed", "reason": "three consecutive turn failures", "turn_counter": counter}
             reason = res.get("stop_reason") or res.get("reason") or ""
+            if res.get("finalization") and reason not in ("concluded", "cancelled"):
+                self._status = "needs operator input (finalization failed)"
+                await workflow.execute_activity(
+                    "mark_needs_input", {"investigation_id": inv, "project_id": a["project_id"],
+                                         "turn_counter": counter, "code": "finalization-failed",
+                                         "reason": "bounded autonomous finalization failed",
+                                         "details": {"failure": res.get("failure") or {"reason": reason},
+                                                     "export_receipt": {"kind": "finalization_export_receipt", "id": inv}}},
+                    task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
+                return {"status": "needs_input", "reason": "finalization-failed", "turn_counter": counter}
             if reason in TERMINAL_REASONS or reason.startswith("investigation is stopped") or reason == "max-turns-reached":
                 self._status = "finished"
                 if reason in ("budget-exhausted", "max-turns-reached", WALL_REACHED):
@@ -333,6 +343,17 @@ class InvestigationWorkflow:
                     self._status = f"retrying after refused proposals ({invalid_turns}/{MAX_INVALID_RETRY_TURNS})"
                     continue
                 needs_input = invalid_turns > MAX_INVALID_RETRY_TURNS
+            if workflow.patched("bounded-autonomous-finalization-v1") and (needs_input or reason == "runtime-bounded"):
+                final = await workflow.execute_activity(
+                    "enter_finalization", {"investigation_id": inv, "project_id": a["project_id"],
+                                           "turn_counter": counter, "trigger": "refused-proposals" if needs_input else reason,
+                                           "runtime_outcome": res.get("runtime_outcome")},
+                    task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
+                if final.get("enabled"):
+                    invalid_turns = 0
+                    self._status = "finalizing"
+                    continue
+                needs_input = True
             if needs_input and workflow.patched("needs-input-visible-v1"):
                 marked = await workflow.execute_activity(
                     "mark_needs_input", {"investigation_id": inv, "project_id": a["project_id"], "turn_counter": counter,
@@ -347,6 +368,17 @@ class InvestigationWorkflow:
                 if cursor:
                     a["operator_cursor"] = int(cursor)
             completion = res.get("completion") or {}
+            if completion and reason == "deadline" and workflow.patched("exploration-boundary-finalization-v1"):
+                # Wait only to the true exploration boundary, never through the reproduction/export hold-back.
+                left = turn_boundary(completion) - workflow.now().timestamp()
+                if left > 0:
+                    await workflow.sleep(left)
+                await workflow.execute_activity(
+                    "enter_finalization", {"investigation_id": inv, "project_id": a["project_id"],
+                                           "turn_counter": counter, "trigger": "exploration-boundary"},
+                    task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
+                self._status = "finalizing"
+                continue
             if completion and reason == "deadline":
                 # A retry that would have crossed the boundary ended a little before it: the fresh turn starts there.
                 left = float(completion["deadline_unix"]) - float(completion["conclude_threshold_seconds"]) - workflow.now().timestamp()
@@ -377,8 +409,8 @@ class InvestigationWorkflow:
                         pass
                     if not workflow.patched("idle-poll-needs-news-v1"):
                         break  # histories recorded before this change started a turn on every timeout
-                    if completion and float(completion["deadline_unix"]) - float(
-                            completion["conclude_threshold_seconds"]) <= workflow.now().timestamp():
+                    if completion and (turn_boundary(completion) if workflow.patched("exploration-boundary-finalization-v1")
+                                       else float(completion["deadline_unix"]) - float(completion["conclude_threshold_seconds"])) <= workflow.now().timestamp():
                         break  # ADR 0020: the conclusion's reserve has begun; the next turn concludes
                     # A quiet poll costs no model call: start a turn only if something happened.
                     news = await workflow.execute_activity(
@@ -445,6 +477,7 @@ class TurnWorkflow:
         receipts: list[dict[str, Any]] = []
         failure: dict[str, Any] = {}
         invalid_run = 0
+        runtime_outcome = None
         failed_waits = 0  # accepted waits whose calls left nothing outstanding
         # ADR 0020 addendum R10: everything in this turn, every retry included, ends at its boundary. A schedule-to-close
         # timeout covers all attempts of one activity; the check before each slot covers the slots between them.
@@ -466,6 +499,10 @@ class TurnWorkflow:
                 d = await workflow.execute_activity("decide", {**base, "slot": slot}, task_queue=INVESTIGATOR_QUEUE,
                                                     start_to_close_timeout=timedelta(seconds=int(b.get("model_timeout", 300))),
                                                     heartbeat_timeout=HB, retry_policy=MODEL, **bounded())
+                if d.get("runtime_outcome"):
+                    runtime_outcome = d["runtime_outcome"]
+                    stop = "runtime-bounded"
+                    break
                 if not d.get("accepted"):
                     # Versioned change: histories recorded before it ended the turn on any rejection.
                     if d.get("reason") == "invalid" and workflow.patched("invalid-proposal-feedback-v1"):
@@ -547,7 +584,8 @@ class TurnWorkflow:
         finally:
             done = await workflow.execute_activity("complete_turn", {**base, "stop_reason": stop, "control": control,
                                                                      "receipts": receipts[-20:],
-                                                                     **({"failure": failure} if failure else {})},
+                                                                     **({"failure": failure} if failure else {}),
+                                                                     **({"runtime_outcome": runtime_outcome} if runtime_outcome else {})},
                                                    task_queue=INVESTIGATOR_QUEUE,
                                                    start_to_close_timeout=timedelta(seconds=60),
                                                    heartbeat_timeout=HB, retry_policy=SHORT)
@@ -557,6 +595,8 @@ class TurnWorkflow:
                 # the conclusion and closed the turn as cancelled, and the coordinator sees the same.
                 stop = "cancelled"
         return {"started": True, "turn_id": tid, "stop_reason": stop, "control": control,
+                "finalization": bool(b.get("finalization")),
+                **({"runtime_outcome": runtime_outcome} if runtime_outcome else {}),
                 **({"failure": failure} if failure else {}),
                 **({"completion": b["completion"]} if b.get("completion") else {})}
 

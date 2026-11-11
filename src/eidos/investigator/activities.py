@@ -294,6 +294,7 @@ class InvestigatorActivities:
             return {"started": False, "reason": r.get("reason")}
         lim = r["spec"]["limits"]
         return {"started": True, "turn_id": r["turn_id"], "max_model_calls": lim["max_model_calls"],
+                "finalization": bool(r["spec"].get("finalization")),
                 "resumed": r.get("resumed", False), "model_timeout": lim.get("deadline_seconds", 300),
                 **({"completion": r["spec"]["completion"]} if r["spec"].get("completion") else {})}
 
@@ -310,9 +311,16 @@ class InvestigatorActivities:
         if turn["spec"].get("completion"):
             view["completion"] = turn["spec"]["completion"]  # likewise (ADR 0020)
         if turn["spec"].get("exploration"):
-            view["exploration"] = turn["spec"]["exploration"]  # likewise (ADR 0023)
+            view["exploration"] = turn["spec"]["exploration"]
+        if turn["spec"].get("finalization"):
+            view["finalization"] = turn["spec"]["finalization"]  # likewise (ADR 0023)
         catalog = self.inv.query("search_components", {"limit": 100, "as_of_horizon": turn["horizon"]}, project=p)["components"]
         packed = pack(view, catalog, policy=turn["spec"].get("context_policy") or POLICY_V1)
+        if turn["spec"].get("finalization"):
+            # Exact recovery evidence is supplied independently of context-policy windowing.
+            packed["text"] += "\n\n## Bounded autonomous finalization\n" + json.dumps(
+                {**turn["spec"]["finalization"], "remaining_budget": view["budgets"],
+                 "remaining_wall": view.get("completion")}, sort_keys=True, default=str)
         # The source manifest includes the catalog snapshot so offline replays see exactly what was
         # installed at the horizon, not components published later.
         src_bytes = json.dumps({**view, "catalog": catalog}, sort_keys=True, default=str).encode()
@@ -383,6 +391,18 @@ class InvestigatorActivities:
             view = json.load(open(tmp.name))
         cfg = {**turn["spec"]["runtime"].get("settings", {}), "runtime": turn["spec"]["runtime"]["runtime"],
                "model": turn["spec"]["runtime"].get("model"), **self.runtime_overrides}
+        if turn["spec"].get("finalization"):
+            # Recovery shares the original envelope; shrink its reservation to the remaining budget.
+            envelope = int(cfg.get("max_tokens_per_decision", 0 if cfg.get("runtime") == "fixture" else 120_000))
+            for dim, budget in (turn["spec"].get("budgets") or {}).items():
+                left = max(0.0, budget["limit_amount"] - budget["used"] - budget["reserved"])
+                if dim == "model_tokens":
+                    envelope = min(envelope, int(left))
+                if dim == "model_usd" and cfg.get("price_per_mtok"):
+                    rate = max(float(v) for v in cfg["price_per_mtok"].values())
+                    if rate > 0:
+                        envelope = min(envelope, int(left * 1e6 / rate))
+            cfg["max_tokens_per_decision"] = envelope
         runtime = build_runtime(cfg)
         # Reserve this decision's maximum envelope before any request (checked inside the turn,
         # not only between turns). Failure paths settle the reservation via record_model_usage.
@@ -403,12 +423,20 @@ class InvestigatorActivities:
             reserved, reservation_ref = rr["reserved"], rr.get("reservation_ref")
         except LabError as exc:
             if exc.code == "BUDGET_EXHAUSTED":
+                if (exc.error.get("details") or {}).get("reason") == "exploration-holdback":
+                    return {"accepted": False, "reason": "runtime-bounded", "n_calls": 0,
+                            "runtime_outcome": "exploration-exhausted"}
                 return {"accepted": False, "reason": "budget-exhausted", "n_calls": 0}
             raise
-        abort = DecisionAbort(decision_deadline(started, float(turn["spec"]["limits"].get("deadline_seconds") or 0)))
+        limits = dict(turn["spec"]["limits"])
+        if turn["spec"].get("completion"):
+            from eidos.domain.turns import turn_boundary
+            limits["deadline_seconds"] = min(float(limits.get("deadline_seconds") or 600),
+                                               max(0.01, turn_boundary(turn["spec"]["completion"]) - time.time()))
+        abort = DecisionAbort(decision_deadline(started, float(limits.get("deadline_seconds") or 0)))
         req = DecisionRequest(turn_id=a["turn_id"], slot=a["slot"], context=context_text,
-                              turn_so_far=self._turn_so_far(p, turn), limits=turn["spec"]["limits"], settings=cfg,
-                              read_tools=self._read_tools(p), view=view, abort=abort)
+                              turn_so_far=self._turn_so_far(p, turn), limits=limits, settings=cfg,
+                              read_tools=self._read_tools(p, finalization=bool(turn["spec"].get("finalization"))), view=view, abort=abort)
 
         def aborted() -> dict:
             if abort.reason == "activity-cancelled" or _activity_cancelled():
@@ -428,7 +456,7 @@ class InvestigatorActivities:
             except DecisionAborted as exc:
                 # Stopped, paused or cancelled: nothing is proposed. Usage is what the responses reported; uncertain
                 # when a request was abandoned in flight (its bill is unknown); the reservation is settled against it.
-                usage = {**exc.possible_usage, "uncertain": bool(exc.in_flight or exc.possible_usage.get("uncertain"))}
+                usage = {**exc.possible_usage, **({"phase": "finalization"} if turn["spec"].get("finalization") else {}), "uncertain": bool(exc.in_flight or exc.possible_usage.get("uncertain"))}
                 self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": usage, "reserved": reserved,
                                 "reservation_ref": reservation_ref}, project=p,
                                 key=f"usage-abort:{a['turn_id']}:{a['slot']}:{attempt}:{epoch}")
@@ -439,6 +467,7 @@ class InvestigatorActivities:
                 # ADR 0023: every attempt's usage, its uncertainty, its elapsed time and why it failed are recorded
                 error = model_failure_error(exc, turn["spec"].get("completion"))
                 self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": {**exc.possible_usage,
+                                **({"phase": "finalization"} if turn["spec"].get("finalization") else {}),
                                 "uncertain": True, "error": str(exc)[:500], "attempt": attempt,
                                 "elapsed_seconds": round(time.monotonic() - started, 3),
                                 "failure": error.details[0] if error.details else exc.failure},
@@ -448,7 +477,7 @@ class InvestigatorActivities:
             # Spend is the first durable write: a crash before acceptance must not lose billed requests.
             # ADR 0023: the ledger's entry for this attempt also carries its number and elapsed time (a copy: the
             # decision's own usage is what the runtime reported)
-            recorded = {**res.usage, "attempt": attempt, "elapsed_seconds": round(time.monotonic() - started, 3)}
+            recorded = {**res.usage, **({"phase": "finalization"} if turn["spec"].get("finalization") else {}), "attempt": attempt, "elapsed_seconds": round(time.monotonic() - started, 3)}
             self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": recorded, "reserved": reserved,
                                                    "reservation_ref": reservation_ref},
                             project=p, key=f"usage:{a['turn_id']}:{a['slot']}:{attempt}:{epoch}")
@@ -460,6 +489,11 @@ class InvestigatorActivities:
                                    key=f"resp:{a['turn_id']}:{a['slot']}:{attempt}:{epoch}")
             if _abort_reason(abort):  # last check before the durable acceptance boundary
                 return aborted()
+            if res.runtime_outcome:
+                return self.wf.command("record_runtime_outcome", {
+                    "turn_id": a["turn_id"], "slot": a["slot"], "runtime_outcome": res.runtime_outcome,
+                    "response_artifact_id": resp["result"]["artifact_id"], "usage": res.usage},
+                    project=p, key=f"runtime:{a['turn_id']}:{a['slot']}:{attempt}:{epoch}")["result"]
             try:
                 r = self.wf.command("accept_decision", {"turn_id": a["turn_id"], "slot": a["slot"],
                                     "proposal": res.proposal, "usage": res.usage, "usage_recorded": True,
@@ -478,8 +512,8 @@ class InvestigatorActivities:
         status = self.wf.query("get_record", {"kind": "investigation", "id": investigation_id}, project=p).get("status")
         return None if status in (None, "active") else f"investigation-{status}"
 
-    def _read_tools(self, p: str) -> dict:
-        return {
+    def _read_tools(self, p: str, *, finalization: bool = False) -> dict:
+        tools: dict[str, Any] = {
             "inspect_evidence": lambda artifact_id, max_bytes=8192: self.inv.query(
                 "artifact_preview", {"artifact_id": artifact_id, "max_bytes": max_bytes}, project=p),
             "search_components": lambda text="", capability=None: self.inv.query(
@@ -488,6 +522,7 @@ class InvestigatorActivities:
                 "describe_component", {"component_ref": component_ref}, project=p),
             "get_job": lambda job_id: redact_value(self.inv.query("get_job", {"job_id": job_id, "include_lock": False}, project=p)),
         }
+        return {k: v for k, v in tools.items() if not finalization or k != "search_components"}
 
     # -- effects (ADR 0022: a decision's calls run in order; dependent calls wait for what they name) ----------
     @activity.defn(name="execute_decision")
@@ -656,6 +691,11 @@ class InvestigatorActivities:
                                key=f"needs-input:{a['investigation_id']}:{a.get('turn_counter')}:"
                                    f"{activity.info().workflow_run_id}")["result"]
 
+    @activity.defn(name="enter_finalization")
+    def enter_finalization(self, a: dict) -> dict:
+        return self.wf.command("enter_finalization", a, project=a["project_id"],
+                               key=f"finalize:{a['investigation_id']}:{a.get('turn_counter')}")["result"]
+
     @activity.defn(name="record_turn_retry")
     def record_turn_retry(self, a: dict) -> dict:
         """ADR 0019: a bounded automatic retry after a retryable turn failure is on the ledger before its backoff."""
@@ -669,7 +709,8 @@ class InvestigatorActivities:
         r = self.wf.command("complete_turn", {"turn_id": a["turn_id"], "stop_reason": a["stop_reason"],
                             "control": a.get("control"), "receipts": a.get("receipts", []),
                             "execution": f"{getattr(activity.info(), 'workflow_run_id', '') or ''}/complete",
-                            **({"failure": a["failure"]} if a.get("failure") else {})},
+                            **({"failure": a["failure"]} if a.get("failure") else {}),
+                            **({"runtime_outcome": a["runtime_outcome"]} if a.get("runtime_outcome") else {})},
                             project=a["project_id"],
                             # per run (F5): a completion refused for a run that lost the turn is not the owner's receipt
                             key=f"complete:{a['turn_id']}:{getattr(activity.info(), 'workflow_run_id', '') or ''}")

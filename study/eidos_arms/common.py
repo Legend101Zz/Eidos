@@ -118,8 +118,19 @@ def ledger(c, project, inv, path):
                         emit('model_response', {'artifact_id': aid, 'response': json.loads(tmp.read_text())})
                     finally:
                         tmp.unlink(missing_ok=True)
+        for event in events:
+            if event.get('type') == 'decision.runtime_bounded':
+                aid = (event.get('body') or {}).get('response_artifact_id')
+                if aid:
+                    tmp = Path(path).parent / ('.runtime-response-' + aid + '.json')
+                    try:
+                        c.download(project, aid, tmp)
+                        emit('runtime_response', {'artifact_id': aid, 'runtime_outcome':
+                            (event.get('body') or {}).get('runtime_outcome'), 'response': json.loads(tmp.read_text())})
+                    finally:
+                        tmp.unlink(missing_ok=True)
         records = {}
-        for kind in ('note', 'claim', 'assessment', 'evidence_plan', 'export'):
+        for kind in ('note', 'claim', 'assessment', 'evidence_plan', 'export', 'finalization_export_receipt'):
             records[kind] = c.query('list_records', {'kind': kind, 'summary': False, 'limit': 1000}, project=project)
             for row in records[kind]:
                 emit(kind, row)

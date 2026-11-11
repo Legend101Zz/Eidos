@@ -48,7 +48,9 @@ def start_investigation(ctx: Ctx, p: dict) -> dict:
     limits = dict(p.get("limits") or {})
     investigator = {"runtime": "fixture", "model": None, "context_policy": "context-policy/3",
                     "max_calls_per_turn": 6, "max_model_calls_per_turn": 4, "max_turns": 40,
-                    **(p.get("investigator") or {})}
+                    "finalization": "autonomous", **(p.get("investigator") or {})}
+    if investigator["finalization"] not in ("autonomous", "operator"):
+        raise Invalid("investigator.finalization must be autonomous or operator")
     if "model_usd" in limits and investigator.get("runtime") != "fixture" \
             and not (investigator.get("settings") or {}).get("price_per_mtok"):
         # Without prices no decision reserves or reports USD, so the limit would never apply (v1.0.0 review).
@@ -226,7 +228,7 @@ def _clear_needs_input(ctx: Ctx, inv, status: str, action: str) -> None:
                   "was": inv.labels["needs_input"]}, investigation_id=inv.id)
 
 
-NEEDS_INPUT_CODES = ("refused-proposals", "coordinator-stopped", "turn-failed", "provider-unavailable")
+NEEDS_INPUT_CODES = ("refused-proposals", "coordinator-stopped", "turn-failed", "provider-unavailable", "finalization-failed")
 NEEDS_INPUT_DETAILS_BYTES = 2000
 
 
@@ -299,6 +301,73 @@ def stop_investigation(ctx: Ctx, p: dict) -> dict:
 # Turns: TurnSpec committed before context; decisions accepted before effects.
 # ---------------------------------------------------------------------------------------------
 
+FINALIZATION_KIND = "investigation_finalization"
+
+
+def _enter_finalization(ctx: Ctx, inv, trigger: str, runtime_outcome: Any = None) -> dict:
+    prior = ctx.tx.get_record(FINALIZATION_KIND, inv.id)
+    if prior:
+        return dict(prior.body)
+    if inv.body["investigator"].get("finalization", "autonomous") == "operator":
+        return {"enabled": False}
+    refusals = [{"decision_id": d["id"], "turn_id": t["id"], "error": d["body"].get("error"),
+                 "response_artifact_id": d["body"].get("response_artifact_id")}
+                for t in ctx.tx.list_turns(inv.id) for d in ctx.tx.decisions(t["id"])
+                if not d["accepted"] and d["body"].get("reason") == "invalid"]
+    body = {"enabled": True, "trigger": trigger, "runtime_outcome": runtime_outcome,
+            "refusals": refusals, "turn_id": None, "status": "pending"}
+    ctx.tx.put_record(FINALIZATION_KIND, inv.id, ctx.project_id, body, created_by=ctx.principal.id, status="pending")
+    ctx.event("investigation.finalization_started", inv.id, body, investigation_id=inv.id)
+    return body
+
+
+@command("enter_finalization", "turn")
+def enter_finalization(ctx: Ctx, p: dict) -> dict:
+    """Durably admit at most one conclude-only recovery in the original envelope (ADR 0027)."""
+    inv = ctx.tx.require("investigation", p["investigation_id"], lock=True)
+    if inv.status != "active":
+        return {"enabled": False, "reason": f"investigation is {inv.status}"}
+    return _enter_finalization(ctx, inv, str(p.get("trigger") or "runtime-outcome"), p.get("runtime_outcome"))
+
+
+def _fail_pending_finalization(ctx: Ctx, inv, reason: str) -> None:
+    final = ctx.tx.get_record(FINALIZATION_KIND, inv.id)
+    if final is None or final.status == "finished":
+        return
+    receipt = {"schema": "finalization-export-receipt/1", "investigation_id": inv.id,
+               "investigator_concluded": False, "incumbent": exploration.final_incumbent(ctx, inv),
+               "failure": {"kind": "finalization-not-admitted", "reason": reason},
+               "provenance_limits": "Controller export only; no investigator conclusion or new confirmation."}
+    ctx.tx.put_record("finalization_export_receipt", inv.id, ctx.project_id, receipt,
+                      created_by=ctx.principal.id, status="recorded")
+    ctx.tx.put_record(FINALIZATION_KIND, inv.id, ctx.project_id,
+                      {**final.body, "status": "finished", "export_receipt_ref": inv.id},
+                      created_by=ctx.principal.id, status="finished")
+    mark_needs_input(ctx, {"investigation_id": inv.id, "code": "finalization-failed", "reason": reason,
+                          "details": {"failure": receipt["failure"], "export_receipt": {
+                              "kind": "finalization_export_receipt", "id": inv.id}}})
+    ctx.event("investigation.finalization_finished", inv.id, receipt, investigation_id=inv.id)
+
+
+def _finalization_context(ctx: Ctx, inv, state: dict, finalization: dict) -> dict:
+    jobs = exploration._jobs(ctx, inv.id)
+    held = exploration.held_out_artifacts(ctx, inv, jobs)
+    jobs = [j for j in jobs if not (set(j["inputs"].values()) & held)]
+    incumbent = state.get("incumbent")
+    job_id = (incumbent or {}).get("job_id")
+    candidate = next((j for j in jobs if j["id"] == job_id), None)
+    return {**finalization, "locked_candidate": candidate, "incumbent": incumbent,
+            "selection_rule": state.get("rule"),
+            "metrics": [{"job_id": j["id"], "component": j["component"], "inputs": j["inputs"],
+                         "config": j["config"], "receipt": j["receipt"], "outputs": j["outputs"]}
+                        for j in jobs if j.get("receipt")],
+            "provenance_limits": "Visible metrics are diagnostic unless matched by the fixed selection rule. "
+                "Missing held-out evidence never passes assessment. Report reproduction exactly as recorded.",
+            "instruction": "One finalization turn. Read existing evidence, then conclude or stop. No effects, "
+                "new search, training, authoring, rule changes or candidate changes. Report the locked candidate "
+                "with source and receipt identifiers and limitations, or honestly abstain if none is eligible."}
+
+
 @command("begin_turn", "turn")
 def begin_turn(ctx: Ctx, p: dict) -> dict:
     run = str(p.get("run_id") or "")  # the TurnWorkflow run that begins or resumes the turn (F5, ADR 0017 addendum)
@@ -323,17 +392,27 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
     seq = (last["seq"] + 1) if last else 1
     cfg = inv.body["investigator"]
     if seq > int(cfg.get("max_turns", 40)):
+        _fail_pending_finalization(ctx, inv, "max-turns-reached")
         return {"started": False, "reason": "max-turns-reached"}
     wall = inv.body.get("wall")
     completion = turn_rules.completion_state(wall["deadline_unix"], time.time(), wall["conclude_threshold_seconds"]) \
         if wall else None
     if completion and completion["remaining_seconds"] <= 0:
+        _fail_pending_finalization(ctx, inv, turn_rules.WALL_REACHED)
         return {"started": False, "reason": turn_rules.WALL_REACHED}
     budgets = ctx.tx.budgets(inv_scope(inv.id))
     for dim, b in budgets.items():
         if dim in ("model_tokens", "model_usd") and b["used"] + b["reserved"] >= b["limit_amount"]:
+            _fail_pending_finalization(ctx, inv, "budget-exhausted")
             return {"started": False, "reason": "budget-exhausted", "dimension": dim}
+    finalization = ctx.tx.get_record(FINALIZATION_KIND, inv.id)
+    if finalization and finalization.body.get("turn_id"):
+        return {"started": False, "reason": "finalization-exhausted"}
     if "turns" in budgets:
+        remaining_turns = budgets["turns"]["limit_amount"] - budgets["turns"]["used"] - budgets["turns"]["reserved"]
+        if remaining_turns < 1 and finalization:
+            _fail_pending_finalization(ctx, inv, "turn-budget-exhausted")
+            return {"started": False, "reason": "budget-exhausted", "dimension": "turns"}
         ctx.tx.reserve(inv_scope(inv.id), "turns", 1, f"turn:{inv.id}:{seq}")
     tid = f"turn_{inv.id}_{seq}"
     spec = {
@@ -354,11 +433,25 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
         spec["limits"]["deadline_seconds"] = turn_rules.turn_seconds(spec["limits"]["deadline_seconds"], completion)
     # ADR 0023: the incumbent, challenger rounds and the exploration allowance, as of the turn's start (immutable)
     state = exploration.exploration_state(ctx, inv, completion=completion, budgets=budgets)
+    if state.get("phase") == "finalize" or (completion or {}).get("conclude_now"):
+        _enter_finalization(ctx, inv, str(state.get("stop") or "exploration-ended"))
+    finalization = ctx.tx.get_record(FINALIZATION_KIND, inv.id)
+    if finalization:
+        final = {**finalization.body, "turn_id": tid, "status": "running"}
+        ctx.tx.put_record(FINALIZATION_KIND, inv.id, ctx.project_id, final,
+                          created_by=ctx.principal.id, status="running")
+        spec["finalization"] = _finalization_context(ctx, inv, state, final)
+        spec["limits"].update(max_calls=0, max_model_calls=1)
+        spec["tool_vocabulary"] = ["conclude", "stop"]
+        if completion:
+            spec["completion"] = {**completion, "finalization": True}
+            spec["limits"]["deadline_seconds"] = max(1, min(
+                int(cfg.get("turn_deadline_seconds", 600)), int(completion["remaining_seconds"])))
     spec["exploration"] = exploration_rules.compact(state)
     # R14 #4, #5: an exploratory turn ends where the hold-back begins, its decisions, retries and activities included,
     # so an open turn cannot spend the time kept for reproduction and export.
     until = exploration_rules.exploration_deadline_unix(state, completion)
-    if until is not None:
+    if until is not None and not finalization:
         spec["completion"] = {**spec["completion"], "exploration_deadline_unix": round(until, 3)}
         spec["limits"]["deadline_seconds"] = max(turn_rules.MIN_TURN_SECONDS,
                                                  min(int(spec["limits"]["deadline_seconds"]), int(until - time.time())))
@@ -618,6 +711,18 @@ def decision_revoked(ctx: Ctx, decision_id: str) -> bool:
     return ctx.tx.get_record("decision_revocation", decision_id) is not None
 
 
+@command("record_runtime_outcome", "turn")
+def record_runtime_outcome(ctx: Ctx, p: dict) -> dict:
+    """A runtime bound is telemetry/control, never an invalid model proposal (ADR 0026)."""
+    turn = _turn(ctx, p["turn_id"], lock=True)
+    body = {k: p.get(k) for k in ("turn_id", "slot", "runtime_outcome", "response_artifact_id", "usage")}
+    rid = f"{turn['id']}:{p['slot']}:{ctx.command_key}"
+    ctx.tx.put_record("runtime_outcome", rid, ctx.project_id, body, created_by=ctx.principal.id, status="recorded")
+    ctx.event("decision.runtime_bounded", turn["id"], body, investigation_id=turn["investigation_id"])
+    return {"accepted": False, "reason": "runtime-bounded", "n_calls": 0,
+            "runtime_outcome": p["runtime_outcome"], "response_artifact_id": p.get("response_artifact_id")}
+
+
 @command("accept_decision", "turn")
 def accept_decision(ctx: Ctx, p: dict) -> dict:
     """Persist a proposed decision. Exactly one decision is accepted per (turn, slot); a late or
@@ -634,23 +739,23 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
     if not p.get("usage_recorded"):  # recorded earlier by record_model_usage (first durable write)
         _charge_model_usage(ctx, turn["investigation_id"], usage, ref=did)
     if existing:
-        ctx.tx.insert_decision(did, turn["id"], slot, False, {"proposal": p.get("proposal"), "reason": "slot-taken",
+        ctx.tx.insert_decision(did, turn["id"], slot, False, {"response_artifact_id": p.get("response_artifact_id"), "proposal": p.get("proposal"), "reason": "slot-taken",
                                                                "usage": usage})
         if decision_revoked(ctx, existing["id"]):  # a revoked decision is never handed out for execution (F2c)
             return {"accepted": False, "decision_id": did, "reason": "slot-revoked"}
         return {"accepted": False, "decision_id": existing["id"], "reason": "slot-already-accepted",
                 "calls": existing["body"]["calls"], "control": existing["body"].get("control")}
     if turn["status"] != "open":
-        ctx.tx.insert_decision(did, turn["id"], slot, False, {"proposal": p.get("proposal"), "reason": "turn-closed"})
+        ctx.tx.insert_decision(did, turn["id"], slot, False, {"response_artifact_id": p.get("response_artifact_id"), "proposal": p.get("proposal"), "reason": "turn-closed"})
         return {"accepted": False, "decision_id": did, "reason": "turn-closed"}
     late = _execution_refused(ctx, turn, str(p.get("execution") or "")) if inv.status == "active" else None
     late = late or _late_decision(ctx, turn, inv, slot, p.get("attempt"), p.get("epoch"))
     if late:  # ADR 0017: a decision from a stopped investigation or a cancelled request is never applied
-        ctx.tx.insert_decision(did, turn["id"], slot, False, {"proposal": p.get("proposal"), "reason": late})
+        ctx.tx.insert_decision(did, turn["id"], slot, False, {"response_artifact_id": p.get("response_artifact_id"), "proposal": p.get("proposal"), "reason": late})
         ctx.event("decision.unapplied", did, {"reason": late}, investigation_id=inv.id)
         return {"accepted": False, "decision_id": did, "reason": late}
     if inv.revision != turn["study_revision"]:
-        ctx.tx.insert_decision(did, turn["id"], slot, False, {"proposal": p.get("proposal"), "reason": "stale-revision",
+        ctx.tx.insert_decision(did, turn["id"], slot, False, {"response_artifact_id": p.get("response_artifact_id"), "proposal": p.get("proposal"), "reason": "stale-revision",
                                                                "observed_revision": inv.revision})
         ctx.event("decision.unapplied", did, {"reason": "stale-revision"}, investigation_id=inv.id)
         return {"accepted": False, "decision_id": did, "reason": "stale-revision", "observed_revision": inv.revision}
@@ -662,13 +767,21 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
                 ctl["bounded_outcome"] = str(p["bounded_outcome"])[:64]
             proposal["control"] = ctl
         decision = turn_rules.validate_decision(proposal, max_calls=turn["spec"]["limits"]["max_calls"])
+        if turn["spec"].get("finalization") and (decision["calls"] or
+                decision["control"].get("action") not in turn_rules.CONCLUDING_ACTIONS):
+            raise Invalid("autonomous finalization permits read-only evidence and conclude/stop only")
+        if turn["spec"].get("finalization"):
+            candidate = turn["spec"]["finalization"].get("locked_candidate") or {}
+            if candidate.get("status") != "succeeded" and (decision["control"].get("claim") or {}).get(
+                    "disposition") in ("candidate", "confirmed"):
+                raise Invalid("no eligible locked candidate: finalization must honestly abstain")
         _check_component_contracts(ctx, decision["calls"])
         _check_conclusion_due(turn, decision)  # first: "nothing to wait for" would suggest running something
         _check_exploration_phase(turn, decision, live_stop=_live_exploration_stop(ctx, inv, turn))
         _check_resource_policy(ctx, decision)
         _check_something_to_wait_for(ctx, inv, decision)
     except Invalid as exc:
-        ctx.tx.insert_decision(did, turn["id"], slot, False, {"proposal": p.get("proposal"), "reason": "invalid",
+        ctx.tx.insert_decision(did, turn["id"], slot, False, {"response_artifact_id": p.get("response_artifact_id"), "proposal": p.get("proposal"), "reason": "invalid",
                                                                "error": exc.to_dict()})
         return {"accepted": False, "decision_id": did, "reason": "invalid", "error": exc.to_dict()}
     calls = turn_rules.keyed_calls(ctx.project_id, turn["id"], did, decision["calls"])
@@ -910,7 +1023,7 @@ def _charge_model_usage(ctx: Ctx, inv_id: str, usage: dict, *, ref: str, reserve
     reserved = reserved or {}
     uncertain = bool(usage.get("uncertain"))
     detail = {k: usage.get(k) for k in ("provider", "model", "request_ids", "calls")}
-    for k in ("attempt", "elapsed_seconds", "failure"):  # ADR 0023: each attempt, its time and why it failed
+    for k in ("attempt", "elapsed_seconds", "failure", "phase", "runtime_outcome"):  # ADR 0023: each attempt, its time and why it failed
         if usage.get(k) is not None:
             detail[k] = usage[k]
     if usage.get("aborted"):  # ADR 0017: why the decision ended and what was abandoned in flight
@@ -1031,7 +1144,8 @@ def reserve_model_budget(ctx: Ctx, p: dict) -> dict:
     if p.get("attempt") is not None and p.get("epoch") is None:  # callers without begin_decision
         _note_attempt(ctx, turn, int(p.get("slot") or 0), int(p["attempt"]))
     tokens = float((p.get("estimate") or {}).get("model_tokens") or 0)
-    if tokens > 0 and (turn["spec"].get("exploration") or {}).get("phase") in exploration_rules.EXPLORING_PHASES \
+    if tokens > 0 and not turn["spec"].get("finalization") \
+            and (turn["spec"].get("exploration") or {}).get("phase") in exploration_rules.EXPLORING_PHASES \
             and isinstance(budgets.get("model_tokens"), dict):
         # R14 #4: an exploratory decision's reservation must fit in what is left before the token hold-back, as of now
         # (other decisions of the turn have reserved and spent since it began); the hold-back is for finalization.
@@ -1130,6 +1244,8 @@ def _close_turn(ctx: Ctx, turn: dict, p: dict) -> dict:
     result = {"stop_reason": reason, "summary": str(p.get("summary", ""))[:4000], "receipts": p.get("receipts", []),
               "unfinished_handles": p.get("unfinished_handles", []), "control": p.get("control"),
               **({"control_refused": control_refused} if control_refused else {})}
+    if p.get("runtime_outcome"):
+        result["runtime_outcome"] = p["runtime_outcome"]
     failure = _bounded_details(redact_value(p.get("failure"))) if reason == "error" else {}  # redacted before it is bounded
     if failure:  # why the turn failed (ADR 0019): on the turn and on its turn.completed event
         result["failure"] = failure
@@ -1153,6 +1269,26 @@ def _close_turn(ctx: Ctx, turn: dict, p: dict) -> dict:
                   investigation_id=inv_id)
         ctx.tx.put_record("investigation", inv_id, ctx.project_id, body, created_by=ctx.principal.id,
                           status="concluded")
+    if turn["spec"].get("finalization"):
+        final = ctx.tx.require(FINALIZATION_KIND, inv_id)
+        receipt = {"schema": "finalization-export-receipt/1", "investigation_id": inv_id,
+                   "turn_id": turn["id"], "locked_candidate": turn["spec"]["finalization"].get("locked_candidate"),
+                   "incumbent": turn["spec"]["finalization"].get("incumbent"),
+                   "provenance_limits": turn["spec"]["finalization"]["provenance_limits"],
+                   "investigator_concluded": reason == "concluded" and not control_refused,
+                   "stop_reason": reason, "failure": failure or ({"kind": "finalization-incomplete", "reason": reason}
+                                                                 if reason != "concluded" else None)}
+        ctx.tx.put_record("finalization_export_receipt", inv_id, ctx.project_id, receipt,
+                          created_by=ctx.principal.id, status="recorded")
+        ctx.tx.put_record(FINALIZATION_KIND, inv_id, ctx.project_id,
+                          {**final.body, "status": "finished", "export_receipt_ref": inv_id},
+                          created_by=ctx.principal.id, status="finished")
+        if not receipt["investigator_concluded"] and reason != "cancelled":
+            mark_needs_input(ctx, {"investigation_id": inv_id, "code": "finalization-failed",
+                                  "reason": "bounded autonomous finalization did not conclude",
+                                  "details": {"failure": receipt["failure"], "export_receipt": {
+                                      "kind": "finalization_export_receipt", "id": inv_id}}})
+        ctx.event("investigation.finalization_finished", inv_id, receipt, investigation_id=inv_id)
     ctx.event("turn.completed", turn["id"], {"stop_reason": reason, "status": status,
                                              **({"failure": failure} if failure else {}),
                                              **({"control_refused": control_refused} if control_refused else {})},

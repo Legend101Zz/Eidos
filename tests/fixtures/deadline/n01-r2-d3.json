@@ -1,0 +1,20 @@
+{
+  "source": "D3-REPORT.md Case 1: N01-r2 terminal six receipt shapes (turns 10-12, slots 0-1)",
+  "historical_configured_request_timeout": 300,
+  "historical_response_digest_example": "9820d6d0cadc05d82cb04dee131811e538a8b09d55b58439ec71e3aa83e59106",
+  "note": "Read-response shape reconstructed from D3; elapsed values span the documented 3.5-11.6 s, not verbatim response bytes.",
+  "read_response": {"rationale": "Identify and score the incumbent before deciding", "read": [
+    {"tool": "get_job", "args": {"job_id": "job_1b0fc88b1f454622"}},
+    {"tool": "inspect_evidence", "args": {"artifact_id": "art_best_recipe"}},
+    {"tool": "inspect_evidence", "args": {"artifact_id": "art_evidence_table"}},
+    {"tool": "inspect_evidence", "args": {"artifact_id": "art_e03e0d894e96477a"}}
+  ]},
+  "slots": [
+    {"turn": 10, "slot": 0, "deadline_seconds": 249, "read_elapsed_seconds": 6.9},
+    {"turn": 10, "slot": 1, "deadline_seconds": 249, "read_elapsed_seconds": 9.5},
+    {"turn": 11, "slot": 0, "deadline_seconds": 233, "read_elapsed_seconds": 6.0},
+    {"turn": 11, "slot": 1, "deadline_seconds": 233, "read_elapsed_seconds": 3.5},
+    {"turn": 12, "slot": 0, "deadline_seconds": 221, "read_elapsed_seconds": 6.1},
+    {"turn": 12, "slot": 1, "deadline_seconds": 221, "read_elapsed_seconds": 11.6}
+  ]
+}

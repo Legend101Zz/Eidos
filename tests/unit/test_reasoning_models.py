@@ -23,7 +23,7 @@ from eidos.investigator import pydantic_ai_runtime as par
 from eidos.investigator import structured_output as so
 from eidos.investigator.activities import decision_usd_envelope
 from eidos.investigator.pydantic_ai_runtime import PydanticAIRuntime, usage_from_messages
-from eidos.investigator.runtime import DecisionRequest, DecisionResult
+from eidos.investigator.runtime import DecisionAbort, DecisionRequest, DecisionResult
 
 pytestmark = pytest.mark.fixture_llm
 
@@ -651,7 +651,7 @@ def test_json_mode_enum_lists_only_the_available_read_tools_and_does_not_mutate_
 def test_repair_mode_and_anthropic_json_mode_send_no_response_format():
     script = scripted([json.dumps(GOOD)])
     runtime(script, "repair", max_output_tokens=777).decide(request(read_tools([])))
-    assert script.infos[0].model_settings == {"max_tokens": 777}
+    assert script.infos[0].model_settings == {"max_tokens": 777, "timeout": 120.0}
     anthropic = PydanticAIRuntime({"model": "anthropic:claude-sonnet-5-5", "output_mode": "json"})
     assert anthropic._json_mode_settings(["get_job"]) is None
 
@@ -724,15 +724,13 @@ FIRST_REPLIES = {"read-request": read_request(("get_job", {"job_id": "j"})), "ma
 
 
 @pytest.mark.parametrize("first", list(FIRST_REPLIES))
-def test_no_follow_up_request_is_started_when_it_could_outlive_the_decision_deadline(first):
-    log: list = []
+def test_follow_up_is_admitted_with_timeout_smaller_than_configured(first):
     script = scripted([FIRST_REPLIES[first], json.dumps(GOOD)])
-    res = runtime(script, request_timeout=1000).decide(request(read_tools(log), deadline_seconds=600))
-    assert len(script.seen) == 1 and res.usage["calls"] == 1  # the first request is always made
-    assert res.proposal["calls"] == [] and res.proposal["control"]["bounded_outcome"] == "decision-deadline"
-    assert "600" in res.usage["limit_reached"] and not res.usage["structured_output"]["valid"]
-    assert res.usage["structured_output"]["reasks"] == 0  # a re-ask that was never sent is not counted
-    validate_decision(res.proposal, max_calls=4)
+    res = runtime(script, request_timeout=1000).decide(request(read_tools([]), deadline_seconds=249))
+    assert len(script.seen) == res.usage["calls"] == 2
+    assert res.runtime_outcome is None and res.usage["structured_output"]["valid"]
+    assert 0 < script.infos[1].model_settings["timeout"] < 249
+    assert res.usage["structured_output"]["reasks"] == (1 if first == "malformed" else 0)
 
 
 @pytest.mark.parametrize("first", list(FIRST_REPLIES))
@@ -750,20 +748,29 @@ def test_without_a_deadline_the_request_timeout_does_not_limit_follow_ups(limits
     assert len(script.seen) == 2 and res.usage["structured_output"]["valid"]
 
 
-@pytest.mark.parametrize("elapsed, follow_up", [(589, True), (590, True), (591, False), (900, False)])
-def test_the_deadline_check_uses_elapsed_time_plus_the_request_timeout(monkeypatch, elapsed, follow_up):
-    ticks = iter([0.0, float(elapsed)])
-    monkeypatch.setattr(par, "time", SimpleNamespace(monotonic=lambda: next(ticks, float(elapsed))))
+@pytest.mark.parametrize("elapsed, follow_up", [(589, True), (590, True), (591, True), (598, False), (900, False)])
+def test_followup_uses_remaining_time_minus_durable_margin(monkeypatch, elapsed, follow_up):
+    now = [0.0]
     script = scripted([read_request(("get_job", {"job_id": "j"})), json.dumps(GOOD)])
-    res = runtime(script, request_timeout=10).decide(request(read_tools([]), deadline_seconds=600))
+    tools = read_tools([])
+    tools["get_job"] = lambda job: now.__setitem__(0, float(elapsed)) or {"id": job}
+    req = request(tools, deadline_seconds=600)
+    req.abort = DecisionAbort(deadline=600, clock=lambda: now[0])
+    res = runtime(script, request_timeout=10).decide(req)
     assert len(script.seen) == (2 if follow_up else 1)
-    assert (res.proposal["control"].get("bounded_outcome") == "decision-deadline") is (not follow_up)
+    assert (res.runtime_outcome == "deadline-exhausted") is (not follow_up)
+    if follow_up:
+        assert script.infos[-1].model_settings["timeout"] == min(10, 600 - elapsed - 2)
 
 
 def test_a_deadline_stop_still_counts_the_reasoning_of_the_requests_already_made():
+    abort = DecisionAbort()
     script = scripted([read_request(("get_job", {"job_id": "j"}))], usages=[usage(10, 20, 600)])
-    res = runtime(script, request_timeout=1000).decide(request(read_tools([]), deadline_seconds=600))
-    assert res.usage["calls"] == 1 and res.usage["reasoning_tokens"] == 600
+    req = request({"get_job": lambda job: abort.trigger("decision-deadline")})
+    req.abort = abort
+    res = runtime(script, request_timeout=1000).decide(req)
+    assert res.runtime_outcome == "deadline-exhausted" and res.usage["calls"] == 1
+    assert res.usage["reasoning_tokens"] == 600
     assert res.usage["reasoning_accounting"] == "added-to-output" and res.usage["output_tokens"] == 620
 
 

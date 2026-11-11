@@ -314,6 +314,25 @@ def _check_rule_provenance(ctx: Ctx, inv: Any, rule: dict[str, Any]) -> None:
                       details={"rule": rule, "held_out_splits": named, "held_out_artifacts": sorted(held)})
 
 
+def _check_rule_ports(ctx: Ctx, rule: dict[str, Any]) -> None:
+    """Prospective preflight against published scorer manifests, before immutability."""
+    scorer = rule["scorer"]
+    exact = ctx.tx.get_record("component_release", scorer)
+    releases = [exact] if exact else [r for r in ctx.tx.list_records(ctx.project_id, "component_release", limit=5000)
+                                    if r.status == "active" and r.body["manifest"].get("id") == scorer]
+    if not releases:
+        raise Invalid(f"selection scorer {scorer!r} is not published; name a published scorer release")
+    bound = set((rule.get("data") or {}).get("inputs") or {})
+    for release in releases:
+        manifest = release.body["manifest"]
+        ports = set(manifest.get("input") or {}) | set(manifest.get("optional_inputs") or {})
+        invalid = sorted(bound - ports)
+        if invalid:
+            raise Invalid(f"selection data binds unknown scorer ports {invalid}; {release.id} accepts {sorted(ports)}",
+                          details={"scorer": release.id, "invalid_ports": invalid, "input_ports": sorted(ports)},
+                          next_action="Use the scorer's actual input port names before recording the fixed rule.")
+
+
 def check_note(ctx: Ctx, inv_id: str, body: dict[str, Any]) -> dict[str, Any] | None:
     """Validate a ``selection_rule`` or ``candidate_lock`` note before it is recorded (ADR 0023, R14). Returns what the
     lab records with a lock that names a job (``incumbent``), or None.
@@ -326,6 +345,8 @@ def check_note(ctx: Ctx, inv_id: str, body: dict[str, Any]) -> dict[str, Any] | 
       admitted after the rule was recorded, and the challenger strictly better.
     * The incumbent's reproduction is evaluated against the prospective criterion and recorded with the lock."""
     kind = body.get("kind")
+    if kind in ("candidate_lock", "selection_rule") and ctx.tx.get_record("investigation_finalization", inv_id):
+        raise Invalid("autonomous finalization fixes the incumbent and selection rule; no lock or rule changes")
     notes = _notes(ctx, inv_id)
     existing = rules.rule_from_notes(notes)
     inv = ctx.tx.require("investigation", inv_id)
@@ -338,6 +359,7 @@ def check_note(ctx: Ctx, inv_id: str, body: dict[str, Any]) -> dict[str, Any] | 
             raise Invalid("the selection rule is fixed once recorded: challengers are judged by the rule recorded "
                           "before their round", details={"rule": existing[0], "note_id": existing[1], "proposed": new_rule})
         _check_rule_provenance(ctx, inv, new_rule)
+        _check_rule_ports(ctx, new_rule)
         return None
     if kind != "candidate_lock":
         return None
@@ -357,6 +379,7 @@ def check_note(ctx: Ctx, inv_id: str, body: dict[str, Any]) -> dict[str, Any] | 
                           details={"rule": rule, "note_id": existing[1] if existing else None, "proposed": proposed})
         if rule is None:
             _check_rule_provenance(ctx, inv, proposed)
+            _check_rule_ports(ctx, proposed)
         rule = rule or proposed
     versions = rules.lock_versions(notes, candidate_lock_job_id)
     previous = versions[-1] if versions else None

@@ -88,6 +88,14 @@ Effect tools (executed in order only after the lab accepts your decision):
     scorer's receipts on that data count (never held-out data; a lock cannot name its own scorer job). A re-lock must
     beat the incumbent on it, both scored, the challenger run after the rule (refused otherwise); no lock changes after
     a plan is frozen or an assessment requested.
+  Classification scorer-port example: {"metric": "accuracy", "split": "validation", "direction":
+    "higher_is_better", "scorer": "eidos.task.score-classification@1.0.2", "data": {"inputs":
+    {"reference": "art_selection_labels"}}}. "validation" is the scientific split; the scorer's label port is
+    "reference", not "validation". Inspect describe_component before recording: invalid ports are refused prospectively.
+  Reproduction-seed example: select with data.config {"split": "validation"}, run the locked recipe with seed 11,
+    then reproduce it with seed 23 and purpose "reproduction", scoring on the same reference artifact. Do not fix
+    data.config.seed=11 when fresh-seed reproduction must match: fixed config values match exactly and seed 23 would
+    be unscored. A previously recorded rule is immutable; report its limitations rather than rewriting it.
 Batches: calls run in order, and any argument of a later call can be {"$ref": "call[<i>].<field>"}, an earlier call of
   the SAME decision's result, filled in when the later call runs. So one decision can author, train, infer and score:
   [author_source {files}, run_component {inputs: {source: {"$ref": "call[0].artifact_id"}}, ...}, run_component {inputs:

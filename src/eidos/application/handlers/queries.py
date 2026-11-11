@@ -248,11 +248,14 @@ def get_investigation(ctx: Ctx, p: dict) -> dict:
     inv = ctx.tx.require("investigation", p["investigation_id"])
     if inv.project_id != ctx.project_id:
         raise NotFound("not found")
+    final = ctx.tx.get_record("investigation_finalization", inv.id)
+    receipt = ctx.tx.get_record("finalization_export_receipt", inv.id)
     turns = ctx.tx.list_turns(inv.id)
     jobs = ctx.tx.list_jobs(ctx.project_id, investigation_id=inv.id)
     for j in jobs:  # evidence-arm statuses reveal outcomes
         _expose_job(ctx, j)
     return {**inv.view(), "needs_input": (inv.labels or {}).get("needs_input"),
+            "finalization": final.body if final else None, "finalization_export_receipt": receipt.body if receipt else None,
             "turns": [{"id": t["id"], "seq": t["seq"], "status": t["status"], "horizon": t["horizon"],
                        "stop_reason": (t["result"] or {}).get("stop_reason")} for t in turns],
             "jobs": [{"id": j["id"], "status": j["status"], "kind": j["kind"],

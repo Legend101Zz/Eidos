@@ -157,3 +157,16 @@ All gates must pass on the same commit. Evidence files are in `docs/release/evid
 | G7 review open questions | pass | writer fence (`test_writer_fence.py`), reservation double release (`test_turn_recovery.py`), quiet rollover (`test_workflows.py`), CI fallback; review docs updated |
 | G8 docs | pass | this file, HANDOFF, IMPLEMENTATION_STATUS, `docs/mac/STATUS.md`, INSTALL_AND_OPERATE, TROUBLESHOOTING, README, CHANGELOG, release notes |
 | G9 final verification | **pass** on tree `ac30bfc3` (commit `027d474b`; `008883cf` before the [ID rewrite](docs/release/COMMIT_ID_MAP.md)) | qualification Mac: ruff and import contracts clean; unit, integration, MCP and reporting suite 167 passed, 4 skipped; switch-order journey from fresh wheels 154/154; macOS owner kit from fresh wheels 15/15 (`docs/release/evidence/g9-*`); CI 10/10 on that tree; independent review of `eidos-v0.7.0..` with its one docs blocker and should-fixes fixed in the verified tree |
+
+## Round 4: deadline admission and bounded finalization
+
+| Guarantee | Evidence |
+|---|---|
+| Six N01-r2 read responses at 249/233/221 s admit their decisions; HTTP timeouts fit remaining time | `tests/unit/test_deadline_admission_r4.py`, `tests/fixtures/deadline/n01-r2-d3.json` |
+| Runtime deadline exhaustion never fabricates a model wait; cancellation and uncertain spend remain accounted | `test_decision_abort.py`, `test_in_flight_estimate.py`, `test_provider_resilience.py` |
+| One autonomous finalization after repeated refusals/runtime exhaustion; immediate exploration-boundary transition | `tests/integration/test_r4_finalization_workflows.py` |
+| Finalization reports the locked incumbent and provenance; no training, authoring, re-lock or rule changes | `tests/integration/test_r4_finalization.py` |
+| Failed finalization leaves structured input-needed and an export receipt; no independent evidence is invented | `tests/integration/test_r4_finalization.py` |
+| Wrong scorer ports are refused before rule recording; recorded rules stay immutable | `tests/integration/test_r4_finalization.py`, `test_r14_selection_e2e.py` |
+
+Policy and limits: ADRs 0026 and 0027. All new model behavior tests use fake providers; no pilot records are changed.

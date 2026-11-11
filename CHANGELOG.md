@@ -2,6 +2,12 @@
 
 All notable changes to Eidos. Tags are annotated, created only on CI-green commits, and never moved. Development tags `eidos-v0.x` were freezes, not releases.
 
+## Unreleased: 1.4.0
+
+- **Deadline admission (ADR 0026).** Valid read follow-ups can use the actual remaining decision/turn time with a durable-write margin; HTTP and total request timeouts fit that boundary. Runtime deadline exhaustion is explicit telemetry/control, never a fabricated model wait. The exploration boundary transitions to finalization without sleeping through hold-back.
+- **Bounded autonomous finalization (ADR 0027).** Default autonomous policy admits one read-only conclude/stop turn after repeated refusals, runtime exhaustion or exploration completion, inside the original wall/token envelope and separately accounted. It reports the fixed incumbent and evidence limitations, or abstains; failures retain structured input-needed and export receipts. Operator policy remains available.
+- **Prospective rule preflight and diagnostics.** Scorer-port bindings are validated before a selection rule becomes immutable. Classification/reference and reproduction-seed examples explain correct contracts. Refused decisions retain raw response artifact references.
+
 ## Unreleased: 1.3.0
 
 ### Incumbent and challengers, baseline identity, fresh-state repair, provider resilience (ADR 0023, G1)
