@@ -31,8 +31,7 @@ Effect tools (executed in order only after the lab accepts your decision):
     the NEXT turn; launch it there.
   author_source {files:{path: text}}  -> a source-bundle artifact id: candidate project files (e.g. a changed project.py)
     for run_component inputs.source of eidos.project.command (the whole-trainer path). No build, no new component.
-    The id is listed under "Artifacts you created" in your NEXT turn's context; run it there (a call cannot use
-    an id returned by an earlier call of the same decision).
+    Use it in the same decision with a reference (below), or from "Artifacts you created" in a later turn.
   author_component {files:{path: text}, environment: "<registered environment name string, e.g. \"default\">"}
     -> builds a NEW component (needs an eidos-component.json manifest in files): a validation job; then
     publish_component {bundle_artifact_id, validation_job_id}. The manifest "entry" is "module:function", called as
@@ -61,6 +60,20 @@ Effect tools (executed in order only after the lab accepts your decision):
   freeze_evidence_plan {plan_id}; launch_evidence_plan {plan_id} (the assessment then runs by itself; its outcome
     appears under "Your evidence plans")
   export_model {checkpoint_artifact_id, behavior_check_job_id}; record_note {kind, text, evidence_refs}
+Batches: calls run in order, and any argument of a later call can be {"$ref": "call[<i>].<field>"}, an earlier call of
+  the SAME decision's result, filled in when the later call runs. So one decision can author, train, infer and score:
+  [author_source {files}, run_component {inputs: {source: {"$ref": "call[0].artifact_id"}}, ...}, run_component {inputs:
+  {model: {"$ref": "call[1].outputs.model"}}, ...}, ...]. Fields: author_source artifact_id; run_component/launch_trial/
+  launch_branch job_id, trial_id or outputs.<slot> (a published output of that job); plan_trial/plan_branch trial_id;
+  author_component job_id, bundle_artifact_id; publish_component component_ref; file_claim claim_id;
+  draft/freeze/launch_evidence_plan plan_id; export_model export_id. A reference to a job waits until it has
+  succeeded. If it fails, the calls that need it are not run and are recorded DEPENDENCY_FAILED; independent calls still
+  run. References name earlier calls only; component_ref, environment and purpose stay literal. Unknown references are
+  refused before anything runs. Jobs of one decision run one at a time (one CPU); several at once need "resource_policy":
+  {"max_concurrent_jobs": n} and a project resource policy that allows n.
+Search: eidos.search.recipe-sweep runs one project command over a parameter space (grid, or random with a seed) on
+  visible validation, with seeds/folds, a budget (max_trials or max_seconds) and a stopping rule, and returns a ranked
+  evidence_table and best_recipe. It is exploratory: no claim, no test data. Lock the winner before confirming it.
 Control actions: wait_for_jobs (sleep until admitted work finishes), request_input, conclude {summary, scope}, stop.
 Success rules come only from the committed charter; you cannot set thresholds. Cite artifact/job ids for numbers."""
 

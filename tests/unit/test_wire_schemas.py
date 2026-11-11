@@ -28,7 +28,8 @@ ROOT = Path(__file__).resolve().parents[2]
 SCHEMAS = ROOT / "schemas" / "eidos-wire" / f"v{eidos_wire.WIRE_MAJOR}"
 FIXTURES = ROOT / "tests" / "fixtures" / "wire" / f"v{eidos_wire.WIRE_MAJOR}"
 # Fixtures that eidos_wire's own (semantic) checks accept: only the published schema catches them.
-SCHEMA_ONLY = {"invalid-output-manifest-receipt-not-object", "invalid-component-manifest-card-type"}
+SCHEMA_ONLY = {"invalid-output-manifest-receipt-not-object", "invalid-component-manifest-card-type",
+               "invalid-decision-proposal-ref-malformed", "invalid-decision-proposal-ref-extra-key"}
 
 
 def _load(path: Path):
@@ -53,7 +54,9 @@ def _validator(kind: str) -> Draft202012Validator:
 
 def _stdlib_parse(kind: str, data: dict):
     return {"invocation": eidos_wire.Invocation.from_dict, "output-manifest": eidos_wire.OutputManifest.from_dict,
-            "component-manifest": eidos_wire.parse_manifest}[kind](data)
+            "component-manifest": eidos_wire.parse_manifest,
+            # decisions are not worker messages: eidos_wire has no parser for them (ADR 0022)
+            "decision-proposal": lambda d: d}[kind](data)
 
 
 def test_a_schema_files_are_generated_and_current():

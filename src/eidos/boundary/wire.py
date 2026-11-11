@@ -18,8 +18,10 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, RootModel, ValidationError, model_validator
+from typing_extensions import TypeAliasType
 
+from eidos.domain.turns import REF_KEY, REF_PATTERN
 from eidos_wire import WIRE_MAJOR, WIRE_SCHEMA, canonical_json
 from eidos_wire.manifest import _CAPABILITY, _ID, _SEMVER
 
@@ -181,11 +183,70 @@ class ComponentManifest(BaseModel):
     license: str | None = None
 
 
+class BatchResultRef(BaseModel):
+    """A later call's reference to an earlier call of the same decision (ADR 0022), resolved at execution."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", regex_engine="python-re", populate_by_name=True)
+    ref: Annotated[str, Field(alias=REF_KEY, pattern=REF_PATTERN,
+                              description="'call[<index>].<field>' or 'call[<index>].outputs.<slot>'")]
+
+
+CallArgValue = TypeAliasType("CallArgValue", "BatchResultRef | CallArgs | list[CallArgValue] | str | int | float | bool | None")
+
+
+class CallArgs(RootModel[dict[str, CallArgValue]]):
+    """A call's arguments, or an object nested in them. A ``$ref`` key is only ever a :class:`BatchResultRef`."""
+
+    model_config = ConfigDict(strict=True, json_schema_extra={"propertyNames": {"not": {"const": REF_KEY}}})
+
+    @model_validator(mode="after")
+    def _no_loose_ref(self) -> CallArgs:
+        if REF_KEY in self.root:
+            raise ValueError(f"{REF_KEY} must be exactly {{{REF_KEY!r}: 'call[<index>].<field>'}}")
+        return self
+
+
+
+class DecisionCall(BaseModel):
+    """One effect call in order; its receipt, command key and provenance are its own."""
+
+    model_config = _CONFIG
+    tool: Annotated[str, Field(min_length=1)]
+    args: CallArgs
+
+
+class ResourcePolicy(BaseModel):
+    """Concurrency a decision asks for; more than one job at a time needs the project's resource policy too."""
+
+    model_config = _CONFIG
+    max_concurrent_jobs: Annotated[int, Field(ge=1)] = 1
+
+
+class DecisionControl(BaseModel):
+    model_config = _CONFIG
+    action: Literal["wait_for_jobs", "request_input", "conclude", "stop"] | None = None
+    summary: str = ""
+
+
+class DecisionProposal(BaseModel):
+    """A proposed investigator decision. Structural only: the lab's validator (``domain.turns``) adds the rules that need
+    the whole batch (unknown fields of the named tool, out-of-range, forward or self references)."""
+
+    model_config = _CONFIG
+    rationale: str
+    purpose: str = "open-search"
+    hypotheses: list[JsonObject] = Field(default_factory=list)
+    calls: list[DecisionCall] = Field(default_factory=list)
+    control: DecisionControl | None = None
+    resource_policy: ResourcePolicy | None = None
+
+
 #: Published message and manifest types: schema file stem -> boundary model.
 MESSAGES: dict[str, type[BaseModel]] = {
     "invocation": Invocation,
     "output-manifest": OutputManifest,
     "component-manifest": ComponentManifest,
+    "decision-proposal": DecisionProposal,
 }
 
 

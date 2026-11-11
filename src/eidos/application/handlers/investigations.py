@@ -630,6 +630,7 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
             proposal["control"] = ctl
         decision = turn_rules.validate_decision(proposal, max_calls=turn["spec"]["limits"]["max_calls"])
         _check_component_contracts(ctx, decision["calls"])
+        _check_resource_policy(ctx, decision)
         _check_something_to_wait_for(ctx, inv, decision)
     except Invalid as exc:
         ctx.tx.insert_decision(did, turn["id"], slot, False, {"proposal": p.get("proposal"), "reason": "invalid",
@@ -723,6 +724,20 @@ def _environment_names(ctx: Ctx) -> list[str]:
         return []
 
 
+def _check_resource_policy(ctx: Ctx, decision: dict) -> None:
+    """ADR 0022: jobs of a decision run one at a time unless the decision asks for concurrency AND the project's policy
+    (``policy.resources.max_concurrent_jobs``, an operator setting) allows that much. A model cannot grant it itself."""
+    from eidos.application.handlers.projects import get_profile
+    wanted = int((decision.get("resource_policy") or {}).get(turn_rules.MAX_CONCURRENT_JOBS_KEY) or 1)
+    if wanted <= 1:
+        return
+    allowed = int(((get_profile(ctx).body.get("policy") or {}).get("resources") or {}).get(
+        turn_rules.MAX_CONCURRENT_JOBS_KEY) or 1)
+    if wanted > allowed:
+        raise Invalid(f"resource_policy.max_concurrent_jobs is {wanted}, but this project's resource policy allows "
+                      f"{allowed}: jobs of a decision queue sequentially", details={"requested": wanted, "allowed": allowed})
+
+
 def _check_component_contracts(ctx: Ctx, calls: list[dict]) -> None:
     """A decision is accepted only if each component invocation satisfies that release's declared
     configuration contract (so accepted means runnable, not merely well-formed)."""
@@ -749,11 +764,35 @@ def _check_component_contracts(ctx: Ctx, calls: list[dict]) -> None:
             raise Invalid(f"call {i}: unknown component {c['args'].get('component_ref')!r}",
                           details={"call": i, "tool": c["tool"]})
         schema = rel.body["manifest"].get("config_schema")
-        if schema:
-            problems = validate_config(c["args"].get("config") or {}, schema)
+        config = c["args"].get("config") or {}
+        # A config holding a reference has its final value only at execution; resolve_lock checks the contract then.
+        if schema and not any(True for _ in turn_rules.iter_refs(config)):
+            problems = validate_config(config, schema)
             if problems:
                 raise Invalid(f"call {i}: config violates {rel.id} contract", details={"call": i, "problems": problems,
                               "config_schema": schema})
+    _check_output_refs(ctx, calls)
+
+
+def _check_output_refs(ctx: Ctx, calls: list[dict]) -> None:
+    """ADR 0022: ``call[i].outputs.<slot>`` must name an output the referenced component declares, when it declares them
+    (a ``dynamic_outputs`` component, or a trial launched by id, is resolved at execution)."""
+    for i, c in enumerate(calls):
+        for path, text in turn_rules.iter_refs(c["args"]):
+            target, field = turn_rules.parse_ref(text) or (-1, "")
+            if not field.startswith("outputs."):
+                continue
+            source = calls[target]
+            if source["tool"] != "run_component":
+                continue
+            rel = ctx.tx.get_record("component_release", source["args"]["component_ref"])
+            manifest = rel.body["manifest"] if rel is not None else {}
+            declared = manifest.get("output") or {}
+            slot = field.split(".", 1)[1]
+            if not manifest.get("dynamic_outputs") and slot not in declared:
+                raise Invalid(f"call {i} ({c['tool']}): {path}: {text!r} names no output of "
+                              f"{source['args']['component_ref']}; it declares {sorted(declared)}",
+                              details={"call": i, "path": path, "ref": text, "declared": sorted(declared)})
 
 
 def _charge_model_usage(ctx: Ctx, inv_id: str, usage: dict, *, ref: str, reserved: dict | None = None) -> None:

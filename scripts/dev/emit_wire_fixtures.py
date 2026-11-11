@@ -83,6 +83,17 @@ def _attempt(entry: str, base: Path) -> dict[str, Any]:
     }
 
 
+# ADR 0022: decisions are written by the investigator, not the worker SDK; these fixtures are static and pin the schema.
+DECISION = {"rationale": "author, train, then score the checkpoint", "purpose": "open-search", "calls": [
+    {"tool": "author_source", "args": {"files": {"project.py": "print('hello')"}}},
+    {"tool": "run_component", "args": {"component_ref": "eidos.project.command@1.0.7",
+                                       "inputs": {"source": {"$ref": "call[0].artifact_id"}},
+                                       "config": {"argv": ["python", "project.py"]}}},
+    {"tool": "run_component", "args": {"component_ref": "eidos.task.score-classification@1.0.0",
+                                       "inputs": {"predictions": {"$ref": "call[1].outputs.predictions"}}}}],
+    "control": {"action": "wait_for_jobs", "summary": "scores arrive when the batch finishes"}}
+
+
 GRANT = {"grant_id": "llmg_attempt-test", "token": "grant-token-0123456789abcdef", "socket": "/run/eidos-llm.sock",
          "models": ["fake:echo"], "max_requests": 4, "max_tokens": 2000, "max_usd": None,
          "expires_at": "2026-11-09T16:00:00+00:00"}
@@ -133,6 +144,12 @@ def emit() -> dict[str, Any]:
         "invalid-output-manifest-receipt-not-object": variant(succeeded, lambda d: d.update(receipt=["input_rows", 3])),
         "invalid-component-manifest-kind": variant(component, lambda d: d.update(kind="plugin")),
         "invalid-component-manifest-card-type": variant(component, lambda d: d.update(card=42)),
+        "decision-proposal": DECISION,
+        "decision-proposal-parallel": variant(DECISION, lambda d: d.update(resource_policy={"max_concurrent_jobs": 2})),
+        "invalid-decision-proposal-ref-malformed": variant(
+            DECISION, lambda d: d["calls"][1]["args"]["inputs"].update(source={"$ref": "earlier.artifact"})),
+        "invalid-decision-proposal-ref-extra-key": variant(
+            DECISION, lambda d: d["calls"][1]["args"]["inputs"].update(source={"$ref": "call[0].artifact_id", "x": 1})),
     }
     return fixtures
 

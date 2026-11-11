@@ -1,0 +1,49 @@
+{
+  "calls": [
+    {
+      "args": {
+        "files": {
+          "project.py": "print('hello')"
+        }
+      },
+      "tool": "author_source"
+    },
+    {
+      "args": {
+        "component_ref": "eidos.project.command@1.0.7",
+        "config": {
+          "argv": [
+            "python",
+            "project.py"
+          ]
+        },
+        "inputs": {
+          "source": {
+            "$ref": "call[0].artifact_id"
+          }
+        }
+      },
+      "tool": "run_component"
+    },
+    {
+      "args": {
+        "component_ref": "eidos.task.score-classification@1.0.0",
+        "inputs": {
+          "predictions": {
+            "$ref": "call[1].outputs.predictions"
+          }
+        }
+      },
+      "tool": "run_component"
+    }
+  ],
+  "control": {
+    "action": "wait_for_jobs",
+    "summary": "scores arrive when the batch finishes"
+  },
+  "purpose": "open-search",
+  "rationale": "author, train, then score the checkpoint",
+  "resource_policy": {
+    "max_concurrent_jobs": 2
+  }
+}

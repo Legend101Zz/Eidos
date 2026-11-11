@@ -1,6 +1,6 @@
 # Standalone scientific component coverage
 
-All 15 top-level public components in `components/` are copied unchanged, with
+All 16 top-level public components in `components/` are copied unchanged, with
 their method cards and authored fixtures. The three required source packages
 (`eidos-wire`, `eidos-worker-sdk`, `eidos-pytorch`) are copied as well. The assessor
 and qualification runner also receive their unchanged pure-rule dependency closure
@@ -24,6 +24,7 @@ inputs; it does not imply scientific qualification for a new project.
 | eidos.task.score-regression | Callable numeric analysis; same restriction. |
 | eidos.qualification-runner | Callable; authored component controls and target source required. Verified in sandbox. |
 | eidos.project.command | Callable; runs ordinary project commands in the same outer sandbox. |
+| eidos.search.recipe-sweep | Callable; exploratory recipe search over a project command on visible validation (grid or seeded random, seeds/folds, budget, stopping rule), through the same worker SDK as the lab. Verified in sandbox. No claim and no test data. Lock the winner before independent confirmation. |
 | lab.learning.group-balanced-ema | Included training extension, loaded by a compatible trainer; not a standalone artifact operation. |
 | lab.switch.balanced-data | Callable data generator for the library's switch fixture. |
 | eidos.synthetic.llm-examples | Entry point included; **not operational without an authorized scoped model grant/broker**. This standalone study grants no additional paid model calls. |

@@ -5,6 +5,7 @@ Design §"Bounded investigator turns and recovery" / §"Stable intent before eff
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from eidos.domain.errors import Invalid, PayloadTooLarge
@@ -53,6 +54,33 @@ STOP_REASONS = ("calls-exhausted", "invalid-proposals", "waiting", "input-reques
                 "deadline", "cancelled", "error", "stale-revision")
 
 
+# ADR 0022: dependent batches. One accepted decision may name an earlier call's result in a later call's arguments as
+# {"$ref": "call[<index>].<field>"} or {"$ref": "call[<index>].outputs.<slot>"}; the persisted decision keeps the
+# reference, and the investigator resolves it only when the dependent call is executed. Calls are ordered, so a call can
+# depend on earlier calls only: a forward or self reference (the only way to write a cycle) is refused.
+REF_KEY = "$ref"
+# (?!\n): Python's $ also matches before a final newline; the published pattern must mean the same in every engine.
+REF_PATTERN = r"^call\[(0|[1-9][0-9]*)\]\.(outputs\.[A-Za-z0-9_\-]+|[a-z_]+)(?!\n)$"
+_REF = re.compile(REF_PATTERN)
+# Calls that admit a job. They queue sequentially under the one-CPU policy (a decision may ask for concurrency only under
+# an explicit resource policy the project allows), and a reference to one of them means "after it has succeeded".
+JOB_TOOLS = ("run_component", "launch_trial", "launch_branch", "author_component")
+# What each tool's receipt can be asked for. Jobs also expose outputs.<slot> once they have succeeded.
+RESULT_FIELDS: dict[str, tuple[str, ...]] = {
+    "run_component": ("job_id", "trial_id", "lock_digest", "component"),
+    "plan_trial": ("trial_id", "lock_digest"), "launch_trial": ("job_id", "trial_id", "lock_digest"),
+    "plan_branch": ("trial_id", "branch_id", "lock_digest"), "launch_branch": ("job_id", "trial_id", "lock_digest"),
+    "author_component": ("job_id", "component_ref", "bundle_artifact_id"), "author_source": ("artifact_id",),
+    "publish_component": ("component_ref", "digest"), "file_claim": ("claim_id",), "draft_evidence_plan": ("plan_id",),
+    "freeze_evidence_plan": ("plan_id", "plan_digest"), "launch_evidence_plan": ("plan_id",),
+    "export_model": ("export_id",),
+}
+# Literal by contract: an accepted decision has been checked against this component and environment (accepted means
+# runnable), which a value known only at execution cannot be.
+LITERAL_ARGS = ("component_ref", "environment", "investigation_id", "purpose")
+MAX_CONCURRENT_JOBS_KEY = "max_concurrent_jobs"
+
+
 def check_payload(obj: Any, *, limit: int = WORKFLOW_PAYLOAD_LIMIT, what: str = "payload") -> int:
     size = len(canonical_json(obj).encode())
     if size > limit:
@@ -81,6 +109,8 @@ def validate_decision(proposal: dict[str, Any], *, max_calls: int) -> dict[str, 
         if missing:
             raise Invalid(f"call {i} ({c['tool']}): missing required args {missing}",
                           details={"tool": c["tool"], "missing": missing})
+    _validate_refs(calls)
+    resource_policy = _resource_policy(proposal.get("resource_policy"))
     control = proposal.get("control") or {}
     if control and control.get("action") not in CONTROL_TOOLS:
         raise Invalid(f"unknown control action {control.get('action')!r}")
@@ -90,7 +120,98 @@ def validate_decision(proposal: dict[str, Any], *, max_calls: int) -> dict[str, 
     return {"rationale": str(proposal.get("rationale", ""))[:4000],
             "hypotheses": proposal.get("hypotheses") or [],
             "purpose": proposal.get("purpose", "open-search"),
-            "calls": calls, "control": control}
+            "calls": calls, "control": control, **({"resource_policy": resource_policy} if resource_policy else {})}
+
+
+def iter_refs(value: Any, path: str = "") -> Any:
+    """Yield (path, reference text) for every {"$ref": ...} object in ``value``; a malformed one is refused."""
+    if isinstance(value, dict):
+        if REF_KEY in value:
+            if len(value) != 1 or not isinstance(value[REF_KEY], str):
+                raise Invalid(f"{path or 'args'}: a reference is exactly {{\"$ref\": \"call[i].field\"}}",
+                              details={"path": path})
+            yield path, value[REF_KEY]
+            return
+        for k, v in value.items():
+            yield from iter_refs(v, f"{path}.{k}" if path else str(k))
+    elif isinstance(value, list):
+        for i, v in enumerate(value):
+            yield from iter_refs(v, f"{path}[{i}]")
+
+
+def parse_ref(text: str) -> tuple[int, str] | None:
+    """(call index, field or ``outputs.<slot>``) of a reference, or None if it does not match the grammar."""
+    m = _REF.match(text)
+    return (int(m.group(1)), m.group(2)) if m else None
+
+
+def _ref_field_allowed(tool: str, field: str) -> bool:
+    return field in RESULT_FIELDS.get(tool, ()) or (field.startswith("outputs.") and tool in JOB_TOOLS)
+
+
+def _validate_refs(calls: list[dict[str, Any]]) -> None:
+    """ADR 0022: every reference must parse, and name an existing earlier call and a field that call produces."""
+    for i, c in enumerate(calls):
+        c.pop("depends_on", None)  # derived here; a proposal never states its own dependencies
+        depends: set[int] = set()
+        for path, text in iter_refs(c["args"]):
+            parsed = parse_ref(text)
+            if parsed is None:
+                raise Invalid(f"call {i} ({c['tool']}): {path}: malformed reference {text!r}; expected "
+                              "call[<index>].<field> or call[<index>].outputs.<slot>",
+                              details={"call": i, "path": path, "ref": text})
+            target, field = parsed
+            if path.split(".")[0] in LITERAL_ARGS:
+                raise Invalid(f"call {i} ({c['tool']}): {path} must be literal, not a reference (the lab checks it when "
+                              "the decision is accepted)", details={"call": i, "path": path, "ref": text})
+            if target >= len(calls):
+                raise Invalid(f"call {i} ({c['tool']}): {path}: {text!r} names call {target}, but this decision has "
+                              f"{len(calls)} calls", details={"call": i, "path": path, "ref": text})
+            if target >= i:
+                raise Invalid(f"call {i} ({c['tool']}): {path}: {text!r} is a forward or self reference; a call may "
+                              "depend only on earlier calls, so a cycle cannot be written",
+                              details={"call": i, "path": path, "ref": text})
+            tool = calls[target]["tool"]
+            if not _ref_field_allowed(tool, field):
+                allowed = [*RESULT_FIELDS.get(tool, ()), *(["outputs.<slot>"] if tool in JOB_TOOLS else [])]
+                raise Invalid(f"call {i} ({c['tool']}): {path}: {text!r} names no result of {tool}; it produces {allowed}",
+                              details={"call": i, "path": path, "ref": text, "allowed": allowed})
+            depends.add(target)
+        if depends:
+            c["depends_on"] = sorted(depends)
+
+
+def _resource_policy(policy: Any) -> dict[str, int]:
+    """A decision's explicit resource policy (ADR 0022); absent means one job at a time."""
+    if policy in (None, {}):
+        return {}
+    if not isinstance(policy, dict) or set(policy) != {MAX_CONCURRENT_JOBS_KEY}:
+        raise Invalid("resource_policy accepts exactly {\"max_concurrent_jobs\": <integer >= 1>}")
+    value = policy[MAX_CONCURRENT_JOBS_KEY]
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise Invalid("resource_policy.max_concurrent_jobs must be an integer >= 1")
+    return {MAX_CONCURRENT_JOBS_KEY: value}
+
+
+def resolve_refs(value: Any, lookup: Any, path: str = "") -> tuple[Any, list[dict[str, Any]]]:
+    """Replace every reference in ``value`` with ``lookup(index, field)``. Returns the value and its provenance
+    (path, reference text, resolved value) for the call's receipt."""
+    if isinstance(value, dict):
+        if REF_KEY in value:
+            parsed = parse_ref(value[REF_KEY])
+            if parsed is None:
+                raise Invalid(f"{path}: malformed reference {value[REF_KEY]!r}")
+            got = lookup(*parsed)
+            return got, [{"path": path, "ref": value[REF_KEY], "value": got}]
+        out, used = {}, []
+        for k, v in value.items():
+            out[k], more = resolve_refs(v, lookup, f"{path}.{k}" if path else str(k))
+            used += more
+        return out, used
+    if isinstance(value, list):
+        items = [resolve_refs(v, lookup, f"{path}[{i}]") for i, v in enumerate(value)]
+        return [i[0] for i in items], [u for i in items for u in i[1]]
+    return value, []
 
 
 def keyed_calls(project_id: str, turn_id: str, decision_id: str, calls: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -2,6 +2,21 @@
 
 All notable changes to Eidos. Tags are annotated, created only on CI-green commits, and never moved. Development tags `eidos-v0.x` were freezes, not releases.
 
+## Unreleased: 1.2.0
+
+### Dependent batches and recipe search (E3, ADR 0022)
+- **Dependent decision batches.** One accepted decision can now author source and run train, infer and score on it:
+  call arguments can be `{"$ref": "call[i].field"}` or `call[i].outputs.slot`, resolved when the dependent call
+  executes. The batch is recorded prospectively and each call keeps its receipt, command key and provenance. Malformed
+  or unknown references, forward references and references in literal arguments are refused before acceptance.
+- **Jobs of a decision run sequentially** unless a decision's `resource_policy` asks for concurrency and the project's
+  operator-set `policy.resources.max_concurrent_jobs` allows it. `TurnWorkflow` waits for a batch's jobs durably (patch
+  `dependent-batch-v1`). A failure stops only the dependent tail, recorded as `DEPENDENCY_FAILED`.
+- **New component `eidos.search.recipe-sweep@1.0.0`**, in `components/` and the standalone toolkit: grid or seeded
+  random search over a project command, on visible validation only, with seeds, folds, a required budget and a stopping
+  rule. It records every recipe in a ranked evidence table and the best recipe. Exploratory; no claim, no test data.
+- New wire schema `decision-proposal` and fixtures. Tool guide updated.
+
 ## Unreleased / 1.1.1
 
 Reasoning models through OpenAI-compatible endpoints (ADR 0016). Measured with MiniMax-M3.1-Flash through

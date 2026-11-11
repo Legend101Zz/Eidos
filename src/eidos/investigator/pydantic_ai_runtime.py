@@ -69,12 +69,17 @@ class Hypothesis(BaseModel):
     falsifier: str = ""
 
 
+class ResourcePolicy(BaseModel):
+    max_concurrent_jobs: int = Field(default=1, ge=1, description="more than 1 only if the project's resource policy allows it")
+
+
 class Decision(BaseModel):
     rationale: str
     purpose: str = "open-search"
     hypotheses: list[Hypothesis] = Field(default_factory=list)
     calls: list[Call] = Field(default_factory=list)
     control: Control | None = None
+    resource_policy: ResourcePolicy | None = None
 
 
 def to_proposal(d: Decision) -> dict[str, Any]:
@@ -107,6 +112,7 @@ LENIENT_DECISION_SCHEMA: dict[str, Any] = {
         "control": {"type": "object", "properties": {
             "action": {"type": "string", "enum": ["wait_for_jobs", "request_input", "conclude", "stop"]},
             "summary": {"type": "string"}, "scope": {"type": "object"}}},
+        "resource_policy": {"type": "object", "properties": {"max_concurrent_jobs": {"type": "integer", "minimum": 1}}},
     },
 }
 

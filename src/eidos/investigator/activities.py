@@ -26,7 +26,14 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from eidos.client import LabClient, LabError
-from eidos.domain.turns import EFFECT_TOOLS, WORKFLOW_PAYLOAD_LIMIT, check_payload
+from eidos.domain.turns import (
+    EFFECT_TOOLS,
+    JOB_TOOLS,
+    MAX_CONCURRENT_JOBS_KEY,
+    WORKFLOW_PAYLOAD_LIMIT,
+    check_payload,
+    resolve_refs,
+)
 from eidos.investigator.context import pack
 from eidos.investigator.runtime import (
     DecisionAbort,
@@ -58,6 +65,13 @@ def _heartbeating(every: float = 5.0):
         yield
     finally:
         stop.set()
+
+
+# ADR 0022: how long one execute_decision activity waits for a batch's jobs before handing the wait back to the
+# TurnWorkflow (a durable timer, then another activity), and how often it looks at them meanwhile.
+BATCH_WAIT_SLICE_SECONDS = 45.0
+BATCH_POLL_SECONDS = 0.5
+TERMINAL_JOB_STATUSES = ("succeeded", "failed", "cancelled", "pruned")
 
 
 # ADR 0017: a decision is aborted (its in-flight provider request abandoned) when the investigation stops or pauses,
@@ -181,11 +195,42 @@ def decision_usd_envelope(est_tokens: float, price: dict, cfg: dict) -> float:
     return ((est_tokens - out_tokens) * in_price + out_tokens * out_price) / 1e6
 
 
+class _UnresolvedRef(Exception):
+    def __init__(self, message: str, details: dict):
+        super().__init__(message)
+        self.details = details
+
+
+class _Batch:
+    """What one execute_decision activity knows about its decision's jobs (ADR 0022)."""
+
+    def __init__(self, max_concurrent: int, slice_ends: float, *, final: bool):
+        self.max_concurrent, self.slice_ends, self.final = max_concurrent, slice_ends, final
+        self.launched: list[dict] = []
+
+
+def _not_run(call: dict, code: str, message: str, **details: Any) -> dict:
+    """The recorded receipt of a call that never ran. It still has its index and command key."""
+    return {"tool": call["tool"], "index": call["index"], "ok": False, "code": code, "skipped": True,
+            "command_key": call["command_key"], "depends_on": call.get("depends_on") or [],
+            "error": {"code": code, "message": message, "details": details}}
+
+
+def _job_error(job: dict) -> dict | None:
+    terminal = job.get("terminal") or {}
+    error = terminal.get("error")
+    return {"category": error.get("category"), "message": str(error.get("message", ""))[:500]} \
+        if isinstance(error, dict) else None
+
+
 class InvestigatorActivities:
-    def __init__(self, investigator: LabClient, workflow: LabClient, *, runtime_overrides: dict | None = None):
+    def __init__(self, investigator: LabClient, workflow: LabClient, *, runtime_overrides: dict | None = None,
+                 batch_wait_slice: float = BATCH_WAIT_SLICE_SECONDS, batch_poll: float = BATCH_POLL_SECONDS):
         self.inv = investigator
         self.wf = workflow
         self.runtime_overrides = runtime_overrides or {}
+        self.batch_wait_slice = batch_wait_slice
+        self.batch_poll = batch_poll
 
     # -- turn lifecycle ----------------------------------------------------------------------
     @activity.defn(name="begin_turn")
@@ -392,7 +437,7 @@ class InvestigatorActivities:
             "get_job": lambda job_id: self.inv.query("get_job", {"job_id": job_id, "include_lock": False}, project=p),
         }
 
-    # -- effects -------------------------------------------------------------------------------
+    # -- effects (ADR 0022: a decision's calls run in order; dependent calls wait for what they name) ----------
     @activity.defn(name="execute_decision")
     @_hb
     def execute_decision(self, a: dict) -> dict:
@@ -408,20 +453,32 @@ class InvestigatorActivities:
         # F5 (C1): the durable handoff, under the turn lock, by the run that owns the turn. A run that lost the turn
         # (resumed by another) executes nothing; once handed off, a resumed run recovers the decision instead.
         info = activity.info()
+        continuation = int(a.get("continuation") or 0)  # ADR 0022: a later slice of a batch waiting for its jobs
         h = self.wf.command("hand_off_decision", {"decision_id": dec["id"], "execution":
                             f"{getattr(info, 'workflow_run_id', '')}/{getattr(info, 'activity_id', '')}"},
                             # per attempt: a retry is re-checked (a run that lost the turn meanwhile is refused)
                             project=p, key=f"handoff:{dec['id']}:{getattr(info, 'workflow_run_id', '')}:"
-                                          f"{getattr(info, 'attempt', 1)}")["result"]
+                                          f"{getattr(info, 'attempt', 1)}:{continuation}")["result"]
         if not h.get("handed_off"):
             return {"summary": [], "skipped": h.get("reason") or "not-handed-off"}
         # F5c (review R8 #2): every effect is admitted against this decision and run in its own transaction, so a stop,
         # pause or turn closure that commits after the handoff refuses the remaining effects (EFFECT_NOT_ADMITTED).
         admission = {"decision_id": dec["id"],
                      "execution": f"{getattr(info, 'workflow_run_id', '')}/{getattr(info, 'activity_id', '')}"}
-        receipts = []
+        batch = _Batch(int((dec["body"].get("resource_policy") or {}).get(MAX_CONCURRENT_JOBS_KEY) or 1),
+                       time.monotonic() + self.batch_wait_slice, final=bool(a.get("final")))
+        receipts: list[dict] = []
         for call in dec["body"]["calls"]:
-            r = self._execute_call(p, a["investigation_id"], turn["id"], dec["id"], call, admission)
+            blocked = self._batch_gate(p, a, batch, call, receipts)
+            if blocked == "pending":  # ADR 0022: committed calls replay by key when the workflow runs this again
+                return {"pending": True, "next_call": call["index"], "continuation": continuation + 1}
+            if isinstance(blocked, str):
+                # a stop, pause or turn closure seen while waiting: as if the next effect had been refused
+                receipts.append({"tool": call["tool"], "index": call["index"], "ok": False, "code": "EFFECT_NOT_ADMITTED",
+                                 "error": {"message": f"not started: {blocked}", "details": {"reason": blocked}}})
+                return self._finish_decision(p, a, dec, receipts, stopped=blocked)
+            r = blocked or self._execute_call(p, a["investigation_id"], turn["id"], dec["id"], call, admission,
+                                              receipts=receipts, batch=batch)
             if r.get("code") == "EFFECT_NOT_ADMITTED":
                 why = str(((r.get("error") or {}).get("details") or {}).get("reason") or "not-admitted")
                 if why == "superseded-execution":
@@ -430,11 +487,62 @@ class InvestigatorActivities:
                 receipts.append(r)  # the effects before it ran; this one and the rest were refused
                 return self._finish_decision(p, a, dec, receipts, stopped=why)
             receipts.append(r)
+            if r["ok"] and call["tool"] in JOB_TOOLS:
+                batch.launched.append(r)
         return self._finish_decision(p, a, dec, receipts)
+
+    def _batch_gate(self, p: str, a: dict, batch: _Batch, call: dict, receipts: list[dict]) -> dict | str | None:
+        """ADR 0022, before one call of a decision. Returns None when the call may run, a receipt when it must not
+        (a dependency failed, or the turn ran out of time for it), ``"pending"`` when it has to wait longer than this
+        activity's slice, or the reason a stop, pause or closed turn ended the wait."""
+        deps = [receipts[d] for d in call.get("depends_on") or []]
+        failed = next((d for d in deps if not d["ok"]), None)
+        if failed is not None:
+            return _not_run(call, "DEPENDENCY_FAILED", f"call {failed['index']} ({failed['tool']}) did not succeed",
+                            depends_on=failed["index"], dependency_code=failed.get("code"))
+        waiting_for = [d for d in deps if d["tool"] in JOB_TOOLS]
+        is_job = call["tool"] in JOB_TOOLS
+        if not waiting_for and not (is_job and len(batch.launched) >= batch.max_concurrent):
+            return None
+        while True:
+            jobs = {d["index"]: self._batch_job(p, d) for d in waiting_for}
+            bad = next(((i, j) for i, j in jobs.items() if j["status"] in TERMINAL_JOB_STATUSES
+                        and j["status"] != "succeeded"), None)
+            if bad is not None:  # a job that can no longer succeed: nothing that depends on it runs
+                i, job = bad
+                return _not_run(call, "DEPENDENCY_FAILED", f"job {job['id']} of call {i} ended {job['status']}",
+                                depends_on=i, job_id=job["id"], job_status=job["status"],
+                                error=_job_error(job))
+            ready = all(j["status"] == "succeeded" for j in jobs.values())
+            running = sum(1 for r in batch.launched if self._batch_job(p, r)["status"] not in TERMINAL_JOB_STATUSES)
+            if ready and (not is_job or running < batch.max_concurrent):
+                return None
+            if batch.final:
+                return _not_run(call, "BATCH_DEADLINE", "the turn ran out of time waiting for this batch's jobs",
+                                running_jobs=[str(r["result"]["job_id"]) for r in batch.launched
+                                              if self._batch_job(p, r)["status"] not in TERMINAL_JOB_STATUSES])
+            if _activity_cancelled():
+                return "activity-cancelled"
+            reason = self._not_active(p, a["investigation_id"])
+            if reason:
+                return reason
+            if time.monotonic() >= batch.slice_ends:
+                return "pending"
+            time.sleep(self.batch_poll)
+
+    def _batch_job(self, p: str, receipt: dict) -> dict:
+        """The current record of a job this batch admitted (terminal states are final, so they are cached)."""
+        cached = receipt.get("_job")
+        if cached is not None:
+            return cached
+        job = self.wf.query("get_job", {"job_id": receipt["result"]["job_id"], "include_lock": False}, project=p)
+        if job["status"] in TERMINAL_JOB_STATUSES:
+            receipt["_job"] = job
+        return job
 
     def _finish_decision(self, p: str, a: dict, dec: dict, receipts: list[dict], stopped: str | None = None) -> dict:
         # Replay-invariant record: a retry after committed effects yields identical receipts.
-        stable = [{k: v for k, v in r.items() if k != "replayed"} for r in receipts]
+        stable = [{k: v for k, v in r.items() if k not in ("replayed", "_job")} for r in receipts]
         # F5c: receipts of a decision stopped at a refused effect have their own key (per refused call), so a retry
         # that completes the decision after a resume records its full receipts instead of conflicting with them.
         key = f"receipts:{dec['id']}" + (f":stopped:{receipts[-1].get('index')}" if stopped else "")
@@ -451,7 +559,9 @@ class InvestigatorActivities:
             active = self.wf.query("list_jobs", {"investigation_id": a["investigation_id"],
                                                  "statuses": ["admitted", "queued", "running", "cancel-requested"]},
                                    project=p)
-            if not active:
+            # ADR 0022: a batch's own jobs may all have finished already, sequentially. Their events are the news the
+            # wait is for; only a decision that started nothing leaves nothing to wait for.
+            if not active and not any(r["ok"] and r["tool"] in JOB_TOOLS for r in receipts):
                 out["nothing_outstanding"] = True
                 out["failed_calls"] = [{"tool": r["tool"], "code": r.get("code"),
                                         "message": str((r.get("error") or {}).get("message", ""))[:300]}
@@ -459,11 +569,43 @@ class InvestigatorActivities:
         return bounded(out)
 
     def _execute_call(self, p: str, inv: str, turn_id: str, dec_id: str, call: dict,
-                      admission: dict | None = None) -> dict:
-        tool, args, idx = call["tool"], dict(call["args"]), call["index"]
+                      admission: dict | None = None, *, receipts: list[dict] | None = None,
+                      batch: _Batch | None = None) -> dict:
+        key = call["command_key"]
+        assert key == command_key(p, turn_id, dec_id, call["index"]), "persisted command key mismatch"
+        provenance: dict[str, Any] = {}
+        args = dict(call["args"])
+        if call.get("depends_on") and receipts is not None:
+            try:
+                args, used = resolve_refs(args, lambda i, field: self._ref_value(p, receipts[i], field))
+            except _UnresolvedRef as exc:
+                return _not_run(call, "REF_UNRESOLVED", str(exc), **exc.details)
+            provenance = {"command_key": key, "depends_on": call["depends_on"], "resolved": used}
+        result = self._run_effect(p, inv, turn_id, dec_id, call, args, admission)
+        return {**result, **provenance} if provenance else result
+
+    def _ref_value(self, p: str, receipt: dict, field: str) -> Any:
+        """ADR 0022: the value of ``call[i].<field>`` or ``call[i].outputs.<slot>`` from that call's receipt or job."""
+        if field.startswith("outputs."):
+            slot = field.split(".", 1)[1]
+            job = self._batch_job(p, receipt)
+            for output in job.get("outputs") or []:
+                if output["slot"] == slot:
+                    return output["artifact_id"]
+            raise _UnresolvedRef(f"job {job['id']} published no output {slot!r}",
+                                 {"depends_on": receipt["index"], "job_id": job["id"],
+                                  "published": sorted(o["slot"] for o in job.get("outputs") or [])})
+        value = (receipt.get("result") or {}).get(field)
+        if value is None:
+            raise _UnresolvedRef(f"call {receipt['index']} ({receipt['tool']}) returned no {field!r}",
+                                 {"depends_on": receipt["index"]})
+        return value
+
+    def _run_effect(self, p: str, inv: str, turn_id: str, dec_id: str, call: dict, args: dict,
+                    admission: dict | None) -> dict:
+        tool, idx = call["tool"], call["index"]
         key = call["command_key"]
         adm: dict[str, Any] = {"admission": admission} if admission else {}
-        assert key == command_key(p, turn_id, dec_id, idx), "persisted command key mismatch"
         args.setdefault("investigation_id", inv)
         try:
             if tool == "author_source":  # the whole-trainer path: candidate project files, no build

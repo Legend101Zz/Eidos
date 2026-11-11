@@ -43,6 +43,10 @@ MAX_CONSECUTIVE_INVALID = 2
 # retryable failure gets at most MAX_FAILED_TURN_RETRIES automatic retry turns, after a recorded, growing backoff;
 # a non-retryable failure, or one that persists through the retries, marks the investigation needs-input at once.
 MAX_FAILED_TURN_RETRIES = 2
+# ADR 0022: a batch waiting for its own jobs comes back to the workflow between activity slices. It looks again after a
+# durable timer; the last slice, when the turn's own timeout is near, records what could not run instead of waiting.
+BATCH_POLL_SECONDS = 2
+BATCH_FINAL_MARGIN_SECONDS = 120
 FAILED_TURN_BACKOFF_SECONDS = 60
 MAX_FAILED_TURN_BACKOFF_SECONDS = 900
 TERMINAL_REASONS = ("concluded", "budget-exhausted", "max-turns-reached", "stopped", "investigation is stopped",
@@ -335,6 +339,28 @@ class InvestigationWorkflow:
 
 @workflow.defn(name="TurnWorkflow")
 class TurnWorkflow:
+    def _turn_seconds_left(self) -> float | None:
+        info = workflow.info()
+        if info.execution_timeout is None:
+            return None
+        return (info.start_time + info.execution_timeout - workflow.now()).total_seconds()
+
+    async def _drive_batch(self, base: dict, decision_id: str, r: dict) -> dict:
+        """ADR 0022: re-run a batch that is waiting for its own jobs until it has finished. Each run re-admits nothing
+        (committed calls replay by command key) and goes on where the last stopped; near the turn's timeout it is told to
+        record the calls that cannot start (the jobs it admitted keep running, independently of the turn)."""
+        while r.get("pending"):
+            left = self._turn_seconds_left()
+            final = left is not None and left < BATCH_FINAL_MARGIN_SECONDS
+            if not final:
+                await workflow.sleep(BATCH_POLL_SECONDS)
+            r = await workflow.execute_activity(
+                "execute_decision", {**base, "decision_id": decision_id, "continuation": r.get("continuation"),
+                                     **({"final": True} if final else {})},
+                task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=600),
+                heartbeat_timeout=HB, retry_policy=SHORT)
+        return r
+
     @workflow.run
     async def run(self, a: dict[str, Any]) -> dict[str, Any]:
         b = await workflow.execute_activity("begin_turn", a, task_queue=INVESTIGATOR_QUEUE,
@@ -388,6 +414,8 @@ class TurnWorkflow:
                                                         task_queue=INVESTIGATOR_QUEUE,
                                                         start_to_close_timeout=timedelta(seconds=600),
                                                         heartbeat_timeout=HB, retry_policy=SHORT)
+                    if r.get("pending") and workflow.patched("dependent-batch-v1"):
+                        r = await self._drive_batch(base, d["decision_id"], r)
                     receipts.append({"decision_id": d["decision_id"], "summary": r.get("summary")})
                     if (r.get("stopped") or r.get("skipped")) and workflow.patched("refused-execution-cancels-v1"):
                         # F5d (review R9): execution refused (a stop, pause, turn closure or a run that lost the turn
