@@ -138,3 +138,37 @@ relaxed. The existing 35 tools keep their names, arguments and `structured_conte
 - Token counts are a proxy (cl100k); the arm-3 prompt cost of the next pilot is the real measurement. Whether fewer, smaller
   calls free budget for better experiments is the hypothesis D2 states; it is not shown here.
 - `wait_status` polls (1 s); there is no server push.
+
+## Addendum (H1): integration with ADR 0023 and ADR 0024
+
+Round 3 was integrated on `task/r3-integrated` (G1, then G2, then G3, each `--no-ff`). The textual conflicts were only in
+`CHANGELOG.md` and `ACCEPTANCE_MATRIX.md`. The semantic ones were resolved like this:
+
+- **Selection rules over MCP.** `submit_candidate`'s lock is the investigator's validated `candidate_lock` (ADR 0023,
+  R14): it needs the prospective selection rule, a re-lock must beat the incumbent on recorded scorer evidence, and no
+  lock changes once the selection is frozen. `submit_candidate` takes an optional `selection` (the rule, when none is
+  recorded yet). It goes into the lock's JSON and into the request digest that the command key binds, so it is part of
+  the R15 key binding.
+- **Exploration phase and hold-back outside a decision.** `accept_decision` checks the finalize phase for the
+  investigator's decisions. Work admitted outside a decision (the MCP `run_batch` path, which shares `BatchRunner`, and
+  direct calls) is now checked at admission (`exploration.check_admission`, called from `admit_job`). The checks are the
+  same: once exploration has stopped (selection frozen, a ceiling, the search limit, or the wall or token hold-back), a
+  new `open-search` or `hypothesis-test` job is refused, unless it reads a pending challenger's output. While
+  exploration runs, the job's wall is capped at the start of the hold-back. `Ctx.admission` marks a decision's effects,
+  which were already checked at acceptance, so they are not checked twice.
+- **Limit.** Challenger rounds (patience, search limit) are counted per investigator turn. Work submitted only over MCP
+  has no turns, so for it those two stops follow the turns that do exist. The ceiling, freeze and hold-back apply to it
+  fully.
+- **One playbook and tool guide.** `investigator-playbook/2` and `TOOL_GUIDE` give the same order: baseline; diagnosis
+  (`eidos.diagnose.baseline-errors`); one broad typed sweep (`eidos.search.recipe-sweep@1.1.0` templates); incumbent and
+  challenger rounds; reproduction; assess or submit; conclude before the deadline. The revision stays `/2`, because 1.3.0
+  is not released yet. The guide's lock paragraph follows R14: the rule names a scorer and data, and a lock cannot name
+  its own scorer.
+- **Pinned facts.** The latest diagnosis is pinned ahead of the three latest sweeps, so later sweeps cannot push it out,
+  and the search section's budget is 2400 characters. Baseline identity, the incumbent and the remaining allowance are
+  pinned as in ADR 0023.
+- **Study.** The arm-3 tools paragraph describes `upload_source`, `run_batch`, `wait_status` and `submit_candidate`,
+  with the selection rule. The manual HTTP upload is gone, and `mcp_http.py` stays as the fallback transport. Arm 2's
+  toolkit `verify.py` also runs the diagnosis and a `quick` template sweep. The toolkit's support closure now includes
+  `eidos.domain.assessment`. Without it, `eidos.assessors.paired-ci` had failed to import standalone since ADR 0021.
+  The common prompts are unchanged.

@@ -83,3 +83,34 @@ def test_the_template_schema_is_typed():
                 {"template": {"name": "quick", "rank_by": "test"}},
                 {"template": {"name": "quick", "cv_folds": 1}}):
         assert validate_config(bad, SWEEP_SCHEMA), bad
+
+
+def test_later_sweeps_never_push_the_diagnosis_out_of_the_pinned_facts():
+    """H1: the latest diagnosis is pinned first, then the three latest sweeps."""
+    jobs = [{"id": "job-d1", "component": "eidos.diagnose.baseline-errors@1.0.0", "status": "succeeded",
+             "receipt": {"top_hypothesis": "old"}, "outputs": []},
+            {"id": "job-d2", "component": "eidos.diagnose.baseline-errors@1.0.0", "status": "succeeded",
+             "receipt": {"top_hypothesis": "per-example-additive-offset"}, "outputs": []}]
+    jobs += [{"id": f"job-s{i}", "component": "eidos.search.recipe-sweep@1.1.0", "status": "succeeded", "receipt": {},
+              "outputs": []} for i in range(5)]
+    facts = _sweep_facts({"jobs": jobs})
+    assert len(facts) == 4 and facts[0].startswith("- Diagnosis job-d2") and "per-example-additive-offset" in facts[0]
+    assert [f.split()[2] for f in facts[1:]] == ["job-s2", "job-s3", "job-s4"]
+
+
+def test_the_playbook_and_the_guide_give_one_order():
+    """H1: baseline, diagnosis, broad template sweep, incumbent and challengers, reproduction, assess or submit, conclude."""
+    from eidos.investigator.playbook import PLAYBOOK
+
+    playbook = flat(PLAYBOOK)
+    steps = ["1. Baseline first", "2. Diagnose the baseline", "eidos.diagnose.baseline-errors", "3. Then one broad typed sweep",
+             "config.template", "4. Lock an incumbent", "5. Reproduce the incumbent", "6. Challenger rounds",
+             "8. Assess or submit", "9. Conclude before the deadline"]
+    positions = [playbook.index(s) for s in steps]
+    assert positions == sorted(positions)
+    guide = flat(TOOL_GUIDE)
+    tail = guide[guide.index("(3) Targeted challengers"):]
+    order = [tail.index(s) for s in ("record the selection rule", "lock the incumbent", "challenger rounds",
+                                     "reproduce the incumbent", "assess or submit", "conclude before the deadline")]
+    assert order == sorted(order)
+    assert '"scorer"' in guide and "a lock cannot name its own scorer job" in guide

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise train, evaluate and analysis from the exported toolkit in Seatbelt."""
+"""Exercise train, evaluate, analysis, baseline diagnosis and a template sweep from the exported toolkit in Seatbelt."""
 
 import argparse
 import json
@@ -61,6 +61,18 @@ def verify(run_dir):
         toolkit / "components/eidos.qualification-runner/fixtures/runs-assessor-controls.json"
     )
     run("eidos.qualification-runner", qualification, "qualification")
+    # ADR 0024: baseline diagnosis, then a one-call typed sweep (recipe-sweep 1.1.0 template) on the same NPZ data
+    diagnosis = read_json(toolkit / "components/eidos.diagnose.baseline-errors/fixtures/planted-offset.json")
+    data = toolkit / "components/eidos.diagnose.baseline-errors/fixtures/data"
+    for port in diagnosis["inputs"]:
+        diagnosis["inputs"][port]["file"] = str(data / Path(diagnosis["inputs"][port]["file"]).name)
+    _, diagnosed = run("eidos.diagnose.baseline-errors", diagnosis, "diagnosis")
+    assert diagnosed["receipt"]["top_hypothesis"] == diagnosis["expect"]["receipt"]["top_hypothesis"], diagnosed
+    sweep = {"inputs": {port: dict(diagnosis["inputs"][port]) for port in ("train", "validation")},
+             "config": {"template": {"name": "quick", "task_type": "classification", "seeds": [11]},
+                        "budget": {"max_trials": 6}},
+             "seed": 11}
+    run("eidos.search.recipe-sweep", sweep, "template-sweep")
     write_json(root / "toolkit-verification.json", receipts)
 
 

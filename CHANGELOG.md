@@ -100,6 +100,19 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
   record before any step, so a changed retry is `COMMAND_KEY_CONFLICT` with nothing replayed. Compact receipts of a
   refused assessment keep every reason.
 
+### Round-3 integration (H1; ADR 0025 addendum H1)
+
+- **ADR 0023 on the MCP path.** `submit_candidate` takes the prospective `selection` rule and locks through the same
+  validated `candidate_lock`. New `open-search` and `hypothesis-test` work admitted outside a decision (`run_batch`, direct
+  calls) is refused once exploration has stopped, unless it reads a pending challenger's output. While exploration runs,
+  that work's wall is capped at the hold-back.
+- **One order in the playbook and tool guide:** baseline, diagnosis, broad template sweep, incumbent and challenger
+  rounds, reproduction, assess or submit, conclude. The guide's lock paragraph follows R14.
+- **Pinned facts:** the latest diagnosis is always pinned ahead of the three latest sweeps.
+- **Study:** the arm-3 tools paragraph describes the new MCP tools (the manual upload is gone; `mcp_http.py` stays as the
+  fallback). The arm-2 toolkit verification runs the diagnosis and a template sweep. The toolkit ships
+  `eidos.domain.assessment`, which `paired-ci` needs standalone, and lists `eidos.task.paired-classification-report`.
+
 ## Unreleased: 1.2.0
 
 ### Review R13 of the integrated round (ADR 0021 addendum)
