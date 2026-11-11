@@ -101,7 +101,8 @@ def prepare(row, run_dir):
             charter_sha=hashlib.sha256(charter.read_bytes()).hexdigest(),
             charter_amendment_commit=os.environ["EIDOS_PILOT_CHARTER_COMMIT"],
             charter_amendment_sha256=hashlib.sha256(
-                (ROOT / "docs/experiments/pilot-1/CHARTER.md").read_bytes()).hexdigest(),
+                (ROOT / os.environ.get("EIDOS_PILOT_CHARTER_PATH", "docs/experiments/pilot-1/CHARTER.md")).read_bytes()).hexdigest(),
+            charter_amendment_path=os.environ.get("EIDOS_PILOT_CHARTER_PATH", "docs/experiments/pilot-1/CHARTER.md"),
         ),
     )
 
