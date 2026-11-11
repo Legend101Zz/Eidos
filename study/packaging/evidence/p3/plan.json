@@ -1,0 +1,482 @@
+[
+  {
+    "family": "breast_cancer",
+    "task": "N01",
+    "run": 2,
+    "arm": 1,
+    "primary_eligible": true,
+    "block_id": "N01-r2",
+    "block_order": 1,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "breast_cancer",
+    "task": "N01",
+    "run": 2,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N01-r2",
+    "block_order": 1,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "breast_cancer",
+    "task": "N01",
+    "run": 2,
+    "arm": 3,
+    "primary_eligible": true,
+    "block_id": "N01-r2",
+    "block_order": 1,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "breast_cancer",
+    "task": "N01",
+    "run": 2,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N01-r2",
+    "block_order": 1,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "friedman1",
+    "task": "N03",
+    "run": 1,
+    "arm": 1,
+    "primary_eligible": true,
+    "block_id": "N03-r1",
+    "block_order": 2,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "friedman1",
+    "task": "N03",
+    "run": 1,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N03-r1",
+    "block_order": 2,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "friedman1",
+    "task": "N03",
+    "run": 1,
+    "arm": 3,
+    "primary_eligible": true,
+    "block_id": "N03-r1",
+    "block_order": 2,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "friedman1",
+    "task": "N03",
+    "run": 1,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N03-r1",
+    "block_order": 2,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "diabetes",
+    "task": "N02",
+    "run": 1,
+    "arm": 1,
+    "primary_eligible": true,
+    "block_id": "N02-r1",
+    "block_order": 3,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "diabetes",
+    "task": "N02",
+    "run": 1,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N02-r1",
+    "block_order": 3,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "diabetes",
+    "task": "N02",
+    "run": 1,
+    "arm": 3,
+    "primary_eligible": true,
+    "block_id": "N02-r1",
+    "block_order": 3,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "diabetes",
+    "task": "N02",
+    "run": 1,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N02-r1",
+    "block_order": 3,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "breast_cancer",
+    "task": "N01",
+    "run": 1,
+    "arm": 1,
+    "primary_eligible": true,
+    "block_id": "N01-r1",
+    "block_order": 4,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "breast_cancer",
+    "task": "N01",
+    "run": 1,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N01-r1",
+    "block_order": 4,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "breast_cancer",
+    "task": "N01",
+    "run": 1,
+    "arm": 3,
+    "primary_eligible": true,
+    "block_id": "N01-r1",
+    "block_order": 4,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "breast_cancer",
+    "task": "N01",
+    "run": 1,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N01-r1",
+    "block_order": 4,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "classification",
+    "task": "N04",
+    "run": 2,
+    "arm": 1,
+    "primary_eligible": true,
+    "block_id": "N04-r2",
+    "block_order": 5,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "classification",
+    "task": "N04",
+    "run": 2,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N04-r2",
+    "block_order": 5,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "classification",
+    "task": "N04",
+    "run": 2,
+    "arm": 3,
+    "primary_eligible": true,
+    "block_id": "N04-r2",
+    "block_order": 5,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "classification",
+    "task": "N04",
+    "run": 2,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N04-r2",
+    "block_order": 5,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "classification",
+    "task": "N04",
+    "run": 1,
+    "arm": 1,
+    "primary_eligible": true,
+    "block_id": "N04-r1",
+    "block_order": 6,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "classification",
+    "task": "N04",
+    "run": 1,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N04-r1",
+    "block_order": 6,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "classification",
+    "task": "N04",
+    "run": 1,
+    "arm": 3,
+    "primary_eligible": true,
+    "block_id": "N04-r1",
+    "block_order": 6,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "classification",
+    "task": "N04",
+    "run": 1,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N04-r1",
+    "block_order": 6,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "friedman1",
+    "task": "N03",
+    "run": 3,
+    "arm": 1,
+    "primary_eligible": true,
+    "block_id": "N03-r3",
+    "block_order": 7,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "friedman1",
+    "task": "N03",
+    "run": 3,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N03-r3",
+    "block_order": 7,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "friedman1",
+    "task": "N03",
+    "run": 3,
+    "arm": 3,
+    "primary_eligible": true,
+    "block_id": "N03-r3",
+    "block_order": 7,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "friedman1",
+    "task": "N03",
+    "run": 3,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N03-r3",
+    "block_order": 7,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "classification",
+    "task": "N04",
+    "run": 3,
+    "arm": 1,
+    "primary_eligible": true,
+    "block_id": "N04-r3",
+    "block_order": 8,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "classification",
+    "task": "N04",
+    "run": 3,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N04-r3",
+    "block_order": 8,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "classification",
+    "task": "N04",
+    "run": 3,
+    "arm": 3,
+    "primary_eligible": true,
+    "block_id": "N04-r3",
+    "block_order": 8,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "classification",
+    "task": "N04",
+    "run": 3,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N04-r3",
+    "block_order": 8,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "breast_cancer",
+    "task": "N01",
+    "run": 3,
+    "arm": 1,
+    "primary_eligible": true,
+    "block_id": "N01-r3",
+    "block_order": 9,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "breast_cancer",
+    "task": "N01",
+    "run": 3,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N01-r3",
+    "block_order": 9,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "breast_cancer",
+    "task": "N01",
+    "run": 3,
+    "arm": 3,
+    "primary_eligible": true,
+    "block_id": "N01-r3",
+    "block_order": 9,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "breast_cancer",
+    "task": "N01",
+    "run": 3,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N01-r3",
+    "block_order": 9,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "diabetes",
+    "task": "N02",
+    "run": 3,
+    "arm": 1,
+    "primary_eligible": true,
+    "block_id": "N02-r3",
+    "block_order": 10,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "diabetes",
+    "task": "N02",
+    "run": 3,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N02-r3",
+    "block_order": 10,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "diabetes",
+    "task": "N02",
+    "run": 3,
+    "arm": 3,
+    "primary_eligible": true,
+    "block_id": "N02-r3",
+    "block_order": 10,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "diabetes",
+    "task": "N02",
+    "run": 3,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N02-r3",
+    "block_order": 10,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "diabetes",
+    "task": "N02",
+    "run": 2,
+    "arm": 1,
+    "primary_eligible": true,
+    "block_id": "N02-r2",
+    "block_order": 11,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "diabetes",
+    "task": "N02",
+    "run": 2,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N02-r2",
+    "block_order": 11,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "diabetes",
+    "task": "N02",
+    "run": 2,
+    "arm": 3,
+    "primary_eligible": true,
+    "block_id": "N02-r2",
+    "block_order": 11,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "diabetes",
+    "task": "N02",
+    "run": 2,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N02-r2",
+    "block_order": 11,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "friedman1",
+    "task": "N03",
+    "run": 2,
+    "arm": 1,
+    "primary_eligible": true,
+    "block_id": "N03-r2",
+    "block_order": 12,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "friedman1",
+    "task": "N03",
+    "run": 2,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N03-r2",
+    "block_order": 12,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "friedman1",
+    "task": "N03",
+    "run": 2,
+    "arm": 3,
+    "primary_eligible": true,
+    "block_id": "N03-r2",
+    "block_order": 12,
+    "randomization_seed": 20261111
+  },
+  {
+    "family": "friedman1",
+    "task": "N03",
+    "run": 2,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N03-r2",
+    "block_order": 12,
+    "randomization_seed": 20261111
+  }
+]

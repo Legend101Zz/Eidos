@@ -1,0 +1,50 @@
+[
+  {
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm1/transcript.jsonl",
+    "missing": false,
+    "flags": [],
+    "interpretation": "term matches require human review; no automatic exclusion"
+  },
+  {
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm2/transcript.jsonl",
+    "missing": false,
+    "flags": [],
+    "interpretation": "term matches require human review; no automatic exclusion"
+  },
+  {
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm3/transcript.jsonl",
+    "missing": false,
+    "flags": [],
+    "interpretation": "term matches require human review; no automatic exclusion"
+  },
+  {
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm4/transcript.jsonl",
+    "missing": false,
+    "flags": [],
+    "interpretation": "term matches require human review; no automatic exclusion"
+  },
+  {
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm1/transcript.jsonl",
+    "missing": false,
+    "flags": [],
+    "interpretation": "term matches require human review; no automatic exclusion"
+  },
+  {
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm2/transcript.jsonl",
+    "missing": false,
+    "flags": [],
+    "interpretation": "term matches require human review; no automatic exclusion"
+  },
+  {
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm3/transcript.jsonl",
+    "missing": false,
+    "flags": [],
+    "interpretation": "term matches require human review; no automatic exclusion"
+  },
+  {
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm4/transcript.jsonl",
+    "missing": false,
+    "flags": [],
+    "interpretation": "term matches require human review; no automatic exclusion"
+  }
+]

@@ -1,0 +1,74 @@
+test_paths_and_digests_are_checked_relative_to_answer_directory (study.eidos_arms.test_contract.ArtifactReferences.test_paths_and_digests_are_checked_relative_to_answer_directory) ... ok
+test_partial_usage_survives_timeout_and_does_not_double_count_final (study.eidos_arms.test_contract.ClaudeStreaming.test_partial_usage_survives_timeout_and_does_not_double_count_final) ... ok
+test_pinned_bar_and_overrides_use_actual_lab_rules (study.eidos_arms.test_contract.ProspectiveCharter.test_pinned_bar_and_overrides_use_actual_lab_rules) ... ok
+test_deadline_exits_and_closes_a_blocked_request (study.eidos_arms.test_contract.ProviderWall.test_deadline_exits_and_closes_a_blocked_request) ... ok
+test_incidents_take_precedence_over_timeout (study.eidos_arms.test_contract.Receipts.test_incidents_take_precedence_over_timeout) ... ok
+test_usage_counts_failures_once_and_separates_cached_input (study.eidos_arms.test_contract.Receipts.test_usage_counts_failures_once_and_separates_cached_input) ... ok
+test_model_scientific_fields_survive_receipt_and_artifact_conversion (study.eidos_arms.test_contract.ScientificAnswer.test_model_scientific_fields_survive_receipt_and_artifact_conversion) ... ok
+test_confirmation_uses_real_eidos_outcome_and_health (study.eidos_arms.test_contract.Selection.test_confirmation_uses_real_eidos_outcome_and_health) ... ok
+test_explicit_lock_selects_successful_candidate (study.eidos_arms.test_contract.Selection.test_explicit_lock_selects_successful_candidate) ... ok
+test_unlocked_search_never_displaces_baseline (study.eidos_arms.test_contract.Selection.test_unlocked_search_never_displaces_baseline) ... ok
+test_failed_or_missing_final_result_still_crashes_in_every_arm (study.eidos_arms.test_parity.FinalOutcomes.test_failed_or_missing_final_result_still_crashes_in_every_arm) ... ok
+test_incident_timeout_and_budget_still_take_precedence (study.eidos_arms.test_parity.FinalOutcomes.test_incident_timeout_and_budget_still_take_precedence) ...
+  test_incident_timeout_and_budget_still_take_precedence (study.eidos_arms.test_parity.FinalOutcomes.test_incident_timeout_and_budget_still_take_precedence) (arm=1, error='HTTP 429') ... FAIL
+  test_incident_timeout_and_budget_still_take_precedence (study.eidos_arms.test_parity.FinalOutcomes.test_incident_timeout_and_budget_still_take_precedence) (arm=2, error='HTTP 429') ... FAIL
+  test_incident_timeout_and_budget_still_take_precedence (study.eidos_arms.test_parity.FinalOutcomes.test_incident_timeout_and_budget_still_take_precedence) (arm=3, error='HTTP 429') ... FAIL
+test_incident_timeout_and_budget_still_take_precedence (study.eidos_arms.test_parity.FinalOutcomes.test_incident_timeout_and_budget_still_take_precedence) ... FAIL
+test_malformed_concluded_answer_remains_invalid_output (study.eidos_arms.test_parity.FinalOutcomes.test_malformed_concluded_answer_remains_invalid_output) ... ok
+test_recovered_errors_then_valid_abstention_are_ok_in_every_arm (study.eidos_arms.test_parity.FinalOutcomes.test_recovered_errors_then_valid_abstention_are_ok_in_every_arm) ... ok
+test_success_event_does_not_hide_invalid_coding_answer (study.eidos_arms.test_parity.FinalOutcomes.test_success_event_does_not_hide_invalid_coding_answer) ... ok
+test_valid_final_result_survives_process_exit_error (study.eidos_arms.test_parity.FinalOutcomes.test_valid_final_result_survives_process_exit_error) ... ok
+test_baseline_note_matches_arm3_verbatim (study.eidos_arms.test_parity.SetupAndInformation.test_baseline_note_matches_arm3_verbatim) ... ok
+test_launcher_does_not_charge_setup_or_change_other_arms (study.eidos_arms.test_parity.SetupAndInformation.test_launcher_does_not_charge_setup_or_change_other_arms) ... ok
+test_method_embedding_and_setup_receipt_at_real_adapter_boundary (study.eidos_arms.test_parity.SetupAndInformation.test_method_embedding_and_setup_receipt_at_real_adapter_boundary) ... ok
+test_policy_is_prospective_and_in_each_pilot_2_charter (study.eidos_arms.test_parity.SetupAndInformation.test_policy_is_prospective_and_in_each_pilot_2_charter) ... ok
+test_setup_failure_still_reports_preparation_duration (study.eidos_arms.test_parity.SetupAndInformation.test_setup_failure_still_reports_preparation_duration) ... ok
+
+======================================================================
+FAIL: test_incident_timeout_and_budget_still_take_precedence (study.eidos_arms.test_parity.FinalOutcomes.test_incident_timeout_and_budget_still_take_precedence) (arm=1, error='HTTP 429')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Volumes/Mrigesh SSD/eidos-v1/p3/study/eidos_arms/test_parity.py", line 109, in test_incident_timeout_and_budget_still_take_precedence
+    self.assertEqual(rec['status'], 'incident')
+AssertionError: 'ok' != 'incident'
+- ok
++ incident
+
+
+======================================================================
+FAIL: test_incident_timeout_and_budget_still_take_precedence (study.eidos_arms.test_parity.FinalOutcomes.test_incident_timeout_and_budget_still_take_precedence) (arm=2, error='HTTP 429')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Volumes/Mrigesh SSD/eidos-v1/p3/study/eidos_arms/test_parity.py", line 109, in test_incident_timeout_and_budget_still_take_precedence
+    self.assertEqual(rec['status'], 'incident')
+AssertionError: 'ok' != 'incident'
+- ok
++ incident
+
+
+======================================================================
+FAIL: test_incident_timeout_and_budget_still_take_precedence (study.eidos_arms.test_parity.FinalOutcomes.test_incident_timeout_and_budget_still_take_precedence) (arm=3, error='HTTP 429')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Volumes/Mrigesh SSD/eidos-v1/p3/study/eidos_arms/test_parity.py", line 109, in test_incident_timeout_and_budget_still_take_precedence
+    self.assertEqual(rec['status'], 'incident')
+AssertionError: 'ok' != 'incident'
+- ok
++ incident
+
+
+======================================================================
+FAIL: test_incident_timeout_and_budget_still_take_precedence (study.eidos_arms.test_parity.FinalOutcomes.test_incident_timeout_and_budget_still_take_precedence)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Volumes/Mrigesh SSD/eidos-v1/p3/study/eidos_arms/test_parity.py", line 110, in test_incident_timeout_and_budget_still_take_precedence
+    self.assertEqual(classify(shown, [{'error': error}], [])[0], 'incident')
+AssertionError: 'ok' != 'incident'
+- ok
++ incident
+
+
+----------------------------------------------------------------------
+Ran 21 tests in 2.641s
+
+FAILED (failures=4)

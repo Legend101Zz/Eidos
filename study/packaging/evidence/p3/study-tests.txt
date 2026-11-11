@@ -1,0 +1,32 @@
+test_cached_tokens_stop_a_running_process (test_envelope.SupervisorTests.test_cached_tokens_stop_a_running_process) ... ok
+test_child_key_is_redacted_from_transcript_and_claim (test_envelope.SupervisorTests.test_child_key_is_redacted_from_transcript_and_claim) ... ok
+test_quota_error_is_incident (test_envelope.SupervisorTests.test_quota_error_is_incident) ... ok
+test_timeout_is_enforced_without_stream_output (test_envelope.SupervisorTests.test_timeout_is_enforced_without_stream_output) ... ok
+test_model_usage_summary_camelcase (test_envelope.UsageTests.test_model_usage_summary_camelcase) ... ok
+test_partial_stream_counts_usage_before_the_final_result (test_envelope.UsageTests.test_partial_stream_counts_usage_before_the_final_result) ... ok
+test_provider_errors_and_unrelated_numbers (test_envelope.UsageTests.test_provider_errors_and_unrelated_numbers) ... ok
+test_repeated_messages_and_cumulative_result_are_not_double_counted (test_envelope.UsageTests.test_repeated_messages_and_cumulative_result_are_not_double_counted) ... ok
+test_model_change_or_missing_model_is_incident (test_grading.DesignTests.test_model_change_or_missing_model_is_incident) ... ok
+test_plan_is_seeded_paired_and_stratified (test_grading.DesignTests.test_plan_is_seeded_paired_and_stratified) ... ok
+test_bundle_symlinks_are_rejected_before_controller_reads (test_grading.GradingBoundaryTests.test_bundle_symlinks_are_rejected_before_controller_reads) ... ok
+test_grader_infrastructure_failure_is_an_incident (test_grading.GradingBoundaryTests.test_grader_infrastructure_failure_is_an_incident) ... ok
+test_unfinished_block_cannot_be_graded (test_grading.GradingBoundaryTests.test_unfinished_block_cannot_be_graded) ... ok
+test_d01_is_behavior_equality_without_improvement (test_grading.GradingRules.test_d01_is_behavior_equality_without_improvement) ... ok
+test_d02_requires_gain_guardrails_reproduction_and_scope (test_grading.GradingRules.test_d02_requires_gain_guardrails_reproduction_and_scope) ... ok
+test_null_correctness_is_never_primary_improvement (test_grading.GradingRules.test_null_correctness_is_never_primary_improvement) ... ok
+test_reproduction_controls_seeds_and_private_paths (test_grading.GradingRules.test_reproduction_controls_seeds_and_private_paths) ... ok
+test_package_allowlist (test_p2.Pilot2.test_package_allowlist) ... ok
+test_plan (test_p2.Pilot2.test_plan) ... ok
+test_regression_reload (test_p2.Pilot2.test_regression_reload) ... ok
+test_rules (test_p2.Pilot2.test_rules) ... ok
+test_bundle_allowlist_and_no_test_rows (test_p3.Pilot3.test_bundle_allowlist_and_no_test_rows) ... ok
+test_generator_matches_frozen_qualification_and_disjoint_splits (test_p3.Pilot3.test_generator_matches_frozen_qualification_and_disjoint_splits) ... ok
+test_study_paths_and_rules (test_p3.Pilot3.test_study_paths_and_rules) ... ok
+test_all_arms_receive_identical_card_intent (test_prompts.PromptParity.test_all_arms_receive_identical_card_intent) ... ok
+test_unknown_card_cannot_silently_lose_the_bar (test_prompts.PromptParity.test_unknown_card_cannot_silently_lose_the_bar) ... ok
+
+----------------------------------------------------------------------
+Ran 26 tests in 0.732s
+
+OK
+GRADE control arm 1: incident success=False

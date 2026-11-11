@@ -1,0 +1,15 @@
+test_archive_rejects_traversal_links_and_duplicates (test_boundaries.Boundaries.test_archive_rejects_traversal_links_and_duplicates) ... ok
+test_collection_rejects_symlinks_and_fifos (test_boundaries.Boundaries.test_collection_rejects_symlinks_and_fifos) ... ok
+test_deterministic_tar_and_hash (test_boundaries.Boundaries.test_deterministic_tar_and_hash) ... ok
+test_dispatch_input_injection_rejected (test_boundaries.Boundaries.test_dispatch_input_injection_rejected) ... ok
+test_fresh_training_command_is_direct_and_evaluator_controlled (test_boundaries.Boundaries.test_fresh_training_command_is_direct_and_evaluator_controlled) ... ok
+test_practical_gain_guardrails_and_null_stratum (test_boundaries.Boundaries.test_practical_gain_guardrails_and_null_stratum) ... ok
+test_numeric_validation_and_failure_classification (test_boundaries.Scoring.test_numeric_validation_and_failure_classification) ... ok
+test_prediction_headers_cannot_request_unbounded_allocations (test_boundaries.Scoring.test_prediction_headers_cannot_request_unbounded_allocations) ... ok
+test_bad_predictions_are_candidate_failures_for_classification_and_rmse (test_p3.Pilot3.test_bad_predictions_are_candidate_failures_for_classification_and_rmse) ... ok
+test_registered_cards_and_frozen_bars (test_p3.Pilot3.test_registered_cards_and_frozen_bars) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 1.066s
+
+OK

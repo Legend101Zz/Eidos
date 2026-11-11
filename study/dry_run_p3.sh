@@ -8,7 +8,7 @@ export PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NU
 export EIDOS_PILOT_CHARTER_PATH=docs/experiments/pilot-3/CHARTER.md
 export EIDOS_PILOT_CHARTER_COMMIT="$(git log -1 --format=%H -- "$EIDOS_PILOT_CHARTER_PATH")"
 # Stubs only read this existing build receipt; they never start or use an Eidos lab.
-export EIDOS_STUDY_PYTHON="${EIDOS_STUDY_PYTHON:-/Volumes/Mrigesh SSD/eidos-v1/venvs/pilot-1-lab/bin/python}"
+export EIDOS_STUDY_PYTHON="${EIDOS_P3_STUB_PYTHON:-/Volumes/Mrigesh SSD/eidos-v1/venvs/pilot-1-lab/bin/python}"
 run_root=${1:?Provide an empty SSD output directory}
 if [ -d "$run_root" ] && [ -n "$(ls -A "$run_root")" ]; then
   echo 'Output must be empty' >&2

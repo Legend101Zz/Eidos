@@ -1,0 +1,98 @@
+[
+  {
+    "run_id": 43013552767,
+    "run_tag": "p3qual-N01-baseline-20261111",
+    "card": "N01",
+    "candidate_sha256": "1de08f40b2eb6d8182a536ae725d8e58b2b728a7f4c36d0df268be2c288e57ca",
+    "url": "https://github.com/Legend101Zz/eidos-grading/actions/runs/43013552767",
+    "workflow": {
+      "conclusion": "success",
+      "createdAt": "2026-11-11T11:38:00Z",
+      "databaseId": 43013552767,
+      "headSha": "a1b558cf672e2c24d5cba19fd1285a5995390a41",
+      "status": "completed",
+      "updatedAt": "2026-11-11T11:41:10Z",
+      "url": "https://github.com/Legend101Zz/eidos-grading/actions/runs/43013552767"
+    }
+  },
+  {
+    "run_id": 43013577941,
+    "run_tag": "p3qual-N01-invalid-20261111",
+    "card": "N01",
+    "candidate_sha256": "e5c0466b110ef264622fd6044333d81db9123dd4543dd18f0feda853e8c69256",
+    "url": "https://github.com/Legend101Zz/eidos-grading/actions/runs/43013577941",
+    "workflow": {
+      "conclusion": "success",
+      "createdAt": "2026-11-11T11:38:11Z",
+      "databaseId": 43013577941,
+      "headSha": "8d45452fd4590204ce124a89a610ea036776bc65",
+      "status": "completed",
+      "updatedAt": "2026-11-11T11:41:30Z",
+      "url": "https://github.com/Legend101Zz/eidos-grading/actions/runs/43013577941"
+    }
+  },
+  {
+    "run_id": 43013476014,
+    "run_tag": "p3qual-N01-reference-20261111",
+    "card": "N01",
+    "candidate_sha256": "1449a9b6cc89389ba77e3a3dd1704e454a0a61e0421f3ec160cde96e5cb90382",
+    "url": "https://github.com/Legend101Zz/eidos-grading/actions/runs/43013476014",
+    "workflow": {
+      "conclusion": "success",
+      "createdAt": "2026-11-11T11:37:25Z",
+      "databaseId": 43013476014,
+      "headSha": "74c8d3bac8e582c660047ffe4cd0f25d30123027",
+      "status": "completed",
+      "updatedAt": "2026-11-11T11:41:05Z",
+      "url": "https://github.com/Legend101Zz/eidos-grading/actions/runs/43013476014"
+    }
+  },
+  {
+    "run_id": 43013651544,
+    "run_tag": "p3qual-N03-baseline-20261111",
+    "card": "N03",
+    "candidate_sha256": "85563c283cf0434f09f3fa89c348f7f7d9dc7364d7d6914b5625378f070b4ad8",
+    "url": "https://github.com/Legend101Zz/eidos-grading/actions/runs/43013651544",
+    "workflow": {
+      "conclusion": "success",
+      "createdAt": "2026-11-11T11:38:45Z",
+      "databaseId": 43013651544,
+      "headSha": "e9d409af80038b6e10a485a891a60efa36a9226d",
+      "status": "completed",
+      "updatedAt": "2026-11-11T11:42:02Z",
+      "url": "https://github.com/Legend101Zz/eidos-grading/actions/runs/43013651544"
+    }
+  },
+  {
+    "run_id": 43013686502,
+    "run_tag": "p3qual-N03-invalid-20261111",
+    "card": "N03",
+    "candidate_sha256": "3402ec1e7086075286a8796eb31d70a23329b716471f06298c4cfa1bb035f46e",
+    "url": "https://github.com/Legend101Zz/eidos-grading/actions/runs/43013686502",
+    "workflow": {
+      "conclusion": "success",
+      "createdAt": "2026-11-11T11:39:01Z",
+      "databaseId": 43013686502,
+      "headSha": "e6c7d74acebee370f33f13bedeaa26587d7b6014",
+      "status": "completed",
+      "updatedAt": "2026-11-11T11:41:34Z",
+      "url": "https://github.com/Legend101Zz/eidos-grading/actions/runs/43013686502"
+    }
+  },
+  {
+    "run_id": 43013615358,
+    "run_tag": "p3qual-N03-reference-20261111",
+    "card": "N03",
+    "candidate_sha256": "f599ee7e1f41e1508133629914d01b1f1d789c6478c3ed857f49a2ca193e669b",
+    "url": "https://github.com/Legend101Zz/eidos-grading/actions/runs/43013615358",
+    "workflow": {
+      "conclusion": "success",
+      "createdAt": "2026-11-11T11:38:28Z",
+      "databaseId": 43013615358,
+      "headSha": "d0bd1958b2bc1524c262f411e7ebad18a6fbd1a9",
+      "status": "completed",
+      "updatedAt": "2026-11-11T11:41:48Z",
+      "url": "https://github.com/Legend101Zz/eidos-grading/actions/runs/43013615358"
+    }
+  }
+]
