@@ -78,6 +78,28 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
   byte-identical to the 1.0.0 release), so a fresh project resolves a pinned 1.0.0 reference. Arms publish it unbound;
   the toolkit runs each release with its own module.
 
+### Compact MCP research workflow for external agents (ADR 0025, from diagnosis D2 recommendation 4)
+
+- **`upload_source`** stores project files as an immutable `source-bundle/1` artifact in one MCP call (no separate HTTP
+  upload or manual metadata).
+- **`run_batch`** runs up to 12 calls with ADR 0022 `$ref` references over MCP, through the investigator's batch
+  executor, now shared as `eidos.batches.BatchRunner`. Calls are validated against their own tool schemas and the
+  reference rules before any effect (`INVALID_REF`, `INVALID_BATCH`), recorded first as an `mcp-batch` note, keyed
+  `<key>:<i>`, run one job at a time, and resumed after a bounded wait by calling again with the same key.
+- **`wait_status`** waits at most 50 s and returns compact job, plan, claim and investigation summaries with artifact
+  handles.
+- **`submit_candidate`** records the `candidate_lock`, files the `improves` claim and optionally requests the assessment,
+  returning the lab-derived claim state (`candidate-submitted` without a confirming pass). An unsucceeded job is refused.
+- **Smaller schemas and results.** The idempotency, revision and payload boilerplate is stated once in the server
+  instructions; tool text results are compact JSON. `tools/list` is 39,726 bytes for 39 tools (was 46,387 for 35).
+- **Session reuse.** The study's `mcp_http.py` reuses one MCP session (also across invocations, through a 0600 state
+  file without the token), re-initializing once if the server forgets it, and prints each result once.
+- **Review R15.** A batch runs in one investigation: a call's scope may be named or set in `payload`, and launches take
+  their trial's scope. A call outside it, or a `$ref` across investigations, is `INVESTIGATION_MISMATCH` before any
+  effect. `submit_candidate` binds its whole normalized request, assessment included, to the key with a `<key>:submit`
+  record before any step, so a changed retry is `COMMAND_KEY_CONFLICT` with nothing replayed. Compact receipts of a
+  refused assessment keep every reason.
+
 ## Unreleased: 1.2.0
 
 ### Review R13 of the integrated round (ADR 0021 addendum)

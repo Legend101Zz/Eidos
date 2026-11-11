@@ -12,6 +12,7 @@ from urllib.parse import unquote
 import httpx
 
 from eidos.client import LabClient, LabError
+from eidos.mcp import workflow
 from eidos.mcp.normalize import normalize, normalize_arguments
 from eidos.mcp.tools import BY_NAME, Tool, build_call
 
@@ -75,8 +76,8 @@ def validate_args(tool: Tool, args: dict[str, Any]) -> None:
         if (isinstance(v, bool) and props[k]["type"] in ("integer", "number")) or not isinstance(v, want):
             problems.append(f"'{k}' must be {props[k]['type']}")
     ck = args.get("command_key")
-    if isinstance(ck, str) and len(ck) > 200:
-        problems.append("'command_key' longer than 200 characters")
+    if isinstance(ck, str) and len(ck) > tool.max_key_length:
+        problems.append(f"'command_key' longer than {tool.max_key_length} characters")
     if problems:
         hint = "Supply a caller-chosen command_key; reuse it to retry safely." if "command_key" in " ".join(problems) \
             else "Fix the arguments and call again."
@@ -95,6 +96,8 @@ def call_tool(client: Any, name: str, args: dict[str, Any]) -> dict[str, Any]:
     cfg, cfg_changes = _normalize_config(client, tool, args)
     if cfg_changes:
         args, changes = {**args, "config": cfg}, changes + cfg_changes
+    if tool.composite:
+        return _call_workflow(client, tool, args, changes)
     payload, project, key, expected = build_call(tool, args)
     try:
         if tool.kind == "command":
@@ -113,6 +116,28 @@ def call_tool(client: Any, name: str, args: dict[str, Any]) -> dict[str, Any]:
         raise
     except Exception as exc:  # noqa: BLE001 - mapped to a structured tool error
         raise failure_from(exc) from exc
+
+
+def _call_workflow(client: Any, tool: Tool, args: dict[str, Any], changes: list[dict[str, Any]]) -> dict[str, Any]:
+    """ADR 0025: the compact workflow tools, each composed of ordinary lab calls under the caller's token."""
+    project, key = str(args.get("project") or ""), str(args.get("command_key") or "")
+    try:
+        if tool.name == "upload_source":
+            r = workflow.upload_source(client, project, key, args)
+            out = {**r["result"], **({"replayed": True} if r["replayed"] else {})}
+        elif tool.name == "run_batch":
+            out = workflow.run_batch(client, project, key, args)
+        elif tool.name == "wait_status":
+            out = workflow.wait_status(client, project, args)
+        else:
+            out = workflow.submit_candidate(client, project, key, args)
+    except workflow.WorkflowFailure as exc:
+        raise ToolFailure(exc.code, exc.message, exc.next_action, exc.details) from exc
+    except ToolFailure:
+        raise
+    except Exception as exc:  # noqa: BLE001 - mapped to a structured tool error
+        raise failure_from(exc) from exc
+    return {**out, "normalized_arguments": changes} if changes else out
 
 
 def _maybe_reencoded(value: Any) -> bool:
