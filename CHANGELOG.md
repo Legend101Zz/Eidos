@@ -8,6 +8,14 @@ Reasoning models through OpenAI-compatible endpoints (ADR 0016). Measured with M
 its OpenAI-compatible endpoint at 16384 output tokens and a 300 s request timeout: `json` 8/8 (was 5/8 at the 4096
 cap and 6/8 at 16384 tokens / 120 s), `tool` 6/8 (was 4/8); `docs/release/evidence/g4-111-minimax-m31flash-*.json`.
 
+### Large CLI payloads go through `@file`, not argv
+- The e2e journey (`scripts/journeys/e2e_journey.py`) failed at step 3b with `OSError: [Errno 7] Argument list too
+  long`: the paired-ci control suite (about 500 KiB) was passed inline to `lab cmd register_control_suite --payload`,
+  and Linux caps one argv string at 128 KiB. The journey now writes every JSON argument (`--payload`, `--params`,
+  `--config`, `--migration`) to `$OUT/payloads/` and passes `@path`; the switch-order and A8 journeys, the upgrade
+  check and the MCP-client receipt verifier do the same. `lab investigate start --settings` now also accepts `@file`
+  (it was the only JSON option that did not). The suite is unchanged.
+
 ### Ordinary classification accuracy evidence path (ADR 0018)
 - **New built-in component `eidos.task.paired-classification-report@1.0.0`** (lab environment, installed by
   `lab project create`). Takes the baseline's and the candidate's held-out predictions and the labels (JSON, JSONL,

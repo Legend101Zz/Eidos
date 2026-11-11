@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import time
 
 p = argparse.ArgumentParser()
@@ -33,7 +35,13 @@ a = p.parse_args()
 
 
 def lab_query(name: str, params: dict):
-    r = subprocess.run([a.lab, "query", name, "-p", a.project, "--params", json.dumps(params)], capture_output=True, text=True)
+    # JSON via @file, never argv: Linux caps one argv string at 128 KiB (E2BIG).
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump(params, f)
+    try:
+        r = subprocess.run([a.lab, "query", name, "-p", a.project, "--params", f"@{f.name}"], capture_output=True, text=True)
+    finally:
+        os.unlink(f.name)
     return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else {"error": (r.stdout + r.stderr)[-300:]}
 
 

@@ -273,8 +273,8 @@ def step3(j: Journey, a: argparse.Namespace) -> None:
         # ---- no-change continuation (restore class exact) vs an uninterrupted control ----------------
         mig = {k: "copy" for k in art45["meta"]["checkpoint"]["state_entries"]}
         rc, data, err = j.cli("checkpoint", "branch", j.project, "--parent", ck45, "--component", TRAIN,
-                              "--migration", json.dumps(mig), "--stream-policy", "paired", "--wall-seconds", "600",
-                              "--config", json.dumps({**base_cfg, "steps": 180, "verify_no_change": True}))
+                              "--migration", j.at_file(mig), "--stream-policy", "paired", "--wall-seconds", "600",
+                              "--config", j.at_file({**base_cfg, "steps": 180, "verify_no_change": True}))
         j.check("lab checkpoint branch (no-change continuation) planned and launched", rc == 0 and data, err=err[-300:])
         if not data:
             raise Blocked("branch failed")

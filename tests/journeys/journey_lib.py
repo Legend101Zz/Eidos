@@ -151,6 +151,16 @@ class Journey:
                 "out": {o["slot"]: o["artifact_id"] for o in job.get("outputs", [])}}
 
     # -- CLI in a fresh process -----------------------------------------------------------------
+    def at_file(self, obj: Any) -> str:
+        """Write a JSON CLI argument next to the record and return `@path` (the CLI's JSON-or-@file options).
+
+        JSON never goes on argv: Linux caps one argv string at 128 KiB (MAX_ARG_STRLEN, `Argument list too long`)."""
+        d = self.out_path.parent / "cli-payloads"
+        d.mkdir(parents=True, exist_ok=True)
+        f = d / f"{len(list(d.iterdir())):04d}.json"
+        f.write_text(json.dumps(obj, default=str))
+        return f"@{f}"
+
     def cli(self, *args: str, check: bool = True, timeout: float = 900) -> tuple[int, Any, str]:
         env = dict(os.environ)
         r = subprocess.run([str(Path(sys.executable).parent / "lab"), *args], capture_output=True, text=True,
