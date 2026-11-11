@@ -326,7 +326,7 @@ def test_a_scorer_ref_with_a_release_matches_that_release_only(scene):
     inv = scene.investigation()
     job = scene.job(inv)
     scene.scored(inv, job, {"accuracy": 0.82})
-    other_release = scene.scorer.split("@")[0] + "@9.9.9"
+    other_release = _publish(scene.lab, scene.pid, {**SCORER, "release": "9.9.9"}, CODE)["component_ref"]
     assert "@" in scene.scorer and scene.lock(inv, job, selection={**RULE, "scorer": other_release})["incumbent"][
         "evidence"] is None
 
@@ -615,8 +615,9 @@ def test_a_launched_assess_candidate_freezes_the_selection(lab, tmp_path):
     flow = AssessScene(lab, tmp_path)
     baseline, candidate = flow.job(BASELINE_RECIPE), flow.job(CANDIDATE_RECIPE)
     inv = flow.investigation()
+    selection = {**RULE, "scorer": flow.q("get_job", {"job_id": candidate})["lock"]["component"]["ref"]}
     flow.cmd("record_note", {"investigation_id": inv, "kind": "candidate_lock",
-                             "text": json.dumps({"job_id": candidate, "selection": RULE})})
+                             "text": json.dumps({"job_id": candidate, "selection": selection})})
     receipt = flow.assess_candidate(flow.request(baseline, candidate, investigation_id=inv))
     assert receipt["status"] == "launched", receipt
     with pytest.raises(Invalid) as caught:  # through the command, as the lab checks it (flow.lock writes the note directly)

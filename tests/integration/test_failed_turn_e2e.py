@@ -189,7 +189,7 @@ async def running(env, lab, prov: FakeProvider, **workflow_args):
     pid, _, _ = setup(lab)  # project, environment, component and charter of the turn-recovery tests
     inv = lab.cmd(lab.admin, "start_investigation", {
         "question": "q", "charter_id": f"charter:s{pid}", "limits": {"model_tokens": 1e6, "trials": 100},
-        "investigator": {"runtime": "pydantic-ai", "model": "openai-compatible:fake",
+        "investigator": {"runtime": "pydantic-ai", "model": "openai-compatible:fake", "finalization": "operator",
                          "settings": {"max_tokens_per_decision": 120_000}}}, project=pid)["result"]["investigation_id"]
     acts = InvestigatorActivities(
         ShimClient(lab, lab.principal(f"inv-{pid}", ["investigator"], [pid])),
@@ -198,7 +198,7 @@ async def running(env, lab, prov: FakeProvider, **workflow_args):
                            "request_timeout": 30, "abort_poll_seconds": 0.2, "max_output_tokens": MAX_OUTPUT_TOKENS})
     # The activities the real investigator worker registers (eidos.apps.roots.run_investigator_worker).
     registered = [acts.begin_turn, acts.build_context, acts.decide, acts.execute_decision, acts.complete_turn,
-                  acts.check_news, acts.mark_needs_input, acts.record_turn_retry]
+                  acts.check_news, acts.mark_needs_input, acts.record_turn_retry, acts.enter_finalization]
     args = {"investigation_id": inv, "project_id": pid, "idle_poll_seconds": 1, "failed_turn_backoff_seconds": 1,
             **workflow_args}
     pool = ThreadPoolExecutor(max_workers=16)  # the real activities are synchronous

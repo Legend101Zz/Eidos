@@ -351,10 +351,16 @@ def _fail_pending_finalization(ctx: Ctx, inv, reason: str) -> None:
 
 def _finalization_context(ctx: Ctx, inv, state: dict, finalization: dict) -> dict:
     jobs = exploration._jobs(ctx, inv.id)
-    held = exploration.held_out_artifacts(ctx, inv, jobs)
-    jobs = [j for j in jobs if not (set(j["inputs"].values()) & held)]
     incumbent = state.get("incumbent")
     job_id = (incumbent or {}).get("job_id")
+    if job_id and not any(j["id"] == job_id for j in jobs):
+        # A valid lock may name an existing job of this project, created before/outside the investigation.
+        # Preserve that exact lock; never substitute a different recipe or invent selection evidence.
+        locked = ctx.tx.get_job(job_id)
+        if locked and locked["project_id"] == ctx.project_id:
+            jobs.append(exploration.view_job(locked, ctx.tx.publications(job_id)))
+    held = exploration.held_out_artifacts(ctx, inv, jobs)
+    jobs = [j for j in jobs if not (set(j["inputs"].values()) & held)]
     candidate = next((j for j in jobs if j["id"] == job_id), None)
     return {**finalization, "locked_candidate": candidate, "incumbent": incumbent,
             "selection_rule": state.get("rule"),

@@ -219,3 +219,21 @@ def test_default_policy_is_autonomous_and_recorded_at_start(scene):
     turn = scene.begin(inv)
     assert turn['spec']['finalization']['enabled'] is True
     assert turn['spec']['limits']['max_calls'] == 0
+
+
+def test_finalization_reports_the_exact_lock_when_its_job_predates_the_investigation(scene):
+    job = scene.job(None, metrics={'accuracy': 0.91})
+    inv = scene.investigation(finalization='autonomous')
+    scene.rule(inv)
+    scene.lock(inv, job)
+    _entered(scene, inv)
+    turn = scene.begin(inv)
+    final = turn['spec']['finalization']
+    assert final['locked_candidate']['id'] == job and final['locked_candidate']['status'] == 'succeeded'
+    assert any(m['job_id'] == job for m in final['metrics'])
+    control = {'action': 'conclude', 'summary': f'Existing locked recipe {job}; no held-out confirmation.',
+               'claim': {'disposition': 'candidate'}}
+    assert scene.propose(turn['turn_id'], 0, {'rationale': 'report existing lock', 'calls': [], 'control': control})['accepted']
+    _complete(scene.lab, scene.pid, turn['turn_id'], 'concluded', control)
+    claim = scene.q('get_investigation', {'investigation_id': inv})['body']['conclusion']['claim_state']
+    assert claim['confirmed'] is False
