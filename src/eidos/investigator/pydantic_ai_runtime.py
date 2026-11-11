@@ -112,6 +112,7 @@ def to_proposal(d: Decision) -> dict[str, Any]:
 
 
 def no_effect_proposal(outcome: str) -> dict[str, Any]:
+    """Historical wire fixture for the retired fabricated-wait representation."""
     """The explicit no-effect decision the runtime writes when a model produced nothing usable within the bounds."""
     return {"rationale": f"no usable decision ({outcome}); no effects proposed", "calls": [],
             "control": {"action": "wait_for_jobs", "summary": outcome, "bounded_outcome": outcome}}
@@ -802,15 +803,18 @@ class PydanticAIRuntime:
 
     def _bounded(self, messages: list, model: Any, max_requests: int, reason: str, outcome: str,
                  report: dict, billed: list | None = None) -> DecisionResult:
-        """No usable decision within the bounds: an explicit no-effect decision; every billed request reported
+        """No usable decision within the bounds: report the outcome and every billed request
         (``billed``: every response of the decision, when ``messages`` leaves some out)."""
         usage = self._usage(messages if billed is None else billed)
         usage["limit_reached"] = str(reason)[:300]
         report["repairs"] = sorted(set(report["repairs"]))
         usage["structured_output"] = report
-        proposal = no_effect_proposal(outcome)
-        return DecisionResult(proposal, usage, json.loads(_messages_json(messages)), self._settings(usage, max_requests),
-                              PROMPT_REVISION)
+        return self._runtime_bound(messages, usage, max_requests, outcome)
+
+    def _runtime_bound(self, messages: list, usage: dict, max_requests: int, outcome: str) -> DecisionResult:
+        usage["runtime_outcome"] = outcome
+        return DecisionResult({}, usage, json.loads(_messages_json(messages)),
+                              self._settings(usage, max_requests), PROMPT_REVISION, outcome)
 
     def _decide_tool(self, req: DecisionRequest) -> DecisionResult:
         from pydantic_ai import capture_run_messages
@@ -832,54 +836,9 @@ class PydanticAIRuntime:
             except EnvelopeRefused as exc:  # the next request was not started: its worst case does not fit
                 usage = self._usage(messages)
                 usage["limit_reached"] = f"decision token envelope: {exc}"[:300]
-                proposal = {"rationale": "decision token envelope spent before a final decision; no effects proposed",
-                            "calls": [], "control": {"action": "wait_for_jobs", "summary": "token envelope spent",
-                                                     "bounded_outcome": "request-budget-exhausted"}}
-                return DecisionResult(proposal, usage, json.loads(_messages_json(messages)),
-                                      self._settings(usage, max_requests), PROMPT_REVISION)
+                return self._runtime_bound(messages, usage, max_requests, "request-budget-exhausted")
             except UsageLimitExceeded as exc:
-                if req.read_tools and max_requests > 1:
-                    # Read-tool loop hit its share: one final request WITHOUT tools over the same history,
-                    # so the model must decide from the evidence it has already gathered.
-                    first = list(messages)
-                    final_agent = self._agent(req, with_tools=False)
-                    with capture_run_messages() as final_messages:
-                        try:
-                            result = final_agent.run_sync(
-                                "Your read-tool budget for this decision is used up. No further evidence is "
-                                "available. Return your decision now from what you have gathered.",
-                                message_history=_close_tool_calls(first),
-                                # exactly the one reserved request: the per-decision cap is a hard cap
-                                usage_limits=UsageLimits(request_limit=max(1, max_requests - tool_budget)),
-                                model_settings=settings or None)
-                            usage = self._usage(first + [m for m in result.new_messages()])
-                            usage["tool_budget_exhausted"] = True
-                            raw = json.loads(_messages_json(first + list(result.new_messages())))
-                            return DecisionResult(to_proposal(result.output), usage, raw,
-                                                  self._settings(usage, max_requests), PROMPT_REVISION)
-                        except DecisionAborted:
-                            raise
-                        except Exception as final_exc:  # noqa: BLE001 - fall through to the bounded outcome below
-                            from pydantic_ai.exceptions import UnexpectedModelBehavior
-                            from pydantic_ai.messages import ModelResponse
-                            new = [m for m in final_messages if m not in messages]
-                            messages.extend(new)
-                            last = [m for m in new if isinstance(m, ModelResponse)]
-                            if isinstance(final_exc, UnexpectedModelBehavior) and last and is_runaway(last[-1]):
-                                # F5 (A4): the reserved tool-free request ran away (reasoning only, output cap hit).
-                                # It was the last request of the decision, so there is no re-ask: recorded, and the
-                                # bounded outcome is reasoning-runaway, not request-budget-exhausted.
-                                return self._tool_budget_runaway(messages, last[-1], max_requests)
-                # A bounded outcome, not a lost failure: every billed request is reported and the
-                # slot ends with an explicit no-effect decision the next turn can see.
-                usage = self._usage(messages)
-                usage["limit_reached"] = str(exc)[:300]
-                proposal = {"rationale": f"decision request budget ({max_requests}) exhausted before a final "
-                                         "decision; no effects proposed", "calls": [],
-                            "control": {"action": "wait_for_jobs", "summary": "request budget exhausted",
-                                        "bounded_outcome": "request-budget-exhausted"}}
-                return DecisionResult(proposal, usage, json.loads(_messages_json(messages)),
-                                      self._settings(usage, max_requests), PROMPT_REVISION)
+                limit_error = exc
             except ModelCallFailed:
                 raise
             except Exception as exc:  # provider/transport failure: report everything that may have billed
@@ -893,10 +852,62 @@ class PydanticAIRuntime:
                     # ADR 0023: the output stayed invalid through the output retries: one fresh-state request
                     return self._tool_fresh_state(req, prompt, list(messages), exc, max_requests, settings)
                 raise model_call_failed(exc, self._usage(messages)) from exc
-        usage = self._usage(result.all_messages())
-        raw = json.loads(result.all_messages_json())
-        return DecisionResult(to_proposal(result.output), usage, raw, self._settings(usage, max_requests),
-                              PROMPT_REVISION)
+            else:
+                usage = self._usage(result.all_messages())
+                raw = json.loads(result.all_messages_json())
+                return DecisionResult(to_proposal(result.output), usage, raw, self._settings(usage, max_requests),
+                                      PROMPT_REVISION)
+
+        # The reserved request starts outside the prior UsageLimitExceeded
+        # handler, so its provider failure has no local-limit exception context.
+        return self._tool_after_limit(req, list(messages), limit_error, max_requests, tool_budget, settings)
+
+    def _tool_after_limit(self, req: DecisionRequest, messages: list, error: BaseException,
+                          max_requests: int, tool_budget: int, settings: dict[str, Any]) -> DecisionResult:
+        from pydantic_ai import capture_run_messages
+        from pydantic_ai.exceptions import UsageLimitExceeded
+        from pydantic_ai.usage import UsageLimits
+
+        reason = str(error)
+        if req.read_tools and max_requests > 1:
+            # Read-tool loop hit its share: one final request WITHOUT tools over the same history,
+            # so the model must decide from the evidence it has already gathered.
+            first = list(messages)
+            final_agent = self._agent(req, with_tools=False)
+            with capture_run_messages() as final_messages:
+                try:
+                    result = final_agent.run_sync(
+                        "Your read-tool budget for this decision is used up. No further evidence is "
+                        "available. Return your decision now from what you have gathered.",
+                        message_history=_close_tool_calls(first),
+                        # exactly the one reserved request: the per-decision cap is a hard cap
+                        usage_limits=UsageLimits(request_limit=max(1, max_requests - tool_budget)),
+                        model_settings=settings or None)
+                    usage = self._usage(first + [m for m in result.new_messages()])
+                    usage["tool_budget_exhausted"] = True
+                    raw = json.loads(_messages_json(first + list(result.new_messages())))
+                    return DecisionResult(to_proposal(result.output), usage, raw,
+                                          self._settings(usage, max_requests), PROMPT_REVISION)
+                except (DecisionAborted, ModelCallFailed):
+                    raise
+                except Exception as final_exc:
+                    from pydantic_ai.exceptions import UnexpectedModelBehavior
+                    from pydantic_ai.messages import ModelResponse
+                    new = [m for m in final_messages if m not in messages]
+                    messages.extend(new)
+                    last = [m for m in new if isinstance(m, ModelResponse)]
+                    if isinstance(final_exc, UnexpectedModelBehavior) and last and is_runaway(last[-1]):
+                        # F5 (A4): the reserved tool-free request ran away (reasoning only, output cap hit).
+                        # It was the last request of the decision, so there is no re-ask: recorded, and the
+                        # bounded outcome is reasoning-runaway, not request-budget-exhausted.
+                        return self._tool_budget_runaway(messages, last[-1], max_requests)
+                    if isinstance(final_exc, EnvelopeRefused):
+                        reason = f"decision token envelope: {final_exc}"
+                    elif not isinstance(final_exc, (UnexpectedModelBehavior, UsageLimitExceeded)):
+                        raise model_call_failed(final_exc, self._usage(messages)) from final_exc
+        usage = self._usage(messages)
+        usage["limit_reached"] = reason[:300]
+        return self._runtime_bound(messages, usage, max_requests, "request-budget-exhausted")
 
     def _tool_budget_runaway(self, messages: list, runaway: Any, max_requests: int) -> DecisionResult:
         """Tool mode: the reserved tool-free request after the read-tool budget ran away (F5, A4). No request is left
@@ -911,10 +922,8 @@ class PydanticAIRuntime:
         usage["limit_reached"] = (f"reasoning runaway in the reserved final request (output cap "
                                   f"{output_cap(self.config)}) after the read-tool budget; no request left")
         usage["structured_output"] = report
-        proposal = no_effect_proposal("reasoning-runaway")
         history = _close_tool_calls([m for m in messages if m is not runaway])
-        return DecisionResult(proposal, usage, json.loads(_messages_json(history)),
-                              self._settings(usage, max_requests), PROMPT_REVISION)
+        return self._runtime_bound(history, usage, max_requests, "reasoning-runaway")
 
     def _tool_runaway(self, req: DecisionRequest, messages: list, runaway: Any, max_requests: int,
                       settings: dict[str, Any]) -> DecisionResult:
@@ -934,9 +943,7 @@ class PydanticAIRuntime:
             usage = self._usage(billed)
             usage["limit_reached"] = reason[:300]
             usage["structured_output"] = report
-            proposal = no_effect_proposal("reasoning-runaway")
-            return DecisionResult(proposal, usage, json.loads(_messages_json(history)),
-                                  self._settings(usage, max_requests), PROMPT_REVISION)
+            return self._runtime_bound(history, usage, max_requests, "reasoning-runaway")
 
         if len(billed) >= max_requests:
             return bounded(f"reasoning runaway in the last of {max_requests} requests", kept)
@@ -991,9 +998,7 @@ class PydanticAIRuntime:
             usage = self._usage(billed)
             usage["limit_reached"] = reason[:300]
             usage["structured_output"] = report
-            return DecisionResult(no_effect_proposal("structured-output-invalid"), usage,
-                                  json.loads(_messages_json(history)), self._settings(usage, max_requests),
-                                  PROMPT_REVISION)
+            return self._runtime_bound(history, usage, max_requests, "structured-output-invalid")
 
         left = max_requests - len(billed)
         if left < 1:

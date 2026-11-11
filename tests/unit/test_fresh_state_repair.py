@@ -98,12 +98,9 @@ def so_of(res) -> dict:
 
 
 def assert_bounded(res) -> None:
-    """The explicit no-effect decision of a bounded outcome, valid for the lab, with every request reported."""
-    assert res.proposal["calls"] == [] and res.proposal["control"]["bounded_outcome"] == BOUNDED
+    """A bounded outcome has no proposal and reports every request."""
+    assert res.proposal == {} and res.runtime_outcome == res.usage["runtime_outcome"] == BOUNDED
     assert res.usage["limit_reached"] and so_of(res)["valid"] is False
-    decision = validate_decision(res.proposal, max_calls=4)
-    assert decision["calls"] == [] and decision["control"]["action"] == "wait_for_jobs"
-    assert decision["control"]["bounded_outcome"] == BOUNDED
 
 
 # -- 1. text mode: a fresh-state repair after the re-ask failed --------------------------------------------------------------
@@ -258,7 +255,7 @@ def test_the_fresh_state_request_respects_max_requests_per_decision(max_requests
 def test_with_a_budget_of_two_the_third_reply_is_never_asked_for():
     script = scripted(["not json", "still not json", json.dumps(GOOD)])
     res = runtime(script, max_requests_per_decision=2).decide(request())
-    assert len(script.seen) == 2 and res.proposal["control"]["bounded_outcome"] == BOUNDED
+    assert len(script.seen) == 2 and res.proposal == {} and res.runtime_outcome == res.usage["runtime_outcome"] == BOUNDED
     assert so_of(res)["fresh_state"] == []
 
 
@@ -289,7 +286,7 @@ def test_the_fresh_state_request_must_fit_the_token_envelope():
     res = runtime(script, max_output_tokens=cap, max_tokens_per_decision=limit).decide(request())
     assert len(script.seen) == 2 and res.usage["calls"] == 2  # the fresh request was not started: nothing billed for it
     assert "token envelope" in res.usage["limit_reached"]
-    assert res.proposal["control"]["bounded_outcome"] == BOUNDED
+    assert res.proposal == {} and res.runtime_outcome == res.usage["runtime_outcome"] == BOUNDED
 
 
 def test_a_fresh_state_repair_refused_by_the_token_envelope_is_not_counted():
@@ -422,14 +419,11 @@ def test_a_quota_failure_in_the_fresh_state_request_is_not_retryable(mode):
     assert e.value.possible_usage["failed_request"]["kind"] == "quota-exhausted"
 
 
-# -- 6. the proposal of a bounded outcome validates --------------------------------------------------------------------------------
+# -- 6. bounded outcomes carry no model proposal --------------------------------------------------------------------------------
 @pytest.mark.parametrize("mode", ["repair", "json", "tool"])
-def test_the_bounded_outcome_validates_as_a_decision(mode):
+def test_the_bounded_outcome_serializes_without_a_proposal(mode):
     script = scripted(["garbage"])
     res = runtime(script, mode, fresh_state_repairs=1).decide(request())
-    assert res.proposal["control"]["bounded_outcome"] == BOUNDED
-    d = validate_decision(res.proposal, max_calls=4)
-    assert d["calls"] == [] and d["control"]["action"] == "wait_for_jobs" and d["purpose"] == "open-search"
-    assert BOUNDED in d["rationale"] and d["control"]["summary"] == BOUNDED
-    json.dumps(res.proposal)  # it is stored as the decision's body
+    assert res.proposal == {} and res.runtime_outcome == res.usage["runtime_outcome"] == BOUNDED
+    assert json.loads(json.dumps(res.proposal)) == {}
     json.dumps(res.model_settings)

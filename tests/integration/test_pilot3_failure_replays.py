@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse, TextPart, ThinkingPart
@@ -42,6 +44,18 @@ def replay_slot(slot, *, surrogate_thinking=None):
     original = [ModelMessagesTypeAdapter.validate_python([item["response"]])[0] for item in recorded]
     assert all(isinstance(reply, ModelResponse) for reply in original)
     usage = slot["usage_receipt"]["body"]["usage"]
+    historical_control = (slot["decision"]["body"].get("proposal") or {}).get("control") or {}
+    budget_bound = historical_control.get("bounded_outcome") == "request-budget-exhausted"
+    if budget_bound:
+        token_limit = re.fullmatch(
+            r"decision token envelope: the next request may use (\d+) input \+ (\d+) output tokens; "
+            r"the decision's token envelope has (\d+) of (\d+) left",
+            usage["limit_reached"],
+        )
+        assert token_limit is not None
+        final_estimate, output_cap, remaining, token_cap = map(int, token_limit.groups())
+    else:
+        token_cap, output_cap = 1_000_000, 16_384
     missing = slot.get("missing_runaway_reply_ids", [])
     assert bool(missing) == bool(surrogate_thinking)
     assert usage["request_ids"] == [item["timing"]["provider_response_id"] for item in recorded] + missing
@@ -62,6 +76,7 @@ def replay_slot(slot, *, surrogate_thinking=None):
     now = [0.0]
     requests = []
     successor_history = []
+    estimator_applied = []
     expected_reads = [read for read in usage["structured_output"]["reads"] if read.get("executed")]
     actual_reads = []
 
@@ -116,14 +131,30 @@ def replay_slot(slot, *, surrogate_thinking=None):
         "output_mode": "json",
         "request_timeout": 300 * TIME_SCALE,
         "max_requests_per_decision": 8,
-        "max_tokens_per_decision": 1_000_000,
+        "max_tokens_per_decision": token_cap,
+        "max_output_tokens": output_cap,
     })
     request = DecisionRequest(
         f"historical-{slot['turn']}", slot["slot"], "Recorded pilot failure tail", [],
         {"deadline_seconds": deadline}, abort=DecisionAbort(deadline, clock=lambda: now[0]),
         read_tools={tool: read(tool) for tool in READ_TOOLS},
     )
-    result = runtime.decide(request)
+    if budget_bound:
+        original_estimate = pydantic_ai_runtime.TokenEnvelope.estimate
+
+        def estimate(envelope, messages, settings, params):
+            if len(requests) == len(original):
+                # The final estimate is receipt evidence. We stub the read
+                # outputs, whose original payload sizes are outside the fixture.
+                assert envelope.limit - envelope.spent == remaining
+                estimator_applied.append(final_estimate)
+                return final_estimate
+            return original_estimate(envelope, messages, settings, params)
+
+        with patch.object(pydantic_ai_runtime.TokenEnvelope, "estimate", estimate):
+            result = runtime.decide(request)
+    else:
+        result = runtime.decide(request)
     expected = [(receipt["tool"], tuple(receipt["args"][arg] for arg, _, _ in READ_TOOLS[receipt["tool"]]))
                 for receipt in expected_reads]
     assert actual_reads == expected
@@ -141,11 +172,15 @@ def replay_slot(slot, *, surrogate_thinking=None):
         # The coordinator continues with the recorded refusal for this slot.
         # Compare both synthetic variants' effects at the actual runtime boundary.
         return len(original), None, (requests, successor_history, result.proposal, result.usage)
+    if budget_bound:
+        assert len(requests) == len(original) and estimator_applied == [final_estimate]
+        assert result.usage["limit_reached"] == usage["limit_reached"]
+        assert result.runtime_outcome == result.usage["runtime_outcome"] == "request-budget-exhausted"
+        assert result.proposal == {}
     elif slot["decision"]["accepted"]:
         assert len(requests) == len(original) and result.runtime_outcome is None
         assert result.proposal["calls"]
     else:
-        historical_control = slot["decision"]["body"]["proposal"]["control"]
         assert historical_control["action"] == "wait_for_jobs"
         if historical_control.get("bounded_outcome") == "decision-deadline":
             if deadline - now[0] <= pydantic_ai_runtime.DURABLE_WRITE_MARGIN_SECONDS:
@@ -173,6 +208,7 @@ def replay_slot(slot, *, surrogate_thinking=None):
     ("N02-r2", "N02-r2"),
     ("N02-r3", "N02-r3"),
     ("N03-r1", "N03-r1"),
+    ("N03-r2", "N03-r2"),
     ("N03-r3", "N03-r3"),
     ("N04-r2", "N04-r2"),
     ("N04-r3", "N04-r3"),
@@ -189,6 +225,15 @@ async def test_recorded_failure_tail_reaches_controller_abstention(env, lab, mon
     scene.rule(inv)
     candidate = scene.job(inv, metrics={"accuracy": .91})
     scene.lock(inv, candidate)
+    # The corrected coordinator exits at the first typed budget bound. Exercise
+    # the later historical replies and accepted effects independently of that fork.
+    historical_slots = (
+        [await asyncio.to_thread(replay_slot, slot) for slot in fixture["slots"]]
+        if fixture_name == "N03-r2" else []
+    )
+    if historical_slots:
+        assert [i for i, (_, outcome, _) in enumerate(historical_slots) if outcome] == [1, 3, 4]
+        assert sum(bool(slot["recorded_effect_receipts"]) for slot in fixture["slots"]) == 2
 
     class Historical(Recovery):
         def __init__(self):
@@ -196,6 +241,7 @@ async def test_recorded_failure_tail_reaches_controller_abstention(env, lab, mon
             self.replies = 0
             self.index = 0
             self.recovery_turn = None
+            self.effects = []
 
         @activity.defn(name="begin_turn")
         async def begin_turn(self, a):
@@ -215,7 +261,9 @@ async def test_recorded_failure_tail_reaches_controller_abstention(env, lab, mon
                 return {"accepted": False, "runtime_outcome": "no-recorded-recovery-reply"}
             item = fixture["slots"][self.index]
             assert a["turn_id"] == f"t{item['turn'] - fixture['slots'][0]['turn'] + 1}" and a["slot"] == item["slot"]
-            if item.get("missing_runaway_reply_ids"):
+            if historical_slots:
+                replay = historical_slots[self.index]
+            elif item.get("missing_runaway_reply_ids"):
                 replay = await asyncio.to_thread(replay_slot, item, surrogate_thinking="Synthetic reasoning variant A.")
                 other = await asyncio.to_thread(replay_slot, item, surrogate_thinking="Different synthetic reasoning B.")
                 assert replay == other
@@ -238,6 +286,7 @@ async def test_recorded_failure_tail_reaches_controller_abstention(env, lab, mon
             item = fixture["slots"][self.index - 1]
             (receipt,) = item["recorded_effect_receipts"]
             assert receipt["decision_id"] == a["decision_id"]
+            self.effects.append(receipt)
             return {"summary": receipt["summary"]}
 
         @activity.defn(name="enter_finalization")
@@ -263,13 +312,18 @@ async def test_recorded_failure_tail_reaches_controller_abstention(env, lab, mon
             id=f"pilot-replay-{fixture_name}-{uuid.uuid4().hex}", task_queue=WORKFLOW_QUEUE,
         ), timeout=30)
     assert result["status"] == "abstained" and result["reason"] == "controller-abstained"
-    assert fake.index == len(fixture["slots"])
-    assert fake.replies == sum(len(item["replies"]) for item in fixture["slots"])
+    consumed = fixture["slots"][:2] if historical_slots else fixture["slots"]
+    assert fake.index == len(consumed)
+    assert fake.replies == sum(len(item["replies"]) for item in consumed)
+    assert fake.effects == [receipt for item in consumed for receipt in item["recorded_effect_receipts"]]
     assert len(fake.transitions) == 1 and not fake.marks
     transition = fake.transitions[0][1]
     if fixture_name == "N01-r3":
         assert transition["trigger"] == "runtime-bounded"
         assert transition["runtime_outcome"] == "deadline-exhausted"
+    elif historical_slots:
+        assert transition["trigger"] == "runtime-bounded"
+        assert transition["runtime_outcome"] == "request-budget-exhausted"
     else:
         assert transition["trigger"] == "refused-proposals"
     shown = scene.q("get_investigation", {"investigation_id": inv})

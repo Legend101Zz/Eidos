@@ -285,7 +285,7 @@ def test_bounded_decisions_still_report_every_requests_reasoning():
     script = scripted([read_request(("get_job", {"job_id": "j"}))], usages=[usage(10, 20, 7)])
     log: list = []
     res = runtime(script, max_requests_per_decision=3).decide(request(read_tools(log)))
-    assert res.proposal["control"]["bounded_outcome"] == "request-budget-exhausted" and len(log) == 2
+    assert res.proposal == {} and res.runtime_outcome == res.usage["runtime_outcome"] == "request-budget-exhausted" and len(log) == 2
     assert res.usage["reasoning_tokens"] == 21 and res.usage["calls"] == 3
 
 
@@ -300,7 +300,7 @@ def test_reasoning_added_to_output_counts_against_the_decision_token_budget(reas
     if reasked:
         assert res.usage["structured_output"]["valid"]
     else:
-        assert res.proposal["control"]["bounded_outcome"] == "structured-output-invalid"
+        assert res.proposal == {} and res.runtime_outcome == res.usage["runtime_outcome"] == "structured-output-invalid"
         assert res.usage["output_tokens"] == 100 + reasoning and res.usage["calls"] == 1
         assert "token envelope" in res.usage["limit_reached"] and res.usage["structured_output"]["reasks"] == 0
 
@@ -419,9 +419,8 @@ def test_a_model_that_always_asks_to_read_never_exceeds_the_request_budget(budge
     res = runtime(script, max_requests_per_decision=budget).decide(request(read_tools(log)))
     assert len(script.seen) <= budget and len(script.seen) == budget and res.usage["calls"] == budget
     assert len(log) == budget - 1  # the read made in the last allowed request is not executed
-    assert res.proposal["calls"] == [] and res.proposal["control"]["bounded_outcome"] == "request-budget-exhausted"
+    assert res.proposal == {} and res.runtime_outcome == res.usage["runtime_outcome"] == "request-budget-exhausted"
     assert res.usage["limit_reached"] and not res.usage["structured_output"]["valid"]
-    assert validate_decision(res.proposal, max_calls=4)["control"]["action"] == "wait_for_jobs"
     last = res.usage["structured_output"]["reads"][-1]
     assert last["executed"] is False and last["request"] == budget and last["tool"] == "get_job"
     assert res.usage["structured_output"]["read_requests"] == budget
@@ -461,10 +460,9 @@ def test_a_read_tool_in_calls_twice_ends_in_a_bounded_invalid_decision_without_e
     script = scripted([json.dumps(misuse)])
     res = runtime(script, fresh_state_repairs=0).decide(request(read_tools([])))
     assert len(script.seen) == 2  # never more than one re-ask (no fresh-state repair here)
-    assert res.proposal["calls"] == [] and res.proposal["control"]["bounded_outcome"] == "structured-output-invalid"
+    assert res.proposal == {} and res.runtime_outcome == res.usage["runtime_outcome"] == "structured-output-invalid"
     rep = res.usage["structured_output"]
     assert len(rep["errors"]) == 2 and not rep["valid"] and rep["reasks"] == 1
-    assert validate_decision(res.proposal, max_calls=4)["calls"] == []
 
 
 def test_a_read_tool_in_calls_is_refused_even_without_read_tools_and_the_reask_says_so():
@@ -485,7 +483,7 @@ def test_a_read_request_without_read_tools_is_malformed_and_reasked_once():
 def test_a_read_request_without_read_tools_twice_is_bounded():
     script = scripted([read_request(("get_job", {"job_id": "j"}))])
     res = runtime(script, fresh_state_repairs=0).decide(request())
-    assert len(script.seen) == 2 and res.proposal["control"]["bounded_outcome"] == "structured-output-invalid"
+    assert len(script.seen) == 2 and res.proposal == {} and res.runtime_outcome == res.usage["runtime_outcome"] == "structured-output-invalid"
 
 
 @pytest.mark.parametrize("extra", [{"calls": GOOD["calls"]}, {"control": {"action": "stop", "summary": "s"}}])
@@ -687,8 +685,7 @@ def test_recorded_minimax_reply_with_a_read_tool_in_calls_is_refused_and_reasked
 def test_recorded_minimax_reply_is_never_accepted_as_an_effect():
     script = scripted([RECORDED_MINIMAX])
     res = runtime(script, "json").decide(request(read_tools([])))
-    assert res.proposal["calls"] == [] and res.proposal["control"]["bounded_outcome"] == "structured-output-invalid"
-    validate_decision(res.proposal, max_calls=4)
+    assert res.proposal == {} and res.runtime_outcome == res.usage["runtime_outcome"] == "structured-output-invalid"
     # the lab's own validator is the second line: the original reply, normalised exactly as the runtime does, is
     # refused there too, independently of the runtime's own refusal (``read_tools_in_calls``)
     obj, _ = so.normalize(so.extract_json(RECORDED_MINIMAX)[0])
@@ -796,10 +793,10 @@ def test_a_request_whose_worst_case_does_not_fit_the_remaining_envelope_is_not_s
     script = scripted([read_request(("get_job", {"job_id": "j"})), json.dumps(GOOD)], usages=[usage(19_900, 100_000)])
     res = runtime(script, mode, max_output_tokens=16384, max_tokens_per_decision=120_000).decide(request(read_tools(log)))
     assert len(script.seen) == 1 and res.usage["calls"] == 1
-    assert res.proposal["calls"] == [] and res.proposal["control"]["bounded_outcome"] == "request-budget-exhausted"
     assert "token envelope" in res.usage["limit_reached"] and "16384 output" in res.usage["limit_reached"]
     assert res.usage["input_tokens"] + res.usage["output_tokens"] <= 120_000
-    validate_decision(res.proposal, max_calls=4)
+    assert res.proposal == {}
+    assert res.runtime_outcome == res.usage["runtime_outcome"] == "request-budget-exhausted"
 
 
 def test_tool_mode_does_not_start_a_request_whose_worst_case_does_not_fit():
@@ -808,7 +805,7 @@ def test_tool_mode_does_not_start_a_request_whose_worst_case_does_not_fit():
                             "max_output_tokens": 16384, "max_tokens_per_decision": 120_000})
     res = rt.decide(request(read_tools([])))
     assert len(seen) == 1 and res.usage["calls"] == 1  # neither the read follow-up nor a tool-free final request
-    assert res.proposal["calls"] == [] and res.proposal["control"]["bounded_outcome"] == "request-budget-exhausted"
+    assert res.proposal == {} and res.runtime_outcome == res.usage["runtime_outcome"] == "request-budget-exhausted"
     assert "token envelope" in res.usage["limit_reached"]
     assert res.usage["input_tokens"] + res.usage["output_tokens"] <= 120_000
 
@@ -828,7 +825,7 @@ def test_the_first_request_is_not_started_when_its_bytes_and_the_cap_exceed_the_
     script = scripted([json.dumps(GOOD)])
     res = runtime(script, max_output_tokens=4096, max_tokens_per_decision=5000).decide(request())
     assert script.seen == [] and res.usage["calls"] == 0
-    assert res.proposal["control"]["bounded_outcome"] == "request-budget-exhausted"
+    assert res.proposal == {} and res.runtime_outcome == res.usage["runtime_outcome"] == "request-budget-exhausted"
     assert "4096 output" in res.usage["limit_reached"]
 
 

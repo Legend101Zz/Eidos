@@ -4,6 +4,8 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.4.0
 
+- [ADR 0030](docs/decisions/0030-typed-runtime-bounds-without-proposals.md) records bounded Pydantic AI exits as runtime outcomes. Token and request limits, runaway reasoning and unusable structured replies no longer generate fabricated waits. Provider failures during the reserved tool-free request retain their provider classification.
+
 - [ADR 0029](docs/decisions/0029-study-fresh-checkpoint-contract.md) gives all four study arms the existing fresh-checkpoint naming contract in their shared prompt and tool-facing charter before Pilot 4.
 
 - Preserve ordinary finalization's reproduction/export/confirmation under the default policy; admit conclude-only recovery separately and handle disabled operator admission without deadline loops (R18).

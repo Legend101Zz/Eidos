@@ -31,7 +31,6 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import RequestUsage
 
-from eidos.domain.turns import validate_decision
 from eidos.investigator.pydantic_ai_runtime import (
     REASONING_EFFORTS,
     RUNAWAY_NOTE,
@@ -205,10 +204,8 @@ def runaway_of(res: DecisionResult) -> list[tuple[int, bool]]:
 
 
 def assert_bounded_runaway(res: DecisionResult) -> None:
-    ctl = res.proposal["control"]
-    assert ctl["bounded_outcome"] == "reasoning-runaway" and ctl["action"] == "wait_for_jobs"
-    assert ctl["summary"] == "reasoning-runaway" and res.proposal["calls"] == []
-    assert validate_decision(res.proposal, max_calls=4)["calls"] == []  # the lab accepts the no-effect decision
+    assert res.proposal == {}
+    assert res.runtime_outcome == res.usage["runtime_outcome"] == "reasoning-runaway"
     assert res.usage["limit_reached"] and not res.usage["structured_output"].get("valid", False)
 
 
@@ -380,7 +377,7 @@ def test_a_whitespace_only_reply_at_the_cap_is_a_runaway_too():
 def test_a_whitespace_only_reply_twice_is_the_bounded_runaway_outcome():
     wire = Wire(runaway_body("whitespace"), runaway_body("whitespace"))
     res = wire_runtime(wire, max_tokens_per_decision=250_000).decide(request())
-    assert res.proposal["control"]["bounded_outcome"] == "reasoning-runaway" and res.proposal["calls"] == []
+    assert res.proposal == {} and res.runtime_outcome == res.usage["runtime_outcome"] == "reasoning-runaway"
     assert runaway_of(res) == [(1, False), (2, True)] and res.usage["calls"] == 2
 
 
@@ -403,7 +400,7 @@ def test_a_truncated_answer_twice_is_the_structured_output_outcome_not_the_runaw
     truncated = completion({"role": "assistant", "content": '{"rationale": "cut'}, finish="length", prompt=3000,
                            out=CAP, reasoning=None)
     res = wire_runtime(Wire(truncated), fresh_state_repairs=0).decide(request())
-    assert res.proposal["control"]["bounded_outcome"] == "structured-output-invalid"
+    assert res.proposal == {} and res.runtime_outcome == res.usage["runtime_outcome"] == "structured-output-invalid"
     assert res.usage["structured_output"]["runaway"] == [] and res.usage["calls"] == 2
 
 
@@ -496,7 +493,7 @@ def test_after_a_refused_read_request_the_schema_reask_is_a_normal_request_bound
         request(read_tools(log)))
     assert len(wire.requests) == 4 and seen == [0, 0, 0, 1]  # request 2's read request was not executed
     assert "read" not in schema_of(wire.requests[1])["properties"] and "read" in schema_of(wire.requests[2])["properties"]
-    assert res.proposal["control"]["bounded_outcome"] == "request-budget-exhausted" and res.usage["calls"] == 4
+    assert res.proposal == {} and res.runtime_outcome == res.usage["runtime_outcome"] == "request-budget-exhausted" and res.usage["calls"] == 4
     assert log == ["job_0"] and runaway_of(res) == [(1, False)]
 
 
@@ -746,14 +743,14 @@ def test_a_runaway_then_a_malformed_reply_then_a_decision_uses_both_reasks():
 def test_a_runaway_then_two_malformed_replies_is_bounded_invalid_not_runaway():
     script = scripted(runaway_response(), "not json at all")
     res = fn_runtime(script, fresh_state_repairs=0).decide(request())
-    assert len(script.seen) == 3 and res.proposal["control"]["bounded_outcome"] == "structured-output-invalid"
+    assert len(script.seen) == 3 and res.proposal == {} and res.runtime_outcome == res.usage["runtime_outcome"] == "structured-output-invalid"
     assert res.usage["calls"] == 3 and res.usage["output_tokens"] == CAP + 40
 
 
 def test_a_malformed_reply_after_a_runaway_with_no_request_left_is_bounded_invalid():
     script = scripted(runaway_response(), "not json at all", json.dumps(GOOD))
     res = fn_runtime(script, max_requests_per_decision=2).decide(request())
-    assert len(script.seen) == 2 and res.proposal["control"]["bounded_outcome"] == "structured-output-invalid"
+    assert len(script.seen) == 2 and res.proposal == {} and res.runtime_outcome == res.usage["runtime_outcome"] == "structured-output-invalid"
     assert res.usage["calls"] == 2
 
 
@@ -1073,7 +1070,6 @@ def test_tool_mode_runaway_in_the_reserved_final_request_after_the_read_budget_i
     assert "read-tool budget" in last_user(final)
     # the bounded no-effect outcome of a runaway, not the request-budget one the old code reported
     assert_bounded_runaway(res)
-    assert res.proposal["control"]["bounded_outcome"] != "request-budget-exhausted"
     u = res.usage
     assert u["tool_budget_exhausted"] is True and "reserved final request" in u["limit_reached"]
     # recorded: the runaway is the third request; it was not a re-ask and there was no re-ask
