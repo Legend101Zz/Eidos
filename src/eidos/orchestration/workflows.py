@@ -395,7 +395,11 @@ class InvestigationWorkflow:
                 if cursor:
                     a["operator_cursor"] = int(cursor)
             completion = res.get("completion") or {}
-            if completion and reason == "deadline" and workflow.patched("exploration-boundary-finalization-v1"):
+            if completion and reason == "deadline" and workflow.patched("exploration-boundary-finalization-v1") \
+                    and (completion.get("exploration_deadline_unix") is not None
+                         or not workflow.patched("exploration-boundary-only-v3")):
+                # Only exploratory turns cross this boundary. Ordinary finalization ends at the separate
+                # conclusion reserve and starts its fresh conclusion turn through the existing path below.
                 # Wait only to the true exploration boundary, never through the reproduction/export hold-back.
                 left = turn_boundary(completion) - workflow.now().timestamp()
                 if left > 0:
