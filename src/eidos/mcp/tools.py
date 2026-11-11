@@ -199,8 +199,9 @@ TOOLS: tuple[Tool, ...] = (
          "and the freeze grant or an auto-freeze policy.",
          (P("plan_id", "s", required=True),), grant="propose"),
     Tool("launch_evidence_plan", "command", "launch_evidence_plan",
-         "Launch a frozen plan: admits one job per arm and returns the job ids.",
-         (P("plan_id", "s", required=True),), grant="spend_compute"),
+                  "Launch a frozen plan: its jobs run one at a time and are admitted as earlier ones end; returns the jobs admitted "
+         "so far. max_concurrent_jobs above 1 needs a project resource policy that allows it.",
+         (P("plan_id", "s", required=True), P("max_concurrent_jobs", "i")), grant="spend_compute"),
     Tool("assess_candidate", "command", "assess_candidate",
          "Default assessment pipeline (ADR 0021): from a locked candidate, a baseline and a charter rule to a frozen, "
          "launched evidence plan with the correct template. Validates output schemas, seed pairing (fresh "
@@ -217,7 +218,8 @@ TOOLS: tuple[Tool, ...] = (
           P("labels", "s", "Held-out labels artifact id (classification path)."), P("predictions_slot", "s"),
           P("data_provenance", "o", "{split: held-out|selection, note?}."), P("required_isolation", "o"),
           P("train_evaluate", "o", "Paired-report path: {seeds, baseline, candidate, evaluation, common_train?, common_evaluate?}."),
-          P("environment", "s"), P("request_id", "s"), P("investigation_id", "s")),
+          P("environment", "s"), P("request_id", "s"), P("investigation_id", "s"),
+          P("max_concurrent_jobs", "i", "Jobs of the plan run one at a time unless the project's resource policy allows more.")),
          grant="propose"),
     Tool("get_claim", "query", "get_claim",
          "Claim with its assessments (outcome, conformance, evidence health), its derived state "

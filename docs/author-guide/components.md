@@ -20,7 +20,7 @@ assessor's author wrote that suite, treat it as an author suite until someone el
 |---|---|
 | **Project** (the researcher's registered interpreter with torch; CWD = `project_root`) | `eidos.pytorch.train`, `eidos.pytorch.evaluate`, `eidos.pytorch.weight-edit`, `eidos.pytorch.behavior-check`; training extension `lab.learning.group-balanced-ema` (loaded inside the train process) |
 | **Lab** (needs `eidos.domain`) | `eidos.assessors.paired-ci`, `eidos.qualification-runner` |
-| Either (standard library only) | `lab.pairs.by_group`, `lab.switch.balanced-data`, `eidos.templates.improves-under-budget`, `eidos.task.paired-classification-report` (NPZ inputs need numpy) |
+| Either (standard library only) | `lab.pairs.by_group`, `lab.switch.balanced-data`, `eidos.templates.improves-under-budget`, `eidos.task.paired-classification-report` (NPZ inputs need numpy), `eidos.search.recipe-sweep` (its candidate command needs its own project environment) |
 
 Project-environment components need `eidos-worker-sdk` and `eidos-pytorch` on `PYTHONPATH` (the runner
 adds them) and an adapter module importable from the project root or from `config.python_path`.
@@ -39,6 +39,7 @@ adds them) and an adapter module importable from the project root or from `confi
 | `eidos.templates.improves-under-budget@1.2.0` (`evidence-plan/1`) | plan / planning | `request` (`plan-request/1`) -> `draft` (`evidence-plan/1`) | none (the request carries claim, seeds, evaluation, baseline/candidate; or `classification`: labels and per-seed predictions artifacts, ADR 0018) | `arms, seeds, jobs_planned, open_obligations` |
 | `eidos.assessors.paired-ci@1.2.0` (`protocol-assessment/1`) | assess / assessment | `evidence` (`evidence-set/1`) -> `evaluation` (`protocol-evaluation/1`) | none (metrics: `both-correct-rate`, `reference-accuracy`, `accuracy`) | `outcome, units, clusters, metrics{estimate, ci_low, ci_high}` |
 | `eidos.task.paired-classification-report@1.0.0` (`paired-classification-report/1`) | observe / artifact-op | `baseline`, `candidate` (`class-predictions/1`), `labels` (`class-labels/1`) -> `predictions` (`classification-pair-rows/1`) | `role`, `cluster`, `classes?`, `id_field?` | `role, cluster, examples, classes, aligned` |
+| `eidos.search.recipe-sweep@1.0.0` (`recipe-search/1`) | change-weights / artifact-op | `source`, `train`, `validation`, `task` -> `evidence_table` (`recipe-sweep-table/1`), `best_recipe` (`recipe-sweep-best/1`) | `command, space{mode,parameters,seed?,samples?}, objective{metric,direction?}, seed_policy{seeds,folds}, budget{max_trials,max_seconds}, stopping{rule,patience,min_delta,target}, recipe?` | `stop_reason, evidence_digest, best_recipe_id, metrics` |
 | `eidos.qualification-runner@1.0.0` | observe / artifact-op | (target source at `ports["target.source/1"].path`) -> `qualification_results` (`qualification-results/1`) | `suite, target{ref}, result_slot, outcome_key` | `target, controls, invalid_runs` |
 
 ## The adapter conventions the PyTorch components rely on

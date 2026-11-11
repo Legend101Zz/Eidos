@@ -24,6 +24,7 @@ from eidos.application.handlers.evidence import (
 from eidos.application.service import Ctx, command
 from eidos.domain import assessment as rules
 from eidos.domain.errors import DomainError, Forbidden, Invalid
+from eidos.domain.turns import MAX_CONCURRENT_JOBS_KEY
 
 REQUEST_FIELDS = ("success_rule_id", "charter_id", "claim_id", "baseline", "candidate", "seeds", "labels", "predictions_slot",
                   "data_provenance", "required_isolation", "environment", "train_evaluate")
@@ -360,7 +361,8 @@ def assess_candidate(ctx: Ctx, p: dict) -> dict:
             if plan["obligations"]:
                 raise Invalid("plan has unresolved obligations", details={"obligations": plan["obligations"]})
             frozen = freeze_evidence_plan(ctx, {"plan_id": plan["plan_id"]})
-            launched = launch_evidence_plan(ctx, {"plan_id": plan["plan_id"]})
+            launched = launch_evidence_plan(ctx, {"plan_id": plan["plan_id"],
+                                                   MAX_CONCURRENT_JOBS_KEY: p.get(MAX_CONCURRENT_JOBS_KEY)})
             blocked = ctx.tx.require("evidence_plan", plan["plan_id"]).body["launch"]["blocked"]
             if blocked:
                 raise _StepBlocked("a plan step was refused admission at launch", details={"blocked": blocked})

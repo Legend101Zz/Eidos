@@ -66,6 +66,46 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 - The investigator's tool guide states that a candidate can be submitted without a held-out verdict, the normal case
   when the evaluator owns the held-out data.
 
+### Dependent batches and recipe search (E3, ADR 0022)
+- **Dependent decision batches.** One accepted decision can now author source and run train, infer and score on it:
+  call arguments can be `{"$ref": "call[i].field"}` or `call[i].outputs.slot`, resolved when the dependent call
+  executes. The batch is recorded prospectively and each call keeps its receipt, command key and provenance. Malformed
+  or unknown references, forward references and references in literal arguments are refused before acceptance.
+- **Jobs of a decision run sequentially** unless a decision's `resource_policy` asks for concurrency and the project's
+  operator-set `policy.resources.max_concurrent_jobs` allows it. `TurnWorkflow` waits for a batch's jobs durably (patch
+  `dependent-batch-v1`). A failure stops only the dependent tail, recorded as `DEPENDENCY_FAILED`.
+- **New component `eidos.search.recipe-sweep@1.0.0`**, in `components/` and the standalone toolkit: grid or seeded
+  random search over a project command, on visible validation only, with seeds, folds, a required budget and a stopping
+  rule. It records every recipe in a ranked evidence table and the best recipe. Exploratory; no claim, no test data.
+- New wire schema `decision-proposal` and fixtures. Tool guide updated.
+
+### Review fixes E3b (review R11 of 0a75804, ADR 0022 addendum R11)
+- **Evidence plans use the one-CPU allowance.** `launch_evidence_plan` admits one job at a time, or the
+  `max_concurrent_jobs` it asks for if the project's resource policy allows that, and the next step is admitted when a
+  job ends. In a decision, a plan waits for an idle batch and holds its whole allowance until its last job has ended.
+  The launch result's `jobs` now lists only the jobs admitted so far.
+- **Sweep evaluations are process groups.** Each is stopped and reaped as a whole group on a timeout, a stop request,
+  cancellation, or a normal exit that left workers behind.
+- **Sweep evaluations cannot publish inherited credentials.** They run in a scrubbed environment, and failure text is
+  redacted before it reaches the table.
+- **The sweep copies no project file implicitly.** Without a source bundle, `command.copy` must list the files, and files
+  named after a held-out split are refused, there and in a source bundle.
+- **`DecisionControl` carries `scope`, `scope_text` and `bounded_outcome`**, which the runtime writes and the published
+  schema dropped. A scope the model wrote that is not a JSON object is kept as `scope_text`. The decision fixtures now
+  come from the runtime's own conversion.
+
+### Integration of ADR 0020, 0021 and 0022
+- **One workflow.** The playbook and the tool guide describe one path: baseline; a sweep or quick wins with batches; lock;
+  fresh-seed reproduction; `assess_candidate` where held-out data exists, otherwise "candidate submitted for confirmation";
+  conclude before the deadline.
+- **`context-policy/2` pinned facts** also state the candidate and assessment state, recent sweeps and batches, and the body
+  lists assessment requests.
+- **`assess_candidate` follows the one-CPU rule in a batch** and passes the decision's checked `max_concurrent_jobs`.
+  A refused request holds no allowance.
+- **A waiting batch stops at the conclusion reserve** as well as at the turn's timeout.
+- **`DecisionControl` publishes `claim` and `claim_text`** beside `scope` and batch references, with fixture
+  `decision-proposal-conclude-claim`.
+
 ## Unreleased / 1.1.1
 
 Reasoning models through OpenAI-compatible endpoints (ADR 0016). Measured with MiniMax-M3.1-Flash through

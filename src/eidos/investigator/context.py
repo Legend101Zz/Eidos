@@ -11,6 +11,7 @@ import json
 import re
 from typing import Any
 
+from eidos.domain.assessment import lifecycle_state
 from eidos.domain.redaction import redact_text as _redact
 from eidos.domain.turns import CONTROL_TOOLS, EFFECT_TOOLS, MODEL_CONTEXT_CHAR_LIMIT
 from eidos_wire import canonical_json, sha256_bytes
@@ -19,6 +20,8 @@ POLICY_ID = "context-policy/2"  # ADR 0020
 POLICY_V1 = "context-policy/1"
 MAX_JOBS = 25
 MAX_CATALOG = 30
+SWEEP_COMPONENT = "eidos.search.recipe-sweep"
+BATCH_NOT_RUN_CODES = ("DEPENDENCY_FAILED", "REF_UNRESOLVED", "BATCH_DEADLINE")
 
 TOOL_GUIDE = """You are the Eidos investigator. Each turn you propose ONE decision as JSON:
 {"rationale": str, "purpose": one of reproduction|measurement-development|open-search|hypothesis-test|confirmation,
@@ -34,8 +37,7 @@ Effect tools (executed in order only after the lab accepts your decision):
     the NEXT turn; launch it there.
   author_source {files:{path: text}}  -> a source-bundle artifact id: candidate project files (e.g. a changed project.py)
     for run_component inputs.source of eidos.project.command (the whole-trainer path). No build, no new component.
-    The id is listed under "Artifacts you created" in your NEXT turn's context; run it there (a call cannot use
-    an id returned by an earlier call of the same decision).
+    Use it in the same decision with a reference (below), or from "Artifacts you created" in a later turn.
   author_component {files:{path: text}, environment: "<registered environment name string, e.g. \"default\">"}
     -> builds a NEW component (needs an eidos-component.json manifest in files): a validation job; then
     publish_component {bundle_artifact_id, validation_job_id}. The manifest "entry" is "module:function", called as
@@ -74,6 +76,21 @@ Effect tools (executed in order only after the lab accepts your decision):
     expect its refusal, and conclude with disposition "candidate" and your validation point estimate. The outcome is
     "candidate submitted for confirmation" and the independent evaluator decides. That is a normal, complete result.
   export_model {checkpoint_artifact_id, behavior_check_job_id}; record_note {kind, text, evidence_refs}
+Batches: calls run in order, and any argument of a later call can be {"$ref": "call[<i>].<field>"}, an earlier call of
+  the SAME decision's result, filled in when the later call runs. So one decision can author, train, infer and score:
+  [author_source {files}, run_component {inputs: {source: {"$ref": "call[0].artifact_id"}}, ...}, run_component {inputs:
+  {model: {"$ref": "call[1].outputs.model"}}, ...}, ...]. Fields: author_source artifact_id; run_component/launch_trial/
+  launch_branch job_id, trial_id or outputs.<slot> (a published output of that job); plan_trial/plan_branch trial_id;
+  author_component job_id, bundle_artifact_id; publish_component component_ref; file_claim claim_id;
+  draft/freeze/launch_evidence_plan and assess_candidate plan_id; export_model export_id. A reference to a job waits until it has
+  succeeded. If it fails, the calls that need it are not run and are recorded DEPENDENCY_FAILED; independent calls still
+  run. References name earlier calls only; component_ref, environment and purpose stay literal. Unknown references are
+  refused before anything runs. Jobs of one decision run one at a time (one CPU); several at once need "resource_policy":
+  {"max_concurrent_jobs": n} and a project resource policy that allows n. launch_evidence_plan and assess_candidate use the same
+  allowance: their jobs run one at a time, and the calls after them that start compute wait until the last job has ended.
+Search: eidos.search.recipe-sweep runs one project command over a parameter space (grid, or random with a seed) on
+  visible validation, with seeds/folds, a budget (max_trials or max_seconds) and a stopping rule, and returns a ranked
+  evidence_table and best_recipe. It is exploratory: no claim, no test data. Lock the winner before confirming it.
 Control actions: wait_for_jobs (sleep until admitted work finishes), request_input, conclude {summary, scope, claim?},
   stop. claim = {disposition: "candidate"|"confirmed"|"null"|"abstain", claim_id?, point_estimate: {metric, value or
   baseline+candidate, split?, direction?: "higher_is_better"|"lower_is_better"} (value means improvement: positive is
@@ -222,9 +239,10 @@ PINNED_BUDGETS: dict[str, tuple[int, float, int]] = {
     "revision": (900, 0.02, 900), "model": (400, 0.01, 400), "charter": (3000, 0.06, 3000), "steering": (4000, 0.07, 1200),
     "inputs": (3000, 0.05, 3000), "task": (2000, 0.04, 2000), "notes": (3000, 0.05, 3000), "budget": (1500, 0.03, 1500),
     "wall": (500, 0.06, 500), "baseline": (1200, 0.03, 1200), "lock": (1500, 0.03, 800), "success_rules": (1500, 0.03, 1500),
-    "environments": (6000, 0.10, 900), "failures": (6000, 0.10, 400)}
+    "environments": (6000, 0.10, 900), "failures": (6000, 0.10, 400), "assessment": (2400, 0.04, 700), "search": (1500, 0.03, 600),
+    "batches": (1000, 0.02, 500)}
 HEAD_SECTIONS = ("revision", "model", "charter", "steering", "inputs", "task", "notes", "budget")
-FACT_SECTIONS = ("wall", "baseline", "lock", "success_rules", "environments", "failures")
+FACT_SECTIONS = ("wall", "baseline", "lock", "assessment", "success_rules", "environments", "search", "batches", "failures")
 # Dropped first when the sections together do not fit a small limit; the facts are not on this list.
 DROP_ORDER = ("notes", "task", "inputs", "budget", "revision", "model")
 MAX_REFUSED_PACKAGES = 10
@@ -311,11 +329,64 @@ def _lock_fact(view: dict[str, Any]) -> list[str]:
     locks = [n for n in (view.get("pinned_notes") or []) if n.get("kind") in ("candidate_lock", "lock")]
     if locks:
         out.append(f"- Current lock ({locks[-1]['id']}, {len(locks)} recorded): {_redact(str(locks[-1].get('text') or ''))[:600]}")
-    active = [p for p in (view.get("evidence_plans") or []) if p.get("status") in ("frozen", "launched", "running", "assessed")]
+    active = [p for p in (view.get("evidence_plans") or []) if p.get("status") not in ("draft", "cancelled", None)]
     if active:
         pl = active[-1]
         out.append(f"- Latest frozen evidence plan: {pl['plan_id']} ({pl['status']}, claim {pl.get('claim')}, "
                    f"assessment {json.dumps(pl.get('assessment'), sort_keys=True)})"[:800])
+    return out
+
+
+def _assessment_facts(view: dict[str, Any]) -> list[str]:
+    """Where the candidate stands (ADR 0021): the state its claim would have now, and the route that remains."""
+    plans = view.get("evidence_plans") or []
+    out: list[str] = []
+    assessed = [p for p in plans if p.get("assessment")]
+    if assessed:
+        plan, a = assessed[-1], assessed[-1]["assessment"]
+        state = lifecycle_state(a.get("outcome"), a.get("conformance"), a.get("health"))
+        out.append(f"- Candidate state: {state} (plan {plan['plan_id']}, assessment {a.get('assessment_id')}, outcome "
+                   f"{a.get('outcome')}, conformance {a.get('conformance')}, health {a.get('health')})")
+    else:
+        out.append('- Candidate state: no assessment recorded. Concluding with claim disposition "candidate" records '
+                   '"candidate submitted for confirmation".')
+    for plan in plans[-2:]:
+        conf = plan.get("confirmation")
+        if isinstance(conf, dict):
+            kind = "can confirm" if conf.get("eligible") else "exploratory, cannot confirm"
+            out.append(f"- Plan {plan['plan_id']} ({plan.get('status')}): {kind}"
+                       + (f": {'; '.join(str(r) for r in conf.get('reasons') or [])}" if not conf.get("eligible") else ""))
+    for req in (view.get("assessment_requests") or [])[-2:]:
+        reasons = [str((r or {}).get("code")) for r in req.get("reasons") or [] if isinstance(r, dict)]
+        out.append(f"- assess_candidate {req.get('request_id')}: {req.get('status')}"
+                   + (f", plan {req['plan_id']}" if req.get("plan_id") else "") + (f", reasons {reasons}" if reasons else ""))
+    ch = view.get("charter")
+    if ch:
+        out.append("- Route: held-out data is attested in the charter, so assess_candidate can confirm." if ch.get("held_out") else
+                   "- Route: no held-out data is attested in the charter, so assessment stays exploratory. Conclude with claim "
+                   'disposition "candidate": the outcome is "candidate submitted for confirmation" and the evaluator decides.')
+    return out
+
+
+def _sweep_facts(view: dict[str, Any]) -> list[str]:
+    """Recipe sweeps of this investigation (ADR 0022), whose rows the job window can otherwise drop."""
+    out = []
+    for j in view.get("jobs") or []:
+        if not str(j.get("component") or "").startswith(SWEEP_COMPONENT):
+            continue
+        outputs = {o["slot"]: o["artifact_id"] for o in j.get("outputs", []) if o.get("slot") in ("best_recipe", "evidence_table")}
+        metrics = (j.get("receipt") or {}).get("metrics") if isinstance(j.get("receipt"), dict) else None
+        out.append(f"- Sweep {j['id']} ({j.get('status')}): {json.dumps(outputs, sort_keys=True)}"
+                   + (f", metrics {json.dumps(metrics, sort_keys=True)}" if metrics else "") + ". Exploratory: lock the winner before confirming it.")
+    return out[-3:]
+
+
+def _batch_facts(view: dict[str, Any]) -> list[str]:
+    """How batches work, and the calls of recent batches that did not run (ADR 0022), beyond the recent results window."""
+    out = ['- Batches: one decision can chain calls with {"$ref": "call[i].field"}; jobs run one at a time unless the resource '
+           "policy allows more. A call that fails stops what depends on it, and independent calls still run."]
+    notrun = [r for r in view.get("call_results") or [] if r.get("code") in BATCH_NOT_RUN_CODES]
+    out += [f"- Not run (turn {r.get('turn')}): {r.get('tool')} {r.get('code')}" for r in notrun[-4:]]
     return out
 
 
@@ -396,6 +467,9 @@ def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
     raw["wall"] = [wall] if wall else []
     raw["baseline"] = [baseline or "- Baseline: none recorded yet (reproduce it first)."]
     raw["lock"] = _lock_fact(view)
+    raw["assessment"] = _assessment_facts(view)
+    raw["search"] = _sweep_facts(view)
+    raw["batches"] = _batch_facts(view)
     raw["success_rules"] = (["- Charter success rule(s): " + json.dumps(ch.get("success_rules"), sort_keys=True)]
                             if ch and ch.get("success_rules") is not None else [])
     env_details = view.get("environment_details") or {}
@@ -422,7 +496,7 @@ def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
 
     def assemble_facts() -> list[str]:
         out = ["## Pinned facts (always present; they survive truncation and the job window)"]
-        for name in ("wall", "baseline", "lock", "success_rules", "environments"):
+        for name in ("wall", "baseline", "lock", "assessment", "success_rules", "environments", "search", "batches"):
             out += pinned.get(name, [])
         if pinned.get("failures"):
             out += ["- Known failures so far (do not repeat one without changing what caused it):", *pinned["failures"]]
@@ -485,6 +559,8 @@ def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
     fill("jobs", f"## Jobs ({len(jobs)} total; recent ones, oldest first)", job_items, newest_first=True,
          ids=sel["jobs"], skipped=omitted["jobs"])
     fill("plans", "## Your evidence plans", [(str(p.get("plan_id")), json.dumps(p, sort_keys=True, default=str)) for p in plans])
+    fill("requests", "## Assessment requests (assess_candidate; a refusal lists why)",
+         [(str(r.get("request_id")), json.dumps(r, sort_keys=True, default=str)) for r in view.get("assessment_requests") or []])
     fill("results", f"## Results of your recent calls ({len(results)}; ids here are what later calls take)",
          [(f"result:{i}", json.dumps(r, sort_keys=True, default=str)) for i, r in enumerate(results)], newest_first=True)
     fill("created", f"## Artifacts you created ({len(created)}; unused ones have used_by [])",
@@ -502,7 +578,7 @@ def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
                                 sort_keys=True)) for c in shown], ids=sel["catalog"], skipped=omitted["catalog"])
 
     body: list[str] = []
-    for name in ("jobs", "created", "results", "plans", "approved", "claims", "catalog"):
+    for name in ("jobs", "created", "results", "plans", "requests", "approved", "claims", "catalog"):
         body += rendered.get(name, [])
     if len(catalog) > len(sel["catalog"]) and "catalog" in rendered:
         body.append("(more components exist: use search via the catalog query; they are data, not tools)")

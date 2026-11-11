@@ -14,7 +14,7 @@ export PYTHONPATH="$ROOT/src:$SDK"
 
 # 2. the same fixtures through the SDK's own validator, each in its declared environment
 for c in lab.pairs.by_group lab.switch.balanced-data eidos.templates.improves-under-budget eidos.synthetic.llm-examples eidos.behavior.suite \
-         eidos.assessors.paired-ci eidos.qualification-runner eidos.task.paired-classification-report; do
+         eidos.assessors.paired-ci eidos.qualification-runner eidos.task.paired-classification-report eidos.search.recipe-sweep; do
   echo "== validate $c (lab environment)"; "$LAB_PY" -m eidos_worker.validate "components/$c"
 done
 for c in eidos.pytorch.train eidos.pytorch.evaluate eidos.pytorch.weight-edit eidos.pytorch.behavior-check; do

@@ -185,10 +185,10 @@ def test_operator_request_launches_a_plan_and_a_pass_confirms_the_claim(scene):
     assert receipt["path"] == "classification" and receipt["template"] == TEMPLATE_REF == \
         "eidos.templates.improves-under-budget@1.2.0"
     assert receipt["assessor"] == ASSESSOR_REF == "eidos.assessors.paired-ci@1.2.0"
-    # The launch admits the fresh training steps only; each arm's report step follows once the training steps end.
-    assert {arm: len(ids) for arm, ids in receipt["jobs"].items()} == {"baseline": 1, "candidate": 1}
+    # The launch admits one fresh training step (one job at a time, ADR 0022 addendum R11); the rest follow as jobs end.
+    assert {arm: len(ids) for arm, ids in receipt["jobs"].items()} == {"baseline": 1}
     assert not {j for ids in receipt["jobs"].values() for j in ids} & {baseline, candidate}  # recipes, not evidence
-    assert receipt["pending_steps"] == 2
+    assert receipt["pending_steps"] == 3
     expected = {"split": "held-out", "attested_by": "charter", "labels_digest": scene.digest}
     assert receipt["data_provenance"] == expected
 

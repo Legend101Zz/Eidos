@@ -137,3 +137,12 @@ Review R10 found eight problems; each is corrected here and has a test.
    or declaration registers a new record, and an unchanged one replays.
 
 The review's principle is unchanged: admission refuses only on positive evidence, and nothing here weakens assessment.
+
+## Integration with ADR 0021 and ADR 0022 (E4)
+
+`context-policy/2` carries three more budgeted pinned sections: where the candidate stands (`assessment`: state, plan
+confirmation, `assess_candidate` requests, and the route the charter leaves), recipe sweeps (`search`) and batches
+(`batches`, including calls that did not run). The body also lists `assessment_requests`, which only `context-policy/1`
+rendered. A waiting batch (`_drive_batch`) stops at the reserve's start like the rest of the turn: its calls that cannot
+start are recorded `BATCH_DEADLINE`, and every slice is bounded. `investigator-playbook/1` and `investigator-prompt/2` now
+describe the one integrated workflow; neither id was released with the earlier text, so they are not bumped.

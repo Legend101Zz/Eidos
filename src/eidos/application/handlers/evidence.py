@@ -7,6 +7,7 @@ import uuid
 from typing import Any
 
 from eidos.application.handlers.investigations import confirm_scope, inv_scope
+from eidos.application.handlers.projects import checked_concurrency
 from eidos.application.handlers.runs import admit_job, resolve_lock, strongest_profile
 from eidos.application.service import Ctx, command
 from eidos.domain import assessment as ev_assessment
@@ -20,7 +21,10 @@ from eidos.domain.errors import (
     QualificationMissing,
     WithdrawnMethod,
 )
+from eidos.domain.turns import MAX_CONCURRENT_JOBS_KEY
 from eidos_wire import canonical_json, sha256_bytes
+
+TERMINAL_STATUSES = ("succeeded", "failed", "cancelled", "pruned")
 
 
 @command("file_claim", "propose")
@@ -246,11 +250,20 @@ def _admit_step(ctx: Ctx, plan, arm: dict, step: dict, inputs: dict, scope, inv_
 
 
 def _advance(ctx: Ctx, plan, launch: dict) -> dict:
-    """Admit every pending step whose referenced steps succeeded; block those whose did not."""
+    """Admit pending steps whose referenced steps succeeded, within the plan's concurrency (one job at a time unless the
+    project's resource policy and the launcher allow more, ADR 0022 addendum R11); block those whose did not. Called again
+    in the transaction that ends each arm job, so the next step is admitted before the plan can look idle. A paused
+    investigation admits nothing until it resumes; a halted plan (a stop, or a question change that cancels work) blocks
+    what it has not admitted, as cancelling admitted jobs did when a plan admitted all its arms at launch."""
     inv_id = plan.body.get("investigation_id")
     scope = launch.get("scope")
     every = [s for arm in plan.body["arms"] for s in _pipeline_steps(arm)]
     unique = {s["id"]: s for s in every if sum(x["id"] == s["id"] for x in every) == 1}
+    limit = int(launch.get(MAX_CONCURRENT_JOBS_KEY) or 1)
+    halted = launch.get("halted")
+    inv = ctx.tx.get_record("investigation", inv_id) if inv_id else None
+    paused = inv is not None and inv.status == "paused"
+    active = sum(1 for jid in launch["steps"].values() if ctx.tx.get_job(jid)["status"] not in TERMINAL_STATUSES)
     progressed = True
     while progressed:
         progressed = False
@@ -269,7 +282,7 @@ def _advance(ctx: Ctx, plan, launch: dict) -> dict:
                         break
                     jid = launch["steps"].get(dep_key)
                     job = ctx.tx.get_job(jid) if jid else None
-                    if not job or job["status"] not in ("succeeded", "failed", "cancelled", "pruned"):
+                    if not job or job["status"] not in TERMINAL_STATUSES:
                         ready = False
                         continue
                     if job["status"] != "succeeded":
@@ -281,10 +294,10 @@ def _advance(ctx: Ctx, plan, launch: dict) -> dict:
                         break
                     wanted = (st["spec"].get("input_schemas") or {}).get(port)
                     inputs[port] = typed_reference(ctx, pub["artifact_id"], wanted) if wanted else pub["artifact_id"]
-                if blocked:
-                    launch["blocked"][st["key"]] = blocked
+                if blocked or halted:
+                    launch["blocked"][st["key"]] = halted or blocked
                     progressed = True
-                elif ready:
+                elif ready and active < limit and not paused:
                     # A step whose admission is refused (a withdrawn release, an exhausted budget, a resolution error)
                     # is blocked with its reason; it must never make the finishing predecessor's transaction fail,
                     # which would leave that job running forever (1.1.0 review). The savepoint undoes partial writes.
@@ -297,6 +310,7 @@ def _advance(ctx: Ctx, plan, launch: dict) -> dict:
                         continue
                     launch["steps"][st["key"]] = jid
                     launch["jobs"].setdefault(arm["id"], []).append(jid)
+                    active += 1
                     progressed = True
     return launch
 
@@ -313,21 +327,35 @@ def launch_evidence_plan(ctx: Ctx, p: dict) -> dict:
         scope = confirm_scope(inv_id) if ctx.tx.budgets(confirm_scope(inv_id)) else inv_scope(inv_id)
     for arm in plan.body["arms"]:
         _pipeline_steps(arm)  # validate shape before admitting anything
-    launch = _advance(ctx, plan, {"jobs": {}, "steps": {}, "blocked": {}, "scope": scope, "by": ctx.principal.id})
+    limit = checked_concurrency(ctx, p.get(MAX_CONCURRENT_JOBS_KEY))
+    launch = _advance(ctx, plan, {"jobs": {}, "steps": {}, "blocked": {}, "scope": scope, "by": ctx.principal.id,
+                                  MAX_CONCURRENT_JOBS_KEY: limit})
     body = {**plan.body, "launch": launch}
     rec = ctx.tx.put_record("evidence_plan", plan.id, ctx.project_id, body, created_by=ctx.principal.id, status="executing")
-    return {"plan_id": plan.id, "revision": rec.revision, "jobs": launch["jobs"], "pending_steps":
-            sum(len(_pipeline_steps(a)) for a in plan.body["arms"]) - len(launch["steps"]) - len(launch["blocked"])}
+    return {"plan_id": plan.id, "revision": rec.revision, "jobs": launch["jobs"], MAX_CONCURRENT_JOBS_KEY: limit,
+            "pending_steps": sum(len(_pipeline_steps(a)) for a in plan.body["arms"]) - len(launch["steps"]) - len(launch["blocked"])}
 
 
-def maybe_request_assessment(ctx: Ctx, plan_id: str) -> None:
-    """Called when an evidence-arm job ends: advance pipelines; request assessment when done."""
+def reconsider_plans(ctx: Ctx, investigation_id: str, *, halt: str | None = None) -> None:
+    """After an operator control: a resumed investigation's plans admit again, and ``halt`` ends what a plan had not
+    yet admitted (its running jobs follow the control's own policy)."""
+    for rec in ctx.tx.list_records(ctx.project_id, "evidence_plan", status="executing", limit=100000):
+        if rec.body.get("investigation_id") == investigation_id:
+            maybe_request_assessment(ctx, rec.id, halt=halt)
+
+
+def maybe_request_assessment(ctx: Ctx, plan_id: str, *, halt: str | None = None) -> None:
+    """Called when an evidence-arm job ends or an operator control changes what a plan may do: advance pipelines;
+    request assessment when done."""
     plan = ctx.tx.get_record("evidence_plan", plan_id, lock=True)
     if not plan or plan.status != "executing":
         return
     launch = plan.body["launch"]
     if "steps" in launch:
-        launch = _advance(ctx, plan, json.loads(json.dumps(launch)))
+        launch = json.loads(json.dumps(launch))
+        if halt:
+            launch["halted"] = halt
+        launch = _advance(ctx, plan, launch)
         if launch != plan.body["launch"]:
             plan = ctx.tx.put_record("evidence_plan", plan.id, ctx.project_id, {**plan.body, "launch": launch},
                                      created_by=ctx.principal.id, status="executing")
@@ -335,7 +363,7 @@ def maybe_request_assessment(ctx: Ctx, plan_id: str) -> None:
         if len(launch["steps"]) + len(launch["blocked"]) < total:
             return
     jobs = [ctx.tx.get_job(j) for js in arm_jobs(plan.body).values() for j in js]
-    if all(j["status"] in ("succeeded", "failed", "cancelled", "pruned") for j in jobs):
+    if all(j["status"] in TERMINAL_STATUSES for j in jobs):
         blocked = ((ctx.tx.get_record("evidence_plan", plan_id) or plan).labels or {}).get("blocked_by")
         if blocked:  # withdrawn method: no assessment is requested (fail closed)
             ctx.tx.set_status("evidence_plan", plan_id, "assessment-blocked")

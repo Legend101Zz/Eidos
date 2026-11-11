@@ -187,3 +187,12 @@ evaluator still decides.
   applies to every path, including older plans at the time a new conclusion is drawn.
 - Confirmation on the classification path now costs fresh training per seed and per arm. That is the price of a
   prospective result; a charter that attests held-out data must budget for it.
+
+## Integration with ADR 0020 and ADR 0022 (E4)
+
+Plans launched from a batch go through the same `freeze_evidence_plan` and `launch_evidence_plan`, so provenance and the
+prospective rules hold unchanged: a result pinned through `$ref` already exists when the plan is frozen (a reference to a
+job waits for it to succeed) and is refused as `observed-evidence`. `assess_candidate` is a plan tool for the batch
+scheduler: its jobs run one at a time and hold the decision's CPU allowance, and it takes the decision's checked
+`max_concurrent_jobs`. A refused `assess_candidate` is a recorded answer that admitted nothing, so it holds no allowance
+and gives a wait nothing to wait for. The decision schema carries `control.claim` beside `scope` and batch references.

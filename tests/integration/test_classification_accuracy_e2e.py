@@ -338,8 +338,8 @@ def test_two_recorded_recipes_and_attested_heldout_labels_reach_an_accuracy_verd
     plan = flow.plan_body(plan_id)
     assert plan["confirmation"]["eligible"] is True and plan["confirmation"]["reasons"] == []
     assert plan["confirmation"]["data_keys"] == [f"labels:{flow.labels_digest}"]
-    # Launch admits the training steps only; the recorded jobs are not among them (nothing observed is reused).
-    assert {arm: len(ids) for arm, ids in jobs.items()} == {"baseline": 1, "candidate": 1}
+    # Launch admits one training step (one job at a time, ADR 0022 addendum R11); no recorded job is among them.
+    assert {arm: len(ids) for arm, ids in jobs.items()} == {"baseline": 1}
     assert not {j for ids in jobs.values() for j in ids} & {baseline_job, candidate_job}
 
     finished = _run_plan(flow, plan_id)

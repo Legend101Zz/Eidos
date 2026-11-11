@@ -128,6 +128,8 @@ def get_job(ctx: Ctx, p: dict) -> dict:
 @query("list_jobs")
 def list_jobs(ctx: Ctx, p: dict) -> list[dict]:
     rows = ctx.tx.list_jobs(ctx.project_id, investigation_id=p.get("investigation_id"), statuses=p.get("statuses"))
+    if p.get("plan_id"):  # the jobs one evidence plan has admitted
+        rows = [j for j in rows if j["lock"].get("plan_id") == p["plan_id"]]
     for j in rows:
         _expose_job(ctx, j)
     return [{"id": j["id"], "kind": j["kind"], "status": j["status"], "purpose": j["purpose"], "epoch": j["epoch"],
@@ -470,8 +472,10 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
         plans.append({"plan_id": pl.id, "status": pl.status, "claim": (pl.body.get("claim_ref") or {}).get("id"),
                       "success_rule_ref": pl.body.get("success_rule_ref"), "obligations": pl.body.get("obligations"),
                       "jobs": launch.get("jobs"), "blocked": launch.get("blocked"),
+                      "confirmation": pl.body.get("confirmation"),
                       "assessment": None if asm is None else {"assessment_id": asm.id, "outcome": asm.body.get("outcome"),
-                                                              "conformance": asm.body.get("conformance")}})
+                                                              "conformance": asm.body.get("conformance"),
+                                                              "health": (asm.labels or {}).get("health", "intact")}})
     requests = [{"request_id": r.id, "status": r.status, "plan_id": r.body.get("plan_id"), "path": r.body.get("path"),
                  "exploratory": r.body.get("exploratory"), "reasons": r.body.get("reasons")}
                 for r in ctx.tx.list_records(ctx.project_id, "assessment_request", parent_id=inv.id, limit=100000)

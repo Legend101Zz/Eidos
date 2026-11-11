@@ -28,7 +28,8 @@ ROOT = Path(__file__).resolve().parents[2]
 SCHEMAS = ROOT / "schemas" / "eidos-wire" / f"v{eidos_wire.WIRE_MAJOR}"
 FIXTURES = ROOT / "tests" / "fixtures" / "wire" / f"v{eidos_wire.WIRE_MAJOR}"
 # Fixtures that eidos_wire's own (semantic) checks accept: only the published schema catches them.
-SCHEMA_ONLY = {"invalid-output-manifest-receipt-not-object", "invalid-component-manifest-card-type"}
+SCHEMA_ONLY = {"invalid-output-manifest-receipt-not-object", "invalid-component-manifest-card-type",
+               "invalid-decision-proposal-ref-malformed", "invalid-decision-proposal-ref-extra-key"}
 
 
 def _load(path: Path):
@@ -53,7 +54,9 @@ def _validator(kind: str) -> Draft202012Validator:
 
 def _stdlib_parse(kind: str, data: dict):
     return {"invocation": eidos_wire.Invocation.from_dict, "output-manifest": eidos_wire.OutputManifest.from_dict,
-            "component-manifest": eidos_wire.parse_manifest}[kind](data)
+            "component-manifest": eidos_wire.parse_manifest,
+            # decisions are not worker messages: eidos_wire has no parser for them (ADR 0022)
+            "decision-proposal": lambda d: d}[kind](data)
 
 
 def test_a_schema_files_are_generated_and_current():
@@ -188,3 +191,31 @@ def test_d_component_registration_refuses_schema_violations_with_problems():
     with pytest.raises(Invalid) as exc:
         parse_or_invalid({**good, "card": 42})  # eidos_wire.parse_manifest alone accepts this
     assert any(p.startswith("card:") for p in exc.value.details["problems"])
+
+
+# ADR 0022 addendum R11: what the investigator runtime writes is what the published decision schema carries.
+@pytest.mark.parametrize("name", ["decision-proposal", "decision-proposal-conclude", "decision-proposal-conclude-scope-text",
+                                  "decision-proposal-bounded-outcome"])
+def test_runtime_decision_proposals_are_schema_valid_and_lose_nothing(name):
+    data = json.loads((FIXTURES / f"{name}.json").read_text())
+    assert not list(_validator("decision-proposal").iter_errors(data))
+    parsed = wire.DecisionProposal.model_validate(data).model_dump(by_alias=True, exclude_none=True, mode="json")
+    control = data["control"]
+    assert {k: parsed["control"][k] for k in control} == control
+    from eidos.domain.turns import validate_decision
+    assert validate_decision(json.loads(json.dumps(data)), max_calls=16)["control"] == control
+
+
+def test_conclude_carries_the_structured_answer_and_a_textual_scope():
+    conclude = json.loads((FIXTURES / "decision-proposal-conclude.json").read_text())["control"]
+    assert conclude == {"action": "conclude", "summary": "the answer is B", "scope": {"answer": "B", "model": "candidate"}}
+    text = json.loads((FIXTURES / "decision-proposal-conclude-scope-text.json").read_text())["control"]
+    assert text["scope_text"] == "only the visible validation split" and "scope" not in text
+
+
+@pytest.mark.parametrize("scope_json", ['"plain"', "7", "[1]", "not json"])
+def test_a_scope_the_model_wrote_that_is_not_an_object_stays_text(scope_json):
+    from eidos.investigator.pydantic_ai_runtime import Control, Decision, to_proposal
+    proposal = to_proposal(Decision(rationale="r", control=Control(action="conclude", scope_json=scope_json)))
+    assert proposal["control"]["scope_text"] == scope_json and "scope" not in proposal["control"]
+    assert not list(_validator("decision-proposal").iter_errors(proposal))

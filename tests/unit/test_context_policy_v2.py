@@ -272,6 +272,10 @@ def make_heavy_view():
     return make_view(jobs, environment_details={"lab": capability_summary(env)}, pinned_notes=pinned_notes_lock())
 
 
+# Room for the whole tool guide plus the pinned facts; anything smaller only exercises the last guard.
+PINNED_LIMIT = 14000
+
+
 def assert_pinned_facts(text):
     assert "- Baseline: job job_0000" in text and '"accuracy": 0.61' in text
     assert "SUCCESS-RULE-MARKER" in text and "Charter success rule(s)" in text
@@ -284,7 +288,7 @@ def assert_pinned_facts(text):
 
 def test_pinned_facts_survive_truncation():
     catalog = make_catalog(40, summary_chars=3000)
-    char_limit = 9000
+    char_limit = PINNED_LIMIT
     out = pack(make_heavy_view(), catalog, char_limit=char_limit)
     assert_pinned_facts(out["text"])
     assert out["truncations"]["context_truncated"] is True
@@ -476,7 +480,7 @@ def test_wall_fact_in_the_reserve_says_conclude_now():
 
 def test_wall_fact_is_pinned_under_truncation():
     completion = completion_state(deadline_unix=2000.0, now=1950.0, threshold=100.0)
-    out = pack(make_heavy_view() | {"completion": completion}, make_catalog(40, 3000), char_limit=9000)
+    out = pack(make_heavy_view() | {"completion": completion}, make_catalog(40, 3000), char_limit=PINNED_LIMIT)
     assert "CONCLUDE NOW" in out["text"]
     assert_pinned_facts(out["text"])
 

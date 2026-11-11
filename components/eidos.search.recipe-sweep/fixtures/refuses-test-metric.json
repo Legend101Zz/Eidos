@@ -1,0 +1,32 @@
+{
+ "name": "an objective on a test split is refused",
+ "inputs": {},
+ "config": {
+  "command": {
+   "argv": [
+    "python",
+    "fit.py"
+   ]
+  },
+  "space": {
+   "mode": "grid",
+   "parameters": {
+    "lr": {
+     "values": [
+      0.1
+     ]
+    }
+   }
+  },
+  "objective": {
+   "metric": "test_accuracy"
+  },
+  "budget": {
+   "max_trials": 3
+  }
+ },
+ "expect": {
+  "status": "failed"
+ },
+ "author_test": true
+}
