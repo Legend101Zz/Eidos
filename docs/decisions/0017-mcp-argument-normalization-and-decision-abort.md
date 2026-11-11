@@ -459,3 +459,39 @@ between two effects of one decision through `execute_decision`.
 - **Effects sent without an admission.** Operators and tools that call effect commands directly are not decisions and
   are not checked here; the existing per-command rules apply (for example, run and trial admission refuse a
   non-active investigation).
+
+## Addendum: review R9 (F5d: an operator stop or pause always wins over a turn's conclusion)
+
+**Finding.** A decision accepted with `control.action = "conclude"` (or `"stop"`) could race an operator stop or
+pause. When effect admission refused its calls, `execute_decision` returned `stopped` or `skipped`, but
+`TurnWorkflow` ignored that result and still passed the decision's control to `complete_turn`, whose `_close_turn`
+then wrote the investigation as `concluded` over the operator's `stopped` or `paused`. A decision with no calls never
+calls `execute_decision` and reached the same completion path, as did a stop that committed after the effects ran
+but before `complete_turn`.
+
+**Rule.** The conclusion is an effect of the turn like any other, and it is admitted under the same locks.
+
+- In `complete_turn` (`_close_turn`), with the turn row lock already held, the investigation row is locked (the
+  documented order: turn, then investigation) *before* the turn's result is written. If the decision's control is
+  `conclude` or `stop` and the investigation is not `active`, the control is refused. The investigation keeps the
+  operator's state and gets no `conclusion`. The turn closes as `cancelled` (stop reason `concluded` becomes
+  `cancelled`), and both its result and its `turn.completed` event carry `control_refused: "investigation-<status>"`.
+  A stop or pause either commits first, and the conclusion is refused, or it waits for the turn's closing to commit.
+  In the second case the stop or pause then sets its own status over `concluded`, as before. Either way the
+  operator's state is the final one. This holds for
+  every way into `complete_turn`: refused execution, a stop between execution and completion, and a decision with no
+  calls.
+- In `TurnWorkflow` (patch `refused-execution-cancels-v1`), an `execute_decision` result with `stopped` or
+  `skipped` ends the turn as `cancelled`. The decision's control is not acted on, and no further slot is decided. If
+  the turn would have stopped as `concluded` but `complete_turn` reports the turn `cancelled` (the lab refused the
+  conclusion), the workflow returns `cancelled` too. The coordinator therefore treats the turn like any cancelled
+  turn: its next `begin_turn` finds the investigation stopped (finished) or paused (waits for a resume). Histories
+  recorded before the patch keep their recorded commands, and for them the lab-side check alone keeps the operator's
+  state.
+
+**Tests.** `tests/integration/test_f5d_conclude_race.py` (against PostgreSQL, stop and pause): a stop before
+execution (the real `execute_decision` skips and the turn is cancelled), a stop after execution but before
+completion, a no-call conclude decision racing a stop, the `stop` control, a duplicate completion, and the unraced
+control case that still concludes. `tests/integration/test_f5d_refused_execution.py` (Temporal): `skipped` and
+`stopped` execution results cancel the turn without acting on its control, and a completion the lab reports as
+`cancelled` is returned as `cancelled`.

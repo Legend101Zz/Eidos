@@ -389,6 +389,12 @@ class TurnWorkflow:
                                                         start_to_close_timeout=timedelta(seconds=600),
                                                         heartbeat_timeout=HB, retry_policy=SHORT)
                     receipts.append({"decision_id": d["decision_id"], "summary": r.get("summary")})
+                    if (r.get("stopped") or r.get("skipped")) and workflow.patched("refused-execution-cancels-v1"):
+                        # F5d (review R9): execution refused (a stop, pause, turn closure or a run that lost the turn
+                        # committed first) is a cancellation: the decision's control (e.g. conclude) is never applied.
+                        # Older histories went on to the decision's control; complete_turn refuses it too.
+                        stop = "cancelled"
+                        break
                 control = d.get("control") or {}
                 action = control.get("action")
                 if action == "wait_for_jobs" and d.get("n_calls") and r.get("nothing_outstanding") \
@@ -424,11 +430,17 @@ class TurnWorkflow:
             if stop == "error":
                 failure = turn_failure(exc)
         finally:
-            await workflow.execute_activity("complete_turn", {**base, "stop_reason": stop, "control": control,
-                                                              "receipts": receipts[-20:],
-                                                              **({"failure": failure} if failure else {})},
-                                            task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60),
-                                            heartbeat_timeout=HB, retry_policy=SHORT)
+            done = await workflow.execute_activity("complete_turn", {**base, "stop_reason": stop, "control": control,
+                                                                     "receipts": receipts[-20:],
+                                                                     **({"failure": failure} if failure else {})},
+                                                   task_queue=INVESTIGATOR_QUEUE,
+                                                   start_to_close_timeout=timedelta(seconds=60),
+                                                   heartbeat_timeout=HB, retry_policy=SHORT)
+            if stop == "concluded" and (done or {}).get("status") == "cancelled" \
+                    and workflow.patched("refused-execution-cancels-v1"):
+                # F5d (review R9): a stop or pause committed after execution but before completion; the lab refused
+                # the conclusion and closed the turn as cancelled, and the coordinator sees the same.
+                stop = "cancelled"
         return {"started": True, "turn_id": tid, "stop_reason": stop, "control": control,
                 **({"failure": failure} if failure else {})}
 

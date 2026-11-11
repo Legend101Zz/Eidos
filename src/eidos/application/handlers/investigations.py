@@ -957,28 +957,41 @@ def _close_turn(ctx: Ctx, turn: dict, p: dict) -> dict:
     reason = p.get("stop_reason", "calls-exhausted")
     if reason not in turn_rules.STOP_REASONS:
         raise Invalid(f"stop_reason must be one of {turn_rules.STOP_REASONS}")
+    control = p.get("control") or {}
+    inv_id = turn["investigation_id"]
+    control_refused = None
+    if control.get("action") in ("conclude", "stop"):
+        # F5d (review R9): the conclusion is applied only to an investigation that is still active, checked under its
+        # row lock (lock order: the turn row, held by the caller, then the investigation row). A stop or pause that
+        # committed after the decision was accepted (before or after its effects ran) always wins: the turn closes as
+        # cancelled and the operator's state is never overwritten with ``concluded``.
+        inv = ctx.tx.require("investigation", inv_id, lock=True)
+        if inv.status != "active":
+            control_refused = f"investigation-{inv.status}"
+            if reason == "concluded":
+                reason = "cancelled"
     status = "cancelled" if reason == "cancelled" else ("failed" if reason == "error" else "completed")
     result = {"stop_reason": reason, "summary": str(p.get("summary", ""))[:4000], "receipts": p.get("receipts", []),
-              "unfinished_handles": p.get("unfinished_handles", []), "control": p.get("control")}
+              "unfinished_handles": p.get("unfinished_handles", []), "control": p.get("control"),
+              **({"control_refused": control_refused} if control_refused else {})}
     failure = _bounded_details(p.get("failure")) if reason == "error" else {}
     if failure:  # why the turn failed (ADR 0019): on the turn and on its turn.completed event
         result["failure"] = failure
     result["uncertain_model_reservations"] = release_turn_model_reservations(ctx, turn)
     ctx.tx.update_turn(turn["id"], status=status, result=result)
-    inv_id = turn["investigation_id"]
     budgets = ctx.tx.budgets(inv_scope(inv_id))
     if "turns" in budgets:
         ctx.tx.settle(inv_scope(inv_id), "turns", reserved=1, actual=1, ref=turn["id"])
-    control = p.get("control") or {}
-    if control.get("action") in ("conclude", "stop"):
-        inv = ctx.tx.require("investigation", inv_id, lock=True)
+    if control.get("action") in ("conclude", "stop") and not control_refused:
         body = dict(inv.body)
         body["conclusion"] = {"turn_id": turn["id"], "summary": control.get("summary") or result["summary"],
                               "scope": control.get("scope"), "action": control["action"]}
         ctx.tx.put_record("investigation", inv_id, ctx.project_id, body, created_by=ctx.principal.id,
                           status="concluded")
     ctx.event("turn.completed", turn["id"], {"stop_reason": reason, "status": status,
-                                             **({"failure": failure} if failure else {})}, investigation_id=inv_id)
+                                             **({"failure": failure} if failure else {}),
+                                             **({"control_refused": control_refused} if control_refused else {})},
+              investigation_id=inv_id)
     return {"turn_id": turn["id"], "status": status}
 
 

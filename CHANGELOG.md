@@ -8,6 +8,21 @@ Reasoning models through OpenAI-compatible endpoints (ADR 0016). Measured with M
 its OpenAI-compatible endpoint at 16384 output tokens and a 300 s request timeout: `json` 8/8 (was 5/8 at the 4096
 cap and 6/8 at 16384 tokens / 120 s), `tool` 6/8 (was 4/8); `docs/release/evidence/g4-111-minimax-m31flash-*.json`.
 
+### Review fixes F5d (review R9 of b6e57f8)
+- **An operator stop or pause always wins over a turn's conclusion (ADR 0017 addendum "review R9").** A decision
+  accepted with `conclude` (or `stop`) control that raced a stop or pause could still conclude the investigation:
+  `TurnWorkflow` ignored a refused (`stopped`/`skipped`) execution and passed the decision's control to
+  `complete_turn`, which wrote `concluded` over the operator's state. A decision with no calls took the same path.
+  `complete_turn` now checks the investigation under its lock before applying conclusion control. If the
+  investigation is not active, the turn closes as `cancelled` with `control_refused`, and the investigation keeps its
+  state. `TurnWorkflow` treats a refused execution as cancellation (patch `refused-execution-cancels-v1`), and it
+  returns `cancelled` when the lab refused the conclusion.
+- **Flaky test fixed.** `test_failed_turn_policy.py::test_turn_workflow_failure_is_a_retryable_turn_failure` counted
+  invocations of a fake `complete_turn`, which Temporal may deliver again. It failed once in CI with turn `t2`
+  recorded twice. The fake now persists completions per turn (first wins, like the lab's locked completion handler)
+  and begins each turn once, and the test asserts the persisted completions.
+- Tests: `tests/integration/test_f5d_conclude_race.py`, `tests/integration/test_f5d_refused_execution.py`.
+
 ### Review fixes F5c (review R8 of 117741a)
 - **Turn acquisition is fenced by an ordered ticket (ADR 0017 addendum "review R8").** The coordinator gives each
   turn workflow it starts a ticket (its workflow clock at the start, patch `turn-ticket-v1`), and `begin_turn`
