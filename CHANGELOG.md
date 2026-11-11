@@ -2,6 +2,117 @@
 
 All notable changes to Eidos. Tags are annotated, created only on CI-green commits, and never moved. Development tags `eidos-v0.x` were freezes, not releases.
 
+## Unreleased: 1.3.0
+
+### Incumbent and challengers, baseline identity, fresh-state repair, provider resilience (ADR 0023, G1)
+
+- **Incumbent plus challengers until the exploration deadline.** A selection rule (metric, `validation` or
+  `training-cv`, direction; optional `ceiling`, `max_rounds`) is recorded before the rounds it judges and is fixed. A
+  `candidate_lock` that changes the incumbent must beat it on that rule, read from recorded receipts (the lock job's
+  scorer lineage), else `record_note` refuses it; each change is versioned on its note and emitted as
+  `incumbent.changed`. No lock changes after a plan is frozen or an assessment requested.
+- **Exploration allowance and stops.** `begin_turn` records `spec.exploration`: challenger rounds, the wall and token
+  allowance after a hold-back for reproduction and export (before the conclusion reserve), and the phase. Exploration
+  stops at a perfect score, `patience_rounds` without improvement, a declared search limit, the hold-back, or the
+  selection freeze; then `accept_decision` refuses new open-search and hypothesis-test compute.
+- **`context-policy/3`** pins the rule, incumbent, rounds, allowance and phase, and reads the baseline from its durable
+  record. **`investigator-playbook/2`** (`investigator-prompt/3`) replaces "lock early, stop as soon as" with challenger
+  rounds. `context-policy/2` remains for replay.
+- **Baseline identity.** The lab records an investigation's first baseline job (project command without authored
+  source, or a job a `baseline` note designates) and the first job that scored it (`investigation_baseline`; `baseline.recorded`,
+  `baseline.scored`). "Baseline: none recorded yet" no longer appears once a baseline has run.
+- **Fresh-state repair.** A reply still malformed after the schema re-ask (or the output retries in tool mode) gets a
+  bounded, counted, recorded request from a fresh state (`fresh_state_repairs`, default 1) before the bounded
+  no-effect outcome. Tool mode no longer turns persistent invalid output into a retried activity failure.
+- **Provider resilience.** Failures are classified (quota exhausted, transient, permanent). A transient failure's
+  `Retry-After` (with jitter, bounded by the time before the conclusion reserve) sets the next Temporal attempt's delay
+  and the turn retry's backoff; quota exhaustion (e.g. MiniMax 2056) is non-retryable and marks the investigation
+  needs-input with code `provider-unavailable` at once. Every attempt records its usage, uncertainty, elapsed time and
+  failure class. The study provider bridge forwards `Retry-After`.
+
+### Selection is prospective and evidence-bound (ADR 0023 addendum R14, G1b)
+
+- **Rule before challengers.** A lock naming a job needs a recorded selection rule; a re-lock needs recorded evidence
+  for both incumbent and challenger, a challenger admitted after the rule, and a strictly better value. Unverified and
+  incumbent-unscored re-locks are refused.
+- **Provenance.** Selection rules name their `scorer` and selection `data`; only that scorer's receipts on that data
+  count, never attested held-out data, and a lock cannot nominate `scored_by`.
+- **Reproduction criterion.** `reproduce_within` (or `reproduction_tolerance`, default 0.02): an incumbent is
+  reproduced only by a scored re-run within it; locks and the conclusion record the evaluation.
+- **Hold-back.** Exploratory turns, their activities and retries end at the exploration deadline; the boundary is
+  recomputed between decisions and exploratory reservations must fit before the token hold-back. A Retry-After that
+  cannot fit stops the retry and the next turn finalizes.
+- **Patience** counts only rounds whose challengers are terminal and evaluated; scoring a pending challenger stays
+  allowed in the finalize phase.
+- **Baseline** only from the project command or a `baseline` note, never from a `reproduction` purpose.
+
+### Baseline error analysis and typed sweep templates (ADR 0024, from the diagnosis of development pilot 2)
+
+- **`eidos.diagnose.baseline-errors@1.0.0`** (new, numpy): from train, validation and optional baseline predictions,
+  groups and task, a `baseline-diagnosis/1` report with split statistics, error slices (class or target quantile,
+  input-norm and input-mean quantile, groups), invariance probes (quick ridge and k-NN refits under none, per-example
+  centering, per-example standardization, split-wise standardization and shift-invariant features, with within-split
+  CV) and ranked hypotheses that tell an additive offset, a gain change, a feature-wise shift, a spatial or positional
+  shift and information loss apart, each with a prediction and a falsifier. Provenance and input digests recorded.
+  Reads no test data; exploratory.
+- **`eidos.search.recipe-sweep@1.1.0`: typed templates.** `config.template {name: quick|broad, ...}` runs a broad sweep in
+  one call with no authored code: preprocessing (none, train-fitted standardize, per-example center or standardize)
+  crossed with linear, k-NN, kernel ridge, small MLP, and SVM and GBM where scikit-learn exists (otherwise recorded as
+  skipped), screened on validation, finalists cross-validated within train, every attempted recipe recorded, a
+  reproduce command for the winner. Command sweeps are unchanged.
+- **Config contracts support `anyOf`**, so the sweep's schema accepts a template or a full command sweep and still
+  refuses neither.
+- **Investigator guide:** diagnose, then a template sweep, then targeted challengers; diagnosis jobs are pinned with
+  sweeps in the context. Method cards, author guide and toolkit coverage updated; arm 4 also installs the diagnosis
+  component; the standalone toolkit carries both.
+
+### Review R16 of G2 (ADR 0024 addendum)
+
+- **Diagnosis:** `prediction_key` and `groups_key` are checked against held-out names before any input is opened; array
+  names with a word beginning `test`, `holdout` or `heldout` are refused.
+- **Sweep 1.1.0:** repeated seeds are refused (`seed_policy.seeds`, `template.seeds`); every evaluation gets its own
+  directory and a working-directory error is recorded as that evaluation's failure, so the evidence table is still
+  written. `command.copy` entries and non-code source-bundle files with a word beginning `test`, `holdout` or `heldout`
+  (`test1.csv`, `testfeatures.csv`) are refused.
+- **`eidos.search.recipe-sweep@1.0.0` stays installable** beside 1.1.0 (`components/eidos.search.recipe-sweep@1.0.0/`,
+  byte-identical to the 1.0.0 release), so a fresh project resolves a pinned 1.0.0 reference. Arms publish it unbound;
+  the toolkit runs each release with its own module.
+
+### Compact MCP research workflow for external agents (ADR 0025, from diagnosis D2 recommendation 4)
+
+- **`upload_source`** stores project files as an immutable `source-bundle/1` artifact in one MCP call (no separate HTTP
+  upload or manual metadata).
+- **`run_batch`** runs up to 12 calls with ADR 0022 `$ref` references over MCP, through the investigator's batch
+  executor, now shared as `eidos.batches.BatchRunner`. Calls are validated against their own tool schemas and the
+  reference rules before any effect (`INVALID_REF`, `INVALID_BATCH`), recorded first as an `mcp-batch` note, keyed
+  `<key>:<i>`, run one job at a time, and resumed after a bounded wait by calling again with the same key.
+- **`wait_status`** waits at most 50 s and returns compact job, plan, claim and investigation summaries with artifact
+  handles.
+- **`submit_candidate`** records the `candidate_lock`, files the `improves` claim and optionally requests the assessment,
+  returning the lab-derived claim state (`candidate-submitted` without a confirming pass). An unsucceeded job is refused.
+- **Smaller schemas and results.** The idempotency, revision and payload boilerplate is stated once in the server
+  instructions; tool text results are compact JSON. `tools/list` is 39,726 bytes for 39 tools (was 46,387 for 35).
+- **Session reuse.** The study's `mcp_http.py` reuses one MCP session (also across invocations, through a 0600 state
+  file without the token), re-initializing once if the server forgets it, and prints each result once.
+- **Review R15.** A batch runs in one investigation: a call's scope may be named or set in `payload`, and launches take
+  their trial's scope. A call outside it, or a `$ref` across investigations, is `INVESTIGATION_MISMATCH` before any
+  effect. `submit_candidate` binds its whole normalized request, assessment included, to the key with a `<key>:submit`
+  record before any step, so a changed retry is `COMMAND_KEY_CONFLICT` with nothing replayed. Compact receipts of a
+  refused assessment keep every reason.
+
+### Round-3 integration (H1; ADR 0025 addendum H1)
+
+- **ADR 0023 on the MCP path.** `submit_candidate` takes the prospective `selection` rule and locks through the same
+  validated `candidate_lock`. New `open-search` and `hypothesis-test` work admitted outside a decision (`run_batch`, direct
+  calls) is refused once exploration has stopped, unless it reads a pending challenger's output. While exploration runs,
+  that work's wall is capped at the hold-back.
+- **One order in the playbook and tool guide:** baseline, diagnosis, broad template sweep, incumbent and challenger
+  rounds, reproduction, assess or submit, conclude. The guide's lock paragraph follows R14.
+- **Pinned facts:** the latest diagnosis is always pinned ahead of the three latest sweeps.
+- **Study:** the arm-3 tools paragraph describes the new MCP tools (the manual upload is gone; `mcp_http.py` stays as the
+  fallback). The arm-2 toolkit verification runs the diagnosis and a template sweep. The toolkit ships
+  `eidos.domain.assessment`, which `paired-ci` needs standalone, and lists `eidos.task.paired-classification-report`.
+
 ## Unreleased: 1.2.0
 
 ### Review R13 of the integrated round (ADR 0021 addendum)

@@ -88,9 +88,14 @@ def turn_seconds(configured: int, completion: dict[str, Any]) -> int:
 
 def turn_boundary(completion: dict[str, Any]) -> float:
     """When a turn must be over, retries and execution included: where the conclusion's reserve begins, or for the concluding
-    turn the wall deadline itself."""
+    turn the wall deadline itself. An exploratory turn (R14 #4, #5: ``exploration_deadline_unix``, set by begin_turn)
+    ends where the reproduction hold-back begins, so neither its activities nor their retries can spend it."""
     deadline = float(completion["deadline_unix"])
-    return deadline if completion["conclude_now"] else deadline - float(completion["conclude_threshold_seconds"])
+    if completion["conclude_now"]:
+        return deadline
+    if completion.get("exploration_deadline_unix") is not None:
+        return min(float(completion["exploration_deadline_unix"]), deadline - float(completion["conclude_threshold_seconds"]))
+    return deadline - float(completion["conclude_threshold_seconds"])
 
 
 # ADR 0022: dependent batches. One accepted decision may name an earlier call's result in a later call's arguments as
@@ -190,12 +195,15 @@ def parse_ref(text: str) -> tuple[int, str] | None:
     return (int(m.group(1)), m.group(2)) if m else None
 
 
-def _ref_field_allowed(tool: str, field: str) -> bool:
-    return field in RESULT_FIELDS.get(tool, ()) or (field.startswith("outputs.") and tool in JOB_TOOLS)
-
-
 def _validate_refs(calls: list[dict[str, Any]]) -> None:
-    """ADR 0022: every reference must parse, and name an existing earlier call and a field that call produces."""
+    validate_refs(calls)
+
+
+def validate_refs(calls: list[dict[str, Any]], *, result_fields: dict[str, tuple[str, ...]] | None = None,
+                  job_tools: tuple[str, ...] = JOB_TOOLS) -> None:
+    """ADR 0022: every reference must parse, and name an existing earlier call and a field that call produces. Sets each
+    call's ``depends_on``. The MCP adapter (ADR 0025) passes its own vocabulary's result fields and job tools."""
+    fields_of = RESULT_FIELDS if result_fields is None else result_fields
     for i, c in enumerate(calls):
         c.pop("depends_on", None)  # derived here; a proposal never states its own dependencies
         depends: set[int] = set()
@@ -217,8 +225,8 @@ def _validate_refs(calls: list[dict[str, Any]]) -> None:
                               "depend only on earlier calls, so a cycle cannot be written",
                               details={"call": i, "path": path, "ref": text})
             tool = calls[target]["tool"]
-            if not _ref_field_allowed(tool, field):
-                allowed = [*RESULT_FIELDS.get(tool, ()), *(["outputs.<slot>"] if tool in JOB_TOOLS else [])]
+            if not (field in fields_of.get(tool, ()) or (field.startswith("outputs.") and tool in job_tools)):
+                allowed = [*fields_of.get(tool, ()), *(["outputs.<slot>"] if tool in job_tools else [])]
                 raise Invalid(f"call {i} ({c['tool']}): {path}: {text!r} names no result of {tool}; it produces {allowed}",
                               details={"call": i, "path": path, "ref": text, "allowed": allowed})
             depends.add(target)

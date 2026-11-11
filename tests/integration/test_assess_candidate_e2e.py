@@ -135,8 +135,16 @@ class Scene:
             "environment": "lab", "limits": LIMITS,
             "investigator": {"runtime": "fixture", "settings": {"max_tokens_per_decision": 120_000}}})["investigation_id"]
 
-    def lock(self, inv: str, job_id: str) -> None:
-        self.cmd("record_note", {"investigation_id": inv, "kind": "candidate_lock", "text": json.dumps({"job_id": job_id})})
+    def lock(self, inv: str, job_id: str, *, text: str | None = None, refs: list | None = None) -> None:
+        """A ``candidate_lock`` note as the ledger keeps it. These tests are about which lock assess_candidate reads;
+        the selection checks a lock passes on record_note (a rule recorded first, re-locks only on better recorded
+        evidence: ADR 0023, R14) are covered by test_incumbent_challengers, so the note is written directly."""
+        body = {"investigation_id": inv, "kind": "candidate_lock", "text": text if text is not None
+                else json.dumps({"job_id": job_id}), **({"evidence_refs": refs} if refs is not None else {})}
+        with self.lab.ledger.transaction() as tx:
+            tx.project_id = self.pid
+            tx.put_record("note", f"note_{uuid.uuid4().hex[:12]}", self.pid, body, created_by=self.lab.admin.id,
+                          status="open", parent_id=inv)
 
     def conclude(self, inv: str, claim: dict | None) -> dict:
         """Close a turn of the investigation with control ``conclude``; returns the conclusion's claim state."""
@@ -871,8 +879,7 @@ def test_the_view_does_not_carry_an_assessment_over_to_a_revised_claim(scene):
 
 
 def _note(scene: Scene, inv: str, text: str, refs: list | None = None) -> None:
-    scene.cmd("record_note", {"investigation_id": inv, "kind": "candidate_lock", "text": text,
-                              **({"evidence_refs": refs} if refs is not None else {})})
+    scene.lock(inv, "", text=text, refs=refs)
 
 
 @pytest.mark.parametrize("refs", [lambda job: [job], lambda job: [{"job_id": job}, "art_context"]])

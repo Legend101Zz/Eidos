@@ -118,7 +118,7 @@ def test_retry_after_committed_tool_effect_reuses_keys_and_admits_once(lab):
     assert d3["control"]["action"] == "wait_for_jobs" and d3["n_calls"] == 0
     env.run(acts.complete_turn, {**base, "stop_reason": "waiting", "control": d3["control"]})
     turn = lab.q(lab.admin, "get_turn", {"turn_id": b["turn_id"]}, project=pid)
-    assert turn["status"] == "completed" and turn["context"]["policy"] == "context-policy/2"
+    assert turn["status"] == "completed" and turn["context"]["policy"] == "context-policy/3"
     usage = lab.q(lab.admin, "budgets", {"investigation_id": inv}, project=pid)["budgets"]["model_tokens"]
     assert usage["used"] > 0  # fixture usage is still accounted
 

@@ -1,0 +1,50 @@
+{
+ "name": "a two-point grid ranks the better recipe first",
+ "inputs": {
+  "source": {
+   "json": {
+    "files": {
+     "fit.py": "import json, sys\na = dict(zip(sys.argv[1::2], sys.argv[2::2]))\njson.dump({'validation_accuracy': 1.0 - abs(float(a['--lr']) - 0.1)}, open(a['--out'] + '/receipt.json', 'w'))\n"
+    }
+   },
+   "media_type": "application/json"
+  }
+ },
+ "config": {
+  "command": {
+   "argv": [
+    "python",
+    "fit.py",
+    "--out",
+    "{out}",
+    "--lr",
+    "{param.lr}"
+   ]
+  },
+  "space": {
+   "mode": "grid",
+   "parameters": {
+    "lr": {
+     "values": [
+      0.5,
+      0.1
+     ]
+    }
+   }
+  },
+  "objective": {
+   "metric": "validation_accuracy"
+  },
+  "budget": {
+   "max_trials": 10
+  }
+ },
+ "expect": {
+  "status": "succeeded",
+  "receipt": {
+   "stop_reason": "space-exhausted",
+   "best_recipe_id": "r0001-c924a5f4"
+  }
+ },
+ "author_test": true
+}

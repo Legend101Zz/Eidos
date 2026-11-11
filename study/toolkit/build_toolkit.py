@@ -32,7 +32,7 @@ def build_toolkit(run_dir):
     # Export the unchanged dependency closure, without a lab/server installation.
     support = destination / "support/eidos/domain"
     support.mkdir(parents=True, exist_ok=True)
-    for name in ("__init__", "charter", "errors", "stats", "evidence", "qualification"):
+    for name in ("__init__", "assessment", "charter", "errors", "stats", "evidence", "qualification"):
         shutil.copyfile(ROOT / "src/eidos/domain" / f"{name}.py", support / f"{name}.py")
     shutil.copyfile(ROOT / "src/eidos/__init__.py", support.parent / "__init__.py")
     shutil.copyfile(ROOT / "LICENSE", destination / "support/LICENSE")

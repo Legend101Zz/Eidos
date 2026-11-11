@@ -42,10 +42,12 @@ RESOURCE_NOT_FOUND = -32002
 
 INSTRUCTIONS = (
     "Eidos lab operator interface. Installed components are data: use list_components / describe_component. "
-    "Every mutating tool requires a caller-chosen command_key; if a reply is lost, retry with the same key "
-    "and arguments to get the original receipt. Errors are tool results with isError=true and a "
-    "machine-readable error.code plus error.next_action. Long work returns a job/investigation id: poll "
-    "get_run / get_investigation / list_events (use next_cursor to resume). Disconnecting does not stop work."
+    "Every mutating tool requires a caller-chosen command_key (<=200 chars): if a reply is lost, retry with the same key "
+    "and the same arguments to get the original receipt; the same key with other arguments is COMMAND_KEY_CONFLICT; use a "
+    "fresh key for a new operation. expected_revision, where offered, guards against concurrent change. Errors are tool "
+    "results with isError=true, error.code and error.next_action. Long work returns a job/investigation id and keeps "
+    "running if you disconnect. Compact workflow: upload_source, then run_batch (chain calls with $ref), wait_status, and "
+    "submit_candidate; get_run / get_artifact_access expand any id they return."
 )
 
 
@@ -64,7 +66,8 @@ def _tool_defs() -> list[types.Tool]:
 
 
 def _result(payload: dict[str, Any], *, is_error: bool = False) -> types.CallToolResult:
-    return types.CallToolResult(content=[types.TextContent(type="text", text=json.dumps(payload, indent=2, default=str))],
+    return types.CallToolResult(content=[types.TextContent(type="text", text=json.dumps(payload, separators=(",", ":"),
+                                                                                   default=str))],
                                 structured_content=payload, is_error=is_error)
 
 

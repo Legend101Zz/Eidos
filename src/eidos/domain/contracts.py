@@ -3,8 +3,9 @@
 A release may declare ``config_schema`` in its manifest. It is shown to investigators in the
 catalog, enforced when a decision is accepted (so "schema-valid" means "runnable"), and enforced
 again at resolution. Supported keywords: type, required, properties, additionalProperties (bool),
-items, minItems, maxItems, enum, pattern, minimum, maximum, minLength, and ``firstItemPattern``
-(regex the first array item must match, e.g. an interpreter or script).
+items, minItems, maxItems, enum, pattern, minimum, maximum, minLength, ``firstItemPattern``
+(regex the first array item must match, e.g. an interpreter or script) and ``anyOf`` (a list of schemas; the value
+must satisfy at least one, as well as the rest of the schema).
 """
 
 from __future__ import annotations
@@ -48,6 +49,11 @@ def validate_config(value: Any, schema: dict[str, Any], path: str = "config") ->
         if isinstance(schema.get("items"), dict):
             for i, v in enumerate(value):
                 problems += validate_config(v, schema["items"], f"{path}[{i}]")
+    if isinstance(schema.get("anyOf"), list) and schema["anyOf"]:
+        branches = [validate_config(value, branch, path) for branch in schema["anyOf"]]
+        if all(branches):
+            problems.append(f"{path}: matches none of its alternatives (" + "; or ".join(
+                ", ".join(b) for b in branches) + ")")
     if isinstance(value, dict):
         for k in schema.get("required", []):
             if k not in value:

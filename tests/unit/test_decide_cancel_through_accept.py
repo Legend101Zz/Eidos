@@ -239,7 +239,9 @@ def test_cancellation_during_usage_recording_aborts_before_the_upload_and_accept
     assert "activity-cancelled" in str(err)
     assert world.count("accept_decision") == 0
     assert world.count("record_model_usage") == 1  # the billed response is still charged, once
-    assert world.payloads["record_model_usage"][0]["usage"] == USAGE
+    recorded = dict(world.payloads["record_model_usage"][0]["usage"])
+    assert recorded.pop("attempt") == 1 and recorded.pop("elapsed_seconds") >= 0  # ADR 0023: per attempt, timed
+    assert recorded == USAGE
     assert world.keys["record_model_usage"] == [f"usage:{TURN}:{SLOT}:1:1"]
     assert world.log == ["begin_decision", "reserve_model_budget", "record_model_usage"]  # the first check stops before the upload
 

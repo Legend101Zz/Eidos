@@ -6,6 +6,7 @@ import time
 import uuid
 from typing import Any
 
+from eidos.application.handlers import exploration
 from eidos.application.handlers.components import catalog, env_for
 from eidos.application.handlers.investigations import check_exploration_allowed, inv_scope
 from eidos.application.handlers.projects import get_profile
@@ -30,6 +31,10 @@ def admit_job(ctx: Ctx, *, kind: str, lock: dict, investigation_id: str | None, 
         check_exploration_allowed(ctx, investigation_id)
     jid = job_id or f"job_{uuid.uuid4().hex[:16]}"
     wall_seconds = _fit_wall(ctx, investigation_id, purpose, wall_seconds)
+    # ADR 0023 for work outside a decision (the MCP batch path, ADR 0025): the finalize phase and the hold-back
+    explore_until = exploration.check_admission(ctx, investigation_id, purpose, lock)
+    if explore_until is not None:
+        wall_seconds = max(1, min(int(wall_seconds), int(explore_until - time.time())))
     lock = {**lock, "limits": {"wall_seconds": wall_seconds, "max_output_bytes": int(lock.get("max_output_bytes", 512 << 20)),
                                **(lock.get("limits") or {})}, "job_id": jid, "project_id": ctx.project_id}
     from eidos_wire import canonical_json, sha256_bytes

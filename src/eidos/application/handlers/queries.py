@@ -435,7 +435,8 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
                 for e in ctx.tx.events_after(ctx.project_id, 0, investigation_id=inv.id, upto=horizon, limit=100000,
                                              types=["admission.refused"]) if e["investigation_id"] == inv.id]
     pinned_notes = [{"id": n.id, "kind": n.body.get("kind"), "text": n.body.get("text"),
-                     "evidence_refs": n.body.get("evidence_refs")}
+                     "evidence_refs": n.body.get("evidence_refs"),
+                     **({"incumbent": n.body["incumbent"]} if isinstance(n.body.get("incumbent"), dict) else {})}
                     for n in ctx.tx.list_records(ctx.project_id, "note", limit=100000)
                     if n.body.get("investigation_id") == inv.id and n.body.get("kind") in PINNED_NOTE_KINDS
                     and (cutoff_ts is None or n.created_at <= cutoff_ts)]
@@ -483,7 +484,12 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
                 if cutoff_ts is None or r.created_at <= cutoff_ts]
     approved = sorted({(ap.body["release_ref"], tuple(ap.body.get("scope") or ()))
                        for ap in ctx.tx.list_records(ctx.project_id, "approval", status="active", limit=100000)})
+    baseline_record = None  # ADR 0023: the durable baseline identity, as recorded at the horizon
+    for h in ctx.tx.record_history("investigation_baseline", inv.id):
+        if cutoff_ts is None or h["created_at"] <= cutoff_ts:
+            baseline_record = h["body"]
     return {"investigation": {"id": inv.id, "status": inv.status, "body": inv_body}, "horizon": horizon,
+            "baseline_record": baseline_record,
             "environments": environments, "environment_details": environment_details, "admission_refusals": refusals,
             "pinned_notes": pinned_notes, "created_artifacts": created[-50:], "call_results": call_results[-30:],
             "evidence_plans": plans[-10:],
@@ -497,7 +503,7 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
             "budgets": ctx.tx.budgets(inv_scope(inv.id))}
 
 
-PINNED_NOTE_KINDS = ("baseline", "candidate_lock", "lock")
+PINNED_NOTE_KINDS = ("baseline", "candidate_lock", "lock", "selection_rule")
 
 
 def _environments_at(ctx: Ctx, cutoff_ts: Any) -> tuple[list[str], dict[str, Any]]:

@@ -1,6 +1,6 @@
 # Built-in scientific components
 
-The ten components under `components/` are ordinary component bundles: a directory with
+The components under `components/` are ordinary component bundles: a directory with
 `eidos-component.json`, code, a method card and JSON fixtures in the `eidos_worker.validate` format. The lab
 publishes the whole directory as the source bundle. Two example projects under `examples/` show how
 an existing custom PyTorch project is adapted.
@@ -20,6 +20,7 @@ assessor's author wrote that suite, treat it as an author suite until someone el
 |---|---|
 | **Project** (the researcher's registered interpreter with torch; CWD = `project_root`) | `eidos.pytorch.train`, `eidos.pytorch.evaluate`, `eidos.pytorch.weight-edit`, `eidos.pytorch.behavior-check`; training extension `lab.learning.group-balanced-ema` (loaded inside the train process) |
 | **Lab** (needs `eidos.domain`) | `eidos.assessors.paired-ci`, `eidos.qualification-runner` |
+| Project, with numpy | `eidos.diagnose.baseline-errors`, `eidos.task.score-classification`, `eidos.task.score-regression`; a recipe-sweep template's evaluations |
 | Either (standard library only) | `lab.pairs.by_group`, `lab.switch.balanced-data`, `eidos.templates.improves-under-budget`, `eidos.task.paired-classification-report` (NPZ inputs need numpy), `eidos.search.recipe-sweep` (its candidate command needs its own project environment) |
 
 Project-environment components need `eidos-worker-sdk` and `eidos-pytorch` on `PYTHONPATH` (the runner
@@ -39,8 +40,18 @@ adds them) and an adapter module importable from the project root or from `confi
 | `eidos.templates.improves-under-budget@1.2.0` (`evidence-plan/1`) | plan / planning | `request` (`plan-request/1`) -> `draft` (`evidence-plan/1`) | none (the request carries claim, seeds, evaluation, baseline/candidate; or `classification`: labels and per-seed predictions artifacts, ADR 0018) | `arms, seeds, jobs_planned, open_obligations` |
 | `eidos.assessors.paired-ci@1.2.0` (`protocol-assessment/1`) | assess / assessment | `evidence` (`evidence-set/1`) -> `evaluation` (`protocol-evaluation/1`) | none (metrics: `both-correct-rate`, `reference-accuracy`, `accuracy`) | `outcome, units, clusters, metrics{estimate, ci_low, ci_high}` |
 | `eidos.task.paired-classification-report@1.0.0` (`paired-classification-report/1`) | observe / artifact-op | `baseline`, `candidate` (`class-predictions/1`), `labels` (`class-labels/1`) -> `predictions` (`classification-pair-rows/1`) | `role`, `cluster`, `classes?`, `id_field?` | `role, cluster, examples, classes, aligned` |
-| `eidos.search.recipe-sweep@1.0.0` (`recipe-search/1`) | change-weights / artifact-op | `source`, `train`, `validation`, `task` -> `evidence_table` (`recipe-sweep-table/1`), `best_recipe` (`recipe-sweep-best/1`) | `command, space{mode,parameters,seed?,samples?}, objective{metric,direction?}, seed_policy{seeds,folds}, budget{max_trials,max_seconds}, stopping{rule,patience,min_delta,target}, recipe?` | `stop_reason, evidence_digest, best_recipe_id, metrics` |
+| `eidos.search.recipe-sweep@1.1.0` (`recipe-search/1`) | change-weights / artifact-op | `source`, `train`, `validation`, `task` -> `evidence_table` (`recipe-sweep-table/1`), `best_recipe` (`recipe-sweep-best/1`) | either `template{name: quick|broad, task_type?, preprocess?, families?, finalists?, cv_folds?, seeds?, rank_by?, timeout_seconds?, max_rows?}` (NPZ `train`/`validation`; the evaluations need numpy, svm/gbm need scikit-learn), or `command, space{mode,parameters,seed?,samples?}, objective{metric,direction?}, seed_policy{seeds,folds}, budget{max_trials,max_seconds}, stopping{rule,patience,min_delta,target}, recipe?` | `stop_reason, evidence_digest, best_recipe_id, metrics, template?, task_type?` |
+| `eidos.diagnose.baseline-errors@1.0.0` (`baseline-diagnosis/1`) | observe / artifact-op (numpy) | `train`, `validation` (`task-array/1`), optional `predictions`, `groups`, `task` -> `report` (`baseline-diagnosis/1`) | `task_type?, layout?, image_shape?, probes?, group_keys?, seed?, cv_folds?, quantiles?, min_effect?, max_train_rows?, max_validation_rows?` | `top_hypothesis, hypotheses, metrics` |
 | `eidos.qualification-runner@1.0.0` | observe / artifact-op | (target source at `ports["target.source/1"].path`) -> `qualification_results` (`qualification-results/1`) | `suite, target{ref}, result_slot, outcome_key` | `target, controls, invalid_runs` |
+
+## Diagnose, sweep, challenge (ADR 0024)
+
+The order the investigator guide recommends after reproducing a baseline: `eidos.diagnose.baseline-errors` first (split
+statistics, error slices, invariance probes and ranked hypotheses with predictions and falsifiers), then a broad
+`eidos.search.recipe-sweep` template in one call (preprocessing x model family, screened on validation, finalists
+cross-validated within train), then targeted challengers that test the top hypothesis. All three are exploratory and
+read no test data; the winner is locked before independent confirmation. Both run through the lab and through the
+standalone toolkit (`study/toolkit/run_component.py`).
 
 ## The adapter conventions the PyTorch components rely on
 

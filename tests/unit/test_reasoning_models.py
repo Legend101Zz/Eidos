@@ -459,8 +459,8 @@ def test_every_read_tool_is_refused_in_calls(tool):
 def test_a_read_tool_in_calls_twice_ends_in_a_bounded_invalid_decision_without_effects():
     misuse = {**GOOD, "calls": [{"tool": "get_job", "args": {"job_id": "j"}}]}
     script = scripted([json.dumps(misuse)])
-    res = runtime(script).decide(request(read_tools([])))
-    assert len(script.seen) == 2  # never more than one re-ask
+    res = runtime(script, fresh_state_repairs=0).decide(request(read_tools([])))
+    assert len(script.seen) == 2  # never more than one re-ask (no fresh-state repair here)
     assert res.proposal["calls"] == [] and res.proposal["control"]["bounded_outcome"] == "structured-output-invalid"
     rep = res.usage["structured_output"]
     assert len(rep["errors"]) == 2 and not rep["valid"] and rep["reasks"] == 1
@@ -484,7 +484,7 @@ def test_a_read_request_without_read_tools_is_malformed_and_reasked_once():
 
 def test_a_read_request_without_read_tools_twice_is_bounded():
     script = scripted([read_request(("get_job", {"job_id": "j"}))])
-    res = runtime(script).decide(request())
+    res = runtime(script, fresh_state_repairs=0).decide(request())
     assert len(script.seen) == 2 and res.proposal["control"]["bounded_outcome"] == "structured-output-invalid"
 
 
@@ -826,11 +826,12 @@ def test_the_first_request_is_not_started_when_its_bytes_and_the_cap_exceed_the_
 
 
 def test_the_envelope_counts_separately_billed_reasoning_as_spent():
-    # 10 + 10000 tokens (9000 of them reasoning, inside the output) leave room for the re-ask in 25000; with "separate"
-    # billing the 9000 reasoning tokens are charged on top, and the re-ask's worst case no longer fits
+    # 10 + 10000 tokens (9000 of them reasoning, inside the output) leave room for the re-ask in 30000; with "separate"
+    # billing the 9000 reasoning tokens are charged on top, and the re-ask's worst case no longer fits (the re-ask also
+    # re-sends the system instructions, whose size follows the playbook revision)
     for billing, reasked in (("included", True), ("separate", False)):
         script = scripted(["not json", json.dumps(GOOD)], usages=[usage(10, 10_000, 9_000)])
-        runtime(script, max_output_tokens=200, max_tokens_per_decision=25_000,
+        runtime(script, max_output_tokens=200, max_tokens_per_decision=30_000,
                 reasoning_tokens_billing=billing).decide(request())
         assert len(script.seen) == (2 if reasked else 1), billing
 
