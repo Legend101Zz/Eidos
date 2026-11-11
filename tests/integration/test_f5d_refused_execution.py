@@ -124,6 +124,10 @@ class FakeLab:
                                      **({"control_refused": refused} if refused else {})}
         return {"status": status}
 
+    @activity.defn(name="reconcile_finalization")
+    async def reconcile_finalization(self, a: dict) -> dict:
+        return {"finalization": False}
+
     @activity.defn(name="record_turn_retry")
     async def record_turn_retry(self, a: dict) -> dict:
         return {}
@@ -138,7 +142,7 @@ class FakeLab:
 
     def acts(self):
         return [self.begin_turn, self.build_context, self.decide, self.execute_decision, self.complete_turn,
-                self.check_news, self.mark_needs_input, self.record_turn_retry]
+                self.reconcile_finalization, self.check_news, self.mark_needs_input, self.record_turn_retry]
 
 
 async def run_turn(env, fake: FakeLab) -> dict:
