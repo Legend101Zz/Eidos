@@ -29,6 +29,7 @@ from study.common import (
     research_python,
     write_json,
 )
+from study.private_card_registry import PRIVATE_CARD_BARS
 from study.run_arm import stop_process_tree, utc_now
 
 
@@ -92,7 +93,8 @@ def prepare(row, run_dir):
     run_dir.mkdir(parents=True, exist_ok=True)
     dev_command("package_task.py", "--task", row["task"], "--out", run_dir / "task")
     # The common structural interface contains no graders, labels or references.
-    shutil.copyfile(DEVELOPMENT / "validate_answer.py", run_dir / "task/answer_schema.py")
+    if row["task"] not in PRIVATE_CARD_BARS:
+        shutil.copyfile(DEVELOPMENT / "validate_answer.py", run_dir / "task/answer_schema.py")
     if row["arm"] in (2, 3, 4):
         shutil.copyfile(STUDY / "METHOD.md", run_dir / "METHOD.md")
     (run_dir / "out").mkdir()
@@ -153,6 +155,8 @@ def run_block(rows, runs_root, stub=False, replace_incident=False):
     )
     write_json(record_path, block)
     processes, logs = [], []
+    worker_env = dict(os.environ)
+    worker_env.pop("EIDOS_PRIVATE_SEAL_ROOT", None)
     try:
         for row in rows:
             prepare(row, Path(run_dirs[str(row["arm"])]))
@@ -170,7 +174,7 @@ def run_block(rows, runs_root, stub=False, replace_incident=False):
             log = (run_dir / "launcher.log").open("w")
             logs.append(log)
             processes.append(
-                subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=log, start_new_session=True)
+                subprocess.Popen(command, cwd=ROOT, env=worker_env, stdout=log, stderr=log, start_new_session=True)
             )
         deadline = time.monotonic() + ENVELOPE["wall_s"] + 60
         while any(process.poll() is None for process in processes):

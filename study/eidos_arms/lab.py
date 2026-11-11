@@ -40,7 +40,8 @@ def build_record():
 def environment():
     env = dict(os.environ, EIDOS_HOME=str(home()), OMP_NUM_THREADS='1', MKL_NUM_THREADS='1')
     for key in list(env):
-        if key.endswith(('_API_KEY', '_AUTH_TOKEN', '_OAUTH_TOKEN')) or key in ('EIDOS_TOKEN', 'EIDOS_API_URL', 'PYTHONPATH', 'EIDOS_EVAL_AUDIT_IDENTIFIERS'):
+        if key.endswith(('_API_KEY', '_AUTH_TOKEN', '_OAUTH_TOKEN')) or key in ('EIDOS_TOKEN', 'EIDOS_API_URL', 'PYTHONPATH', 'EIDOS_EVAL_AUDIT_IDENTIFIERS',
+                        'EIDOS_PRIVATE_SEAL_ROOT'):
             env.pop(key, None)
     return env
 

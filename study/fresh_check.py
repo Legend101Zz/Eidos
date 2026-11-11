@@ -13,9 +13,12 @@ from study.common import agent_env, research_python, sandbox_command
 from study.run_arm import stop_process_tree
 
 
-def candidate_command(workspace, command, timeout=120):
+def candidate_command(workspace, command, timeout=120, *, hidden=(), writable=()):
     workspace = Path(workspace).resolve()
     env = agent_env(workspace)
+    if writable:
+        scratch = str(writable[-1])
+        env.update(HOME=scratch, TMPDIR=scratch, XDG_CACHE_HOME=scratch, XDG_CONFIG_HOME=scratch)
     # No API key is added to candidate execution; network is denied as well.
     process = subprocess.Popen(
         sandbox_command(
@@ -23,6 +26,8 @@ def candidate_command(workspace, command, timeout=120):
             command,
             network=False,
             readonly=[workspace / "candidate", workspace / "inputs", workspace / "test_inputs.npz"],
+            hidden=hidden,
+            writable=writable,
         ),
         cwd=workspace / "candidate",
         env=env,
@@ -41,7 +46,23 @@ def candidate_command(workspace, command, timeout=120):
     return stdout.decode(errors="replace")
 
 
-def infer(workspace, code, model, inputs, output):
+def infer(workspace, code, model, inputs, output, *, isolated=False):
+    writable = ()
+    if isolated:
+        # Each inference writes only its designated output and fresh scratch.
+        output.parent.mkdir()
+        scratch = output.parent / "scratch"
+        scratch.mkdir()
+        writable = (output, scratch)
+    hidden = ()
+    if isolated:
+        hidden = tuple(
+            path for pattern in ("*-inference", "confirmation-inference-*")
+            for path in workspace.glob(pattern)
+            if path != output.parent
+        )
+        if Path(inputs) != workspace / "test_inputs.npz":
+            hidden += (workspace / "test_inputs.npz",)
     candidate_command(
         workspace,
         [
@@ -55,7 +76,11 @@ def infer(workspace, code, model, inputs, output):
             "--out",
             str(output),
         ],
+        hidden=hidden,
+        writable=writable,
     )
+    if isolated and (output.is_symlink() or not output.is_file()):
+        raise ValueError("inference did not emit regular predictions")
 
 
 def equal_predictions(left, right):
@@ -79,14 +104,19 @@ def equal_predictions(left, right):
         )
 
 
-def fresh_check(workspace, code, model, validation_inputs, locked_validation, test_inputs):
+def fresh_check(workspace, code, model, validation_inputs, locked_validation, test_inputs, *, isolated=False):
     workspace = Path(workspace)
     validation = workspace / "fresh_validation.npz"
-    infer(workspace, code, model, validation_inputs, validation)
+    if isolated:
+        validation = workspace / "validation-inference/predictions.npz"
+    infer(workspace, code, model, validation_inputs, validation, isolated=isolated)
     validation_equal = equal_predictions(locked_validation, validation)
     first, second = workspace / "test_predictions.npz", workspace / "fresh_test_predictions.npz"
-    infer(workspace, code, model, test_inputs, first)
-    infer(workspace, code, model, test_inputs, second)
+    if isolated:
+        first = workspace / "test-inference/predictions.npz"
+        second = workspace / "fresh-test-inference/predictions.npz"
+    infer(workspace, code, model, test_inputs, first, isolated=isolated)
+    infer(workspace, code, model, test_inputs, second, isolated=isolated)
     test_equal = equal_predictions(first, second)
     return {
         "fresh_process_export_equal": validation_equal and test_equal,

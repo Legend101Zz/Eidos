@@ -8,14 +8,16 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from study.private_card_registry import PRIVATE_CARD_BARS
+
 ROOT = Path(__file__).resolve().parents[1]
 STUDY = ROOT / "study"
 DEVELOPMENT = ROOT / "research/public/development"
 MODEL = "MiniMax-M3.1-Flash"
 ENVELOPE = {"wall_s": 1800, "tokens": 8_000_000, "threads": 1}
 FAMILIES = {"D01": "iris", "D02": "digits", "D12": "duplicate-input-null", "D03":"digits_shift", "D04":"conditioning", "D05":"forecast", "D06":"order",
-            "N01":"breast_cancer", "N02":"diabetes", "N03":"friedman1", "N04":"classification"}
-IMPROVEMENT_CARDS = frozenset({'D02', 'D03', 'D04', 'D05', 'D06', 'N01', 'N02', 'N03', 'N04'})
+            "N01":"breast_cancer", "N02":"diabetes", "N03":"friedman1", "N04":"classification", **{card: card for card in PRIVATE_CARD_BARS}}
+IMPROVEMENT_CARDS = frozenset({'D02', 'D03', 'D04', 'D05', 'D06', 'N01', 'N02', 'N03', 'N04'}) | frozenset(PRIVATE_CARD_BARS)
 FRESH_RECIPE_CARDS = IMPROVEMENT_CARDS - {'D02'}
 
 
@@ -78,7 +80,7 @@ def agent_env(run_dir):
     return env
 
 
-def sandbox_command(run_dir, command, *, network=True, readonly=()):
+def sandbox_command(run_dir, command, *, network=True, readonly=(), hidden=(), writable=()):
     """Public helper for arms 1–3. Parameters avoid profile string interpolation."""
     python = research_python()
     prefix = subprocess.check_output([python, "-c", "import sys; print(sys.prefix)"], text=True).strip()
@@ -88,6 +90,15 @@ def sandbox_command(run_dir, command, *, network=True, readonly=()):
     for index, path in enumerate(readonly):
         extra += f'\n(deny file-write* (subpath (param "READONLY{index}")))\n'
         readonly_params += ["-D", f"READONLY{index}=" + str(Path(path).resolve())]
+    for index, path in enumerate(hidden):
+        extra += f'\n(deny file-read* file-write* (subpath (param "HIDDEN{index}")))\n'
+        readonly_params += ["-D", f"HIDDEN{index}=" + str(Path(path).resolve())]
+    if writable:
+        allowed = ['(literal "/dev/null")']
+        for index, path in enumerate(writable):
+            allowed.append(f'(subpath (param "WRITE{index}"))')
+            readonly_params += ["-D", f"WRITE{index}=" + str(Path(path).resolve())]
+        extra += "\n(deny file-write* (require-not (require-any " + " ".join(allowed) + ")) )\n"
     profile = (
         ["-p", (STUDY / "sandbox/agent.sb").read_text() + extra]
         if extra
@@ -116,6 +127,14 @@ def render_prompt(arm, card, *, base=None):
     if "{{TOOLS_PARAGRAPH}}" not in text:
         raise ValueError("base prompt must contain {{TOOLS_PARAGRAPH}}")
     cards = read_json(STUDY / "cards.json")
+    if card in PRIVATE_CARD_BARS:
+        metric, gain = PRIVATE_CARD_BARS[card]
+        change = f"improves accuracy by {gain} absolute" if metric == "accuracy" else f"reduces RMSE by at least {gain:.0%}"
+        cards[card] = {"practical_bar": (
+            f"The task owner's practical bar: a candidate must show that its recipe {change} "
+            "on the evaluator's held-out data versus the supplied baseline (seed 11) and reproduces "
+            "from fresh initialization. An honest abstention or qualified null is acceptable."
+        )}
     if card not in cards and not base and card != "TOY-REGRESSION":
         raise ValueError(f"unknown study card: {card}")
     if card in cards and "{{PRACTICAL_BAR}}" not in text:
@@ -125,6 +144,12 @@ def render_prompt(arm, card, *, base=None):
 
 
 def dev_command(script, *args, **kwargs):
+    if script == "package_task.py" and len(args) == 4 and args[0] == "--task" and args[2] == "--out":
+        if args[1] in PRIVATE_CARD_BARS:
+            from study.private_seal import configured_seal
+
+            configured_seal().stage_bundle(args[1], args[3])
+            return
     return subprocess.run(
         [research_python(), str(STUDY / "packaging/package_card.py" if script == "package_task.py" and any(str(a) in FRESH_RECIPE_CARDS for a in args) else DEVELOPMENT / script), *map(str, args)],
         check=True,

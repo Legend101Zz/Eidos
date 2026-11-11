@@ -78,7 +78,7 @@ def analyze(design_path, results_path, out):
     lines = [
         "# Development pilot — descriptive only",
         "",
-        "D02–D06 and accepted N01–N04 are in the improvement stratum. D01 reports operational equality; D12 reports",
+        "Assignments marked primary-eligible are in the improvement stratum. D01 reports operational equality; D12 reports",
         "null correctness (never a primary improvement success). Missing assignments remain in n.",
         "",
         "The draft interval is exploratory; these data cannot establish practical superiority.",

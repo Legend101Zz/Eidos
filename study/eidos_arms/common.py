@@ -56,6 +56,8 @@ def prepare(c, run_dir, arm):
     """One new project per invocation; immutable task bundle is the only scientific input."""
     import uuid
 
+    from study.private_card_registry import PRIVATE_CLASSIFICATION, PRIVATE_REGRESSION
+
     from eidos.cli.main import builtin_component_dirs, install_component
     from eidos.tasks.bundle import import_bundle
     project = f'pilot-a{arm}-{uuid.uuid4().hex[:16]}'
@@ -70,16 +72,17 @@ def prepare(c, run_dir, arm):
     imported = import_bundle(c, project, run_dir / 'task', python=os.environ['EIDOS_RESEARCH_PYTHON'])
     from .charters import commit
     imported.update(commit(c, project, imported['task_id'], run_dir))
+    card = imported['task_id']
     for directory in builtin_component_dirs():
         # <id>@<release>/ is an earlier release kept installable so pinned references resolve; it is published, not bound.
         name, pinned = directory.name.split('@')[0], '@' in directory.name
         if name in ('eidos.project.command', 'eidos.task.score-classification',
                     'eidos.search.recipe-sweep', 'eidos.diagnose.baseline-errors') or (
-                imported['task_id'] in ('D03', 'D06', 'N01', 'N04') and name == 'eidos.task.paired-classification-report'):
+                (card in ('D03', 'D06', 'N01', 'N04') or card in PRIVATE_CLASSIFICATION) and name == 'eidos.task.paired-classification-report'):
             r = install_component(c, project, directory, 'default', not pinned)
             if 'component_ref' not in r or r.get('validation') == 'failed':
                 raise RuntimeError(f'component installation failed: {r}')
-    if imported['task_id'] not in ('D01', 'D04', 'D05', 'N02', 'N03'):
+    if card not in ('D01', 'D04', 'D05', 'N02', 'N03') and card not in PRIVATE_REGRESSION:
         from .protocols import prepare as prepare_protocols
         prepare_protocols(c, project, run_dir)
     write_json(run_dir / 'lab_import.json', {'project': project, **imported})
