@@ -54,6 +54,8 @@ _PARAM = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _PLACEHOLDER = re.compile(r"\{[A-Za-z_][A-Za-z0-9_.]*\}")
 _HELDOUT = re.compile(r"(^|[^a-z0-9])(test(?:set|data|split)?|hold[_\- ]?out|held[_\- ]?out)([^a-z0-9]|$)")
 _CAMEL = re.compile(r"([a-z0-9])([A-Z])")
+_WORD = re.compile(r"[a-z]+")
+_HELDOUT_PREFIXES = ("test", "holdout", "heldout")
 
 
 class SweepConfigError(ValueError):
@@ -62,6 +64,13 @@ class SweepConfigError(ValueError):
 
 def _names_heldout(name):
     return bool(_HELDOUT.search(_CAMEL.sub(r"\1_\2", str(name)).lower()))
+
+
+def _names_heldout_file(name):
+    """A data file is refused more strictly than a metric: besides the split names above, any word of its name that
+    begins with test, holdout or heldout (test1.csv, testfeatures.csv, x_test2.npy, holdout3.npz)."""
+    words = _WORD.findall(_CAMEL.sub(r"\1_\2", str(name)).lower())
+    return _names_heldout(name) or any(w.startswith(_HELDOUT_PREFIXES) for w in words)
 
 
 # -- the search space ----------------------------------------------------------------------------------------------
@@ -168,7 +177,7 @@ def _check_project_files(command, source_files):
     if source_files is not None:
         for rel in source_files:
             parts = str(rel).replace("\\", "/").split("/")
-            if any(_names_heldout(part) for part in parts) and Path(parts[-1]).suffix not in SOURCE_CODE_SUFFIXES:
+            if any(_names_heldout_file(part) for part in parts) and Path(parts[-1]).suffix not in SOURCE_CODE_SUFFIXES:
                 raise SweepConfigError("source bundle file %r is named after a held-out split; this search uses visible "
                                        "validation only" % rel)
         return
@@ -179,7 +188,7 @@ def _check_project_files(command, source_files):
     for name in allow:
         if not isinstance(name, str) or not name or "/" in name or "\\" in name or name.startswith("."):
             raise SweepConfigError("command.copy entry %r must be a plain file name" % (name,))
-        if _names_heldout(name):
+        if _names_heldout_file(name):
             raise SweepConfigError("command.copy entry %r is named after a held-out split; this search uses visible "
                                    "validation only" % name)
         path = Path.cwd() / name
@@ -343,9 +352,18 @@ def _evaluate(root, index, seed, fold, n_folds, parameters, cfg, inputs, reader,
     command = cfg["command"]
     label = index if isinstance(index, str) else "%04d" % index  # a template's stages prefix their own labels
     base = root / ("trial-%s-s%s-f%d" % (label, seed, fold))
+    attempt = 1
+    while base.exists():  # every evaluation has its own directory: a repeated label never reuses or clobbers one
+        attempt += 1
+        base = root / ("trial-%s-s%s-f%d-r%d" % (label, seed, fold, attempt))
     work, out = base / "work", base / "out"
-    _prepare_work(work, inputs, reader, command, source_files)
-    out.mkdir()
+    record = {"seed": seed, "fold": fold}
+    try:
+        _prepare_work(work, inputs, reader, command, source_files)
+        out.mkdir()
+    except OSError as exc:  # recorded as this evaluation's failure: the evidence already gathered is kept
+        record.update(status="failed", error="could not prepare the working directory: %s" % (str(exc)[:TAIL_CHARS],))
+        return record
     subst = {"{work}": str(work), "{out}": str(out), "{seed}": str(seed), "{fold}": str(fold),
              "{folds}": str(n_folds), "{params_json}": json.dumps(parameters, sort_keys=True)}
     subst.update({"{param.%s}" % k: _format(v) for k, v in parameters.items()})
@@ -354,7 +372,6 @@ def _evaluate(root, index, seed, fold, n_folds, parameters, cfg, inputs, reader,
         recipe_path.write_text(json.dumps(_render(cfg["recipe"], parameters), sort_keys=True))
         subst["{recipe}"] = str(recipe_path)
     argv = _argv(command, subst)
-    record = {"seed": seed, "fold": fold}
     home = base / "home"
     home.mkdir()
     stderr_path = base / "stderr.log"
@@ -484,6 +501,8 @@ def _seeds_folds(config, context):
         seeds = [context.seed if context.seed is not None else 0]
     if not isinstance(seeds, list) or not seeds or not all(isinstance(s, int) and not isinstance(s, bool) for s in seeds):
         raise SweepConfigError("seed_policy.seeds must be a non-empty list of integers")
+    if len(set(seeds)) != len(seeds):
+        raise SweepConfigError("seed_policy.seeds must not repeat a seed: a repeated seed measures nothing new")
     folds = int(policy.get("folds", 1))
     if folds < 1:
         raise SweepConfigError("seed_policy.folds must be at least 1")
@@ -727,6 +746,8 @@ def _run_template(inputs, config, *, reader, writer, context):
         seeds = [context.seed if context.seed is not None else 0]
     if not isinstance(seeds, list) or not seeds or not all(isinstance(s, int) and not isinstance(s, bool) for s in seeds):
         raise SweepConfigError("template.seeds must be a non-empty list of integers")
+    if len(set(seeds)) != len(seeds):
+        raise SweepConfigError("template.seeds must not repeat a seed: a repeated seed measures nothing new")
     stopping = dict(config.get("stopping") or {"rule": "none"})
     if stopping.get("rule", "none") != "none":
         raise SweepConfigError("a template screens every recipe it can within the budget: stopping.rule must be none")

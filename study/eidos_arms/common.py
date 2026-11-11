@@ -71,10 +71,12 @@ def prepare(c, run_dir, arm):
     from .charters import commit
     imported.update(commit(c, project, imported['task_id'], run_dir))
     for directory in builtin_component_dirs():
-        if directory.name in ('eidos.project.command', 'eidos.task.score-classification',
-                              'eidos.search.recipe-sweep', 'eidos.diagnose.baseline-errors') or (
-                imported['task_id'] in ('D03', 'D06') and directory.name == 'eidos.task.paired-classification-report'):
-            r = install_component(c, project, directory, 'default', True)
+        # <id>@<release>/ is an earlier release kept installable so pinned references resolve; it is published, not bound.
+        name, pinned = directory.name.split('@')[0], '@' in directory.name
+        if name in ('eidos.project.command', 'eidos.task.score-classification',
+                    'eidos.search.recipe-sweep', 'eidos.diagnose.baseline-errors') or (
+                imported['task_id'] in ('D03', 'D06') and name == 'eidos.task.paired-classification-report'):
+            r = install_component(c, project, directory, 'default', not pinned)
             if 'component_ref' not in r or r.get('validation') == 'failed':
                 raise RuntimeError(f'component installation failed: {r}')
     if imported['task_id'] not in ('D01', 'D04', 'D05'):

@@ -17,7 +17,9 @@ def main():
     sources = [root / "support"] + [
         root / "packages" / p / "src" for p in ("eidos-wire", "eidos-worker-sdk", "eidos-pytorch")
     ]
-    sources += sorted(p.parent for p in (root / "components").glob("*/eidos-component.json"))
+    # Earlier releases kept for pinned references (<id>@<release>/) share module names with the current release: the
+    # worker puts the invoked component's own directory first, so only current releases go on the shared path.
+    sources += sorted(p.parent for p in (root / "components").glob("*/eidos-component.json") if "@" not in p.parent.name)
     sys.path[:0] = list(map(str, sources))
     from eidos_wire import OutputManifest
     from eidos_worker.testing import make_invocation

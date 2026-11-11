@@ -29,7 +29,8 @@ def test_ten_components_present():
 @pytest.mark.parametrize("path", ALL, ids=lambda p: p.name)
 def test_manifest_is_valid_and_complete(path):
     m = load_manifest(path / "eidos-component.json")
-    assert m.id == path.name
+    # The current release lives in <id>/; an earlier release kept installable for pinned references in <id>@<release>/.
+    assert path.name in (m.id, m.ref)
     assert (path / m.card).is_file()
     module = m.entry.split(":")[0].split(".")
     assert (path / Path(*module)).with_suffix(".py").is_file()

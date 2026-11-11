@@ -21,6 +21,7 @@ LAYOUTS = ("auto", "tabular", "sequence", "image")
 MAX_CLASSES = 50
 _HELDOUT = re.compile(r"(^|[^a-z0-9])(test(?:set|data|split)?|hold[_\- ]?out|held[_\- ]?out)([^a-z0-9]|$)")
 _CAMEL = re.compile(r"([a-z0-9])([A-Z])")
+_WORD = re.compile(r"[a-z]+")
 EPS = 1e-8
 
 
@@ -29,7 +30,10 @@ class DiagnosisConfigError(ValueError):
 
 
 def _names_heldout(name):
-    return bool(_HELDOUT.search(_CAMEL.sub(r"\1_\2", str(name)).lower()))
+    """An array name that names a held-out split, or any word of which begins with test, holdout or heldout
+    (test_labels, testfeatures, x_test1)."""
+    text = _CAMEL.sub(r"\1_\2", str(name)).lower()
+    return bool(_HELDOUT.search(text)) or any(w.startswith(("test", "holdout", "heldout")) for w in _WORD.findall(text))
 
 
 # -- inputs -----------------------------------------------------------------------------------------------------------
@@ -449,7 +453,9 @@ def run(inputs, config, *, reader, writer, context):
             raise DiagnosisConfigError("the %s port is required" % port)
     keys = {"x": config.get("x_key", "x"), "y": config.get("y_key", "y"), "ids": config.get("ids_key", "ids")}
     group_keys = list(config.get("group_keys") or [])
-    for name in [*keys.values(), *group_keys]:
+    prediction_key, groups_key = config.get("prediction_key", "predictions"), config.get("groups_key", "groups")
+    # Every array name this diagnosis may open is checked before any input is read.
+    for name in [*keys.values(), *group_keys, prediction_key, groups_key]:
         if _names_heldout(name):
             raise DiagnosisConfigError("array name %r names a held-out split; this diagnosis reads visible data only" % name)
     probes_wanted = list(config.get("probes") or PROBES)
@@ -502,14 +508,14 @@ def run(inputs, config, *, reader, writer, context):
     groups = dict(va["groups"])
     if "groups" in inputs:
         with np.load(reader.path("groups"), allow_pickle=False) as data:
-            gkey = config.get("groups_key", "groups")
+            gkey = groups_key
             gids, gval = np.asarray(data["ids"]), np.asarray(data[gkey])
         position = {v: i for i, v in enumerate(gids.tolist())}
         if any(v not in position for v in va["ids"].tolist()):
             raise DiagnosisConfigError("the groups input does not cover every validation id")
         groups["groups:" + gkey] = gval[[position[v] for v in va["ids"].tolist()]]
     if "predictions" in inputs:
-        pred = _align_predictions(reader, va, config.get("prediction_key", "predictions"))
+        pred = _align_predictions(reader, va, prediction_key)
         source = "baseline predictions (input port predictions)"
     else:
         pred = _ridge_fit_predict(xtr, ytr, va["x"], task_type, classes, models["ridge"])
