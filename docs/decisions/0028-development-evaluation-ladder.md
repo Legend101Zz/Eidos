@@ -1,4 +1,4 @@
-# 0026 Development evaluation ladder
+# 0028 Development evaluation ladder
 
 Accepted 2026-11-11 for ticket T1. The handoff `EVALS.md` specifies offline core invariants and replays, a seven-card development mini-eval, and prospective sealed-card pilots.
 

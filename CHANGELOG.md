@@ -4,7 +4,9 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.3.0
 
-### Development evaluation ladder (ADR 0026, T1)
+### Development evaluation ladder (ADR 0028, T1)
+
+- Renumbered the development evaluation ladder from ADR 0026 to [ADR 0028](docs/decisions/0028-development-evaluation-ladder.md) to avoid the round-4 ADR numbering collision.
 
 - Use one Tier-1 controller for the frozen round-3 and round-4 builds. Record the server-registered deadline and measured margin, preserve bounded replies and finalization receipts, and classify controller abstention separately.
 
