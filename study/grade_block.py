@@ -345,7 +345,9 @@ def grade_run(run_dir, grading_dir, block_incident=None, expected_meta=None):
     return result
 
 
-def grade_block(block_record, grading_root, results_path):
+def grade_block(block_record, grading_root, results_path, *, arms=(1, 2, 3, 4)):
+    if not arms or len(set(arms)) != len(arms) or any(arm not in (1, 2, 3, 4) for arm in arms):
+        raise ValueError("arms must be distinct study arm numbers")
     block = read_json(block_record)
     if not block.get("complete"):
         raise ValueError("grading is permitted only after the whole block ends")
@@ -361,7 +363,7 @@ def grade_block(block_record, grading_root, results_path):
         shutil.move(str(grade_directory), archived)
     write_json(grade_directory / "block_record.json", block)
     records = []
-    for arm in (1, 2, 3, 4):
+    for arm in arms:
         root = directory / f"arm{arm}"
         records.append(
             grade_run(
@@ -374,7 +376,7 @@ def grade_block(block_record, grading_root, results_path):
     if any(r["status"] == "incident" for r in records):
         # A grader/infrastructure incident invalidates the entire paired block.
         reason = next(r.get("reason") for r in records if r["status"] == "incident")
-        for arm, result in enumerate(records, 1):
+        for arm, result in zip(arms, records, strict=True):
             result.update(status="incident", verified_success=False, card_success=False, reason=reason)
             write_json(grade_directory / f"arm{arm}/grade.json", result)
         block.update(status="incident", incident_reason=reason)
