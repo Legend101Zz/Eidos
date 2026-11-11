@@ -1041,7 +1041,7 @@ def test_benign_names_that_merely_contain_test_are_copied_and_test_like_files_st
     res = sweep(None, config, cwd=project)
     assert res.ok, res.manifest.error
     m = res.json("evidence_table")["recipes"][0]["evaluations"][0]["metrics"]
-    assert [m["seen_%d" % i] for i in range(7)] == [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0]  # the three benign files only
+    assert [m[f"seen_{i}"] for i in range(7)] == [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0]  # the three benign files only
 
 
 # -- every evaluation is its own process group: stopped and reaped on timeout, stop request and cancellation ------------
@@ -1215,9 +1215,9 @@ def unit_search(module, root, *, seeds=(11,)):
 @pytest.mark.parametrize("index", [0, "screen-0003"], ids=["numbered-recipe", "stage-labelled-recipe"])
 def test_evaluating_the_same_recipe_seed_and_fold_twice_gives_each_its_own_directory(tmp_path, index):
     module, root = load_sweep_module(), tmp_path / "sweep"
-    label = index if isinstance(index, str) else "%04d" % index
+    label = index if isinstance(index, str) else f"{index:04d}"
     first = unit_evaluate(module, root, index)
-    first_dir = root / ("trial-%s-s11-f0" % label)
+    first_dir = root / f"trial-{label}-s11-f0"
     (first_dir / "out" / "marker.txt").write_text("first")  # a second evaluation must not reuse or clear this directory
     second = unit_evaluate(module, root, index)
     third = unit_evaluate(module, root, index)
@@ -1226,7 +1226,7 @@ def test_evaluating_the_same_recipe_seed_and_fold_twice_gives_each_its_own_direc
         assert record["status"] == "ok" and (record["seed"], record["fold"]) == (11, 0)
         assert record["metrics"]["validation_score"] == approx(want)
     assert sorted(d.name for d in root.iterdir()) == sorted(
-        "trial-%s-s11-f0%s" % (label, suffix) for suffix in ("", "-r2", "-r3"))
+        f"trial-{label}-s11-f0{suffix}" for suffix in ("", "-r2", "-r3"))
     assert (first_dir / "out" / "marker.txt").read_text() == "first"
     for d in root.iterdir():  # each ran in its own work directory and wrote its own receipt
         assert (d / "out" / "receipt.json").is_file() and (d / "work" / "project.py").is_file()
