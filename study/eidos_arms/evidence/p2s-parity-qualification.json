@@ -1,0 +1,333 @@
+{
+  "checked_at": "2026-11-11T05:40:12.263882+00:00",
+  "build": {
+    "eidos_commit_sha": "f4b2a853060294378f5e2635ce749fb51cf050eb",
+    "python": "/Users/comreton/eidos-internal/venvs/pilot-2-lab/bin/python",
+    "wheels": {
+      "eidos_lab-1.1.0-py3-none-any.whl": "07958eb02ab36e00814c0d775fc86fb2e98c926d0f83b24fa76310ddb8340969",
+      "eidos_pytorch-1.1.0-py3-none-any.whl": "cc48cbda59ec60d5818637675236bcf45333b7aca405124d14691525d58b51a6",
+      "eidos_wire-1.1.0-py3-none-any.whl": "e6177cad69baefe5afce6b61d74e27321c4efa4f5bf440df61ddd9e0f20d48cd",
+      "eidos_worker_sdk-1.2.0-py3-none-any.whl": "148e7b5dd4a817a33977c04967d9408c39182e1e6a4b29198f27d1657d8d067a"
+    },
+    "packages": {
+      "eidos-lab": "1.1.0",
+      "eidos-wire": "1.1.0",
+      "eidos-worker-sdk": "1.2.0",
+      "eidos-pytorch": "1.1.0"
+    }
+  },
+  "raw_receipts_root": "/Users/comreton/eidos-internal/p2s-qualification-final",
+  "model_calls": 0,
+  "cards": [
+    {
+      "card": "D03",
+      "project": "pilot-a4-3bb7b16e23e6479d",
+      "checked_environments": [
+        "lab",
+        "default"
+      ],
+      "python_executable": "/Users/comreton/eidos-internal/venvs/research/bin/python",
+      "lock_digest": "sha256:868816875984ce55469c67c8886df34532c136f0399d3b2423b7c3c4f406c191",
+      "scientific_versions": {
+        "numpy": "2.5.4",
+        "torch": "2.15.0",
+        "scipy": "1.18.1",
+        "scikit-learn": "1.9.1",
+        "joblib": "1.6.0"
+      },
+      "baseline_jobs": {
+        "lab": "job_a09a6eeb374b4b62",
+        "default": "job_693dc1b7428249af"
+      },
+      "baseline_status": "succeeded in both environments; no inputs.source; scientific imports passed",
+      "qualifications": [
+        {
+          "target": "eidos.assessors.paired-ci@1.2.0",
+          "id": "qual:eidos.assessors.paired-ci@1.2.0:9b6eef25",
+          "job_id": "job_c875c4be21f64f6d",
+          "status": "passed",
+          "controls": [
+            {
+              "type": "planted",
+              "status": "passed",
+              "control": "planted-large-effect",
+              "detected": 1,
+              "required": 1,
+              "repetitions": 1
+            },
+            {
+              "type": "null",
+              "status": "passed",
+              "control": "null-identical-arms",
+              "detected": 0,
+              "required": 1,
+              "repetitions": 1
+            },
+            {
+              "type": "null",
+              "status": "passed",
+              "control": "null-candidate-worse",
+              "detected": 0,
+              "required": 1,
+              "repetitions": 1
+            },
+            {
+              "type": "null",
+              "status": "passed",
+              "control": "null-guardrail-violated",
+              "detected": 0,
+              "required": 1,
+              "repetitions": 1
+            },
+            {
+              "type": "null",
+              "status": "passed",
+              "control": "null-single-cluster-inconclusive",
+              "detected": 0,
+              "required": 1,
+              "repetitions": 1
+            },
+            {
+              "type": "planted",
+              "status": "passed",
+              "control": "accuracy-planted-gain",
+              "detected": 1,
+              "required": 1,
+              "repetitions": 1
+            },
+            {
+              "type": "null",
+              "status": "passed",
+              "control": "accuracy-null-identical-arms",
+              "detected": 0,
+              "required": 1,
+              "repetitions": 1
+            },
+            {
+              "type": "null",
+              "status": "passed",
+              "control": "accuracy-null-small-noisy-inconclusive",
+              "detected": 0,
+              "required": 1,
+              "repetitions": 1
+            },
+            {
+              "type": "planted",
+              "status": "passed",
+              "control": "planted-stochastic-effect",
+              "detected": 40,
+              "interval": [
+                0.9123783986738101,
+                1.0
+              ],
+              "required": 40,
+              "repetitions": 40
+            },
+            {
+              "type": "null",
+              "status": "passed",
+              "control": "null-stochastic-no-effect",
+              "detected": 0,
+              "interval": [
+                0.0,
+                0.0876216013261899
+              ],
+              "required": 40,
+              "repetitions": 40
+            }
+          ]
+        },
+        {
+          "target": "eidos.templates.improves-under-budget@1.2.0",
+          "id": "qual:eidos.templates.improves-under-budget@1.2.0:2cbbb9e1",
+          "job_id": "job_bf48db9f6ecc4341",
+          "status": "passed",
+          "controls": [
+            {
+              "type": "planted",
+              "status": "passed",
+              "control": "planted-distinct",
+              "detected": 1,
+              "required": 1,
+              "repetitions": 1
+            },
+            {
+              "type": "null",
+              "status": "passed",
+              "control": "null-identical",
+              "detected": 0,
+              "required": 1,
+              "repetitions": 1
+            },
+            {
+              "type": "null",
+              "status": "passed",
+              "control": "null-threshold-override",
+              "detected": 0,
+              "required": 1,
+              "repetitions": 1
+            }
+          ]
+        }
+      ],
+      "independent_control_suite": false,
+      "wall_s": 25.354,
+      "model_calls": 0
+    },
+    {
+      "card": "D06",
+      "project": "pilot-a4-63f97c98711540bc",
+      "checked_environments": [
+        "lab",
+        "default"
+      ],
+      "python_executable": "/Users/comreton/eidos-internal/venvs/research/bin/python",
+      "lock_digest": "sha256:868816875984ce55469c67c8886df34532c136f0399d3b2423b7c3c4f406c191",
+      "scientific_versions": {
+        "numpy": "2.5.4",
+        "torch": "2.15.0",
+        "scipy": "1.18.1",
+        "scikit-learn": "1.9.1",
+        "joblib": "1.6.0"
+      },
+      "baseline_jobs": {
+        "lab": "job_961bc62d7ef94707",
+        "default": "job_16918d4008dc4797"
+      },
+      "baseline_status": "succeeded in both environments; no inputs.source; scientific imports passed",
+      "qualifications": [
+        {
+          "target": "eidos.assessors.paired-ci@1.2.0",
+          "id": "qual:eidos.assessors.paired-ci@1.2.0:76c67516",
+          "job_id": "job_46b3dea31cb246dc",
+          "status": "passed",
+          "controls": [
+            {
+              "type": "planted",
+              "status": "passed",
+              "control": "planted-large-effect",
+              "detected": 1,
+              "required": 1,
+              "repetitions": 1
+            },
+            {
+              "type": "null",
+              "status": "passed",
+              "control": "null-identical-arms",
+              "detected": 0,
+              "required": 1,
+              "repetitions": 1
+            },
+            {
+              "type": "null",
+              "status": "passed",
+              "control": "null-candidate-worse",
+              "detected": 0,
+              "required": 1,
+              "repetitions": 1
+            },
+            {
+              "type": "null",
+              "status": "passed",
+              "control": "null-guardrail-violated",
+              "detected": 0,
+              "required": 1,
+              "repetitions": 1
+            },
+            {
+              "type": "null",
+              "status": "passed",
+              "control": "null-single-cluster-inconclusive",
+              "detected": 0,
+              "required": 1,
+              "repetitions": 1
+            },
+            {
+              "type": "planted",
+              "status": "passed",
+              "control": "accuracy-planted-gain",
+              "detected": 1,
+              "required": 1,
+              "repetitions": 1
+            },
+            {
+              "type": "null",
+              "status": "passed",
+              "control": "accuracy-null-identical-arms",
+              "detected": 0,
+              "required": 1,
+              "repetitions": 1
+            },
+            {
+              "type": "null",
+              "status": "passed",
+              "control": "accuracy-null-small-noisy-inconclusive",
+              "detected": 0,
+              "required": 1,
+              "repetitions": 1
+            },
+            {
+              "type": "planted",
+              "status": "passed",
+              "control": "planted-stochastic-effect",
+              "detected": 40,
+              "interval": [
+                0.9123783986738101,
+                1.0
+              ],
+              "required": 40,
+              "repetitions": 40
+            },
+            {
+              "type": "null",
+              "status": "passed",
+              "control": "null-stochastic-no-effect",
+              "detected": 0,
+              "interval": [
+                0.0,
+                0.0876216013261899
+              ],
+              "required": 40,
+              "repetitions": 40
+            }
+          ]
+        },
+        {
+          "target": "eidos.templates.improves-under-budget@1.2.0",
+          "id": "qual:eidos.templates.improves-under-budget@1.2.0:6aa69cd2",
+          "job_id": "job_b470b33b6a2c462c",
+          "status": "passed",
+          "controls": [
+            {
+              "type": "planted",
+              "status": "passed",
+              "control": "planted-distinct",
+              "detected": 1,
+              "required": 1,
+              "repetitions": 1
+            },
+            {
+              "type": "null",
+              "status": "passed",
+              "control": "null-identical",
+              "detected": 0,
+              "required": 1,
+              "repetitions": 1
+            },
+            {
+              "type": "null",
+              "status": "passed",
+              "control": "null-threshold-override",
+              "detected": 0,
+              "required": 1,
+              "repetitions": 1
+            }
+          ]
+        }
+      ],
+      "independent_control_suite": false,
+      "wall_s": 25.946,
+      "model_calls": 0
+    }
+  ]
+}

@@ -79,7 +79,8 @@ def archive_block(block_dir, reason):
 
 def prepare(row, run_dir):
     free = int(subprocess.check_output(["df", "-k", "/"], text=True).splitlines()[1].split()[3])
-    if free < 14 * 1024 * 1024: raise RuntimeError("STOP: less than 14 GiB free")
+    if free < 14 * 1024 * 1024:
+        raise RuntimeError("STOP: less than 14 GiB free")
     run_dir.mkdir(parents=True, exist_ok=True)
     dev_command("package_task.py", "--task", row["task"], "--out", run_dir / "task")
     # The common structural interface contains no graders, labels or references.
@@ -103,6 +104,16 @@ def prepare(row, run_dir):
                 (ROOT / "docs/experiments/pilot-1/CHARTER.md").read_bytes()).hexdigest(),
         ),
     )
+
+
+def outer_deadline(run_dir, arm, deadline, *, stub=False):
+    """Arm 4's setup finishes before its search clock; retain the 60 s teardown allowance."""
+    if arm != 4 or stub:
+        return deadline
+    setup = Path(run_dir) / 'setup.json'
+    if not setup.exists():
+        return None  # The adapter's bounded infrastructure calls are still preparing the project.
+    return deadline + read_json(setup)['setup_wall_s']
 
 
 def run_block(rows, runs_root, stub=False, replace_incident=False):
@@ -154,11 +165,10 @@ def run_block(rows, runs_root, stub=False, replace_incident=False):
             )
         deadline = time.monotonic() + ENVELOPE["wall_s"] + 60
         while any(process.poll() is None for process in processes):
-            if time.monotonic() > deadline:
-                for process in processes:
-                    if process.poll() is None:
-                        stop_process_tree(process)
-                break
+            for row, process in zip(rows, processes, strict=True):
+                limit = outer_deadline(run_dirs[str(row['arm'])], row['arm'], deadline, stub=stub)
+                if process.poll() is None and limit is not None and time.monotonic() > limit:
+                    stop_process_tree(process)
             time.sleep(0.2)
         records = []
         for row in rows:
@@ -249,7 +259,8 @@ def main():
     args = parser.parse_args()
     if args.command == "plan":
         cards = args.cards.split(",") if args.cards else None
-        if args.runs < 1 or (cards and (len(set(cards)) != len(cards) or any(c not in FAMILIES for c in cards))): parser.error("invalid cards or runs")
+        if args.runs < 1 or (cards and (len(set(cards)) != len(cards) or any(c not in FAMILIES for c in cards))):
+            parser.error("invalid cards or runs")
         design = plan(args.seed, cards, args.runs)
         write_json(args.out, design)
         print(f"Planned {len(design)//4} randomized paired blocks, {len(design)} assignments.")
@@ -276,7 +287,8 @@ def main():
             parser.error("each block must contain exactly four arms")
         jobs.append(pool.submit(run_block, rows, args.runs_root, args.stub, args.replace_incident))
     try:
-        for job in jobs: job.result()
+        for job in jobs:
+            job.result()
     finally:
         pool.shutdown(wait=True)
 

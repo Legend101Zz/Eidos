@@ -37,6 +37,11 @@ def main():
         (a.run_dir / 'worker_error.txt').write_text(traceback.format_exc())
         record.update(status='incident', incident_reason=f'{type(exc).__name__}: {exc}')
     finally:
+        if a.arm == 4:
+            setup = a.run_dir / 'setup.json'
+            record.update(json.loads(setup.read_text()) if setup.exists() else {
+                'setup_started_at': started, 'setup_ended_at': utc(),
+                'setup_wall_s': round(time.monotonic() - t0, 3), 'setup_complete': False})
         (a.run_dir / 'transcript.jsonl').touch(exist_ok=True)
         if (a.run_dir / 'lab_policy.json').exists():
             record['llm_broker_policy'] = json.loads((a.run_dir / 'lab_policy.json').read_text())

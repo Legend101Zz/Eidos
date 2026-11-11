@@ -23,6 +23,14 @@ done
 
 These are controller commands for the separately authorized pilot. Tooling qualification makes no model calls. Arms 3/4 allocate UUID projects, with project-scoped tokens; the shared lab start is protected by its existing filesystem lock. D04/D05 have a documented built-in assessor gap.
 
+Before launch, record the prospective P2S policy in the pilot-2 charter (see
+[P2S_REPORT.md](P2S_REPORT.md)). Each real arm-4 run reports `setup_wall_s`
+separately from its timed `wall_s`; `adapter_wall_s` includes setup and teardown.
+The launcher excludes setup from arm 4's outer deadline. All selectable lab
+environments use the research interpreter. METHOD text and the factual no-source
+baseline note are supplied to arm 4, and all arms classify recovered errors by
+their final outcome. No pilot-1 record is reclassified.
+
 For the private GitHub grader, submit only after a whole paired block ends.
 Use a unique tag for every dispatch; example for D03-r1 arm 1:
 

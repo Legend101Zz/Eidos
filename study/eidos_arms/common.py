@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import os
+import re
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -195,7 +195,6 @@ def classify(shown, receipts, models, timed_out=False, answer_valid=True):
     text = json.dumps(failures)
     if len(models) > 1:
         return 'incident', 'model id changed: ' + ', '.join(models)
-    import re
     # Addendum 2: classify only error strings and HTTP status codes with the same rule as arms 1-3
     # (study/run_arm.py incident_text). The old search over the whole failure JSON matched token
     # counts such as "output_tokens": 541 as a 5xx status. A request timeout without a provider
@@ -207,8 +206,8 @@ def classify(shown, receipts, models, timed_out=False, answer_valid=True):
     if any(t.get('stop_reason') == 'budget-exhausted' for t in shown.get('turns', [])) or (
             'budget-exhausted' in str(shown.get('needs_input', ''))):
         return 'token_budget', None
-    if failures or shown.get('needs_input') or any(t.get('stop_reason') == 'error' for t in shown.get('turns', [])):
-        return 'crash', 'investigator failed or requires operator input: ' + text[:1800]
-    if not answer_valid:
-        return 'invalid_output', None
-    return 'ok', None
+    # Scientific completion is determined by the final state and exported answer,
+    # not by recovered request/turn errors. A controller fallback alone is not a conclusion.
+    if shown.get('status') == 'concluded':
+        return ('ok' if answer_valid else 'invalid_output'), None
+    return 'crash', 'investigator ended without a conclusion or requires operator input: ' + text[:1800]

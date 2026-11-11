@@ -34,7 +34,7 @@ class Receipts(unittest.TestCase):
         self.assertEqual(classify({}, [], [], True)[0], 'timeout')
         self.assertEqual(classify({'needs_input': {'reason': 'budget-exhausted'}}, [], [])[0], 'token_budget')
         self.assertEqual(classify({'needs_input': {'reason': 'invalid proposals'}}, [], [])[0], 'crash')
-        self.assertEqual(classify({}, [], [], answer_valid=False)[0], 'invalid_output')
+        self.assertEqual(classify({'status': 'concluded'}, [], [], answer_valid=False)[0], 'invalid_output')
 
 
 class Selection(unittest.TestCase):

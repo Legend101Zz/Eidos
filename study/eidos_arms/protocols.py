@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import copy
 import json
-import sys
+import os
 import time
 
 from . import lab
@@ -24,9 +24,11 @@ def prepare(c, project, run_dir):
     assessor = "eidos.assessors.paired-ci@1.2.0" if card in ("D03", "D06") else ASSESSOR
     template = "eidos.templates.improves-under-budget@1.2.0" if card in ("D03", "D06") else TEMPLATE
     from eidos.cli.main import builtin_component_dirs, install_component
-    c.command('register_environment', {'name': 'lab', 'python_executable': lab.python(),
-              'project_root': str(run_dir / 'task'), 'python_version': sys.version.split()[0],
-              'installed': {}, 'notes': 'Installed lab interpreter; only the packaged task is the project root'},
+    from eidos.tasks.bundle import _inspect_env
+    python = os.environ['EIDOS_RESEARCH_PYTHON']
+    c.command('register_environment', {'name': 'lab', 'python_executable': python,
+              'project_root': str(run_dir / 'task'), **_inspect_env(python, run_dir / 'task'),
+              'notes': 'Infrastructure controls; same research interpreter as default; task-only project root'},
               project=project, key='pilot-lab-env:' + project)
     dirs = {p.name: p for p in builtin_component_dirs(lab_env_only=True)}
     for name in ('eidos.assessors.paired-ci', 'eidos.templates.improves-under-budget', 'eidos.qualification-runner'):

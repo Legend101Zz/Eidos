@@ -13,6 +13,21 @@ def charter(card):
             'question': 'Reproduce the supplied baseline (seed 11), then evaluate the practical accuracy bar.',
             'known_exposures': [{'description': 'Public development task; no evaluator test data supplied'}],
             'resource_limits': {'wall_seconds': 1800, 'model_tokens': 8_000_000, 'threads': 1}}
+    if card in ('D03', 'D04', 'D05', 'D06'):
+        body['pilot_2_setup'] = {
+            'policy': 'P2S prospective parity corrections; pilot-1 records remain unchanged.',
+            'environments': 'All selectable environments use the arms-1–3 research interpreter, '
+                            'including lab infrastructure controls; only the packaged task is the project root.',
+            'information': 'Arms 2 and 3 receive METHOD.md; arm 4 embeds the same METHOD.md with task text. '
+                           'Arms 3 and 4 are told that baseline project-command needs no authored source.',
+            'run_classification': 'All arms use final outcomes: recovered intermediate errors do not override '
+                                  'a successful final result and valid answer. Incident, wall-timeout and '
+                                  'token-budget rules retain precedence.',
+            'arm4_timing': 'Lab startup, project import, charter, component installation, controls and prompt '
+                           'assembly precede the investigation clock. Each run records setup_wall_s separately; '
+                           'the launcher excludes it from the outer run deadline. Provider bridge startup, '
+                           'investigation, export and accounting remain inside the timed interval. '
+                           'adapter_wall_s includes setup and teardown.'}
     if card == 'D01':
         return {**body, 'question': 'Operational import and reproduction; no improvement requested.',
                 'exploration_only': True}

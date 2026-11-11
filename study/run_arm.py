@@ -42,6 +42,7 @@ class UsageTracker:
         self.models = set()
         self.claim = ""
         self.final_seen = False
+        self.final_is_error = False
         self.stream_message_id = None
 
     @staticmethod
@@ -79,6 +80,7 @@ class UsageTracker:
             self.messages[key] = {k: max(old.get(k, 0), v) for k, v in counters.items()}
         if event.get("type") == "result":
             self.final_seen = True
+            self.final_is_error = bool(event_error(event))
             self.claim = event.get("result", "") or ""
             if isinstance(event.get("usage"), dict):
                 self.summary = self.counters(event["usage"])
@@ -155,7 +157,7 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
     arm = read_json(root / "arm.json")
     started, clock = utc_now(), time.monotonic()
     usage = UsageTracker()
-    status, reason, error_seen = "ok", None, False
+    status, reason = "ok", None
     transcript = root / "transcript.jsonl"
     process = None
     with transcript.open("w") as log:
@@ -176,7 +178,7 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
                 buffers[name] = b""
 
             def consume(line, name):
-                nonlocal status, reason, error_seen
+                nonlocal status, reason
                 text = line.decode("utf-8", errors="replace")
                 for name_of_secret in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
                     secret = env.get(name_of_secret)
@@ -201,10 +203,8 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
                 if status == "ok" and usage.tokens["total"] > token_limit:
                     status = "token_budget"
                 error = text if name == "stderr" else event_error(event)
-                if error:
-                    error_seen = error_seen or name != "stderr"
-                    if status == "ok" and incident_text(error):
-                        status, reason = "incident", error[:2000]
+                if error and status == "ok" and incident_text(error):
+                    status, reason = "incident", error[:2000]
 
             while selector.get_map():
                 if time.monotonic() - clock >= wall_s and status == "ok":
@@ -237,7 +237,9 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
             stop_process_tree(process)
             if status == "ok" and usage.tokens["total"] > token_limit:
                 status = "token_budget"
-            if status == "ok" and (process.returncode != 0 or error_seen or not usage.final_seen):
+            # A successful final result survives recovered tool/request errors and a
+            # later process-exit error. The caller still validates out/answer.json.
+            if status == "ok" and (not usage.final_seen or usage.final_is_error):
                 status = "crash"
         except Exception as exc:
             if process is not None and process.poll() is None:
