@@ -61,6 +61,9 @@ class Control(BaseModel):
     action: Literal["wait_for_jobs", "request_input", "conclude", "stop"] | None = None
     summary: str = ""
     scope_json: str | None = Field(default=None, description="optional JSON object describing the claim scope")
+    claim_json: str | None = Field(default=None, description="optional JSON object for conclude: {disposition: "
+                                   "candidate|confirmed|null|abstain, claim_id?, point_estimate?, uncertainty?, "
+                                   "population?, evidence_refs?, obligations?}; the state itself is derived from evidence")
 
 
 class Hypothesis(BaseModel):
@@ -88,6 +91,11 @@ def to_proposal(d: Decision) -> dict[str, Any]:
                 ctl["scope"] = json.loads(d.control.scope_json)
             except ValueError:
                 ctl["scope_text"] = d.control.scope_json
+        if d.control.claim_json:
+            try:
+                ctl["claim"] = json.loads(d.control.claim_json)
+            except ValueError:
+                ctl["claim_text"] = d.control.claim_json
         out["control"] = {k: v for k, v in ctl.items() if v is not None}
     return out
 
@@ -106,7 +114,7 @@ LENIENT_DECISION_SCHEMA: dict[str, Any] = {
             "tool": {"type": "string"}, "args": {"type": "object"}}}},
         "control": {"type": "object", "properties": {
             "action": {"type": "string", "enum": ["wait_for_jobs", "request_input", "conclude", "stop"]},
-            "summary": {"type": "string"}, "scope": {"type": "object"}}},
+            "summary": {"type": "string"}, "scope": {"type": "object"}, "claim": {"type": "object"}}},
     },
 }
 

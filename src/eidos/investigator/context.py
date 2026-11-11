@@ -60,8 +60,20 @@ Effect tools (executed in order only after the lab accepts your decision):
     eidos.task.paired-classification-report (ids must match exactly).
   freeze_evidence_plan {plan_id}; launch_evidence_plan {plan_id} (the assessment then runs by itself; its outcome
     appears under "Your evidence plans")
+  assess_candidate {success_rule_id, claim_id or claim:{statement, scope}, baseline:{"<seed>": <job id>},
+    candidate:{"<seed>": <job id>}, labels:<labels artifact id>, predictions_slot?, data_provenance:{split:
+    "held-out"|"selection"}, required_isolation}: the default route to an independent verdict. In one step it validates
+    output schemas, seed pairing (fresh initializations), the charter and data provenance, then plans, freezes and
+    launches with the right template (paired-report metrics: train_evaluate {seeds, baseline, candidate, evaluation}
+    instead of baseline/candidate/labels). A refusal is recorded with its reasons under "Assessment requests". Labels
+    you used for selection stay exploratory: they are refused here and never confirm anything.
   export_model {checkpoint_artifact_id, behavior_check_job_id}; record_note {kind, text, evidence_refs}
-Control actions: wait_for_jobs (sleep until admitted work finishes), request_input, conclude {summary, scope}, stop.
+Control actions: wait_for_jobs (sleep until admitted work finishes), request_input, conclude {summary, scope, claim?},
+  stop. claim = {disposition: "candidate"|"confirmed"|"null"|"abstain", claim_id?, point_estimate: {metric, value or
+  baseline+candidate, split?}, uncertainty?, population?, evidence_refs?: [ids], obligations?: [str]}. Your conclusion's
+  claim state comes from recorded evidence: an assessor pass gives protocol-passed, a failed assessment gives not
+  supported, and without an assessment your candidate is "submitted for confirmation". Abstaining or reporting a null is
+  always allowed; "confirmed" without an assessor pass is recorded as a downgrade.
 Success rules come only from the committed charter; you cannot set thresholds. Cite artifact/job ids for numbers."""
 
 
@@ -127,6 +139,11 @@ def pack(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int
         lines.append("## Your evidence plans")
         for pl in plans:
             lines.append(json.dumps(pl, sort_keys=True, default=str))
+    requests = view.get("assessment_requests") or []
+    if requests:
+        lines.append("## Assessment requests (assess_candidate; a refusal lists why)")
+        for req in requests:
+            lines.append(json.dumps(req, sort_keys=True, default=str))
     approved = view.get("approved_protocols")
     if approved is not None:
         lines.append("## Approved (qualified) protocols: templates and assessors usable in a plan, by claim kind")

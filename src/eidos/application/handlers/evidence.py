@@ -9,6 +9,7 @@ from typing import Any
 from eidos.application.handlers.investigations import confirm_scope, inv_scope
 from eidos.application.handlers.runs import admit_job, resolve_lock, strongest_profile
 from eidos.application.service import Ctx, command
+from eidos.domain import assessment as ev_assessment
 from eidos.domain import evidence as ev
 from eidos.domain import isolation, qualification
 from eidos.domain.errors import (
@@ -26,6 +27,9 @@ from eidos_wire import canonical_json, sha256_bytes
 def file_claim(ctx: Ctx, p: dict) -> dict:
     body = ev.validate_claim({k: p.get(k) for k in ("statement", "kind", "scope", "assumptions", "alternatives",
                                                      "supporting", "contradicting", "fork_point")})
+    if p.get("state") is not None or p.get("confirmed") is not None:
+        raise Invalid("a claim's state is derived from recorded assessments (ADR 0021); it cannot be asserted when filing",
+                      details={"state": p.get("state"), "confirmed": p.get("confirmed")})
     body["author"] = ctx.principal.id
     body["investigation_id"] = p.get("investigation_id")
     cid = p.get("claim_id") or f"claim_{uuid.uuid4().hex[:12]}"
@@ -35,7 +39,9 @@ def file_claim(ctx: Ctx, p: dict) -> dict:
                       details={"observed_revision": existing.revision})
     if existing:
         body["superseded_revision"] = existing.revision
-    rec = ctx.tx.put_record("claim", cid, ctx.project_id, body, created_by=ctx.principal.id, status="proposed")
+    # A filed claim is a submitted candidate until an assessment says otherwise (ADR 0021).
+    rec = ctx.tx.put_record("claim", cid, ctx.project_id, body, created_by=ctx.principal.id, status="proposed",
+                            labels={"state": ev_assessment.CANDIDATE_SUBMITTED})
     ctx.event("claim.filed", cid, {"revision": rec.revision, "kind": body["kind"]}, investigation_id=p.get("investigation_id"))
     return {"claim_id": cid, "revision": rec.revision}
 
@@ -399,7 +405,9 @@ def submit_assessment(ctx: Ctx, p: dict) -> dict:
     ctx.tx.put_record("justification", f"just:{aid}", ctx.project_id,
                       {"claim_id": claim_id, "requires": [aid], "kind": "assessment"},
                       created_by=ctx.principal.id, status="active", parent_id=claim_id)
-    ctx.tx.set_status("claim", claim_id, "assessed", labels={"latest_assessment": aid, "outcome": result["outcome"]})
+    ctx.tx.set_status("claim", claim_id, "assessed", labels={
+        "latest_assessment": aid, "outcome": result["outcome"],
+        "state": ev_assessment.lifecycle_state(result["outcome"], result.get("conformance"), result.get("health"))})
     ctx.event("assessment.committed", aid, {"plan": plan.id, "outcome": result["outcome"],
                                             "conformance": result["conformance"]},
               investigation_id=plan.body.get("investigation_id"), wake=True)

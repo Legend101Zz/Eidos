@@ -2,6 +2,27 @@
 
 All notable changes to Eidos. Tags are annotated, created only on CI-green commits, and never moved. Development tags `eidos-v0.x` were freezes, not releases.
 
+## Unreleased: 1.2.0
+
+### Assessment by default and evidence-derived claim state (ADR 0021)
+- **`assess_candidate`** (lab command, investigator tool, MCP tool, `lab assess`) goes from a locked candidate, a
+  baseline and a charter rule to a frozen, launched evidence plan, using the paired-classification adapter and
+  `eidos.assessors.paired-ci@1.2.0` for accuracy and the template's train/evaluate path for paired metrics. It
+  validates output schemas, seed pairing and fresh initializations, the charter id and data provenance before launch.
+  Refusals are recorded (`assessment_request`) with stable reason codes.
+- **Selection data stays exploratory.** `data_provenance.split: selection` is refused, a plan that declares it cannot
+  be frozen, and held-out data needs an operator attestation in the charter (`held_out: {labels, splits}`).
+- **A conclusion's claim state comes from recorded evidence.** `conclusion.claim_state` (schema `conclusion-claim/1`,
+  published as `schemas/eidos-wire/v1/conclusion.schema.json`) is `protocol-passed` only for a conformant, healthy
+  assessor pass, `candidate-submitted` with point estimate, uncertainty, population and unfulfilled obligations when
+  nothing confirmed it, and `not-supported` after an intact failure. The model can abstain or report a null; a claimed
+  confirmation without a pass is recorded as a downgrade. `get_claim` returns the derived state.
+- **Study adapter.** `study/eidos_arms/arm4.py::map_claim_state` maps the states explicitly onto `eidos-answer/0.2`;
+  see `study/eidos_arms/CHARTER_RULES.md`.
+- Tests: `tests/unit/test_claim_state.py`, `tests/unit/test_assessment_pipeline_rules.py`,
+  `tests/unit/test_conclusion_schema.py`, `tests/unit/test_arm4_claim_state_mapping.py`,
+  `tests/components/test_assessment_pipeline_template.py`, `tests/integration/test_assess_candidate_e2e.py`.
+
 ## Unreleased / 1.1.1
 
 Reasoning models through OpenAI-compatible endpoints (ADR 0016). Measured with MiniMax-M3.1-Flash through

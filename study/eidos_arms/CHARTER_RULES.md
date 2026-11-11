@@ -66,6 +66,31 @@ independent qualification**. The independent assessor is a separate service from
 the investigator and uses the frozen charter, not investigator-chosen thresholds.
 The automatic freeze policy admits only qualified/approved protocols.
 
+### Conclusion claim states and the `eidos-answer/0.2` mapping (ADR 0021)
+
+The lab records a conclusion's claim state from its evidence and assessor state; the model cannot select it.
+`arm4.map_claim_state` maps that state explicitly onto the answer. The independent evaluator still decides; this
+mapping only states what the lab's evidence shows.
+
+| Conclusion claim state | `status` | `claim_type` | `scope` |
+|---|---|---|---|
+| `protocol-passed` (conformant, healthy assessor pass) | `improvement_claimed` | `recipe_improvement` | prefixed with the rule and assessment |
+| `candidate-submitted`, positive point estimate | `improvement_claimed` | `recipe_improvement` | ends with `pending independent confirmation` |
+| `candidate-submitted`, no positive estimate or no measurement | `inconclusive` | `no_positive_claim` | unchanged |
+| `not-supported` (failed assessment) | `no_improvement_found` | `no_positive_claim` | unchanged |
+| `null-reported` (the model reports a null) | `no_improvement_found` | `no_positive_claim` | unchanged |
+| `abstained` (the model abstains) | `abstained` | `no_positive_claim` | unchanged |
+| `no-claim`, or a conclusion with no claim state | the model's own fields | | |
+
+Each mapped answer records the state and the model's status in `deviations`, and `selection_receipt.json` keeps the
+full claim state. A submitted candidate is not an improvement confirmed: its point estimate, uncertainty, population
+and unfulfilled obligations stay on the ledger, and only an assessor pass gives `protocol-passed`.
+
+`assess_candidate` goes from a locked candidate, baseline and this rule to a launched plan. It refuses selection data
+(`data_provenance.split: selection`) and any labels the charter does not attest as held-out, so visible validation
+remains selection evidence: charters in this pilot attest no investigator-reachable held-out labels, and arm 4
+concludes with a candidate submitted for confirmation unless an assessor passes.
+
 Commands/interfaces inspected and used:
 
 ```text

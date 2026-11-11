@@ -11,6 +11,7 @@ from typing import Any
 from eidos.application.handlers.components import catalog
 from eidos.application.handlers.investigations import confirm_scope, inv_scope
 from eidos.application.service import Ctx, query
+from eidos.domain import assessment as ev_assessment
 from eidos.domain import support
 from eidos.domain.errors import Forbidden, NotFound
 
@@ -281,7 +282,23 @@ def get_claim(ctx: Ctx, p: dict) -> dict:
                     "health": a.labels.get("health", "intact"), "plan_id": a.body.get("plan_id")}
                    for a in ctx.tx.list_records(ctx.project_id, "assessment", parent_id=claim.id)]
     _expose(ctx, claim.body.get("investigation_id"), f"claim:{claim.id}", {"assessments": [a["id"] for a in assessments]})
-    return {**claim.view(), "assessments": assessments, "support": support.support_status(justs, affected)}
+    return {**claim.view(), "assessments": assessments, "support": support.support_status(justs, affected),
+            "claim_state": _claim_state(assessments, claim.revision, ctx.tx.list_records(ctx.project_id, "assessment",
+                                                                                        parent_id=claim.id))}
+
+
+def _claim_state(assessments: list[dict], revision: int, records: list) -> dict:
+    """The claim's state from its current revision's assessments (ADR 0021): an intact failure outweighs a pass."""
+    rev = {r.id: (r.body.get("claim_ref") or {}).get("revision") for r in records}
+    states = [ev_assessment.lifecycle_state(a["outcome"], a["conformance"], a["health"]) for a in assessments
+              if rev.get(a["id"]) == revision]
+    if ev_assessment.NOT_SUPPORTED in states:
+        state = ev_assessment.NOT_SUPPORTED
+    elif ev_assessment.PROTOCOL_PASSED in states:
+        state = ev_assessment.PROTOCOL_PASSED
+    else:
+        state = ev_assessment.CANDIDATE_SUBMITTED
+    return {"state": state, "confirmed": state == ev_assessment.PROTOCOL_PASSED, "label": ev_assessment.LABELS[state]}
 
 
 @query("get_assessment")
@@ -438,11 +455,16 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
                       "jobs": launch.get("jobs"), "blocked": launch.get("blocked"),
                       "assessment": None if asm is None else {"assessment_id": asm.id, "outcome": asm.body.get("outcome"),
                                                               "conformance": asm.body.get("conformance")}})
+    requests = [{"request_id": r.id, "status": r.status, "plan_id": r.body.get("plan_id"), "path": r.body.get("path"),
+                 "exploratory": r.body.get("exploratory"), "reasons": r.body.get("reasons")}
+                for r in ctx.tx.list_records(ctx.project_id, "assessment_request", parent_id=inv.id, limit=100000)
+                if cutoff_ts is None or r.created_at <= cutoff_ts]
     approved = sorted({(ap.body["release_ref"], tuple(ap.body.get("scope") or ()))
                        for ap in ctx.tx.list_records(ctx.project_id, "approval", status="active", limit=100000)})
     return {"investigation": {"id": inv.id, "status": inv.status, "body": inv_body}, "horizon": horizon,
             "environments": environments, "created_artifacts": created[-50:], "call_results": call_results[-30:],
             "evidence_plans": plans[-10:],
+            "assessment_requests": requests[-10:],
             "approved_protocols": [{"release_ref": r, "scope": list(sc)} for r, sc in approved],
             "charter": charter, "jobs": jobs,
             "events": [{"seq": e["seq"], "type": e["type"], "subject": e["subject"]} for e in events[-200:]],

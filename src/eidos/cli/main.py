@@ -79,6 +79,19 @@ def cmd(name: str, payload: str = typer.Option("{}", help="JSON or @file"), proj
         fail(exc)
 
 
+@app.command("assess")
+def assess(project: str = typer.Option(..., "-p"), payload: str = typer.Option(..., help="assess_candidate request: JSON or @file"),
+           key: str = typer.Option(None, help="command key (reuse to retry safely)")):
+    """Launch the default assessment pipeline for a locked candidate; exit 1 with its recorded reasons when refused."""
+    try:
+        result = client().command("assess_candidate", _json_arg(payload), project=project, key=key)
+    except LabError as exc:
+        fail(exc)
+    out(result)
+    if (result.get("result") or {}).get("status") == "refused":
+        raise typer.Exit(1)
+
+
 @app.command("query")
 def query(name: str, params: str = typer.Option("{}"), project: str = typer.Option(None, "-p")):
     """Run any authorized query."""

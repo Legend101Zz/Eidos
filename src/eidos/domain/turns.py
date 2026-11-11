@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from eidos.domain.assessment import validate_claim_block
 from eidos.domain.errors import Invalid, PayloadTooLarge
 from eidos_wire import canonical_json, command_key
 
@@ -31,6 +32,7 @@ EFFECT_TOOLS = {
     "draft_evidence_plan": "draft_evidence_plan",
     "freeze_evidence_plan": "freeze_evidence_plan",
     "launch_evidence_plan": "launch_evidence_plan",
+    "assess_candidate": "assess_candidate",
     "export_model": "export_model",
     "record_note": "record_note",
 }
@@ -44,7 +46,7 @@ REQUIRED_ARGS = {
     "publish_component": ("bundle_artifact_id", "validation_job_id"), "bind_component": ("component_ref",),
     "retire_component": ("component_ref",), "file_claim": ("statement", "kind", "scope"),
     "draft_evidence_plan": ("claim_id", "charter_id", "template_ref"), "freeze_evidence_plan": ("plan_id",),
-    "launch_evidence_plan": ("plan_id",), "export_model": ("checkpoint_artifact_id", "behavior_check_job_id"),
+    "launch_evidence_plan": ("plan_id",), "assess_candidate": ("success_rule_id",), "export_model": ("checkpoint_artifact_id", "behavior_check_job_id"),
     "record_note": ("text",),
 }
 CONTROL_TOOLS = ("wait_for_jobs", "request_input", "conclude", "stop")
@@ -84,6 +86,8 @@ def validate_decision(proposal: dict[str, Any], *, max_calls: int) -> dict[str, 
     control = proposal.get("control") or {}
     if control and control.get("action") not in CONTROL_TOOLS:
         raise Invalid(f"unknown control action {control.get('action')!r}")
+    if control.get("action") in ("conclude", "stop") and control.get("claim") is not None:
+        validate_claim_block(control["claim"])  # ADR 0021
     for c in calls:
         if c["tool"] in ("plan_trial", "launch_trial", "draft_evidence_plan") and "purpose" not in c["args"]:
             c["args"]["purpose"] = proposal.get("purpose", "open-search")

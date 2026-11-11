@@ -196,6 +196,7 @@ class CommandService:
 def load_handlers() -> None:
     """Import handler modules so their decorators register commands and queries."""
     from eidos.application.handlers import (  # noqa: F401
+        assessment,
         broker,
         components,
         evidence,

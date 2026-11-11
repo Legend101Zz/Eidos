@@ -110,6 +110,8 @@ def compile_plan(
         "alternatives_unresolved": list(draft.get("alternatives_unresolved", [])),
         "disclosures": draft.get("disclosures", {}),
     }
+    if draft.get("data_provenance") is not None:  # ADR 0021: recorded on the plan; absent on older drafts
+        plan["data_provenance"] = copy.deepcopy(draft["data_provenance"])
     ri = plan["required_isolation"]
     if ri is not None and not isinstance(ri, dict):
         raise Invalid("required_isolation must be an object, e.g. {\"sealed\": true} or "
@@ -128,6 +130,9 @@ def check_freezable(plan: dict[str, Any], *, template_approved: bool, assessor_a
         raise QualificationMissing("protocol template is not qualified and approved for this use")
     if not assessor_approved:
         raise QualificationMissing("assessor release is not qualified and approved for this use")
+    if (plan.get("data_provenance") or {}).get("split") == "selection":  # ADR 0021
+        raise Invalid("this plan is over selection data, which stays exploratory: it cannot be frozen as confirmation",
+                      details={"data_provenance": plan["data_provenance"]})
 
 
 def check_conformance(plan: dict[str, Any], realized: dict[str, Any]) -> dict[str, Any]:

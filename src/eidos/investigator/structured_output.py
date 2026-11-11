@@ -157,7 +157,7 @@ JSON_SHAPE = """Reply with ONE JSON object and nothing else (no prose, no code f
 {"rationale": "<why>", "purpose": "reproduction|measurement-development|open-search|hypothesis-test|confirmation",
  "hypotheses": [{"statement": "...", "prediction": "...", "falsifier": "..."}],
  "calls": [{"tool": "<effect tool name>", "args": {<that tool's arguments>}}],
- "control": {"action": "wait_for_jobs|request_input|conclude|stop", "summary": "...", "scope": {}}}
+ "control": {"action": "wait_for_jobs|request_input|conclude|stop", "summary": "...", "scope": {}, "claim": {}}}
 Use double quotes, no trailing commas, no comments. "calls" may be empty; "control" may be omitted."""
 
 

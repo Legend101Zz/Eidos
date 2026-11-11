@@ -181,12 +181,65 @@ class ComponentManifest(BaseModel):
     license: str | None = None
 
 
+# -- recorded research records (not worker messages; published alongside them) ------------------------------------
+ClaimState = Literal["protocol-passed", "candidate-submitted", "not-supported", "abstained", "null-reported", "no-claim"]
+Disposition = Literal["confirmed", "candidate", "null", "abstain"]
+
+
+class ConclusionClaim(BaseModel):
+    """The claim state of a conclusion: derived from recorded evidence and assessor state (ADR 0021), never from a
+    model's chosen status. ``confirmed`` is true only with a conformant, healthy assessor pass."""
+
+    model_config = _CONFIG
+
+    schema_: Literal["conclusion-claim/1"] = Field(alias="schema")
+    state: ClaimState
+    confirmed: bool
+    label: str
+    requested_disposition: Disposition | None = None
+    claim_id: str | None = None
+    claim_revision: int | None = None
+    statement: str | None = None
+    assessment_id: str | None = None
+    plan_id: str | None = None
+    success_rule_ref: str | None = None
+    scope: Any = None
+    point_estimate: JsonObject | None = None
+    uncertainty: Any = None
+    population: Any = None
+    unfulfilled_obligations: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    assessments_considered: list[JsonObject] = Field(default_factory=list)
+    downgraded_from: Disposition | None = None
+    downgrade_reason: str | None = None
+    remaining_alternatives: list[Any] = Field(default_factory=list)
+
+
+class Conclusion(BaseModel):
+    """An investigation's recorded conclusion. Records from before ADR 0021 have no ``schema`` or ``claim_state``."""
+
+    model_config = _CONFIG
+
+    schema_: Literal["conclusion/2"] | None = Field(default=None, alias="schema")
+    turn_id: str
+    summary: str
+    scope: Any = None
+    action: Literal["conclude", "stop"]
+    claim_state: ConclusionClaim | None = None
+
+
 #: Published message and manifest types: schema file stem -> boundary model.
 MESSAGES: dict[str, type[BaseModel]] = {
     "invocation": Invocation,
     "output-manifest": OutputManifest,
     "component-manifest": ComponentManifest,
 }
+
+
+#: Ledger records published with the wire schemas; not worker messages, so outside ``MESSAGES``.
+RECORDS: dict[str, type[BaseModel]] = {"conclusion": Conclusion}
+#: Every schema file: schema file stem -> boundary model.
+PUBLISHED: dict[str, type[BaseModel]] = {**MESSAGES, **RECORDS}
 
 
 class WireSchemaError(ValueError):
@@ -200,7 +253,7 @@ class WireSchemaError(ValueError):
 
 def schema_document(name: str) -> dict[str, Any]:
     """The JSON Schema (2020-12) for one published message type, with the generator header."""
-    model = MESSAGES[name]
+    model = PUBLISHED[name]
     body = model.model_json_schema(by_alias=True, mode="validation")
     return {
         "$schema": JSON_SCHEMA_DIALECT,
@@ -218,7 +271,7 @@ def schema_document(name: str) -> dict[str, Any]:
 
 def validate_wire(name: str, data: Any) -> None:
     """Raise :class:`WireSchemaError` unless ``data`` (a decoded JSON message) satisfies the schema."""
-    model = MESSAGES[name]
+    model = PUBLISHED[name]
     try:
         text = canonical_json(data)
     except (TypeError, ValueError) as exc:
