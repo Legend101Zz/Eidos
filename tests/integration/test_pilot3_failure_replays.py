@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 
 import pytest
-from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse, TextPart
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse, TextPart, ThinkingPart
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.usage import RequestUsage
 from temporalio import activity
@@ -37,18 +37,31 @@ SYNTHETIC_FOLLOW_UP = {
 }
 
 
-def replay_slot(slot):
+def replay_slot(slot, *, surrogate_thinking=None):
     recorded = slot["replies"]
     original = [ModelMessagesTypeAdapter.validate_python([item["response"]])[0] for item in recorded]
     assert all(isinstance(reply, ModelResponse) for reply in original)
     usage = slot["usage_receipt"]["body"]["usage"]
-    assert usage["request_ids"] == [item["timing"]["provider_response_id"] for item in recorded]
-    assert usage["calls"] == len(original)
-    assert usage["input_tokens"] == sum(reply.usage.input_tokens for reply in original)
-    assert usage["output_tokens"] == sum(reply.usage.output_tokens for reply in original)
+    missing = slot.get("missing_runaway_reply_ids", [])
+    assert bool(missing) == bool(surrogate_thinking)
+    assert usage["request_ids"] == [item["timing"]["provider_response_id"] for item in recorded] + missing
+    assert usage["calls"] == len(original) + len(missing)
+    known_usage = usage["per_request"][:len(original)]
+    assert sum(item["input_tokens"] for item in known_usage) == sum(reply.usage.input_tokens for reply in original)
+    assert sum(item["output_tokens"] for item in known_usage) == sum(reply.usage.output_tokens for reply in original)
+    if missing:
+        runaway, = usage["structured_output"]["runaway"]
+        assert missing == [runaway["request_id"]] and runaway["finish_reason"] == "length"
+        assert usage["per_request"][-1]["finish_reason"] == "length"
+        assert not slot["decision"]["accepted"]
+        assert slot["decision"]["body"]["proposal"]["control"]["bounded_outcome"] == "decision-deadline"
+    else:
+        assert usage["input_tokens"] == sum(reply.usage.input_tokens for reply in original)
+        assert usage["output_tokens"] == sum(reply.usage.output_tokens for reply in original)
     deadline = recorded[0]["timing"]["decision_remaining_s"] * TIME_SCALE
     now = [0.0]
     requests = []
+    successor_history = []
     expected_reads = [read for read in usage["structured_output"]["reads"] if read.get("executed")]
     actual_reads = []
 
@@ -57,7 +70,28 @@ def replay_slot(slot):
         timeout = info.model_settings["timeout"]
         assert 0 < timeout <= min(300 * TIME_SCALE, deadline - now[0])
         requests.append(timeout)
-        if index == len(original):
+        if missing and index == len(original):
+            # The receipt measures the whole decision activity. Its elapsed time
+            # is a proxy for the missing request end, not a provider timestamp.
+            now[0] = usage["elapsed_seconds"] * TIME_SCALE
+            assert now[0] < deadline
+            billed = usage["per_request"][-1]
+            response = ModelResponse(
+                parts=[ThinkingPart(content=surrogate_thinking)], finish_reason=runaway["finish_reason"],
+                model_name=billed["model"], provider_response_id=missing[0],
+                usage=RequestUsage(input_tokens=billed["input_tokens"], output_tokens=billed["output_tokens"],
+                                   details={"reasoning_tokens": billed["reasoning_tokens"]}),
+            )
+            assert pydantic_ai_runtime.is_runaway(response)
+            return response
+        if index == len(original) + len(missing):
+            if missing:
+                raw = ModelMessagesTypeAdapter.dump_json(messages).decode()
+                assert surrogate_thinking not in raw and missing[0] not in raw
+                successor_history.extend(
+                    [(part["part_kind"], part.get("content")) for part in message["parts"]]
+                    for message in json.loads(raw)
+                )
             return ModelResponse(parts=[TextPart(json.dumps(SYNTHETIC_FOLLOW_UP))], usage=RequestUsage())
         timing = recorded[index]["timing"]
         next_start = (recorded[index + 1]["timing"]["started_unix"]
@@ -93,22 +127,39 @@ def replay_slot(slot):
     expected = [(receipt["tool"], tuple(receipt["args"][arg] for arg, _, _ in READ_TOOLS[receipt["tool"]]))
                 for receipt in expected_reads]
     assert actual_reads == expected
-    if slot["decision"]["accepted"]:
+    if missing:
+        assert len(requests) == len(original) + len(missing) + 1
+        assert result.runtime_outcome is None and result.proposal["control"]["action"] == "request_input"
+        assert result.usage["structured_output"]["runaway"] == usage["structured_output"]["runaway"]
+        assert result.usage["request_ids"][:usage["calls"]] == usage["request_ids"]
+        for key in ("input_tokens", "output_tokens", "reasoning_tokens"):
+            assert [item[key] for item in result.usage["per_request"][:usage["calls"]]] == [
+                item[key] for item in usage["per_request"]
+            ]
+        raw = json.dumps(result.raw_response)
+        assert surrogate_thinking not in raw and missing[0] not in raw
+        # The coordinator continues with the recorded refusal for this slot.
+        # Compare both synthetic variants' effects at the actual runtime boundary.
+        return len(original), None, (requests, successor_history, result.proposal, result.usage)
+    elif slot["decision"]["accepted"]:
         assert len(requests) == len(original) and result.runtime_outcome is None
         assert result.proposal["calls"]
     else:
         historical_control = slot["decision"]["body"]["proposal"]["control"]
         assert historical_control["action"] == "wait_for_jobs"
-        assert result.runtime_outcome is None
         if historical_control.get("bounded_outcome") == "decision-deadline":
-            assert len(requests) == len(original) + 1
-            assert result.proposal["control"]["action"] == "request_input"
+            if deadline - now[0] <= pydantic_ai_runtime.DURABLE_WRITE_MARGIN_SECONDS:
+                assert len(requests) == len(original)
+                assert result.runtime_outcome == "deadline-exhausted" and result.proposal == {}
+            else:
+                assert len(requests) == len(original) + 1
+                assert result.runtime_outcome is None and result.proposal["control"]["action"] == "request_input"
         else:
             # This historical reply proposed the wait itself. There is no missing
             # follow-up to synthesize, and the coordinator preserves its refusal.
             assert len(requests) == len(original)
-            assert result.proposal["control"]["action"] == "wait_for_jobs"
-    return len(original)
+            assert result.runtime_outcome is None and result.proposal["control"]["action"] == "wait_for_jobs"
+    return len(original), result.runtime_outcome, None
 
 
 @pytest.mark.pg
@@ -118,6 +169,8 @@ def replay_slot(slot):
     ("N01-r1", "N01-r1"),
     ("N01-r2", "N01-r2"),
     ("N01-r2-aborted-addendum1", "N01-r2"),
+    ("N01-r3", "N01-r3"),
+    ("N02-r3", "N02-r3"),
     ("N03-r1", "N03-r1"),
     ("N03-r3", "N03-r3"),
     ("N04-r2", "N04-r2"),
@@ -161,14 +214,23 @@ async def test_recorded_failure_tail_reaches_controller_abstention(env, lab, mon
                 return {"accepted": False, "runtime_outcome": "no-recorded-recovery-reply"}
             item = fixture["slots"][self.index]
             assert a["turn_id"] == f"t{item['turn'] - fixture['slots'][0]['turn'] + 1}" and a["slot"] == item["slot"]
-            self.replies += await asyncio.to_thread(replay_slot, item)
+            if item.get("missing_runaway_reply_ids"):
+                replay = await asyncio.to_thread(replay_slot, item, surrogate_thinking="Synthetic reasoning variant A.")
+                other = await asyncio.to_thread(replay_slot, item, surrogate_thinking="Different synthetic reasoning B.")
+                assert replay == other
+            else:
+                replay = await asyncio.to_thread(replay_slot, item)
+            replies, runtime_outcome, _ = replay
+            self.replies += replies
             self.index += 1
+            if runtime_outcome:
+                return {"accepted": False, "runtime_outcome": runtime_outcome, "reason": "runtime-bounded"}
             if item["decision"]["accepted"]:
                 # This historical slot preceded the six refusals. Effects are
                 # already represented by the recorded receipt and stay offline.
                 decision = item["decision"]
                 return {"accepted": True, "decision_id": decision["id"], "n_calls": len(decision["body"]["calls"])}
-            return {"accepted": False, "reason": "invalid"}
+            return {"accepted": False, "reason": item["decision"]["body"]["reason"]}
 
         @activity.defn(name="execute_decision")
         async def execute_decision(self, a):
@@ -203,6 +265,12 @@ async def test_recorded_failure_tail_reaches_controller_abstention(env, lab, mon
     assert fake.index == len(fixture["slots"])
     assert fake.replies == sum(len(item["replies"]) for item in fixture["slots"])
     assert len(fake.transitions) == 1 and not fake.marks
+    transition = fake.transitions[0][1]
+    if fixture_name == "N01-r3":
+        assert transition["trigger"] == "runtime-bounded"
+        assert transition["runtime_outcome"] == "deadline-exhausted"
+    else:
+        assert transition["trigger"] == "refused-proposals"
     shown = scene.q("get_investigation", {"investigation_id": inv})
     assert shown["status"] == "stopped" and shown["needs_input"] is None and "conclusion" not in shown["body"]
     receipt = shown["finalization_export_receipt"]
