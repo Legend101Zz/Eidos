@@ -321,6 +321,7 @@ class InvestigatorActivities:
             packed["text"] += "\n\n## Bounded autonomous finalization\n" + json.dumps(
                 {**turn["spec"]["finalization"], "remaining_budget": view["budgets"],
                  "remaining_wall": view.get("completion")}, sort_keys=True, default=str)
+            packed["chars"] = len(packed["text"])
         # The source manifest includes the catalog snapshot so offline replays see exactly what was
         # installed at the horizon, not components published later.
         src_bytes = json.dumps({**view, "catalog": catalog}, sort_keys=True, default=str).encode()
@@ -693,8 +694,9 @@ class InvestigatorActivities:
 
     @activity.defn(name="enter_finalization")
     def enter_finalization(self, a: dict) -> dict:
-        return self.wf.command("enter_finalization", a, project=a["project_id"],
-                               key=f"finalize:{a['investigation_id']}:{a.get('turn_counter')}")["result"]
+        result = self.wf.command("enter_finalization", a, project=a["project_id"],
+                                 key=f"finalize:{a['investigation_id']}:{a.get('turn_counter')}")["result"]
+        return {k: result.get(k) for k in ("enabled", "status", "reason")}
 
     @activity.defn(name="record_turn_retry")
     def record_turn_retry(self, a: dict) -> dict:

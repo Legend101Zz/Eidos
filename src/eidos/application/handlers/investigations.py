@@ -228,7 +228,7 @@ def _clear_needs_input(ctx: Ctx, inv, status: str, action: str) -> None:
                   "was": inv.labels["needs_input"]}, investigation_id=inv.id)
 
 
-NEEDS_INPUT_CODES = ("refused-proposals", "coordinator-stopped", "turn-failed", "provider-unavailable", "finalization-failed")
+NEEDS_INPUT_CODES = ("refused-proposals", "coordinator-stopped", "turn-failed", "provider-unavailable", "finalization-failed", "runtime-bounded")
 NEEDS_INPUT_DETAILS_BYTES = 2000
 
 
@@ -1273,6 +1273,13 @@ def _close_turn(ctx: Ctx, turn: dict, p: dict) -> dict:
         final = ctx.tx.require(FINALIZATION_KIND, inv_id)
         receipt = {"schema": "finalization-export-receipt/1", "investigation_id": inv_id,
                    "turn_id": turn["id"], "locked_candidate": turn["spec"]["finalization"].get("locked_candidate"),
+                   **{k: turn["spec"]["finalization"].get(k) for k in (
+                       "metrics", "selection_rule", "refusals", "runtime_outcome")},
+                   "remaining_budget": ctx.tx.budgets(inv_scope(inv_id)),
+                   "finalization_refusals": [{"decision_id": d["id"], "error": d["body"].get("error"),
+                                               "response_artifact_id": d["body"].get("response_artifact_id")}
+                                              for d in ctx.tx.decisions(turn["id"]) if not d["accepted"]],
+                   "finalization_runtime_outcome": p.get("runtime_outcome"),
                    "incumbent": turn["spec"]["finalization"].get("incumbent"),
                    "provenance_limits": turn["spec"]["finalization"]["provenance_limits"],
                    "investigator_concluded": reason == "concluded" and not control_refused,

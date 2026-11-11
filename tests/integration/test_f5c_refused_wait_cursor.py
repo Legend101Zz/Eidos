@@ -96,6 +96,10 @@ class Refusing:
         self.completed.append(a)
         return {"status": "completed"}
 
+    @activity.defn(name="enter_finalization")
+    async def enter_finalization(self, a: dict) -> dict:
+        return {"enabled": False}  # these regressions exercise the operator finalization policy
+
     @activity.defn(name="record_turn_retry")
     async def record_turn_retry(self, a: dict) -> dict:
         return {}
@@ -115,7 +119,7 @@ class Refusing:
         return {"already": False, "cursor": self.cursors[min(len(self.marks), len(self.cursors)) - 1]}
 
     def acts(self):
-        return [self.begin_turn, self.build_context, self.decide, self.execute_decision, self.complete_turn,
+        return [self.begin_turn, self.build_context, self.decide, self.execute_decision, self.complete_turn, self.enter_finalization,
                 self.check_news, self.mark_needs_input, self.record_turn_retry]
 
 

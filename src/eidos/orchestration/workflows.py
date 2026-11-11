@@ -39,7 +39,7 @@ MODEL = RetryPolicy(initial_interval=timedelta(seconds=2), backoff_coefficient=2
 
 HB = timedelta(seconds=30)  # investigator activities heartbeat every 5 s; a killed worker is noticed in ~30 s
 MAX_INVALID_RETRY_TURNS = 2
-WAIT_REASONS = ("waiting", "input-requested", "stale-revision", "calls-exhausted-waiting", "invalid-proposals")
+WAIT_REASONS = ("waiting", "input-requested", "stale-revision", "calls-exhausted-waiting", "invalid-proposals", "runtime-bounded")
 MAX_CONSECUTIVE_INVALID = 2
 # ADR 0019: a failed turn (stop reason "error") never leaves the investigation active with nothing scheduled. A
 # retryable failure gets at most MAX_FAILED_TURN_RETRIES automatic retry turns, after a recorded, growing backoff;
@@ -127,7 +127,9 @@ class InvestigationWorkflow:
         """The poll interval, shortened so that a quiet wait ends when the conclusion's reserve begins (ADR 0020)."""
         if not completion:
             return idle
-        until = turn_boundary(completion) - workflow.now().timestamp()
+        boundary = turn_boundary(completion) if workflow.patched("exploration-boundary-finalization-v1") else (
+            float(completion["deadline_unix"]) - float(completion["conclude_threshold_seconds"]))
+        until = boundary - workflow.now().timestamp()
         return max(1, min(idle, int(until) + 1))
 
     async def _wait_for_operator(self, a: dict, inv: str, history_limit: int, idle: int,
@@ -358,7 +360,10 @@ class InvestigationWorkflow:
                 marked = await workflow.execute_activity(
                     "mark_needs_input", {"investigation_id": inv, "project_id": a["project_id"], "turn_counter": counter,
                                          "refused_turns": invalid_turns,
-                                         "reason": "repeated refused proposals after bounded retries"},
+                                         "reason": "runtime exhausted after bounded recovery" if reason == "runtime-bounded"
+                                                   else "repeated refused proposals after bounded retries",
+                                         **({"code": "runtime-bounded", "details": {"runtime_outcome": res.get("runtime_outcome")}}
+                                            if reason == "runtime-bounded" else {})},
                     task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
                 # F5c (review R8 #3): this wait, like the failed-turn wait (A1), counts only operator events after the
                 # mark's cursor, not after the last turn's horizon (an event between the two would end it at once).
@@ -595,7 +600,7 @@ class TurnWorkflow:
                 # the conclusion and closed the turn as cancelled, and the coordinator sees the same.
                 stop = "cancelled"
         return {"started": True, "turn_id": tid, "stop_reason": stop, "control": control,
-                "finalization": bool(b.get("finalization")),
+                **({"finalization": True} if b.get("finalization") else {}),
                 **({"runtime_outcome": runtime_outcome} if runtime_outcome else {}),
                 **({"failure": failure} if failure else {}),
                 **({"completion": b["completion"]} if b.get("completion") else {})}

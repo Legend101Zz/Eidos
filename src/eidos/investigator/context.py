@@ -132,6 +132,25 @@ Control actions: wait_for_jobs (sleep until admitted work finishes), request_inp
 Success rules come only from the committed charter; you cannot set thresholds. Cite artifact/job ids for numbers."""
 
 
+FINALIZATION_GUIDE = """You are in the single bounded autonomous finalization turn.
+Read existing evidence only: get_job {job_id}, inspect_evidence {artifact_id, max_bytes?},
+describe_component {component_ref}. Then return ONE decision with calls: [] and control.action: conclude or stop.
+No search, compute, authoring, rule changes, candidate changes, re-lock or new evidence collection is allowed.
+Report the locked candidate with its source/job/receipt identifiers, visible metrics, provenance limits and recorded
+reproduction status. With no eligible locked candidate, honestly abstain. Missing held-out evidence never passes
+assessment. A candidate may be submitted pending independent confirmation, with limitations stated explicitly.
+Use only the remaining original wall/token budget; do not request operator input or wait for jobs in this turn."""
+
+
+def _tool_guide(view: dict[str, Any]) -> str:
+    return FINALIZATION_GUIDE if view.get("finalization") else TOOL_GUIDE
+
+
+def _known_tools(view: dict[str, Any]) -> list[str]:
+    return ["get_job", "inspect_evidence", "describe_component", "conclude", "stop"] if view.get("finalization") \
+        else sorted(EFFECT_TOOLS) + list(CONTROL_TOOLS)
+
+
 def pack(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int = MODEL_CONTEXT_CHAR_LIMIT,
          policy: str = POLICY_ID) -> dict[str, Any]:
     if policy == POLICY_V1:
@@ -225,16 +244,16 @@ def _pack_v1(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
     omitted["catalog"] = [c["ref"] for c in catalog[MAX_CATALOG:]]
     if len(catalog) > MAX_CATALOG:
         lines.append("(more components exist: use search via the catalog query; they are data, not tools)")
-    lines.append("## Tools\n" + TOOL_GUIDE)
+    lines.append("## Tools\n" + _tool_guide(view))
     text = "\n".join(lines)
     truncated = False
     if len(text) > char_limit:
-        text = text[: char_limit - 200] + "\n...[context truncated by context-policy/1]\n" + TOOL_GUIDE
+        text = text[: char_limit - 200] + "\n...[context truncated by context-policy/1]\n" + _tool_guide(view)
         truncated = True
     return {"policy": POLICY_V1, "text": text, "selections": sel, "omissions": omitted,
             "truncations": {"context_truncated": truncated}, "chars": len(text),
             "source_manifest_digest": "sha256:" + sha256_bytes(canonical_json(view).encode()),
-            "known_tools": sorted(EFFECT_TOOLS) + list(CONTROL_TOOLS)}
+            "known_tools": _known_tools(view)}
 
 
 def _error_view_v1(err: Any) -> Any:
@@ -639,7 +658,7 @@ def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
             out += ["- Known failures so far (do not repeat one without changing what caused it):", *pinned["failures"]]
         return out
 
-    tail = ["## Tools", TOOL_GUIDE]
+    tail = ["## Tools", _tool_guide(view)]
 
     def pinned_chars() -> int:
         return len("\n".join(assemble_head() + assemble_facts() + tail))
@@ -730,4 +749,4 @@ def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
     return {"policy": POLICY_ID if v3 else POLICY_V2, "text": text, "selections": sel, "omissions": omitted,
             "truncations": {"context_truncated": budget_cut, "budget_left": max(room, 0)}, "chars": len(text),
             "source_manifest_digest": "sha256:" + sha256_bytes(canonical_json(view).encode()),
-            "known_tools": sorted(EFFECT_TOOLS) + list(CONTROL_TOOLS)}
+            "known_tools": _known_tools(view)}

@@ -323,8 +323,10 @@ def _guarded(model: Any, envelope: TokenEnvelope, abort: DecisionAbort | None = 
             sent_at = time.monotonic()
             try:
                 response = await asyncio.wait_for(pending, timeout=usable)
-            except TimeoutError:
-                if usable < request_timeout and time.monotonic() - sent_at >= usable - 0.01:
+            except Exception as exc:
+                import httpx
+                timed_out = isinstance(exc, (TimeoutError, httpx.TimeoutException)) or type(exc).__name__ == "APITimeoutError"
+                if timed_out and usable < request_timeout and time.monotonic() - sent_at >= usable - 0.01:
                     raise DecisionAborted("decision-deadline", in_flight=True,
                                           abandoned=envelope.admitted[-1]) from None
                 raise
@@ -463,6 +465,15 @@ class PydanticAIRuntime:
         return _guarded(model, self.envelope, self.abort, float(self.config.get("request_timeout", 120))) \
             if self.envelope is not None else model
 
+    def _time_note(self) -> str:
+        """Dynamic instructions, recomputed for every provider request, including native tool rounds."""
+        left = None if self.abort is None or self.abort.deadline is None else max(
+            0.0, self.abort.deadline - self.abort.clock())
+        usable = float(self.config.get("request_timeout", 120))
+        if left is not None:
+            usable = max(0.0, min(usable, left - DURABLE_WRITE_MARGIN_SECONDS))
+        return f"Runtime time left: {left} seconds; usable request budget: {usable:.3f} seconds."
+
     def _agent(self, req: DecisionRequest, *, with_tools: bool = True, output_type: Any = None,
                instructions: str | None = None):
         from pydantic_ai import Agent
@@ -487,7 +498,11 @@ class PydanticAIRuntime:
             """Status, receipts and outputs of one job."""
             return call("get_job", job_id)
 
-        return Agent(self._model(), output_type=output_type or Decision, instructions=instructions or SYSTEM,
+        def current_instructions() -> str:
+            return (instructions or SYSTEM) + "\n\n" + self._time_note()
+
+        return Agent(self._model(), output_type=output_type or Decision,
+                     instructions=current_instructions,
                      retries=int(self.config.get("output_retries", 1)),
                      tools=[t for t in (inspect_evidence, search_components, describe_component, get_job)
                             if t.__name__ in tools] if (tools and with_tools) else [])
@@ -502,15 +517,9 @@ class PydanticAIRuntime:
         seconds = float(req.limits.get("deadline_seconds") or 0)
         if self.abort is None and seconds > 0:
             self.abort = DecisionAbort(time.monotonic() + seconds)
-        # The request sees both the real time left and its usable HTTP budget.
-        left = None if self.abort is None or self.abort.deadline is None else max(
-            0.0, self.abort.deadline - self.abort.clock())
-        usable = float(self.config.get("request_timeout", 120))
-        if left is not None:
-            usable = max(0.0, min(usable, left - DURABLE_WRITE_MARGIN_SECONDS))
-        from dataclasses import replace
-        req = replace(req, context=req.context + f"\n\nRuntime time left: {left} seconds; "
-                      f"usable request budget: {usable:.3f} seconds (recomputed before every request).")
+        elif self.abort is not None and seconds > 0:
+            bound = self.abort.clock() + seconds
+            self.abort.deadline = min(self.abort.deadline, bound) if self.abort.deadline is not None else bound
         self._report = None
         try:
             if mode != "tool":

@@ -57,3 +57,13 @@ def test_the_playbook_gives_the_exact_candidate_lock_format():
     playbook = flat(PLAYBOOK)
     assert 'record_note with kind "candidate_lock" and text {"job_id": "<job>"}' in playbook
     assert "exactly one job in evidence_refs" in playbook
+
+
+def test_finalization_context_exposes_evidence_and_conclude_only():
+    from eidos.investigator.context import pack
+    packed = pack({"investigation": {"id": "i", "status": "active", "body": {"question": "report existing work"}},
+                   "horizon": 0, "finalization": {"enabled": True}}, [])
+    assert set(packed["known_tools"]) == {"get_job", "inspect_evidence", "describe_component", "conclude", "stop"}
+    guide = packed["text"].split("## Tools")[-1]
+    assert "calls: []" in guide and "run_component {" not in guide and "author_source {" not in guide
+    assert "Missing held-out evidence never passes" in guide

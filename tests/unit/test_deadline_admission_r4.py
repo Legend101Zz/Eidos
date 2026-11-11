@@ -26,10 +26,12 @@ def test_n01_r2_six_read_responses_admit_followup_decisions():
 def _exercise_slot(item, fixtures):
     now = [0.0]
     settings = []
+    time_notes = []
     reads = []
 
     def provider(messages, info):
         settings.append(info.model_settings)
+        time_notes.append(info.instructions)
         if len(settings) == 1:
             now[0] += item['read_elapsed_seconds']
             reply = fixtures['read_response']
@@ -48,6 +50,8 @@ def _exercise_slot(item, fixtures):
                                           'inspect_evidence': lambda artifact_id, max_bytes=8192: {'artifact_id': artifact_id}})
     result = runtime.decide(request)
     assert result.runtime_outcome is None
+    assert "Runtime time left:" in time_notes[0] and "usable request budget:" in time_notes[1]
+    assert time_notes[0] != time_notes[1]
     assert result.proposal['control']['action'] == 'conclude'
     assert len(settings) == result.usage['calls'] == 2
     assert reads == ['job_1b0fc88b1f454622']
@@ -70,3 +74,28 @@ def test_deadline_margin_returns_runtime_outcome_without_empty_wait_or_provider_
     assert result.proposal == {} and result.runtime_outcome == 'deadline-exhausted'
     assert result.usage['runtime_outcome'] == 'deadline-exhausted'
     assert result.usage['calls'] == 0 and not result.usage.get('structured_output', {}).get('errors')
+
+
+@pytest.mark.fixture_llm
+def test_sdk_timeout_at_the_runtime_boundary_is_runtime_exhaustion_with_uncertain_usage(monkeypatch):
+    import httpx
+    from openai import APITimeoutError
+
+    from eidos.investigator import pydantic_ai_runtime as runtime_module
+
+    now = [0.0]
+    monkeypatch.setattr(runtime_module, 'time', type('Clock', (), {'monotonic': staticmethod(lambda: now[0])}))
+
+    def provider(messages, info):
+        assert info.model_settings['timeout'] == 1.0
+        now[0] = 1.0
+        raise APITimeoutError(request=httpx.Request('POST', 'https://fixture.invalid'))
+
+    runtime = PydanticAIRuntime({'_model_object': FunctionModel(provider), 'model': 'openai-compatible:fake',
+                                'output_mode': 'json', 'request_timeout': 300})
+    result = runtime.decide(DecisionRequest('t', 0, 'context', [], {},
+                            abort=DecisionAbort(3.0, clock=lambda: now[0])))
+    assert result.runtime_outcome == 'deadline-exhausted' and result.proposal == {}
+    assert result.usage['uncertain'] is True and result.usage['aborted']['in_flight'] is True
+    assert result.usage['in_flight_estimate']['input_tokens'] > 0
+    assert 'failure' not in result.usage

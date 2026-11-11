@@ -175,3 +175,47 @@ def test_operator_policy_does_not_admit_autonomous_finalization(scene):
     inv = scene.investigation(finalization='operator')
     assert _entered(scene, inv)['enabled'] is False
     assert 'finalization' not in scene.begin(inv)['spec']
+
+
+def test_no_locked_candidate_can_only_abstain_and_missing_evidence_never_passes(scene):
+    inv = scene.investigation(finalization='autonomous')
+    _entered(scene, inv)
+    turn = scene.begin(inv)
+    invented = scene.propose(turn['turn_id'], 0, {'rationale': 'no lock', 'calls': [], 'control': {
+        'action': 'conclude', 'summary': 'pretend a candidate exists', 'claim': {'disposition': 'candidate'}}})
+    assert invented['accepted'] is False and 'no eligible locked candidate' in invented['error']['message']
+    # A new attempt of the same slot may give an honest abstention (one model decision activity can retry).
+    control = {'action': 'conclude', 'summary': 'No eligible locked candidate; abstaining.',
+               'claim': {'disposition': 'abstain'}}
+    execution = f'{RUN_A}/decide-slot-0'
+    epoch = _begin_decision(scene.lab, scene.pid, turn['turn_id'], execution, slot=0, attempt=2)['epoch']
+    accepted = scene.cmd('accept_decision', {'turn_id': turn['turn_id'], 'slot': 0,
+        'proposal': {'rationale': 'honest abstention', 'calls': [], 'control': control},
+        'usage_recorded': True, 'execution': execution, 'epoch': epoch, 'attempt': 2})
+    assert accepted['accepted'] is True
+    _complete(scene.lab, scene.pid, turn['turn_id'], 'concluded', control)
+    conclusion = scene.q('get_investigation', {'investigation_id': inv})['body']['conclusion']
+    assert conclusion['incumbent'] is None and conclusion['claim_state']['confirmed'] is False
+
+
+def test_unadmitted_finalization_at_original_wall_deadline_has_failure_export(scene, monkeypatch):
+    inv, job = _locked(scene, wall_seconds=1800)
+    _entered(scene, inv)
+    wall = scene.q('get_investigation', {'investigation_id': inv})['body']['wall']
+    monkeypatch.setattr('eidos.application.handlers.investigations.time.time', lambda: wall['deadline_unix'] + 1)
+    assert scene.cmd('begin_turn', {'investigation_id': inv})['started'] is False
+    shown = scene.q('get_investigation', {'investigation_id': inv})
+    assert shown['needs_input']['code'] == 'finalization-failed'
+    assert shown['finalization_export_receipt']['incumbent']['job_id'] == job
+    assert shown['finalization_export_receipt']['investigator_concluded'] is False
+
+
+def test_default_policy_is_autonomous_and_recorded_at_start(scene):
+    inv = scene.cmd('start_investigation', {'question': 'report honestly',
+        'charter_id': f'charter:s{scene.pid}',
+        'investigator': {'wall_seconds': 30, 'conclude_threshold_seconds': 120}})['investigation_id']
+    shown = scene.q('get_investigation', {'investigation_id': inv})
+    assert shown['body']['investigator']['finalization'] == 'autonomous'
+    turn = scene.begin(inv)
+    assert turn['spec']['finalization']['enabled'] is True
+    assert turn['spec']['limits']['max_calls'] == 0

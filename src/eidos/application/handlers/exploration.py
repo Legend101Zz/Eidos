@@ -345,11 +345,12 @@ def check_note(ctx: Ctx, inv_id: str, body: dict[str, Any]) -> dict[str, Any] | 
       admitted after the rule was recorded, and the challenger strictly better.
     * The incumbent's reproduction is evaluated against the prospective criterion and recorded with the lock."""
     kind = body.get("kind")
+    # Serialize prospective rule/lock changes with the finalization gate.
+    inv = ctx.tx.require("investigation", inv_id, lock=True)
     if kind in ("candidate_lock", "selection_rule") and ctx.tx.get_record("investigation_finalization", inv_id):
         raise Invalid("autonomous finalization fixes the incumbent and selection rule; no lock or rule changes")
     notes = _notes(ctx, inv_id)
     existing = rules.rule_from_notes(notes)
-    inv = ctx.tx.require("investigation", inv_id)
     if kind == "selection_rule":
         try:
             new_rule = rules.parse_rule(body.get("text"))

@@ -111,3 +111,33 @@ async def test_failed_finalization_is_not_retried_and_has_structured_input_neede
     assert len(fake.transitions) == 1 and len(fake.decisions) == 2
     assert fake.marks[0]['code'] == 'finalization-failed'
     assert fake.marks[0]['details']['export_receipt'] == {'kind': 'finalization_export_receipt', 'id': wid}
+
+
+async def test_operator_runtime_outcome_waits_without_a_hot_loop(env):  # noqa: F811
+    class Operator(Recovery):
+        @activity.defn(name='enter_finalization')
+        async def enter_finalization(self, a):
+            self.transitions.append((time.time(), a))
+            return {'enabled': False}
+
+        @activity.defn(name='check_news')
+        async def check_news(self, a):
+            return {'news': False}
+
+    fake = Operator('runtime')
+    wid = 'inv-r4-operator-' + uuid.uuid4().hex
+    async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
+            Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=fake.acts()):
+        handle = await env.client.start_workflow(InvestigationWorkflow.run,
+            {'investigation_id': wid, 'project_id': 'p', 'idle_poll_seconds': 1},
+            id=wid, task_queue=WORKFLOW_QUEUE)
+        try:
+            for _ in range(50):
+                if fake.marks:
+                    break
+                await asyncio.sleep(0.1)
+            assert fake.marks[0]['code'] == 'runtime-bounded'
+            await asyncio.sleep(1.5)
+            assert fake.turns == len(fake.decisions) == len(fake.transitions) == 1
+        finally:
+            await handle.terminate()
