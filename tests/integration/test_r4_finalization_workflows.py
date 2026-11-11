@@ -231,3 +231,23 @@ async def test_verified_historical_six_slots_replay_through_coordinator(env):  #
     assert result['reason'] == 'concluded' and result['turn_counter'] == 4
     assert fake.sequence == [(10, 0, 2), (10, 1, 2), (11, 0, 2), (11, 1, 2), (12, 0, 2), (12, 1, 2)]
     assert len(fake.transitions) == 1
+
+
+async def test_new_coordinator_reconciles_existing_running_recovery_before_starting_a_child(env):  # noqa: F811
+    class Restarted(Recovery):
+        @activity.defn(name='reconcile_finalization')
+        async def reconcile_finalization(self, a):
+            self.closed = a
+            return {'finalization': True, 'investigator_concluded': False,
+                    'export_receipt': {'kind': 'finalization_export_receipt', 'id': a['investigation_id']}}
+
+    fake = Restarted('runtime')
+    wid = 'inv-r4-restarted-' + uuid.uuid4().hex
+    async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
+            Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=fake.acts()):
+        result = await asyncio.wait_for(env.client.execute_workflow(InvestigationWorkflow.run,
+            {'investigation_id': wid, 'project_id': 'p', 'turn_counter': 8},
+            id=wid, task_queue=WORKFLOW_QUEUE), timeout=20)
+    assert result == {'status': 'needs_input', 'reason': 'finalization-failed', 'turn_counter': 8}
+    assert fake.turns == 0 and fake.decisions == [] and fake.transitions == []
+    assert fake.closed['turn_counter'] == 8

@@ -198,7 +198,7 @@ async def running(env, lab, prov: FakeProvider, **workflow_args):
                            "request_timeout": 30, "abort_poll_seconds": 0.2, "max_output_tokens": MAX_OUTPUT_TOKENS})
     # The activities the real investigator worker registers (eidos.apps.roots.run_investigator_worker).
     registered = [acts.begin_turn, acts.build_context, acts.decide, acts.execute_decision, acts.complete_turn,
-                  acts.check_news, acts.mark_needs_input, acts.record_turn_retry, acts.enter_finalization]
+                  acts.check_news, acts.mark_needs_input, acts.record_turn_retry, acts.enter_finalization, acts.reconcile_finalization]
     args = {"investigation_id": inv, "project_id": pid, "idle_poll_seconds": 1, "failed_turn_backoff_seconds": 1,
             **workflow_args}
     pool = ThreadPoolExecutor(max_workers=16)  # the real activities are synchronous

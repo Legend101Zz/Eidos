@@ -178,7 +178,10 @@ def search_components(ctx: Ctx, p: dict) -> dict:
     if p.get("as_of_horizon") is not None:  # catalog snapshot as of a ledger horizon
         cutoff = ctx.tx.event_time(int(p["as_of_horizon"]))
     published = {r.id: r.created_at for r in ctx.tx.list_records(ctx.project_id, "component_release", limit=5000)}
+    allowed = finalization_evidence.read_allowlist(ctx, p)
     for r in catalog(ctx, include_inactive=bool(p.get("include_inactive"))):
+        if allowed is not None and r["ref"] not in allowed.get("components", []):
+            continue
         if cutoff is not None and published.get(r["ref"]) and published[r["ref"]] > cutoff:
             continue
         m = r["manifest"]
@@ -239,7 +242,8 @@ def describe_component(ctx: Ctx, p: dict) -> dict:
     rec = ctx.tx.require("component_release", p["component_ref"])
     approvals = [a.view() for a in ctx.tx.list_records(ctx.project_id, "approval") if a.body["release_ref"] == rec.id]
     quals = [q.view() for q in ctx.tx.list_records(ctx.project_id, "qualification", parent_id=rec.id)]
-    return {**rec.view(), "approvals": approvals, "qualifications": quals}
+    return {**rec.view(), "approvals": [] if p.get("finalization_turn_id") else approvals,
+            "qualifications": [] if p.get("finalization_turn_id") else quals}
 
 
 @query("get_profile")
@@ -253,13 +257,15 @@ def get_investigation(ctx: Ctx, p: dict) -> dict:
     if inv.project_id != ctx.project_id:
         raise NotFound("not found")
     final = ctx.tx.get_record("investigation_finalization", inv.id)
+    ordinary = ctx.tx.get_record("investigation_finalization_phase", inv.id)
     receipt = ctx.tx.get_record("finalization_export_receipt", inv.id)
     turns = ctx.tx.list_turns(inv.id)
     jobs = ctx.tx.list_jobs(ctx.project_id, investigation_id=inv.id)
     for j in jobs:  # evidence-arm statuses reveal outcomes
         _expose_job(ctx, j)
     return {**inv.view(), "needs_input": (inv.labels or {}).get("needs_input"),
-            "finalization": final.body if final else None, "finalization_export_receipt": receipt.body if receipt else None,
+            "finalization": final.body if final else None, "finalization_phase": ordinary.body if ordinary else None,
+            "finalization_export_receipt": receipt.body if receipt else None,
             "turns": [{"id": t["id"], "seq": t["seq"], "status": t["status"], "horizon": t["horizon"],
                        "stop_reason": (t["result"] or {}).get("stop_reason")} for t in turns],
             "jobs": [{"id": j["id"], "status": j["status"], "kind": j["kind"],
@@ -403,7 +409,8 @@ def finalization_view(ctx: Ctx, p: dict) -> dict:
                for k, values in turn["spec"]["evidence_allowlist"].items()}
     view = investigation_view(ctx, {"investigation_id": inv.id, "horizon": turn["horizon"],
                                     "finalization_allowlist": allowed})
-    return finalization_evidence.safe_view(view, allowed, blocked=blocked)
+    return finalization_evidence.safe_view(view, allowed, blocked=blocked,
+                                           ordinary=bool(turn["spec"].get("finalization_phase") and not turn["spec"].get("finalization")))
 
 
 @query("investigation_view")
@@ -486,11 +493,12 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
     plans = []
     assessments = {a.body.get("plan_id"): a for a in ctx.tx.list_records(ctx.project_id, "assessment", limit=100000)
                    if cutoff_ts is None or a.created_at <= cutoff_ts}
-    for pl in ctx.tx.list_records(ctx.project_id, "evidence_plan", limit=100000) if p.get("finalization_allowlist") is None else []:
+    for pl in ctx.tx.list_records(ctx.project_id, "evidence_plan", limit=100000):
         if pl.body.get("investigation_id") != inv.id or (cutoff_ts is not None and pl.created_at > cutoff_ts):
             continue
-        _expose_record(ctx, pl)
-        asm = assessments.get(pl.id)
+        if p.get("finalization_allowlist") is None:
+            _expose_record(ctx, pl)
+        asm = assessments.get(pl.id) if p.get("finalization_allowlist") is None else None
         if asm is not None:
             _expose_record(ctx, asm)
         launch = pl.body.get("launch") or {}

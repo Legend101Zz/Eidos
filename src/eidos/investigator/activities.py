@@ -315,7 +315,8 @@ class InvestigatorActivities:
             view["exploration"] = turn["spec"]["exploration"]
         if turn["spec"].get("finalization"):
             view["finalization"] = turn["spec"]["finalization"]  # likewise (ADR 0023)
-        catalog = self.inv.query("search_components", {"limit": 100, "as_of_horizon": turn["horizon"]}, project=p)["components"]
+        catalog = self.inv.query("search_components", {"limit": 100, "as_of_horizon": turn["horizon"],
+            **({"finalization_turn_id": turn["id"]} if turn["spec"].get("evidence_allowlist") is not None else {})}, project=p)["components"]
         if turn["spec"].get("evidence_allowlist") is not None:
             catalog = [c for c in catalog if c["ref"] in turn["spec"]["evidence_allowlist"].get("components", [])]
         packed = pack(view, catalog, policy=turn["spec"].get("context_policy") or POLICY_V1)
@@ -523,7 +524,7 @@ class InvestigatorActivities:
             "inspect_evidence": lambda artifact_id, max_bytes=8192: self.inv.query(
                 "artifact_preview", {"artifact_id": artifact_id, "max_bytes": max_bytes, **isolation}, project=p),
             "search_components": lambda text="", capability=None: self.inv.query(
-                "search_components", {"text": text, "capability": capability, "limit": 20}, project=p),
+                "search_components", {"text": text, "capability": capability, "limit": 20, **isolation}, project=p),
             "describe_component": lambda component_ref: self.inv.query(
                 "describe_component", {"component_ref": component_ref, **isolation}, project=p),
             "get_job": lambda job_id: redact_value(self.inv.query("get_job", {"job_id": job_id, "include_lock": False, **isolation}, project=p)),

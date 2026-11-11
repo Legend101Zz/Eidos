@@ -396,7 +396,7 @@ async def test_budget_exhausted_coordinator_surfaces_for_the_operator(env):
         return {"started": False, "reason": "budget-exhausted"}
 
     acts = [begin_turn, fake.build_context, fake.decide, fake.execute_decision, fake.complete_turn, fake.check_news,
-            fake.mark_needs_input, fake.enter_finalization]
+            fake.mark_needs_input, fake.enter_finalization, fake.reconcile_finalization]
     wid = f"inv-budget-{uuid.uuid4().hex[:6]}"
     async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
             Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=acts):
@@ -425,7 +425,7 @@ async def test_refused_proposal_turns_retry_boundedly_then_surface_for_input(env
         return {"news": True}
 
     acts = [fake.begin_turn, fake.build_context, decide, fake.execute_decision, fake.complete_turn, check_news,
-            fake.mark_needs_input, fake.enter_finalization]
+            fake.mark_needs_input, fake.enter_finalization, fake.reconcile_finalization]
     wid = f"inv-invalid-{uuid.uuid4().hex[:6]}"
     async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
             Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=acts):
@@ -462,7 +462,7 @@ async def test_needs_input_survives_continue_as_new(env):
         return {"news": seen["operator"]} if a.get("operator_only") else {"news": True}
 
     acts = [fake.begin_turn, fake.build_context, decide, fake.execute_decision, fake.complete_turn, check_news,
-            fake.mark_needs_input, fake.enter_finalization]
+            fake.mark_needs_input, fake.enter_finalization, fake.reconcile_finalization]
     wid = f"inv-rollover-{uuid.uuid4().hex[:6]}"
     async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
             Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=acts):
@@ -497,7 +497,7 @@ async def test_wait_after_failed_calls_is_not_a_park(env):
         return {"news": False}
 
     acts = [fake.begin_turn, fake.build_context, decide, execute_decision, fake.complete_turn, check_news,
-            fake.mark_needs_input, fake.enter_finalization]
+            fake.mark_needs_input, fake.enter_finalization, fake.reconcile_finalization]
     wid = f"inv-failwait-{uuid.uuid4().hex[:6]}"
     async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
             Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=acts):

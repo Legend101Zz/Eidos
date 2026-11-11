@@ -49,6 +49,16 @@ def excluded(ctx: Ctx, inv) -> set[str]:
 
 
 def allowlist(ctx: Ctx, inv, jobs: list[dict]) -> dict:
+    from eidos.application.handlers import exploration
+    from eidos.domain.assessment import candidate_lock_job_id
+
+    jobs = list(jobs)
+    lock_notes = [n for n in exploration._notes(ctx, inv.id) if n.get("kind") == "candidate_lock"]
+    locked_id = candidate_lock_job_id(lock_notes[-1]) if lock_notes else None
+    if locked_id and all(j["id"] != locked_id for j in jobs):
+        locked = ctx.tx.get_job(locked_id)
+        if locked and locked["project_id"] == ctx.project_id:
+            jobs.append(exploration.view_job(locked, ctx.tx.publications(locked_id)))
     blocked = excluded(ctx, inv)
     safe = [j for j in jobs if j["id"] not in blocked]
     aids = {str(a) for j in safe for a in (j.get("inputs") or {}).values()}
@@ -71,22 +81,32 @@ def allowlist(ctx: Ctx, inv, jobs: list[dict]) -> dict:
     return {"jobs": sorted(j["id"] for j in safe), "artifacts": sorted(aids - blocked), "components": sorted(components)}
 
 
-def check_read(ctx: Ctx, params: dict, kind: str, identifier: str) -> None:
+def read_allowlist(ctx: Ctx, params: dict) -> dict | None:
     tid = params.get("finalization_turn_id")
     if not tid:
-        return
+        return None
     turn = ctx.tx.get_turn(tid)
     if not turn or turn["project_id"] != ctx.project_id:
         raise Forbidden("finalization evidence read requires its admitted turn")
     allowed = turn["spec"].get("evidence_allowlist") or {}
-    if identifier not in allowed.get(kind, []):
-        raise Forbidden("evidence is outside this finalization turn's allowlist")
     inv = ctx.tx.require("investigation", turn["investigation_id"])
-    if identifier in excluded(ctx, inv):
-        raise Forbidden("held-out evidence and its derivatives are isolated during finalization")
+    if turn["spec"].get("finalization_phase") and not turn["spec"].get("finalization"):
+        # Ordinary finalization can admit reproduction/export/confirmation work during this same turn.
+        # Its durable jobs extend the relevant evidence set; recovery's snapshot stays fixed.
+        from eidos.application.handlers import exploration
+        allowed = allowlist(ctx, inv, exploration._jobs(ctx, inv.id))
+    blocked = excluded(ctx, inv)
+    return {kind: [identifier for identifier in values if identifier not in blocked]
+            for kind, values in allowed.items()}
 
 
-def safe_view(view: dict[str, Any], allowed: dict, *, blocked: set[str] | None = None) -> dict[str, Any]:
+def check_read(ctx: Ctx, params: dict, kind: str, identifier: str) -> None:
+    allowed = read_allowlist(ctx, params)
+    if allowed is not None and identifier not in allowed.get(kind, []):
+        raise Forbidden("evidence is outside the finalization allowlist or derives from held-out data")
+
+
+def safe_view(view: dict[str, Any], allowed: dict, *, blocked: set[str] | None = None, ordinary: bool = False) -> dict[str, Any]:
     """Project only admitted evidence into every context policy (and its stored source manifest).
 
     Free-form turn/receipt/claim histories can echo evidence results and are not recovery evidence. The exact
@@ -96,6 +116,18 @@ def safe_view(view: dict[str, Any], allowed: dict, *, blocked: set[str] | None =
     out["jobs"] = [j for j in view.get("jobs") or [] if j["id"] in allowed.get("jobs", [])]
     for key in ("turns", "events", "call_results", "evidence_plans", "claims", "assessment_requests"):
         out[key] = []
+    if ordinary:
+        # Keep the handles and prospective obligations needed to finish already-admitted confirmation work,
+        # without its result payloads. Recovery does not need these effect handles.
+        out["evidence_plans"] = [{k: plan.get(k) for k in (
+            "plan_id", "status", "claim", "success_rule_ref", "obligations")}
+            for plan in view.get("evidence_plans") or []]
+        out["assessment_requests"] = [{k: request.get(k) for k in ("request_id", "status", "plan_id", "path")}
+                                      for request in view.get("assessment_requests") or []]
+        out["call_results"] = [{"turn": call.get("turn"), "tool": call.get("tool"), "ok": call.get("ok"),
+                                "result": {k: v for k, v in (call.get("result") or {}).items()
+                                           if k.endswith("_id") and isinstance(v, str)}}
+                               for call in view.get("call_results") or [] if isinstance(call.get("result"), dict)]
     out["created_artifacts"] = [a for a in view.get("created_artifacts") or []
                                 if a.get("artifact_id") in allowed.get("artifacts", [])]
     # Preserve the lock/rule without carrying a held-out provenance reference or an echoed derived value.

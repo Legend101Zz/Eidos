@@ -260,6 +260,14 @@ def test_real_boundary_preserves_ordinary_finalization_across_turns(scene, monke
         'calls': [{'tool': 'run_component', 'args': {'component_ref': scene.trial,
             'config': {'split': 'validation', 'seed': 23}}}]})
     assert accepted['accepted'], accepted
+    fresh = scene.job(inv, purpose='reproduction', config={'seed': 23})
+    principal = scene.lab.principal(f'inv-{scene.pid}', ['investigator'], [scene.pid])
+    acts = InvestigatorActivities(ShimClient(scene.lab, principal), ShimClient(scene.lab, scene.wf))
+    tools = acts._read_tools(scene.pid, finalization={'turn_id': turn['turn_id']})
+    assert tools['get_job'](fresh)['id'] == fresh
+    assert tools['inspect_evidence'](scene.output(fresh))['available']
+    shown = scene.q('get_investigation', {'investigation_id': inv})
+    assert shown['finalization'] is None and shown['finalization_phase']['mode'] == 'ordinary'
     scene.finish_turn(turn['turn_id'])
     next_turn = scene.begin(inv)
     assert next_turn['spec']['finalization_phase'] == turn['spec']['finalization_phase']
@@ -331,3 +339,17 @@ def test_finalization_denies_direct_and_transitively_derived_held_out_reads_and_
     for forbidden in [direct, derived, 'secret-direct', 'secret-derived', held, sc.output(direct), sc.output(derived)]:
         assert forbidden not in packed
     assert safe in packed
+
+
+def test_ordinary_finalization_can_read_a_lock_that_predates_the_investigation(scene):
+    job = scene.job(None, metrics={'accuracy': .9})
+    inv = scene.investigation()
+    scene.rule(inv)
+    scene.lock(inv, job)
+    scene.cmd('enter_finalization', {'investigation_id': inv, 'trigger': 'exploration-boundary'})
+    turn = scene.begin(inv)
+    principal = scene.lab.principal(f'inv-{scene.pid}', ['investigator'], [scene.pid])
+    acts = InvestigatorActivities(ShimClient(scene.lab, principal), ShimClient(scene.lab, scene.wf))
+    tools = acts._read_tools(scene.pid, finalization={'turn_id': turn['turn_id']})
+    assert tools['get_job'](job)['id'] == job
+    assert tools['inspect_evidence'](scene.output(job))['available']

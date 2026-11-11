@@ -57,3 +57,17 @@ def test_packed_projection_removes_echoes_of_held_out_results_and_pins():
     assert clean['pinned_notes'] == [{'text': 'locked good'}]
     assert clean['created_artifacts'] == [{'artifact_id': 'safe'}]
     assert clean['investigation']['body']['inputs'] == {'safe': 'safe'}
+
+
+def test_ordinary_context_retains_confirmation_handles_without_observations():
+    view = {'investigation': {'id': 'inv', 'body': {'question': 'q'}},
+            'evidence_plans': [{'plan_id': 'plan', 'status': 'launched', 'obligations': ['confirm'],
+                                'assessment': {'secret': 123}, 'jobs': ['held-job']}],
+            'assessment_requests': [{'request_id': 'request', 'plan_id': 'plan', 'status': 'launched'}],
+            'call_results': [{'tool': 'assess_candidate', 'ok': True,
+                              'result': {'request_id': 'request', 'secret': 123}}]}
+    clean = safe_view(view, {'jobs': [], 'artifacts': []}, blocked={'held-job'}, ordinary=True)
+    assert clean['evidence_plans'][0]['plan_id'] == 'plan'
+    assert 'assessment' not in clean['evidence_plans'][0] and 'jobs' not in clean['evidence_plans'][0]
+    assert clean['assessment_requests'][0]['request_id'] == 'request'
+    assert clean['call_results'][0]['result'] == {'request_id': 'request'}
