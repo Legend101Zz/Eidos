@@ -48,7 +48,9 @@ class Scripted:
     def __init__(self, script: dict[int, str] | None = None, stop_after: int = 1000):
         self.turns = 0
         self.stop_after = stop_after
-        self.completed: list[dict] = []
+        self.completed: list[dict] = []  # every complete_turn invocation (Temporal may deliver an activity again)
+        self.persisted: dict[str, dict] = {}  # the turn completions as the lab persists them: the first one per turn
+        self.begun: dict[int, dict] = {}  # begin_turn results as persisted, per turn index
         self.script = dict(script or {})
         self.started: list[int] = []
         self.marks: list[dict] = []
@@ -62,16 +64,20 @@ class Scripted:
         return [m for m in self.marks if m.get("code") == "turn-failed"]
 
     def completed_turn(self, index: int) -> dict:
-        (c,) = [c for c in self.completed if c["turn_id"] == f"t{index}"]
-        return c
+        """The persisted completion of turn ``index`` (not an invocation count: a redelivered complete_turn finds the
+        turn already closed, like the lab's locked completion handler)."""
+        return self.persisted[f"t{index}"]
 
     @activity.defn(name="begin_turn")
     async def begin_turn(self, a: dict) -> dict:
+        if a["index"] in self.begun:  # a redelivered begin_turn of the same turn workflow: the same turn, as persisted
+            return self.begun[a["index"]]
         if self.turns >= self.stop_after:
             return {"started": False, "reason": "max-turns-reached"}
         self.turns += 1
         self.started.append(a["index"])
-        return {"started": True, "turn_id": f"t{a['index']}", "max_model_calls": 2}
+        self.begun[a["index"]] = {"started": True, "turn_id": f"t{a['index']}", "max_model_calls": 2}
+        return self.begun[a["index"]]
 
     @activity.defn(name="decide")
     async def decide(self, a: dict) -> dict:
@@ -102,6 +108,9 @@ class Scripted:
     @activity.defn(name="complete_turn")
     async def complete_turn(self, a: dict) -> dict:
         self.completed.append(a)
+        if a["turn_id"] in self.persisted:  # already closed: a redelivery changes nothing (the lab's already_closed)
+            return {"status": "completed", "already_closed": True}
+        self.persisted[a["turn_id"]] = a
         return {"status": "completed"}
 
     @activity.defn(name="record_turn_retry")
@@ -332,7 +341,12 @@ async def test_turn_workflow_failure_is_a_retryable_turn_failure(env):
     assert retry["failure"]["message"]
     assert retry["failed_turn_id"] is None  # the turn workflow returned nothing, so no turn id is known
     assert fake.turn_failed_marks == []
-    assert fake.completed_turn(2)["stop_reason"] == "waiting"
+    # Asserted on persisted turn completions, not on how often the fake activity ran: Temporal may deliver an activity
+    # again, and the lab's completion is idempotent per turn. The timed-out turn's workflow never completed its turn
+    # (the coordinator's record_turn_retry closes it in the lab); the retry turn completed once, waiting.
+    assert list(fake.persisted) == ["t2"]
+    assert fake.completed_turn(2)["stop_reason"] == "waiting" and "failure" not in fake.completed_turn(2)
+    assert {c["turn_id"] for c in fake.completed} == {"t2"}
 
 
 # --- turn_failure(): classification of an activity failure, without a server ----------------------------------------
