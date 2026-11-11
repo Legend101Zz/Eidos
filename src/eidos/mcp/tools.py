@@ -48,6 +48,11 @@ class Tool:
     def mutating(self) -> bool:
         return self.kind == "command"
 
+    @property
+    def max_key_length(self) -> int:
+        """The lab takes keys up to 200 characters; a composite tool derives ``<key>:<suffix>`` keys from its own."""
+        return 180 if self.composite else 200
+
     def input_schema(self) -> dict[str, Any]:
         props: dict[str, Any] = {}
         required: list[str] = []
@@ -55,7 +60,7 @@ class Tool:
             props["project"] = {"type": "string", "description": "Project id."}
             required.append("project")
         if self.mutating:
-            props["command_key"] = {"type": "string", "minLength": 1, "maxLength": 200,
+            props["command_key"] = {"type": "string", "minLength": 1, "maxLength": self.max_key_length,
                                     "description": COMMAND_KEY_DOC}
             required.append("command_key")
             props["expected_revision"] = {"type": "integer", "description": EXPECTED_REVISION_DOC}

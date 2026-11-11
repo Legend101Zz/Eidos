@@ -76,8 +76,8 @@ def validate_args(tool: Tool, args: dict[str, Any]) -> None:
         if (isinstance(v, bool) and props[k]["type"] in ("integer", "number")) or not isinstance(v, want):
             problems.append(f"'{k}' must be {props[k]['type']}")
     ck = args.get("command_key")
-    if isinstance(ck, str) and len(ck) > 200:
-        problems.append("'command_key' longer than 200 characters")
+    if isinstance(ck, str) and len(ck) > tool.max_key_length:
+        problems.append(f"'command_key' longer than {tool.max_key_length} characters")
     if problems:
         hint = "Supply a caller-chosen command_key; reuse it to retry safely." if "command_key" in " ".join(problems) \
             else "Fix the arguments and call again."

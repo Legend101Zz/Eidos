@@ -19,7 +19,7 @@ from typing import Any
 from eidos.batches import ACTIVE_JOB_STATUSES, TERMINAL_JOB_STATUSES, BatchRunner
 from eidos.client import LabError
 from eidos.domain.errors import Invalid
-from eidos.domain.turns import PLAN_TOOLS, REF_KEY, RESULT_FIELDS, validate_refs
+from eidos.domain.turns import LITERAL_ARGS, PLAN_TOOLS, REF_KEY, RESULT_FIELDS, iter_refs, validate_refs
 
 SOURCE_MEDIA_TYPE = "application/vnd.eidos.source-bundle+json"
 SOURCE_SCHEMA = "source-bundle/1"
@@ -100,6 +100,8 @@ def _compact_receipt(r: dict) -> dict[str, Any]:
             out["error"]["details"] = details
     if r.get("resolved"):
         out["resolved"] = [{"path": u["path"], "value": u["value"]} for u in r["resolved"]]
+    if r.get("normalized_arguments"):
+        out["normalized_arguments"] = r["normalized_arguments"]
     return out
 
 
@@ -140,10 +142,13 @@ def upload_source(client: Any, project: str, key: str, args: dict[str, Any]) -> 
 
 # -- run_batch -------------------------------------------------------------------------------------------------------
 
-def validate_batch(calls: Any, investigation_id: str | None) -> list[dict[str, Any]]:
+def validate_batch(calls: Any, investigation_id: str | None, client: Any = None,
+                   project: str | None = None) -> list[dict[str, Any]]:
     """Every call checked before anything runs: the tool, its arguments against the tool's own schema (a reference stands
-    in for a value of the declared type), and every reference by the investigator's rules (ADR 0022)."""
-    from eidos.mcp.gateway import ToolFailure, validate_args  # noqa: PLC0415 - the gateway imports this module
+    in for a value of the declared type), and every reference by the investigator's rules (ADR 0022). Each call's
+    arguments get the same ADR 0017 normalization as a single MCP call, recorded in ``normalized_arguments``."""
+    from eidos.mcp.gateway import ToolFailure, _normalize_config, validate_args  # noqa: PLC0415 - imports this module
+    from eidos.mcp.normalize import normalize_arguments  # noqa: PLC0415
     from eidos.mcp.tools import BY_NAME  # noqa: PLC0415
 
     if not isinstance(calls, list) or not calls:
@@ -167,8 +172,16 @@ def validate_batch(calls: Any, investigation_id: str | None) -> list[dict[str, A
         if extra:
             raise WorkflowFailure("INVALID_BATCH", f"{where} ({tool}): {extra} are set by the batch, not by its calls",
                                   details={"call": i})
-        args = dict(args)
         spec = BY_NAME[tool]
+        try:
+            payload_refs = list(iter_refs(args.get("payload") or {}, "payload"))
+        except Invalid as exc:
+            raise WorkflowFailure("INVALID_REF", f"{where} ({tool}): {exc.message}", details={"call": i}) from exc
+        for path, _text in payload_refs:
+            if path.split(".")[1].split("[")[0] in LITERAL_ARGS:  # as for named arguments (ADR 0022)
+                raise WorkflowFailure("INVALID_REF", f"{where} ({tool}): {path} must be literal, not a reference",
+                                      details={"call": i, "path": path})
+        args, changes = normalize_arguments(dict(args), spec.input_schema())
         if investigation_id and "investigation_id" not in args and any(p.name == "investigation_id" for p in spec.params):
             args["investigation_id"] = investigation_id
         props = spec.input_schema()["properties"]
@@ -178,7 +191,11 @@ def validate_batch(calls: Any, investigation_id: str | None) -> list[dict[str, A
             validate_args(spec, {**probe, "project": "p", **({"command_key": "k"} if spec.mutating else {})})
         except ToolFailure as exc:
             raise WorkflowFailure("INVALID_BATCH", f"{where} ({tool}): {exc.message}", details={"call": i}) from exc
-        out.append({"tool": tool, "args": args})
+        if client is not None and not iter_has_ref(args.get("config")):
+            cfg, cfg_changes = _normalize_config(client, spec, {**args, "project": project})
+            if cfg_changes:
+                args, changes = {**args, "config": cfg}, changes + cfg_changes
+        out.append({"tool": tool, "args": args, **({"normalized_arguments": changes} if changes else {})})
     try:
         validate_refs(out, result_fields=BATCH_RESULT_FIELDS, job_tools=BATCH_JOB_TOOLS)
     except Invalid as exc:
@@ -187,13 +204,21 @@ def validate_batch(calls: Any, investigation_id: str | None) -> list[dict[str, A
     return out
 
 
+def iter_has_ref(value: Any) -> bool:
+    if isinstance(value, dict):
+        return REF_KEY in value or any(iter_has_ref(v) for v in value.values())
+    if isinstance(value, list):
+        return any(iter_has_ref(v) for v in value)
+    return False
+
+
 def run_batch(client: Any, project: str, key: str, args: dict[str, Any], *, poll: float = POLL_SECONDS) -> dict[str, Any]:
     """Run a batch's calls in order. Returns when every call has been attempted, or ``pending`` when a call still waits
     for a job after ``wait_seconds``: calling again with the same key and calls replays what was committed and goes on."""
     from eidos.mcp.tools import BY_NAME, build_call  # noqa: PLC0415
 
     inv = args.get("investigation_id")
-    calls = validate_batch(args.get("calls"), inv)
+    calls = validate_batch(args.get("calls"), inv, client, project)
     keyed = [{**c, "index": i, "command_key": f"{key}:{i}"} for i, c in enumerate(calls)]
     digest = hashlib.sha256(json.dumps(calls, sort_keys=True, default=str).encode()).hexdigest()
     # Prospective record of the whole batch, references included, before any effect (as an accepted decision is). The
@@ -231,9 +256,10 @@ def run_batch(client: Any, project: str, key: str, args: dict[str, Any], *, poll
             else:
                 spec = BY_NAME[call["tool"]]
                 payload, _, _, _ = build_call(spec, call_args)
-                rec = client.command(spec.target, payload, project=project, key=call["command_key"])
+                extra = {"normalized_arguments": call["normalized_arguments"]} if call.get("normalized_arguments") else {}
+                rec = client.command(spec.target, payload, project=project, key=call["command_key"], **extra)
                 r = {"tool": call["tool"], "index": call["index"], "ok": True, "replayed": rec.get("replayed"),
-                     "result": rec.get("result")}
+                     "result": rec.get("result"), **extra}
         except LabError as exc:
             r = _failed(call["tool"], call["index"], exc)
         except WorkflowFailure as exc:

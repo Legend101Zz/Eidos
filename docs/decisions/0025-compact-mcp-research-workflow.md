@@ -41,8 +41,10 @@ same reference rules with MCP tool names (`upload_source` produces `artifact_id`
 - **Validated before any effect.** Each call's arguments are checked against that MCP tool's own schema (a reference
   stands in for a value of the declared type), `project`/`command_key`/`expected_revision` inside a call are refused,
   and references are refused if malformed, forward or self, out of range, naming a field the tool does not produce,
-  `outputs.*` of a non-job tool, or placed in `component_ref`, `environment`, `investigation_id` or `purpose`
-  (`INVALID_REF`, `INVALID_BATCH`). Nothing reaches the lab.
+  `outputs.*` of a non-job tool, or placed in `component_ref`, `environment`, `investigation_id` or `purpose`, also
+  inside `payload` (`INVALID_REF`, `INVALID_BATCH`). Nothing reaches the lab. Each call's arguments get the same ADR 0017
+  normalization as a single MCP call, sent with the command and shown in its receipt as `normalized_arguments`.
+- Composite tools take keys of at most 180 characters, so the derived `<key>:<suffix>` keys stay within the lab's 200.
 - **Recorded prospectively.** The first command is a `record_note` of kind `mcp-batch` keyed `<key>:batch`, holding the
   calls' tools, derived `depends_on` and a digest of the calls, before any effect, as an accepted decision is persisted
   before it runs. The same key with other calls is refused there (`COMMAND_KEY_CONFLICT`) before anything runs.
