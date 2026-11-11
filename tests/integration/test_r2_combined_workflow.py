@@ -57,6 +57,9 @@ DECISION_SCHEMA = ROOT / "schemas" / "eidos-wire" / f"v{eidos_wire.WIRE_MAJOR}" 
 SWEEP_REF = "eidos.search.recipe-sweep@1.0.0"
 REFIT_REF = "proj.refit@1.0.0"
 RUN = {"environment": "lab", "isolation_profile": "dev:same-user"}
+# ADR 0023, R14: a lock needs the selection rule recorded first (scorer and selection data fixed before the results)
+SELECTION_RULE = {"metric": "accuracy", "split": "validation", "direction": "higher_is_better",
+                  "scorer": SWEEP_REF.split("@", 1)[0], "data": {"config": {"split": "validation"}}}
 # The project's trainer, one file: validation accuracy peaks at lr 0.1. The sweep runs it once per grid point.
 FIT_PY = ("import json, sys\n"
           "a = dict(zip(sys.argv[1::2], sys.argv[2::2]))\n"
@@ -113,7 +116,8 @@ def lock_the_sweep(prompt: str) -> dict:
     """The model reads the sweep job's id from its context, locks it as the candidate and files the claim."""
     found = re.search(r"- Sweep (\S+) \(succeeded\)", prompt)
     assert found, "the sweep is not among the pinned facts of this context"
-    return decision(call("record_note", kind="candidate_lock", text=json.dumps({"job_id": found.group(1)})),
+    return decision(call("record_note", kind="selection_rule", text=json.dumps(SELECTION_RULE)),
+                    call("record_note", kind="candidate_lock", text=json.dumps({"job_id": found.group(1)})),
                     call("file_claim", statement=CLAIM["statement"], kind="improves", scope=CLAIM["scope"]))
 
 
@@ -333,14 +337,14 @@ def test_the_combined_workflow_sweeps_locks_concludes_a_submitted_candidate_and_
 
     # 2. the lock and the claim, then 3. the conclusion: a candidate with no held-out data is submitted, not confirmed
     assert journey.turn()["stop_reason"] == "concluded"
-    lock_note = scene.record("note", journey.receipts(1)[0]["result"]["note_id"])
+    lock_note = scene.record("note", journey.receipts(1)[1]["result"]["note_id"])  # after the selection rule
     assert lock_note["body"]["kind"] == "candidate_lock" and lock_note["body"]["investigation_id"] == journey.inv
     assert json.loads(lock_note["body"]["text"]) == {"job_id": sweep["id"]}
     state = journey.conclusion()["claim_state"]
     assert state["state"] == "candidate-submitted" and state["confirmed"] is False, state
     assert state["label"] == "candidate submitted for confirmation"
     assert state["requested_disposition"] == "candidate" and "downgraded_from" not in state
-    assert state["claim_id"] == journey.receipts(1)[1]["result"]["claim_id"]
+    assert state["claim_id"] == journey.receipts(1)[2]["result"]["claim_id"]
     assert state["assessment_id"] is None and state["plan_id"] is None
     assert state["point_estimate"]["source"] == "investigator" and state["point_estimate"]["value"] == pytest.approx(0.5)
     assert any("held-out" in o for o in state["unfulfilled_obligations"]), state["unfulfilled_obligations"]
