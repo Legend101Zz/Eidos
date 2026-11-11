@@ -433,7 +433,12 @@ def _ranked(rows, direction):
 
 def _evidence_digest(rows):
     """Stable over re-runs of a deterministic project: everything recorded except wall seconds."""
-    stable = [{**r, "evaluations": [{k: v for k, v in e.items() if k != "seconds"} for e in r["evaluations"]]}
+    def timeless(evaluations):
+        return [{k: v for k, v in e.items() if k != "seconds"} for e in evaluations]
+
+    stable = [{**r, "evaluations": timeless(r["evaluations"]),
+               **({"train_cv": {**r["train_cv"], "evaluations": timeless(r["train_cv"]["evaluations"])}}
+                  if isinstance(r.get("train_cv"), dict) else {})}
               for r in rows]
     return "sha256:" + hashlib.sha256(json.dumps(stable, sort_keys=True).encode()).hexdigest()
 
@@ -769,8 +774,10 @@ def _run_template(inputs, config, *, reader, writer, context):
         row["finalist_rank"] = position
         cv_mean, val_mean = row["train_cv"]["objective"]["mean"], row["objective"]["mean"]
         row["transfer_gap"] = (cv_mean - val_mean) if direction == "maximize" else (val_mean - cv_mean)
-    winner = ordered[0] if ordered else None
     usable = [r for r in screened if r["status"] == "ok"]
+    # No finalist was cross-validated (finalists 0, the budget ended first, or every CV failed): the best screened recipe
+    # still wins on validation, and says that it was not cross-validated.
+    winner = ordered[0] if ordered else (usable[0] if usable and rank_by == "validation" else None)
     resolved = {"name": template["name"], "task_type": task_type, "preprocess": sorted({r["preprocess"] for r in recipes}),
                 "families": sorted({r["family"] for r in recipes}), "skipped_families": skipped,
                 "finalists": n_finalists, "cv_folds": folds, "seeds": seeds, "rank_by": rank_by,
@@ -792,8 +799,9 @@ def _run_template(inputs, config, *, reader, writer, context):
                 "objective": objective, "template": {k: resolved[k] for k in ("name", "task_type", "rank_by", "runner")},
                 "recipe": None if winner is None else {
                     "recipe_id": winner["recipe_id"], "parameters": winner["parameters"],
-                    "objective": winner["objective"], "metrics": winner["metrics"], "train_cv": winner["train_cv"],
-                    "transfer_gap": winner["transfer_gap"], "evaluations": winner["evaluations"],
+                    "objective": winner["objective"], "metrics": winner["metrics"],
+                    "cross_validated": winner in ordered, "train_cv": winner.get("train_cv"),
+                    "transfer_gap": winner.get("transfer_gap"), "evaluations": winner["evaluations"],
                     "command": screen_cfg["command"],
                     "reproduce": {"files": [TEMPLATE_RUNNER],
                                   "argv": ["python", TEMPLATE_RUNNER, "train", "--inputs", ".", "--out", "<out>",

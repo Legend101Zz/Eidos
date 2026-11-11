@@ -58,7 +58,10 @@ stopping rule other than `none` is refused). One call, no authored code:
   (every seed). The budget defaults to the recipe count and the job's wall limit caps it. The best `finalists` (default
   3) are cross-validated within train (`cv_folds`, default 3). The winner is the best finalist by `rank_by`:
   `validation` by default, because cross-validation within train cannot see a train-validation shift (in D03 it would
-  have hidden exactly the offset that mattered); `train-cv` is available. Each finalist records `transfer_gap`.
+  have hidden exactly the offset that mattered); `train-cv` is available. Each finalist records `transfer_gap`. If no
+  finalist was cross-validated (none requested, the budget ended first, or every CV failed), the best screened recipe
+  wins on validation with `cross_validated: false` (none under `train-cv`). The evidence digest excludes wall seconds
+  in the finalists' CV records too, so a re-run with the same seeds gives the same digest.
 - Every attempted recipe, failed ones included, is in `evidence_table` (`stage` finalist or screened); `best_recipe`
   carries a `reproduce` command (`fit_recipe.py train`), which writes `validation_predictions.npz`, so the winner can be
   run as a project command, locked and assessed independently.

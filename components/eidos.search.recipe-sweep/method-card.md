@@ -26,7 +26,8 @@ optional `ids`; staged as `train.npz` and `validation.npz`):
 - *Finalists.* The `finalists` best screened recipes (default 3) are cross-validated within train only (`cv_folds`
   folds, default 3, every seed). Each finalist carries `train_cv`, `finalist_rank` and `transfer_gap` (train-CV minus
   validation, in the better direction). The winner is the best finalist by `rank_by`: `validation` (default) or
-  `train-cv`. Cross-validation within train cannot see a difference between the train and validation distributions,
+  `train-cv`. If no finalist was cross-validated (`finalists: 0`, the budget ended first, or every CV failed), the best
+  screened recipe wins on validation with `cross_validated: false` (none under `train-cv`). Cross-validation within train cannot see a difference between the train and validation distributions,
   which is why validation ranks by default; a large `transfer_gap` says the validation ranking and the training data
   disagree.
 - *Output.* Every attempted recipe is in `evidence_table` with `stage` `finalist` or `screened`; `best_recipe` adds the
