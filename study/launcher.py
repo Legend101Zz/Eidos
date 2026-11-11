@@ -50,11 +50,18 @@ def plan(seed, cards=None, runs=3):
     ]
 
 
+# Pilot-2 addendum 3: Claude Code labels messages it generates itself (for example a surfaced API error) with the
+# model id "<synthetic>". That is not a served model, so it never counts as a model change or a returned model id.
+CLIENT_PLACEHOLDER_MODELS = frozenset({"<synthetic>"})
+
+
 def version_guard(records):
-    models = set(model for record in records for model in record.get("model_ids_seen", []))
+    def served(record):
+        return [m for m in record.get("model_ids_seen", []) if m not in CLIENT_PLACEHOLDER_MODELS]
+    models = set(model for record in records for model in served(record))
     if len(models) != 1:
         return "block must contain exactly one returned model id; saw " + repr(sorted(models))
-    if any(not record.get("model_ids_seen") for record in records):
+    if any(not served(record) for record in records):
         return "one or more runs did not record a returned model id"
     return None
 
