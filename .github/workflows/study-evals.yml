@@ -43,5 +43,23 @@ jobs:
         run: '"$EIDOS_RESEARCH_PYTHON" -m unittest discover -s study/tests -v'
       - name: Installed lab arm tests
         run: |
-          "$EIDOS_STUDY_PYTHON" -c 'import httpx, study.eidos_arms.provider_bridge'
+          "$EIDOS_STUDY_PYTHON" - <<'PY'
+          import os
+          import tempfile
+          import time
+          from pathlib import Path
+          from study.eidos_arms.provider_bridge import start
+          with tempfile.TemporaryDirectory() as directory:
+              root = Path(directory)
+              os.environ['PYTHONPROFILEIMPORTTIME'] = '1'
+              try:
+                  process, _ = start(root, 'https://example.invalid/v1', time.time() + 30, 300)
+              except Exception:
+                  print((root / 'provider_bridge.log').read_text()[-12000:])
+                  raise
+              finally:
+                  os.environ.pop('PYTHONPROFILEIMPORTTIME', None)
+              process.terminate()
+              process.wait(timeout=10)
+          PY
           "$EIDOS_STUDY_PYTHON" -m unittest study.eidos_arms.test_contract study.eidos_arms.test_parity -v
