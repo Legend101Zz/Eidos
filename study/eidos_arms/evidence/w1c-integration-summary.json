@@ -1,0 +1,296 @@
+{
+  "verified_at": "2026-11-10T21:07:48.368154+00:00",
+  "build": {
+    "installed_eidos": "/Volumes/Mrigesh SSD/eidos-v1/venvs/pilot-1-lab/lib/python3.12/site-packages/eidos",
+    "source_python_files_equal": 88,
+    "differences": [],
+    "lab_python": "/Volumes/Mrigesh SSD/eidos-v1/venvs/pilot-1-lab/bin/python",
+    "build": {
+      "eidos_commit_sha": "ba79b9144b594093fe18df57b1a9dfdc2042cba1",
+      "python": "/Volumes/Mrigesh SSD/eidos-v1/venvs/pilot-1-lab/bin/python",
+      "wheels": {
+        "eidos_lab-1.1.0-py3-none-any.whl": "55383ba1eace025917c8014a0690dc2c3564afd911cbd4199cfe89d958a06251",
+        "eidos_pytorch-1.1.0-py3-none-any.whl": "cc48cbda59ec60d5818637675236bcf45333b7aca405124d14691525d58b51a6",
+        "eidos_wire-1.1.0-py3-none-any.whl": "e6177cad69baefe5afce6b61d74e27321c4efa4f5bf440df61ddd9e0f20d48cd",
+        "eidos_worker_sdk-1.2.0-py3-none-any.whl": "148e7b5dd4a817a33977c04967d9408c39182e1e6a4b29198f27d1657d8d067a"
+      },
+      "packages": {
+        "eidos-lab": "1.1.0",
+        "eidos-wire": "1.1.0",
+        "eidos-worker-sdk": "1.2.0",
+        "eidos-pytorch": "1.1.0"
+      }
+    }
+  },
+  "card_model_runs": 0,
+  "provider": "MiniMax only",
+  "smokes": {
+    "3": {
+      "arm": 3,
+      "card": "SYNTHETIC_LINEAR_SMOKE",
+      "status": "ok",
+      "started_at": "2026-11-10T21:02:44.772402+00:00",
+      "ended_at": "2026-11-10T21:05:00.559703+00:00",
+      "wall_s": 135.787,
+      "adapter_wall_s": 146.757,
+      "tokens": {
+        "input": 41958,
+        "cache_read": 492288,
+        "cache_write": 0,
+        "output": 12116,
+        "total": 546362
+      },
+      "billed_usd": null,
+      "model_ids_seen": [
+        "MiniMax-M3.1-Flash"
+      ],
+      "eidos_commit_sha": "ba79b9144b594093fe18df57b1a9dfdc2042cba1",
+      "project": "pilot-a3-95538b2b5b6a4652",
+      "investigation_id": null,
+      "selected_job": null,
+      "evidence_plan_count": null,
+      "assessment_count": null,
+      "run_dir": "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/w1c-checks/arm3-fixed-retry",
+      "answer_artifacts_valid": true,
+      "charter": {
+        "charter_id": "charter:synthetic_linear_smoke-pilot-practical",
+        "revision": 1,
+        "digest": "sha256:6a4516339fb66527015ae4d340b141b1b175af674bc86cf882c859a4de162933",
+        "body": {
+          "study_id": "synthetic_linear_smoke-pilot-practical",
+          "question": "Reproduce the supplied baseline (seed 11), then evaluate the practical accuracy bar.",
+          "known_exposures": [
+            {
+              "description": "Public development task; no evaluator test data supplied"
+            }
+          ],
+          "resource_limits": {
+            "wall_seconds": 1800,
+            "model_tokens": 8000000,
+            "threads": 1
+          },
+          "exploration_only": false,
+          "population": "Evaluator-owned held-out examples from the task population. Visible validation is selection evidence only; it cannot confirm this population.",
+          "comparator": "Supplied baseline trained from fresh initialization with seed 11. Candidate recipe must also reproduce from fresh initialization.",
+          "metrics": {
+            "paired-report/1:reference-accuracy": {
+              "direction": "increase",
+              "denominator": "held-out examples",
+              "description": "Ordinary per-example classification accuracy, encoded as reference correctness in paired-report rows"
+            }
+          },
+          "success_rules": [
+            {
+              "id": "practical-accuracy-gain",
+              "metric": "paired-report/1:reference-accuracy",
+              "min_effect": 0.02,
+              "decision_standard": {
+                "kind": "paired-difference-ci",
+                "confidence": 0.95
+              },
+              "comparison": {
+                "baseline_arm_role": "baseline",
+                "candidate_arm_role": "candidate"
+              },
+              "guardrails": []
+            }
+          ],
+          "notes": "Use eidos.assessors.paired-ci. Its lower 95% confidence bound must reach 0.02. Reference correctness must encode ordinary accuracy, including multiclass tasks. Held-out status and fresh initialization are provenance obligations, not enforced by this numeric rule. Never treat visible-validation passage as evaluator confirmation."
+        }
+      },
+      "llm_broker_enabled": false,
+      "component_grants": 0,
+      "protocol_qualifications": [
+        {
+          "id": "qual:eidos.assessors.paired-ci@1.0.0:2f746ab7",
+          "status": "passed"
+        },
+        {
+          "id": "qual:eidos.templates.improves-under-budget@1.1.0:e24153c9",
+          "status": "passed"
+        }
+      ]
+    },
+    "4": {
+      "arm": 4,
+      "card": "SYNTHETIC_LINEAR_SMOKE",
+      "status": "ok",
+      "started_at": "2026-11-10T20:57:31.394340+00:00",
+      "ended_at": "2026-11-10T20:59:24.778499+00:00",
+      "wall_s": 113.384,
+      "adapter_wall_s": 122.266,
+      "tokens": {
+        "input": 60940,
+        "cache_read": 25939,
+        "cache_write": 0,
+        "output": 15056,
+        "total": 101935
+      },
+      "billed_usd": null,
+      "model_ids_seen": [
+        "MiniMax-M3.1-Flash"
+      ],
+      "eidos_commit_sha": "ba79b9144b594093fe18df57b1a9dfdc2042cba1",
+      "project": "pilot-a4-600787ea142f4e2b",
+      "investigation_id": "inv_608d09118d09",
+      "selected_job": "job_2e7ecc1f2edc42f4",
+      "evidence_plan_count": 0,
+      "assessment_count": 0,
+      "run_dir": "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/w1c-checks/arm4-fixed",
+      "answer_artifacts_valid": true,
+      "charter": {
+        "charter_id": "charter:synthetic_linear_smoke-pilot-practical",
+        "revision": 1,
+        "digest": "sha256:6a4516339fb66527015ae4d340b141b1b175af674bc86cf882c859a4de162933",
+        "body": {
+          "study_id": "synthetic_linear_smoke-pilot-practical",
+          "question": "Reproduce the supplied baseline (seed 11), then evaluate the practical accuracy bar.",
+          "known_exposures": [
+            {
+              "description": "Public development task; no evaluator test data supplied"
+            }
+          ],
+          "resource_limits": {
+            "wall_seconds": 1800,
+            "model_tokens": 8000000,
+            "threads": 1
+          },
+          "exploration_only": false,
+          "population": "Evaluator-owned held-out examples from the task population. Visible validation is selection evidence only; it cannot confirm this population.",
+          "comparator": "Supplied baseline trained from fresh initialization with seed 11. Candidate recipe must also reproduce from fresh initialization.",
+          "metrics": {
+            "paired-report/1:reference-accuracy": {
+              "direction": "increase",
+              "denominator": "held-out examples",
+              "description": "Ordinary per-example classification accuracy, encoded as reference correctness in paired-report rows"
+            }
+          },
+          "success_rules": [
+            {
+              "id": "practical-accuracy-gain",
+              "metric": "paired-report/1:reference-accuracy",
+              "min_effect": 0.02,
+              "decision_standard": {
+                "kind": "paired-difference-ci",
+                "confidence": 0.95
+              },
+              "comparison": {
+                "baseline_arm_role": "baseline",
+                "candidate_arm_role": "candidate"
+              },
+              "guardrails": []
+            }
+          ],
+          "notes": "Use eidos.assessors.paired-ci. Its lower 95% confidence bound must reach 0.02. Reference correctness must encode ordinary accuracy, including multiclass tasks. Held-out status and fresh initialization are provenance obligations, not enforced by this numeric rule. Never treat visible-validation passage as evaluator confirmation."
+        }
+      },
+      "llm_broker_enabled": false,
+      "component_grants": 0,
+      "protocol_qualifications": [
+        {
+          "id": "qual:eidos.assessors.paired-ci@1.0.0:e8750809",
+          "status": "passed"
+        },
+        {
+          "id": "qual:eidos.templates.improves-under-budget@1.1.0:c5171b90",
+          "status": "passed"
+        }
+      ],
+      "accepted_decisions": 2,
+      "rejected_decisions": 1,
+      "project_jobs_succeeded": 9,
+      "investigator_jobs_succeeded": 1,
+      "investigator_settings": {
+        "output_mode": "json",
+        "max_output_tokens": 16384,
+        "request_timeout": 300
+      }
+    }
+  },
+  "retained_attempts": [
+    {
+      "arm": 3,
+      "status": "incident",
+      "incident_reason": "Operator disqualified: persisted lab config used pilot-1b-110, not the fixed build. Stopped by operator; observed usage retained, actual billed usage unknown.",
+      "tokens": {
+        "input": 28644,
+        "cache_read": 186624,
+        "cache_write": 0,
+        "output": 3224,
+        "total": 218492
+      },
+      "wall_s": 40.992,
+      "eidos_commit_sha": null,
+      "run_dir": "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/w1c-checks/arm3-smoke"
+    },
+    {
+      "arm": 4,
+      "status": "incident",
+      "incident_reason": "Operator disqualified: persisted lab config used pilot-1b-110, not the fixed build. Stopped by operator; observed usage retained, actual billed usage unknown.",
+      "tokens": {
+        "input": 7856,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 6097,
+        "total": 13953
+      },
+      "wall_s": 65.806,
+      "eidos_commit_sha": null,
+      "run_dir": "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/w1c-checks/arm4-smoke"
+    },
+    {
+      "arm": 3,
+      "status": "timeout",
+      "incident_reason": null,
+      "tokens": {
+        "input": 41792,
+        "cache_read": 1048960,
+        "cache_write": 0,
+        "output": 20826,
+        "total": 1111578
+      },
+      "wall_s": 240.179,
+      "eidos_commit_sha": "ba79b9144b594093fe18df57b1a9dfdc2042cba1",
+      "run_dir": "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/w1c-checks/arm3-fixed"
+    }
+  ],
+  "stub_block": {
+    "block": "D02-r1",
+    "seed": 20261111,
+    "arms": 4,
+    "valid": 4,
+    "improvement_successes": 0,
+    "model_calls": 0,
+    "four_arm_overlap_s": 3.895652,
+    "plots": 2
+  },
+  "shared_lab_concurrency": {
+    "home": "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/lab/fixed",
+    "different_projects": true,
+    "live_overlap_s": 112.784488,
+    "arm3_attempt": "arm3-fixed (retained timeout)",
+    "arm4_attempt": "arm4-fixed"
+  },
+  "task_root_protocol_check": {
+    "project": "pilot-a4-625b6453cc5a4148",
+    "environment_roots": [
+      "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/w1c-checks/task-root-protocol-check/task",
+      "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/w1c-checks/task-root-protocol-check/task"
+    ],
+    "qualification_statuses": [
+      "passed",
+      "passed"
+    ],
+    "model_calls": 0
+  },
+  "tests": {
+    "study": "Ran 19 tests in 0.528s\n\nOK\nGRADE control arm 1: incident success=False",
+    "contract": "Ran 10 tests in 1.557s\n\nOK"
+  },
+  "shutdown": {
+    "phase": "stopped",
+    "listening_ports": [],
+    "recorded_pids_alive": [],
+    "root_free_bytes": 24454148096
+  }
+}

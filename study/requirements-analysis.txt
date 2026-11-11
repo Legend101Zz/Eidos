@@ -1,0 +1,2 @@
+# Add to the research environment for the descriptive PNGs.
+matplotlib==3.11.2

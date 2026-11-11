@@ -1,0 +1,26 @@
+{
+  "arm": 3,
+  "card": "SYNTHETIC_LINEAR_SMOKE",
+  "run_index": 0,
+  "block_id": "non-study-smoke",
+  "started_at": "2026-11-10T20:27:56.065141+00:00",
+  "incident_reason": null,
+  "billed_usd": null,
+  "tokens": {
+    "input": 51080,
+    "cache_read": 908278,
+    "cache_write": 0,
+    "output": 16140,
+    "total": 975498
+  },
+  "model_ids_seen": [
+    "MiniMax-M3.1-Flash"
+  ],
+  "agent_claim": "Smoke complete. Summary:\n\n**What ran (one baseline job, all through MCP)**\n- `list_components` (native call, once): 2 releases \u2014 `eidos.project.command@1.0.7`, `eidos.task.score-classification@1.0.1`.\n- `run_component` via `mcp_http.py` with a JSON argument file (`work/run_component_args.json`) so `argv` stayed an array, `seed` an int, `timeout_seconds` a number \u2192 job `job_09dc6c9c164d43bb`, `purpose=reproduction`, argv `[\"python\",\"project.py\",\"train\",\"--inputs\",\"{work}\",\"--out\",\"{out}\",\"--seed\",\"{seed}\"]`, seed 11.\n- `get_run` (with `include_lock`) \u2192 status **succeeded**, returncode 0, immutable run lock digest `sha256:c284b4d8\u2026`, job lock_digest `sha256:8a7e7c93\u2026`, inputs digest-matched to the task bundle hashes.\n- Artifacts downloaded from lab API content paths (model, validation predictions, receipt, source snapshot, stderr); every SHA-256 matched the MCP-reported digest.\n\n**Measured result (honest limits)**\n- Receipt: **accuracy 0.9666666666666667 on n=60** (58/60), wall 2.44 s, 1 thread. Re-derived locally from the downloaded predictions (ids match, labels in {0,1}); Wilson 95% CI \u2248 [0.886, 0.991]. Exported `model.pt` reloads to byte-identical predictions. Executed source hashes match the task bundle exactly (`b582e14e\u2026` / `eeeb0ae5\u2026`).\n- Predictions are **visible-validation only**. No test data, no independent confirmation, one seed, one run. Status **inconclusive**, claim_type **no_positive_claim**; filed exploratory claim `claim-smoke-baseline-reproduction-01`.\n\n**Deviations logged**: two `run_component` rejections before admission (invalid `purpose`; non-investigation `investigation_id`) each retried with a fresh `command_key`; `start_investigation` refused (no `investigate` grant) so the job has no investigation attribution; reload/re-derivation checks run locally rather than as extra lab jobs; no source upload, no scoring job, no evidence plan.\n\n**Artifacts under `out/`** (paths relative to `out/`): `answer.json` (schema `eidos-answer/0.2`), `project.py`, `requirements.lock`, `model.pt`, `validation_predictions.npz`, `local_infer_check.npz`, `receipt.json`, `source_snapshot.json`, `command-stderr.txt`, `job_record.json`, `environment_lock.json`, `visible_validation_check.json`. Structural validator passed and every referenced path/hash was re-verified.",
+  "transcript": "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/runs-workers/lane-b-arm3-smoke-08/transcript.jsonl",
+  "status": "ok",
+  "ended_at": "2026-11-10T20:30:15.946289+00:00",
+  "wall_s": 142.443,
+  "exit_code": 0,
+  "project": "pilot-a3-b4dd5ed8d6374416"
+}

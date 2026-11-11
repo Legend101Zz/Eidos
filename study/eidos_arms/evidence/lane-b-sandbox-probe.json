@@ -1,0 +1,9 @@
+{
+  "returncode": 0,
+  "results": {
+    "/Volumes/Mrigesh SSD/eidos-v1/wt-dev-pilot-1b/README.md": "denied",
+    "/Volumes/Mrigesh SSD/eidos-v1/pilot-1/tickets/CONTRACT.md": "denied",
+    "/Users/comreton/.zshrc": "denied",
+    "own_run_write": "allowed"
+  }
+}

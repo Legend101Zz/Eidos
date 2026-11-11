@@ -1,0 +1,23 @@
+{
+  "recipe": {
+    "artifact_validation": true,
+    "reproduce_exit": 0,
+    "tokens": {
+      "input": 107116,
+      "cache_read": 95220,
+      "cache_write": 0,
+      "output": 74901,
+      "total": 277237
+    },
+    "model_ids_seen": [
+      "MiniMax-M3.1-Flash"
+    ]
+  },
+  "reload": {
+    "n": 60,
+    "reload_ids_equal": true,
+    "reload_predictions_equal": true,
+    "reproduced_ids_equal": true,
+    "reproduced_predictions_equal": true
+  }
+}
