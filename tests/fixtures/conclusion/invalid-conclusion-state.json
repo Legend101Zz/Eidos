@@ -1,0 +1,42 @@
+{
+  "action": "conclude",
+  "claim_state": {
+    "assessment_id": null,
+    "assessments_considered": [],
+    "claim_id": "clm_fixture_0001",
+    "claim_revision": 1,
+    "confirmed": false,
+    "evidence_refs": [],
+    "label": "candidate submitted for confirmation",
+    "plan_id": null,
+    "point_estimate": {
+      "baseline": 0.5,
+      "candidate": 0.58,
+      "metric": "accuracy",
+      "source": "investigator",
+      "value": 0.07999999999999996
+    },
+    "population": "held-out examples of toy-3class",
+    "requested_disposition": "candidate",
+    "schema": "conclusion-claim/1",
+    "scope": {
+      "task": "toy-3class"
+    },
+    "state": "proven",
+    "statement": "the candidate recipe raises held-out accuracy",
+    "success_rule_ref": null,
+    "uncertainty": null,
+    "unfulfilled_obligations": [
+      "no conformant, healthy assessor pass on evaluator-owned held-out data",
+      "evidence plan plan_fixture_0001 is frozen; its assessment has not been recorded",
+      "independent confirmation on evaluator-owned held-out data with fresh training seeds",
+      "held-out evaluation with fresh seeds"
+    ]
+  },
+  "schema": "conclusion/2",
+  "scope": {
+    "task": "toy-3class"
+  },
+  "summary": "unknown state",
+  "turn_id": "turn_fixture_0001"
+}

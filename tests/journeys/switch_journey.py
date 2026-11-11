@@ -590,14 +590,21 @@ def step5(j: Journey, a: argparse.Namespace) -> None:
         j.check("plan has no open obligations", rp["obligations"] == [], obligations=rp["obligations"])
         fp = j.cmd_result("freeze_evidence_plan", {"plan_id": pd["plan_id"]})
         j.check("plan frozen", bool(fp.get("plan_digest")), plan_digest=fp.get("plan_digest"))
-        lp = j.cmd_result("launch_evidence_plan", {"plan_id": pd["plan_id"]})
-        j.rec["evidence_jobs"] = lp["jobs"]
-        # launch_evidence_plan maps an arm to the list of its job ids (one per pipeline step; here one run per arm)
-        for arm_id, jids in lp["jobs"].items():
-            assert len(jids) == 1, (arm_id, jids)
-            jb = j.wait_job(jids[0])
-            j.record_job(f"evidence:{arm_id}", jb)
-        j.check("all evidence arms succeeded", all(j.rec["jobs"][f"evidence:{k}"]["status"] == "succeeded" for k in lp["jobs"]))
+        j.cmd_result("launch_evidence_plan", {"plan_id": pd["plan_id"]})
+        # launch_evidence_plan admits one job at a time (ADR 0022 addendum R11); here one run per arm, each after the last
+        done_arms: set[str] = set()
+        while True:
+            plan_jobs = j.query("get_record", {"kind": "evidence_plan", "id": pd["plan_id"]})["body"]["launch"]["jobs"]
+            ready = [(a, jids) for a, jids in plan_jobs.items() if a not in done_arms]
+            if not ready:
+                break
+            for arm_id, jids in ready:
+                assert len(jids) == 1, (arm_id, jids)
+                jb = j.wait_job(jids[0])
+                j.record_job(f"evidence:{arm_id}", jb)
+                done_arms.add(arm_id)
+        j.rec["evidence_jobs"] = plan_jobs
+        j.check("all evidence arms succeeded", all(j.rec["jobs"][f"evidence:{k}"]["status"] == "succeeded" for k in plan_jobs))
         asm = poll(lambda: (lambda r: r[0] if r else None)(
             j.query("list_records", {"kind": "assessment", "parent_id": claim["claim_id"], "limit": 5, "summary": False})), 300)
         j.check("AssessmentWorkflow produced an assessment", asm is not None)

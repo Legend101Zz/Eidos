@@ -2,6 +2,120 @@
 
 All notable changes to Eidos. Tags are annotated, created only on CI-green commits, and never moved. Development tags `eidos-v0.x` were freezes, not releases.
 
+## Unreleased: 1.2.0
+
+### Review R13 of the integrated round (ADR 0021 addendum)
+
+- **Freeze boundary.** `freeze_evidence_plan` refuses any confirmation-eligible plan, including manual plans, whose
+  attested labels or splits an earlier job already read (`selection-exposed`) or whose root steps repeat a recipe and
+  seed already run (`seed-already-observed`).
+- **Pinned candidate state.** `investigation_view` carries `claim_state`, derived by the conclusion's rules, and the
+  pinned facts use it: a pass on an exploratory plan or an earlier claim revision is never shown as `protocol-passed`.
+- **Candidate lock format.** The playbook and tool guide give the exact `candidate_lock` format, and assessment also
+  accepts a lock naming exactly one job in `evidence_refs`. The pinned lock says when a note names no job.
+
+### Investigator reliability and completion (ADR 0020, from the diagnosis of development pilot 1)
+
+- **Environment preflight.** Registration records a capability probe (interpreter digest, key modules, versions) and
+  the project's declared requirements. Admission refuses a job whose component or project declares what the environment
+  measurably lacks (`ENVIRONMENT_PREFLIGHT_REFUSED`), and records an `admission.refused` event. An unprobed environment
+  is never refused. `eidos.task.score-classification` and `score-regression` 1.0.2 declare numpy.
+- **Job views show the environment** (`investigation_view`, `get_job` with or without the lock, `list_jobs`).
+- **Actionable failures.** Failure context includes the exception type and a bounded, redacted stderr tail. Failed job
+  records keep up to 3000 characters of stderr.
+- **`context-policy/2`.** A pinned facts block (baseline, lock, success rule, environments and capabilities, known
+  failures, wall time) survives truncation and the job window; repeated failures read "failed 3× in environment X with
+  ModuleNotFoundError numpy"; the catalog is dropped first and every omission is logged. `context-policy/1` remains for
+  replay and older investigations.
+- **`investigator-playbook/1`** in the system prompt (`investigator-prompt/2`): baseline without source, quick wins,
+  early lock, fresh-seed reproduction, assessment or submission, deadline-aware stopping, null handling.
+- **Deadline-aware completion.** Optional `investigator.wall_seconds` and `conclude_threshold_seconds`: turns and jobs
+  stop before the conclusion's reserve, the investigator is told to conclude and a conclusion is required once it
+  starts, retries are bounded by the remaining wall time, and the deadline surfaces as `wall-deadline-reached`.
+- **Review R10 of the above (ADR 0020 addendum).** The environment probe imports nothing from the probed environment
+  (`environment-capabilities/2`: `-I -S`, distribution metadata only, killed as a process group); it no longer measures
+  importability or GPUs. Requirements are parsed with `packaging` (markers for the probed interpreter, compound constraints,
+  extras, includes); import names come from metadata; what cannot be decided is inconclusive, never refused, and recorded in
+  the job lock. Failure text is redacted before any cut, for stored and model-visible data, including quoted JSON secrets.
+  Every pinned context section has a budget, omissions are recorded, and the final text never exceeds the limit. A turn,
+  retries and execution included, ends at the reserve's start and a fresh conclusion turn begins there (stop reason
+  `deadline`). The environment registration key digests its whole payload. The study arm passes `investigator.wall_seconds`.
+
+### Assessment by default and evidence-derived claim state (ADR 0021)
+- **`assess_candidate`** (lab command, investigator tool, MCP tool, `lab assess`) goes from a locked candidate, a
+  baseline and a charter rule to a frozen, launched evidence plan, using the paired-classification adapter and
+  `eidos.assessors.paired-ci@1.2.0` for accuracy and the template's train/evaluate path for paired metrics. It
+  validates output schemas, seed pairing and fresh initializations, the charter id and data provenance before launch.
+  Refusals are recorded (`assessment_request`) with stable reason codes.
+- **Selection data stays exploratory.** `data_provenance.split: selection` is refused, a plan that declares it cannot
+  be frozen, and held-out data needs an operator attestation in the charter (`held_out: {labels, splits}`).
+- **A conclusion's claim state comes from recorded evidence.** `conclusion.claim_state` (schema `conclusion-claim/1`,
+  published as `schemas/eidos-wire/v1/conclusion.schema.json`) is `protocol-passed` only for a conformant, healthy
+  assessor pass, `candidate-submitted` with point estimate, uncertainty, population and unfulfilled obligations when
+  nothing confirmed it, and `not-supported` after an intact failure. The model can abstain or report a null; a claimed
+  confirmation without a pass is recorded as a downgrade. `get_claim` returns the derived state.
+- **Study adapter.** `study/eidos_arms/arm4.py::map_claim_state` maps the states explicitly onto `eidos-answer/0.2`;
+  see `study/eidos_arms/CHARTER_RULES.md`.
+- Tests: `tests/unit/test_claim_state.py`, `tests/unit/test_assessment_pipeline_rules.py`,
+  `tests/unit/test_conclusion_schema.py`, `tests/unit/test_arm4_claim_state_mapping.py`,
+  `tests/components/test_assessment_pipeline_template.py`, `tests/integration/test_assess_candidate_e2e.py`.
+
+### Prospective confirmation (ADR 0021, E2b)
+- **A plan that can confirm a claim needs verified held-out data.** `freeze_evidence_plan` records `confirmation` from
+  the ledger against the charter's `held_out`. Missing provenance is exploratory: its assessment is `inconclusive`.
+  This applies to manual plans too, and a new conclusion over an older plan gives a submitted candidate.
+- **Confirming evidence must not exist yet.** Freezing refuses plans pinning existing results, by schema or digest.
+  `assess_candidate` now freezes recipes and seeds and launches fresh arms; a held-out set confirms only once, and
+  a recipe's already-run seeds are refused. `baseline` and `candidate` are now `{"job_id": ...}` naming a recipe.
+- **`eidos.templates.improves-under-budget@1.2.0`'s classification path can no longer be frozen**, since it pins
+  existing predictions.
+- The train/evaluate path verifies the candidate against the investigation's `candidate_lock` and pins its component
+  releases, so it can launch.
+- An abstention or a null in either representation takes precedence over the other. A reported point estimate is
+  normalized by the metric's direction, with lower-is-better metrics no longer reversed.
+- The investigator's tool guide states that a candidate can be submitted without a held-out verdict, the normal case
+  when the evaluator owns the held-out data.
+
+### Dependent batches and recipe search (E3, ADR 0022)
+- **Dependent decision batches.** One accepted decision can now author source and run train, infer and score on it:
+  call arguments can be `{"$ref": "call[i].field"}` or `call[i].outputs.slot`, resolved when the dependent call
+  executes. The batch is recorded prospectively and each call keeps its receipt, command key and provenance. Malformed
+  or unknown references, forward references and references in literal arguments are refused before acceptance.
+- **Jobs of a decision run sequentially** unless a decision's `resource_policy` asks for concurrency and the project's
+  operator-set `policy.resources.max_concurrent_jobs` allows it. `TurnWorkflow` waits for a batch's jobs durably (patch
+  `dependent-batch-v1`). A failure stops only the dependent tail, recorded as `DEPENDENCY_FAILED`.
+- **New component `eidos.search.recipe-sweep@1.0.0`**, in `components/` and the standalone toolkit: grid or seeded
+  random search over a project command, on visible validation only, with seeds, folds, a required budget and a stopping
+  rule. It records every recipe in a ranked evidence table and the best recipe. Exploratory; no claim, no test data.
+- New wire schema `decision-proposal` and fixtures. Tool guide updated.
+
+### Review fixes E3b (review R11 of 0a75804, ADR 0022 addendum R11)
+- **Evidence plans use the one-CPU allowance.** `launch_evidence_plan` admits one job at a time, or the
+  `max_concurrent_jobs` it asks for if the project's resource policy allows that, and the next step is admitted when a
+  job ends. In a decision, a plan waits for an idle batch and holds its whole allowance until its last job has ended.
+  The launch result's `jobs` now lists only the jobs admitted so far.
+- **Sweep evaluations are process groups.** Each is stopped and reaped as a whole group on a timeout, a stop request,
+  cancellation, or a normal exit that left workers behind.
+- **Sweep evaluations cannot publish inherited credentials.** They run in a scrubbed environment, and failure text is
+  redacted before it reaches the table.
+- **The sweep copies no project file implicitly.** Without a source bundle, `command.copy` must list the files, and files
+  named after a held-out split are refused, there and in a source bundle.
+- **`DecisionControl` carries `scope`, `scope_text` and `bounded_outcome`**, which the runtime writes and the published
+  schema dropped. A scope the model wrote that is not a JSON object is kept as `scope_text`. The decision fixtures now
+  come from the runtime's own conversion.
+
+### Integration of ADR 0020, 0021 and 0022
+- **One workflow.** The playbook and the tool guide describe one path: baseline; a sweep or quick wins with batches; lock;
+  fresh-seed reproduction; `assess_candidate` where held-out data exists, otherwise "candidate submitted for confirmation";
+  conclude before the deadline.
+- **`context-policy/2` pinned facts** also state the candidate and assessment state, recent sweeps and batches, and the body
+  lists assessment requests.
+- **`assess_candidate` follows the one-CPU rule in a batch** and passes the decision's checked `max_concurrent_jobs`.
+  A refused request holds no allowance.
+- **A waiting batch stops at the conclusion reserve** as well as at the turn's timeout.
+- **`DecisionControl` publishes `claim` and `claim_text`** beside `scope` and batch references, with fixture
+  `decision-proposal-conclude-claim`.
+
 ## Unreleased / 1.1.1
 
 Reasoning models through OpenAI-compatible endpoints (ADR 0016). Measured with MiniMax-M3.1-Flash through

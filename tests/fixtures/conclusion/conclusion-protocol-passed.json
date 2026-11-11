@@ -1,0 +1,58 @@
+{
+  "action": "conclude",
+  "claim_state": {
+    "assessment_id": "asm_fixture_0001",
+    "assessments_considered": [
+      {
+        "claim_id": "clm_fixture_0001",
+        "conformance": "conformant",
+        "health": "intact",
+        "id": "asm_fixture_0001",
+        "outcome": "protocol-passed",
+        "plan_id": "plan_fixture_0001"
+      }
+    ],
+    "claim_id": "clm_fixture_0001",
+    "claim_revision": 1,
+    "confirmed": true,
+    "evidence_refs": [
+      "art_fixture_report"
+    ],
+    "label": "improvement confirmed by a conformant, healthy assessor pass, within the claim's scope",
+    "plan_id": "plan_fixture_0001",
+    "point_estimate": {
+      "direction": "increase",
+      "metric": "classification-report/1:accuracy",
+      "source": "assessor",
+      "value": 0.042
+    },
+    "population": "held-out examples of toy-3class",
+    "remaining_alternatives": [
+      "gain specific to the evaluation population"
+    ],
+    "requested_disposition": "confirmed",
+    "schema": "conclusion-claim/1",
+    "scope": {
+      "split": "held-out",
+      "task": "toy-3class"
+    },
+    "state": "protocol-passed",
+    "statement": "the candidate recipe raises held-out accuracy",
+    "success_rule_ref": "practical-accuracy-gain@1",
+    "uncertainty": {
+      "confidence": 0.95,
+      "high": 0.073,
+      "kind": "confidence-interval",
+      "low": 0.011,
+      "method": "cluster-robust normal",
+      "source": "assessor"
+    },
+    "unfulfilled_obligations": []
+  },
+  "schema": "conclusion/2",
+  "scope": {
+    "task": "toy-3class"
+  },
+  "summary": "Confirmed by a conformant, healthy assessor pass.",
+  "turn_id": "turn_fixture_0001"
+}

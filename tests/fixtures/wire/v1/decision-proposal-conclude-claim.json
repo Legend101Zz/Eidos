@@ -1,0 +1,30 @@
+{
+  "calls": [],
+  "control": {
+    "action": "conclude",
+    "claim": {
+      "disposition": "candidate",
+      "evidence_refs": [
+        "job_0123"
+      ],
+      "obligations": [
+        "independent confirmation"
+      ],
+      "point_estimate": {
+        "direction": "higher_is_better",
+        "metric": "accuracy",
+        "value": 0.04
+      }
+    },
+    "scope": {
+      "answer": {
+        "status": "improvement_claimed"
+      },
+      "split": "validation"
+    },
+    "summary": "candidate submitted for confirmation"
+  },
+  "hypotheses": [],
+  "purpose": "open-search",
+  "rationale": "a locked candidate, no held-out verdict"
+}

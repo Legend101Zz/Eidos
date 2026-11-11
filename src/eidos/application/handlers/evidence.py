@@ -7,8 +7,10 @@ import uuid
 from typing import Any
 
 from eidos.application.handlers.investigations import confirm_scope, inv_scope
+from eidos.application.handlers.projects import checked_concurrency
 from eidos.application.handlers.runs import admit_job, resolve_lock, strongest_profile
 from eidos.application.service import Ctx, command
+from eidos.domain import assessment as ev_assessment
 from eidos.domain import evidence as ev
 from eidos.domain import isolation, qualification
 from eidos.domain.errors import (
@@ -19,13 +21,19 @@ from eidos.domain.errors import (
     QualificationMissing,
     WithdrawnMethod,
 )
+from eidos.domain.turns import MAX_CONCURRENT_JOBS_KEY
 from eidos_wire import canonical_json, sha256_bytes
+
+TERMINAL_STATUSES = ("succeeded", "failed", "cancelled", "pruned")
 
 
 @command("file_claim", "propose")
 def file_claim(ctx: Ctx, p: dict) -> dict:
     body = ev.validate_claim({k: p.get(k) for k in ("statement", "kind", "scope", "assumptions", "alternatives",
                                                      "supporting", "contradicting", "fork_point")})
+    if p.get("state") is not None or p.get("confirmed") is not None:
+        raise Invalid("a claim's state is derived from recorded assessments (ADR 0021); it cannot be asserted when filing",
+                      details={"state": p.get("state"), "confirmed": p.get("confirmed")})
     body["author"] = ctx.principal.id
     body["investigation_id"] = p.get("investigation_id")
     cid = p.get("claim_id") or f"claim_{uuid.uuid4().hex[:12]}"
@@ -35,7 +43,9 @@ def file_claim(ctx: Ctx, p: dict) -> dict:
                       details={"observed_revision": existing.revision})
     if existing:
         body["superseded_revision"] = existing.revision
-    rec = ctx.tx.put_record("claim", cid, ctx.project_id, body, created_by=ctx.principal.id, status="proposed")
+    # A filed claim is a submitted candidate until an assessment says otherwise (ADR 0021).
+    rec = ctx.tx.put_record("claim", cid, ctx.project_id, body, created_by=ctx.principal.id, status="proposed",
+                            labels={"state": ev_assessment.CANDIDATE_SUBMITTED})
     ctx.event("claim.filed", cid, {"revision": rec.revision, "kind": body["kind"]}, investigation_id=p.get("investigation_id"))
     return {"claim_id": cid, "revision": rec.revision}
 
@@ -128,11 +138,34 @@ def freeze_evidence_plan(ctx: Ctx, p: dict) -> dict:
     if not plan.body["arms"]:
         raise Invalid("a plan needs arms before freezing")
     body = dict(plan.body)
+    body["confirmation"] = _confirmation_status(ctx, plan)
     body["assessor"] = {**body["assessor"], "digest": ctx.tx.require("component_release", a_ref).body["digest"]}
     body["frozen_by"] = ctx.principal.id
     rec = ctx.tx.put_record("evidence_plan", plan.id, ctx.project_id, body, created_by=ctx.principal.id, status="frozen")
     ctx.event("evidence_plan.frozen", plan.id, {"digest": rec.digest}, investigation_id=body.get("investigation_id"))
     return {"plan_id": plan.id, "revision": rec.revision, "plan_digest": rec.digest}
+
+
+def _confirmation_status(ctx: Ctx, plan: Any) -> dict:
+    """Whether this plan can confirm a claim, from the ledger rather than from what its draft says (ADR 0021). Locks the
+    pinned charter so two freezes cannot both take the same held-out data."""
+    ref = plan.body["charter_ref"]
+    charter = ctx.tx.require("charter", ref["id"], ref.get("revision"), lock=True)
+    artifacts = {i["artifact_id"]: art for i in ev.literal_inputs(plan.body)
+                 if (art := ctx.tx.get_artifact(i["artifact_id"])) and art["project_id"] == ctx.project_id}
+    results = {a["digest"] for a in ctx.tx.artifacts_with_schemas(ctx.project_id, ev_assessment.RESULT_SCHEMAS)}
+    status = ev.confirmation_status(plan.body, charter=charter.body, artifacts=artifacts, result_digests=results)
+    if status["eligible"]:
+        taken = set(status["data_keys"])
+        for other in ctx.tx.list_records(ctx.project_id, "evidence_plan", limit=100000):
+            reused = taken & set((other.body.get("confirmation") or {}).get("data_keys") or [])
+            if other.id != plan.id and other.status != "draft" and reused:
+                raise Invalid(f"plan {other.id} already used this held-out data for confirmation: running another plan on "
+                              "it would let results seen there choose this one. An operator must attest new held-out data",
+                              details={"reason_code": "held-out-reused", "plan_id": other.id, "data_keys": sorted(reused)})
+        ev.check_prospective(plan.body, status=status, artifacts=artifacts,
+                             jobs=ctx.tx.list_jobs(ctx.project_id, limit=100000))
+    return status
 
 
 def _refuse_unsupported_sealed(ctx: Ctx, body: dict) -> None:
@@ -165,17 +198,41 @@ def arm_jobs(plan_body: dict) -> dict[str, list[str]]:
     return {k: (v if isinstance(v, list) else [v]) for k, v in jobs.items()}
 
 
-def _refs(step: dict, arm_steps: dict[str, dict]) -> dict[str, tuple[str, str]]:
-    """Map input ports to (step key, slot) for inputs that reference earlier pipeline steps."""
+def intermediate_jobs(plan_body: dict) -> set[str]:
+    """Jobs of steps marked ``intermediate``: they run and count for conformance, but their outputs are not the arm's
+    evidence (a fresh training step before the step that reports on it)."""
+    launched = (plan_body.get("launch") or {}).get("steps") or {}
+    return {launched[s["key"]] for arm in plan_body.get("arms") or [] for s in _pipeline_steps(arm)
+            if s["spec"].get("intermediate") and s["key"] in launched}
+
+
+def _refs(step: dict, arm_steps: dict[str, dict], other_steps: dict[str, dict]) -> dict[str, tuple[str, str]]:
+    """Map input ports to (step key, slot) for inputs that reference earlier pipeline steps. A reference resolves in
+    the step's own arm first; ``other_steps`` holds the steps of other arms whose id is unique in the plan."""
     out = {}
     for port, val in (step["spec"].get("inputs") or {}).items():
         if not isinstance(val, str):
             continue
-        for sid in sorted(arm_steps, key=len, reverse=True):
-            if val.startswith(sid + "."):
-                out[port] = (arm_steps[sid]["key"], val[len(sid) + 1:])
+        for steps in (arm_steps, other_steps):
+            sid = next((s for s in sorted(steps, key=len, reverse=True) if val.startswith(s + ".")), None)
+            if sid is not None:
+                out[port] = (steps[sid]["key"], val[len(sid) + 1:])
                 break
     return out
+
+
+def typed_reference(ctx: Ctx, artifact_id: str, schema: str) -> str:
+    """The same bytes under the schema a port declares (recorded in lineage)."""
+    art = ctx.tx.get_artifact(artifact_id)
+    if art["schema"] == schema:
+        return artifact_id
+    aid = f"art_{uuid.uuid4().hex[:16]}"
+    ctx.tx.insert_artifact({"id": aid, "project_id": ctx.project_id, "digest": art["digest"], "size": art["size"],
+                            "media_type": art["media_type"], "schema": schema, "role": art["role"],
+                            "access_class": art["access_class"], "origin": "derived",
+                            "meta": {"typed_reference_of": artifact_id}})
+    ctx.tx.add_lineage(ctx.project_id, artifact_id, aid, "typed-reference")
+    return aid
 
 
 def _admit_step(ctx: Ctx, plan, arm: dict, step: dict, inputs: dict, scope, inv_id) -> str:
@@ -195,19 +252,31 @@ def _admit_step(ctx: Ctx, plan, arm: dict, step: dict, inputs: dict, scope, inv_
 
 
 def _advance(ctx: Ctx, plan, launch: dict) -> dict:
-    """Admit every pending step whose referenced steps succeeded; block those whose did not."""
+    """Admit pending steps whose referenced steps succeeded, within the plan's concurrency (one job at a time unless the
+    project's resource policy and the launcher allow more, ADR 0022 addendum R11); block those whose did not. Called again
+    in the transaction that ends each arm job, so the next step is admitted before the plan can look idle. A paused
+    investigation admits nothing until it resumes; a halted plan (a stop, or a question change that cancels work) blocks
+    what it has not admitted, as cancelling admitted jobs did when a plan admitted all its arms at launch."""
     inv_id = plan.body.get("investigation_id")
     scope = launch.get("scope")
+    every = [s for arm in plan.body["arms"] for s in _pipeline_steps(arm)]
+    unique = {s["id"]: s for s in every if sum(x["id"] == s["id"] for x in every) == 1}
+    limit = int(launch.get(MAX_CONCURRENT_JOBS_KEY) or 1)
+    halted = launch.get("halted")
+    inv = ctx.tx.get_record("investigation", inv_id) if inv_id else None
+    paused = inv is not None and inv.status == "paused"
+    active = sum(1 for jid in launch["steps"].values() if ctx.tx.get_job(jid)["status"] not in TERMINAL_STATUSES)
     progressed = True
     while progressed:
         progressed = False
         for arm in plan.body["arms"]:
             steps = _pipeline_steps(arm)
             by_id = {s["id"]: s for s in steps}
+            others = {sid: s for sid, s in unique.items() if s["key"] not in {x["key"] for x in steps}}
             for st in steps:
                 if st["key"] in launch["steps"] or st["key"] in launch["blocked"]:
                     continue
-                refs = _refs(st, by_id)
+                refs = _refs(st, by_id, others)
                 ready, blocked, inputs = True, None, dict(st["spec"].get("inputs") or {})
                 for port, (dep_key, slot) in refs.items():
                     if dep_key in launch["blocked"]:
@@ -215,7 +284,7 @@ def _advance(ctx: Ctx, plan, launch: dict) -> dict:
                         break
                     jid = launch["steps"].get(dep_key)
                     job = ctx.tx.get_job(jid) if jid else None
-                    if not job or job["status"] not in ("succeeded", "failed", "cancelled", "pruned"):
+                    if not job or job["status"] not in TERMINAL_STATUSES:
                         ready = False
                         continue
                     if job["status"] != "succeeded":
@@ -225,11 +294,12 @@ def _advance(ctx: Ctx, plan, launch: dict) -> dict:
                     if pub is None:
                         blocked = f"predecessor {dep_key} published no '{slot}'"
                         break
-                    inputs[port] = pub["artifact_id"]
-                if blocked:
-                    launch["blocked"][st["key"]] = blocked
+                    wanted = (st["spec"].get("input_schemas") or {}).get(port)
+                    inputs[port] = typed_reference(ctx, pub["artifact_id"], wanted) if wanted else pub["artifact_id"]
+                if blocked or halted:
+                    launch["blocked"][st["key"]] = halted or blocked
                     progressed = True
-                elif ready:
+                elif ready and active < limit and not paused:
                     # A step whose admission is refused (a withdrawn release, an exhausted budget, a resolution error)
                     # is blocked with its reason; it must never make the finishing predecessor's transaction fail,
                     # which would leave that job running forever (1.1.0 review). The savepoint undoes partial writes.
@@ -242,6 +312,7 @@ def _advance(ctx: Ctx, plan, launch: dict) -> dict:
                         continue
                     launch["steps"][st["key"]] = jid
                     launch["jobs"].setdefault(arm["id"], []).append(jid)
+                    active += 1
                     progressed = True
     return launch
 
@@ -258,21 +329,35 @@ def launch_evidence_plan(ctx: Ctx, p: dict) -> dict:
         scope = confirm_scope(inv_id) if ctx.tx.budgets(confirm_scope(inv_id)) else inv_scope(inv_id)
     for arm in plan.body["arms"]:
         _pipeline_steps(arm)  # validate shape before admitting anything
-    launch = _advance(ctx, plan, {"jobs": {}, "steps": {}, "blocked": {}, "scope": scope, "by": ctx.principal.id})
+    limit = checked_concurrency(ctx, p.get(MAX_CONCURRENT_JOBS_KEY))
+    launch = _advance(ctx, plan, {"jobs": {}, "steps": {}, "blocked": {}, "scope": scope, "by": ctx.principal.id,
+                                  MAX_CONCURRENT_JOBS_KEY: limit})
     body = {**plan.body, "launch": launch}
     rec = ctx.tx.put_record("evidence_plan", plan.id, ctx.project_id, body, created_by=ctx.principal.id, status="executing")
-    return {"plan_id": plan.id, "revision": rec.revision, "jobs": launch["jobs"], "pending_steps":
-            sum(len(_pipeline_steps(a)) for a in plan.body["arms"]) - len(launch["steps"]) - len(launch["blocked"])}
+    return {"plan_id": plan.id, "revision": rec.revision, "jobs": launch["jobs"], MAX_CONCURRENT_JOBS_KEY: limit,
+            "pending_steps": sum(len(_pipeline_steps(a)) for a in plan.body["arms"]) - len(launch["steps"]) - len(launch["blocked"])}
 
 
-def maybe_request_assessment(ctx: Ctx, plan_id: str) -> None:
-    """Called when an evidence-arm job ends: advance pipelines; request assessment when done."""
+def reconsider_plans(ctx: Ctx, investigation_id: str, *, halt: str | None = None) -> None:
+    """After an operator control: a resumed investigation's plans admit again, and ``halt`` ends what a plan had not
+    yet admitted (its running jobs follow the control's own policy)."""
+    for rec in ctx.tx.list_records(ctx.project_id, "evidence_plan", status="executing", limit=100000):
+        if rec.body.get("investigation_id") == investigation_id:
+            maybe_request_assessment(ctx, rec.id, halt=halt)
+
+
+def maybe_request_assessment(ctx: Ctx, plan_id: str, *, halt: str | None = None) -> None:
+    """Called when an evidence-arm job ends or an operator control changes what a plan may do: advance pipelines;
+    request assessment when done."""
     plan = ctx.tx.get_record("evidence_plan", plan_id, lock=True)
     if not plan or plan.status != "executing":
         return
     launch = plan.body["launch"]
     if "steps" in launch:
-        launch = _advance(ctx, plan, json.loads(json.dumps(launch)))
+        launch = json.loads(json.dumps(launch))
+        if halt:
+            launch["halted"] = halt
+        launch = _advance(ctx, plan, launch)
         if launch != plan.body["launch"]:
             plan = ctx.tx.put_record("evidence_plan", plan.id, ctx.project_id, {**plan.body, "launch": launch},
                                      created_by=ctx.principal.id, status="executing")
@@ -280,7 +365,7 @@ def maybe_request_assessment(ctx: Ctx, plan_id: str) -> None:
         if len(launch["steps"]) + len(launch["blocked"]) < total:
             return
     jobs = [ctx.tx.get_job(j) for js in arm_jobs(plan.body).values() for j in js]
-    if all(j["status"] in ("succeeded", "failed", "cancelled", "pruned") for j in jobs):
+    if all(j["status"] in TERMINAL_STATUSES for j in jobs):
         blocked = ((ctx.tx.get_record("evidence_plan", plan_id) or plan).labels or {}).get("blocked_by")
         if blocked:  # withdrawn method: no assessment is requested (fail closed)
             ctx.tx.set_status("evidence_plan", plan_id, "assessment-blocked")
@@ -399,7 +484,9 @@ def submit_assessment(ctx: Ctx, p: dict) -> dict:
     ctx.tx.put_record("justification", f"just:{aid}", ctx.project_id,
                       {"claim_id": claim_id, "requires": [aid], "kind": "assessment"},
                       created_by=ctx.principal.id, status="active", parent_id=claim_id)
-    ctx.tx.set_status("claim", claim_id, "assessed", labels={"latest_assessment": aid, "outcome": result["outcome"]})
+    ctx.tx.set_status("claim", claim_id, "assessed", labels={
+        "latest_assessment": aid, "outcome": result["outcome"],
+        "state": ev_assessment.lifecycle_state(result["outcome"], result.get("conformance"), result.get("health"))})
     ctx.event("assessment.committed", aid, {"plan": plan.id, "outcome": result["outcome"],
                                             "conformance": result["conformance"]},
               investigation_id=plan.body.get("investigation_id"), wake=True)

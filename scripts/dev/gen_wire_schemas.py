@@ -14,7 +14,7 @@ import json
 import sys
 from pathlib import Path
 
-from eidos.boundary.wire import MESSAGES, schema_document
+from eidos.boundary.wire import PUBLISHED, schema_document
 from eidos_wire import WIRE_MAJOR
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -25,7 +25,7 @@ def render() -> dict[str, str]:
     """File name -> exact file text for every published schema."""
     return {
         f"{name}.schema.json": json.dumps(schema_document(name), indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-        for name in MESSAGES
+        for name in PUBLISHED
     }
 
 

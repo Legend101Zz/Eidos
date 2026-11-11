@@ -11,6 +11,7 @@ from eidos.application.service import EFFECT_ADMISSION, Ctx, command
 from eidos.domain import charter as charter_rules
 from eidos.domain import turns as turn_rules
 from eidos.domain.errors import BudgetExhausted, EffectNotAdmitted, Invalid, QuestionRevised, StaleRevision
+from eidos.domain.redaction import redact_value
 
 RUNNING_JOB_POLICIES = ("drain", "checkpoint-and-stop", "cancel")
 BUDGET_DIMS = ("model_tokens", "model_usd", "compute_seconds", "trials", "turns")
@@ -42,7 +43,7 @@ def start_investigation(ctx: Ctx, p: dict) -> dict:
     if ctx.tx.get_record("investigation", inv_id):
         raise Invalid(f"investigation {inv_id} already exists")
     limits = dict(p.get("limits") or {})
-    investigator = {"runtime": "fixture", "model": None, "context_policy": "context-policy/1",
+    investigator = {"runtime": "fixture", "model": None, "context_policy": "context-policy/2",
                     "max_calls_per_turn": 6, "max_model_calls_per_turn": 4, "max_turns": 40,
                     **(p.get("investigator") or {})}
     if "model_usd" in limits and investigator.get("runtime") != "fixture" \
@@ -56,6 +57,11 @@ def start_investigation(ctx: Ctx, p: dict) -> dict:
             "investigator": investigator, "steering": [], "confirmation_envelope": p.get("confirmation_envelope", {}),
             "notes": p.get("notes", ""), "inputs": dict(p.get("inputs") or {}),
             "task": p.get("task")}
+    if investigator.get("wall_seconds"):  # ADR 0020: an optional wall limit, fixed when the investigation starts
+        wall = float(investigator["wall_seconds"])
+        body["wall"] = {"wall_seconds": wall, "deadline_unix": time.time() + wall,
+                        "conclude_threshold_seconds": turn_rules.conclude_threshold(
+                            wall, investigator.get("conclude_threshold_seconds"))}
     charter_id = p.get("charter_id")
     if charter_id:
         ch = ctx.tx.require("charter", charter_id)
@@ -164,6 +170,9 @@ def revise_question(ctx: Ctx, p: dict) -> dict:
             ctx.tx.update_job(job["id"], cancel_requested=True)
             ctx.tx.enqueue("job.cancel", f"cancel:{job['id']}", {"job_id": job["id"], "policy": policy})
         affected.append(job["id"])
+    if policy != "drain":  # ADR 0022 addendum R11: a plan's steps not yet admitted are ended like the jobs it had admitted
+        from eidos.application.handlers.evidence import reconsider_plans
+        reconsider_plans(ctx, inv.id, halt="the question was revised with a stopping policy")
     _clear_needs_input(ctx, inv, inv.status, "question-revised")
     ctx.event("investigation.question_revised", inv.id,
               {"question_revision": qrev, "revision": rec.revision, "by": ctx.principal.id, "policy": policy,
@@ -194,6 +203,9 @@ def _set_state(ctx: Ctx, p: dict, status: str, etype: str) -> dict:
             ctx.tx.update_job(job["id"], cancel_requested=True)
             ctx.tx.enqueue("job.cancel", f"cancel:{job['id']}", {"job_id": job["id"], "policy": policy})
             affected.append(job["id"])
+    if status in ("stopped", "active"):  # ADR 0022 addendum R11: a plan's unadmitted steps end, or may continue
+        from eidos.application.handlers.evidence import reconsider_plans
+        reconsider_plans(ctx, inv.id, halt="the investigation was stopped" if status == "stopped" else None)
     ctx.event(etype, inv.id, {"policy": policy, "affected_jobs": affected}, investigation_id=inv.id, wake=True)
     return {"investigation_id": inv.id, "revision": rec.revision, "status": status, "running_job_policy": policy,
             "affected_jobs": affected}
@@ -309,6 +321,11 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
     cfg = inv.body["investigator"]
     if seq > int(cfg.get("max_turns", 40)):
         return {"started": False, "reason": "max-turns-reached"}
+    wall = inv.body.get("wall")
+    completion = turn_rules.completion_state(wall["deadline_unix"], time.time(), wall["conclude_threshold_seconds"]) \
+        if wall else None
+    if completion and completion["remaining_seconds"] <= 0:
+        return {"started": False, "reason": turn_rules.WALL_REACHED}
     budgets = ctx.tx.budgets(inv_scope(inv.id))
     for dim, b in budgets.items():
         if dim in ("model_tokens", "model_usd") and b["used"] + b["reserved"] >= b["limit_amount"]:
@@ -325,10 +342,13 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
         "limits": {"max_calls": int(cfg.get("max_calls_per_turn", 6)),
                    "max_model_calls": int(cfg.get("max_model_calls_per_turn", 4)),
                    "deadline_seconds": int(cfg.get("turn_deadline_seconds", 600))},
+        **({"completion": completion} if completion else {}),
         "budgets": budgets,
         "tool_vocabulary": sorted(turn_rules.EFFECT_TOOLS) + list(turn_rules.CONTROL_TOOLS),
         "exposure_policy": p.get("exposure_policy", "development-feedback-allowed"),
     }
+    if completion:
+        spec["limits"]["deadline_seconds"] = turn_rules.turn_seconds(spec["limits"]["deadline_seconds"], completion)
     horizon = ctx.tx.horizon()
     spec["horizon"] = horizon
     ctx.tx.insert_turn({"id": tid, "investigation_id": inv.id, "project_id": ctx.project_id, "seq": seq,
@@ -630,6 +650,8 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
             proposal["control"] = ctl
         decision = turn_rules.validate_decision(proposal, max_calls=turn["spec"]["limits"]["max_calls"])
         _check_component_contracts(ctx, decision["calls"])
+        _check_conclusion_due(turn, decision)  # first: "nothing to wait for" would suggest running something
+        _check_resource_policy(ctx, decision)
         _check_something_to_wait_for(ctx, inv, decision)
     except Invalid as exc:
         ctx.tx.insert_decision(did, turn["id"], slot, False, {"proposal": p.get("proposal"), "reason": "invalid",
@@ -645,6 +667,18 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
     ctx.event("decision.accepted", did, {"turn_id": turn["id"], "slot": slot, "calls": [c["tool"] for c in calls],
                                          "control": decision["control"]}, investigation_id=inv.id)
     return {"accepted": True, "decision_id": did, "calls": calls, "control": decision["control"]}
+
+
+def _check_conclusion_due(turn: dict, decision: dict) -> None:
+    """ADR 0020: once the conclusion's reserve has begun, a decision must conclude or stop. A runtime's bounded outcome
+    (no usable decision within its limits) is not a choice to keep working, and is left to end the turn."""
+    completion = turn["spec"].get("completion") or {}
+    control = decision.get("control") or {}
+    if completion.get("conclude_now") and control.get("action") not in turn_rules.CONCLUDING_ACTIONS \
+            and not control.get("bounded_outcome"):
+        raise Invalid("only the time reserved for the conclusion remains: this decision must conclude (or stop)",
+                      details={"remaining_seconds": completion.get("remaining_seconds")},
+                      next_action="Propose conclude with the best scoped result the recorded evidence supports.")
 
 
 def _late_decision(ctx: Ctx, turn: dict, inv, slot: int, attempt: int | None, epoch: int | None = None) -> str | None:
@@ -723,6 +757,13 @@ def _environment_names(ctx: Ctx) -> list[str]:
         return []
 
 
+def _check_resource_policy(ctx: Ctx, decision: dict) -> None:
+    """ADR 0022: jobs of a decision run one at a time unless the decision asks for concurrency AND the project's policy
+    allows that much. A model cannot grant it itself."""
+    from eidos.application.handlers.projects import checked_concurrency
+    checked_concurrency(ctx, (decision.get("resource_policy") or {}).get(turn_rules.MAX_CONCURRENT_JOBS_KEY))
+
+
 def _check_component_contracts(ctx: Ctx, calls: list[dict]) -> None:
     """A decision is accepted only if each component invocation satisfies that release's declared
     configuration contract (so accepted means runnable, not merely well-formed)."""
@@ -749,11 +790,35 @@ def _check_component_contracts(ctx: Ctx, calls: list[dict]) -> None:
             raise Invalid(f"call {i}: unknown component {c['args'].get('component_ref')!r}",
                           details={"call": i, "tool": c["tool"]})
         schema = rel.body["manifest"].get("config_schema")
-        if schema:
-            problems = validate_config(c["args"].get("config") or {}, schema)
+        config = c["args"].get("config") or {}
+        # A config holding a reference has its final value only at execution; resolve_lock checks the contract then.
+        if schema and not any(True for _ in turn_rules.iter_refs(config)):
+            problems = validate_config(config, schema)
             if problems:
                 raise Invalid(f"call {i}: config violates {rel.id} contract", details={"call": i, "problems": problems,
                               "config_schema": schema})
+    _check_output_refs(ctx, calls)
+
+
+def _check_output_refs(ctx: Ctx, calls: list[dict]) -> None:
+    """ADR 0022: ``call[i].outputs.<slot>`` must name an output the referenced component declares, when it declares them
+    (a ``dynamic_outputs`` component, or a trial launched by id, is resolved at execution)."""
+    for i, c in enumerate(calls):
+        for path, text in turn_rules.iter_refs(c["args"]):
+            target, field = turn_rules.parse_ref(text) or (-1, "")
+            if not field.startswith("outputs."):
+                continue
+            source = calls[target]
+            if source["tool"] != "run_component":
+                continue
+            rel = ctx.tx.get_record("component_release", source["args"]["component_ref"])
+            manifest = rel.body["manifest"] if rel is not None else {}
+            declared = manifest.get("output") or {}
+            slot = field.split(".", 1)[1]
+            if not manifest.get("dynamic_outputs") and slot not in declared:
+                raise Invalid(f"call {i} ({c['tool']}): {path}: {text!r} names no output of "
+                              f"{source['args']['component_ref']}; it declares {sorted(declared)}",
+                              details={"call": i, "path": path, "ref": text, "declared": sorted(declared)})
 
 
 def _charge_model_usage(ctx: Ctx, inv_id: str, usage: dict, *, ref: str, reserved: dict | None = None) -> None:
@@ -974,7 +1039,7 @@ def _close_turn(ctx: Ctx, turn: dict, p: dict) -> dict:
     result = {"stop_reason": reason, "summary": str(p.get("summary", ""))[:4000], "receipts": p.get("receipts", []),
               "unfinished_handles": p.get("unfinished_handles", []), "control": p.get("control"),
               **({"control_refused": control_refused} if control_refused else {})}
-    failure = _bounded_details(p.get("failure")) if reason == "error" else {}
+    failure = _bounded_details(redact_value(p.get("failure"))) if reason == "error" else {}  # redacted before it is bounded
     if failure:  # why the turn failed (ADR 0019): on the turn and on its turn.completed event
         result["failure"] = failure
     result["uncertain_model_reservations"] = release_turn_model_reservations(ctx, turn)
@@ -983,9 +1048,17 @@ def _close_turn(ctx: Ctx, turn: dict, p: dict) -> dict:
     if "turns" in budgets:
         ctx.tx.settle(inv_scope(inv_id), "turns", reserved=1, actual=1, ref=turn["id"])
     if control.get("action") in ("conclude", "stop") and not control_refused:
+        from eidos.application.handlers.assessment import conclusion_claim_state
+        from eidos.domain.assessment import CONCLUSION_SCHEMA
         body = dict(inv.body)
-        body["conclusion"] = {"turn_id": turn["id"], "summary": control.get("summary") or result["summary"],
-                              "scope": control.get("scope"), "action": control["action"]}
+        # ADR 0021: the claim state comes from recorded evidence and assessor state, not the model's status.
+        claim_state = conclusion_claim_state(ctx, inv, control)
+        body["conclusion"] = {"schema": CONCLUSION_SCHEMA, "turn_id": turn["id"],
+                              "summary": control.get("summary") or result["summary"], "scope": control.get("scope"),
+                              "action": control["action"], "claim_state": claim_state}
+        ctx.event("assessment.claim_state", inv_id, {k: claim_state.get(k) for k in ("state", "confirmed", "claim_id",
+                                                                                   "assessment_id", "requested_disposition")},
+                  investigation_id=inv_id)
         ctx.tx.put_record("investigation", inv_id, ctx.project_id, body, created_by=ctx.principal.id,
                           status="concluded")
     ctx.event("turn.completed", turn["id"], {"stop_reason": reason, "status": status,

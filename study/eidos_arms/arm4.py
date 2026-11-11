@@ -54,6 +54,15 @@ def grader_reproduce_command(argv):
     return ['python', 'reproduce.py', '--out', 'reproduced']
 
 
+# The lab's wall deadline ends this far before the watchdog's, so that a registered deadline is never the later of the two.
+WATCHDOG_MARGIN_SECONDS = 5.0
+
+
+def remaining_wall_seconds(deadline_unix, now=None):
+    """Seconds the investigation may run: the watchdog's deadline, as measured right before the investigation starts."""
+    return max(1.0, deadline_unix - (time.time() if now is None else now) - WATCHDOG_MARGIN_SECONDS)
+
+
 def stop_investigation(c, project, inv):
     return c.command('stop_investigation', {'investigation_id': inv, 'running_job_policy': 'cancel'},
                      project=project, key='study-outer-stop:' + inv)
@@ -82,6 +91,8 @@ def run(run_dir, meta):
         bridge, bridge_receipt = start_bridge(run_dir, investigator['settings']['base_url'],
                                               deadline_utc, investigator['settings']['request_timeout'])
         investigator['settings']['base_url'] = bridge_receipt['base_url']
+        # ADR 0020: completion state, the conclusion's reserve and the "conclude now" turn, inside the watchdog's envelope.
+        investigator['wall_seconds'] = remaining_wall_seconds(deadline_utc)
         r = c.command('start_investigation', {
             'question': question, 'charter_id': imported['charter_id'], 'environment': 'default',
             'inputs': imported['artifacts'], 'task': imported['task'], 'investigator': investigator,
@@ -145,13 +156,14 @@ def run(run_dir, meta):
         conclusion = (shown.get('body') or {}).get('conclusion') or {}
         claim = conclusion.get('summary') or ''
         conclusion_scope = conclusion.get('scope') or {}
+        claim_state = conclusion.get('claim_state')
         answer_metadata = conclusion_scope.get('answer') if isinstance(conclusion_scope, dict) else None
         assessments = [r['body'] for r in records['assessment']]
         agent_claim = {'investigator': claim, 'assessor': assessments}
         export_error = None
         try:
             export_answer(c, project, inv, run_dir, meta, selected, reason, claim, assessments, tokens, receipts,
-                          usage_uncertain=uncertain, answer_metadata=answer_metadata)
+                          usage_uncertain=uncertain, answer_metadata=answer_metadata, claim_state=claim_state)
         except (ValueError, TypeError) as exc:
             export_error = str(exc)
         # Refresh after fallback so the transcript and job receipts include the delivered baseline.
@@ -248,8 +260,51 @@ def baseline(c, project, inv, imported, remaining):
     return None
 
 
+CONFIRMATION_PENDING = 'pending independent confirmation'
+DEFAULT_SCOPE = 'Packaged task; visible validation; assessor conclusions preserved in selection_receipt.json.'
+
+
+def map_claim_state(claim_state, metadata, candidate, measurements):
+    """Map a conclusion's evidence-derived claim state (ADR 0021) onto the eidos-answer/0.2 status fields.
+
+    Returns (status, claim_type, scope, deviations). A conclusion without a claim state (recorded before ADR 0021)
+    keeps the model's own fields. The independent evaluator still decides: this states what the lab evidence shows.
+    """
+    status = metadata.get('status', 'inconclusive' if candidate else 'abstained')
+    claim_type = metadata.get('claim_type', 'no_positive_claim')
+    scope = metadata.get('scope', DEFAULT_SCOPE)
+    if not isinstance(claim_state, dict) or claim_state.get('state') in (None, 'no-claim'):
+        return status, claim_type, scope, []
+    state = claim_state['state']
+    # An abstention or a null the model reported wins over any other field, including an older claim state.
+    if status in ('abstained', 'no_improvement_found'):
+        return status, 'no_positive_claim', scope, [
+            f'Model status {status!r} kept: an abstention or null takes precedence over the claim state {state!r}']
+    estimate = (claim_state.get('point_estimate') or {}).get('value')
+    positive = isinstance(estimate, (int, float)) and not isinstance(estimate, bool) and estimate > 0
+    deviations = [f'Status mapped from the conclusion claim state {state!r} (ADR 0021); model status was '
+                  f'{metadata.get("status")!r}; the independent evaluator still decides']
+    if state in ('protocol-passed', 'candidate-submitted') and candidate is not None and not measurements:
+        return 'inconclusive', 'no_positive_claim', scope, deviations + [
+            f'Claim state {state!r} but no recorded measurement, so no improvement is claimed in this answer']
+    if state == 'protocol-passed':
+        return 'improvement_claimed', 'recipe_improvement', (
+            f"Protocol-passed under {claim_state.get('success_rule_ref')} (assessment {claim_state.get('assessment_id')}); "
+            f"{scope}"), deviations
+    if state == 'candidate-submitted':
+        if not positive:
+            return 'inconclusive', 'no_positive_claim', scope, deviations + [
+                'Candidate submitted without a positive point estimate; no improvement is claimed']
+        return 'improvement_claimed', 'recipe_improvement', f'{scope}; {CONFIRMATION_PENDING}', deviations
+    if state in ('not-supported', 'null-reported'):
+        return 'no_improvement_found', 'no_positive_claim', scope, deviations
+    if state == 'abstained':
+        return 'abstained', 'no_positive_claim', scope, deviations
+    return status, claim_type, scope, deviations + [f'Unknown claim state {state!r}; model status kept']
+
+
 def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessments, tokens, receipts,
-                  usage_uncertain=False, answer_metadata=None):
+                  usage_uncertain=False, answer_metadata=None, claim_state=None):
     out = run_dir / 'out'
     out.mkdir(exist_ok=True)
     candidate, evidence = None, []
@@ -261,7 +316,7 @@ def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessment
         if field in answer_metadata and not isinstance(answer_metadata[field], list):
             raise ValueError('conclusion answer.' + field + ' must be an array')
     write_json(out / 'selection_receipt.json', {'job_id': jid, 'reason': reason,
-               'investigator_conclusion': claim, 'assessments': assessments})
+               'investigator_conclusion': claim, 'assessments': assessments, 'claim_state': claim_state})
     if jid:
         job = c.query('get_job', {'job_id': jid}, project=project)
         write_json(out / 'training_receipt.json', job)
@@ -372,17 +427,21 @@ def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessment
                     'role': 'investigator-cited-job', 'supports': 'Ledger receipt cited by investigator measurement',
                     'limitations': 'Investigator interpretation; confirmation and selection roles remain as recorded'})
         measurements.append(m)
-    status = answer_metadata.get('status', 'inconclusive' if candidate else 'abstained')
+    status, claim_type, answer_scope, state_deviations = map_claim_state(claim_state, answer_metadata, candidate, measurements)
     if candidate is None:
         status = 'abstained'
-    abstention = answer_metadata.get('abstention', {
-        'abstained': status == 'abstained', 'reason': reason if status == 'abstained' else None,
-        'unresolved': ['Independent confirmation on evaluator inputs and fresh training seeds'],
-        'next_discriminating_test': 'Run the exported recipe with fresh seeds in the independent evaluator'})
+    if status == 'abstained':
+        claim_type = 'no_positive_claim'
+    abstention = answer_metadata.get('abstention')
+    if not isinstance(abstention, dict) or abstention.get('abstained') != (status == 'abstained'):
+        abstention = {
+            'abstained': status == 'abstained', 'reason': reason if status == 'abstained' else None,
+            'unresolved': ['Independent confirmation on evaluator inputs and fresh training seeds'],
+            'next_discriminating_test': 'Run the exported recipe with fresh seeds in the independent evaluator'}
     answer = {'schema_version': 'eidos-answer/0.2', 'task_id': meta['card'], 'run_id': run_dir.name,
-        'status': status, 'claim_type': answer_metadata.get('claim_type', 'no_positive_claim'),
+        'status': status, 'claim_type': claim_type,
         'claim': answer_metadata.get('claim') or claim or 'No investigator conclusion was produced. ' + reason,
-        'scope': answer_metadata.get('scope', 'Packaged task; visible validation; assessor conclusions preserved in selection_receipt.json.'),
+        'scope': answer_scope,
         'candidate': None if status == 'abstained' else candidate, 'measurements': measurements, 'evidence': evidence,
         'alternative_explanations': answer_metadata.get('alternative_explanations', ['Training-seed variation', 'Selection on visible validation data']),
         'abstention': abstention,
@@ -392,7 +451,7 @@ def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessment
                        'macOS Seatbelt uses the same OS identity; memory limits are best effort',
                        'Eidos 1.1.0 has per-turn deadlines; total wall deadline enforced by stop/cancel watchdog '
                        'and a per-run provider forwarding process that exits at the deadline',
-                       *answer_metadata.get('deviations', [])],
+                       *state_deviations, *answer_metadata.get('deviations', [])],
         'confidence': answer_metadata.get('confidence')}
     if answer['confidence'] is not None:
         answer['confidence_outcome'] = answer_metadata.get('confidence_outcome')

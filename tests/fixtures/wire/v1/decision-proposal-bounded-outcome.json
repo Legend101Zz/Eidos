@@ -1,0 +1,9 @@
+{
+  "calls": [],
+  "control": {
+    "action": "wait_for_jobs",
+    "bounded_outcome": "decision-deadline",
+    "summary": "decision-deadline"
+  },
+  "rationale": "no usable decision (decision-deadline); no effects proposed"
+}

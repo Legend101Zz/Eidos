@@ -22,7 +22,7 @@ EXPECTED = {
     "get_study_charter", "plan_trial", "launch_trial", "run_component", "file_claim", "draft_evidence_plan",
     "freeze_evidence_plan", "launch_evidence_plan", "get_claim", "get_evidence_plan", "get_assessment",
     "plan_branch", "launch_branch", "qualify_protocol", "promote_protocol", "get_investigation", "get_run",
-    "list_events", "compare_trials", "cancel_run", "get_artifact_access",
+    "list_events", "compare_trials", "cancel_run", "get_artifact_access", "assess_candidate",
 }
 
 
@@ -56,7 +56,7 @@ def body(result):
 async def test_tool_list_is_the_stable_set(client):
     tools = (await client.list_tools()).tools
     assert {t.name for t in tools} == EXPECTED
-    assert len(tools) == len(TOOLS) == 34
+    assert len(tools) == len(TOOLS) == 35
     by = {t.name: t for t in tools}
     for t in tools:
         schema = t.input_schema
