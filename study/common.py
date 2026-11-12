@@ -118,6 +118,19 @@ def sandbox_command(run_dir, command, *, network=True, readonly=(), hidden=(), w
     ]
 
 
+EXPORT_READINESS_CONTRACT = (
+    "Before locking or submitting a candidate, use your assigned time and tools to run its declared "
+    "infer command in a fresh process on the supplied visible validation inputs. Use the exact "
+    "candidate source and checkpoint you intend to submit and write to a new output path. Check "
+    "that fitted preprocessing and other required state are serialized and reload correctly, and "
+    "that the declared dependencies cover this inference path. Verify that the output has the same "
+    "unique validation IDs and compare predictions by ID against the validation predictions "
+    "produced during training. If the check fails, diagnose and make any changes through your "
+    "ordinary work before locking, then repeat the check on the intended submission. Report any "
+    "unresolved limitation or abstain. This visible check is separate from independent confirmation."
+)
+
+
 def render_prompt(arm, card, *, base=None):
     """All four arms use the same card table and substitution, including smoke overrides."""
     paragraph = (STUDY / f"prompts/tools_arm{arm}.md").read_text().strip()
@@ -139,8 +152,9 @@ def render_prompt(arm, card, *, base=None):
         raise ValueError(f"unknown study card: {card}")
     if card in cards and "{{PRACTICAL_BAR}}" not in text:
         raise ValueError("study prompt must contain {{PRACTICAL_BAR}}")
-    return text.replace("{{TOOLS_PARAGRAPH}}", paragraph).replace(
+    rendered = text.replace("{{TOOLS_PARAGRAPH}}", paragraph).replace(
         "{{PRACTICAL_BAR}}", cards.get(card, {}).get("practical_bar", ""))
+    return rendered.rstrip() + "\n\n" + EXPORT_READINESS_CONTRACT + "\n"
 
 
 def dev_command(script, *args, **kwargs):

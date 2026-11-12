@@ -1,7 +1,7 @@
 """Parity checks for the study's only card-specific prompt insertion."""
 import unittest
 
-from study.common import STUDY, read_json, render_prompt
+from study.common import EXPORT_READINESS_CONTRACT, STUDY, read_json, render_prompt
 
 
 class PromptParity(unittest.TestCase):
@@ -17,7 +17,8 @@ class PromptParity(unittest.TestCase):
                 self.assertNotIn('{{', text)
                 normalized.append(text.replace(paragraph, '{{TOOLS_PARAGRAPH}}'))
             self.assertEqual(len(set(normalized)), 1)
-            self.assertEqual(normalized[0], base.replace('{{PRACTICAL_BAR}}', rule['practical_bar']))
+            expected = base.replace('{{PRACTICAL_BAR}}', rule['practical_bar']).rstrip()
+            self.assertEqual(normalized[0], expected + '\n\n' + EXPORT_READINESS_CONTRACT + '\n')
         self.assertEqual(cards['D02'], cards['D12'])
         self.assertIn('no improvement is requested', cards['D01']['practical_bar'])
 

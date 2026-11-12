@@ -11,7 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from study.common import write_json
+from study.common import EXPORT_READINESS_CONTRACT, write_json
 from study.launcher import outer_deadline
 from study.run_arm import run_claude, run_stream
 
@@ -100,6 +100,7 @@ class FinalOutcomes(unittest.TestCase):
                     self.assertEqual(run_claude(root, arm)['status'], 'invalid_output')
                 submitted = sandbox.call_args.args[1]
                 self.assertIn(REPRODUCTION_CONTRACT, ' '.join(submitted[submitted.index('-p') + 1].split()))
+                self.assertEqual(submitted[submitted.index('-p') + 1].count(EXPORT_READINESS_CONTRACT), 1)
 
     def test_incident_timeout_and_budget_still_take_precedence(self):
         # Pilot-2 addendum 1 and pilot-3 addendum 2: a provider failure decides a run only when it is the
@@ -151,6 +152,7 @@ class SetupAndInformation(unittest.TestCase):
                 arm3.run(root, metadata)
             submitted = stream.run_stream.call_args.args[1]
             self.assertIn(REPRODUCTION_CONTRACT, ' '.join(submitted[submitted.index('-p') + 1].split()))
+            self.assertEqual(submitted[submitted.index('-p') + 1].count(EXPORT_READINESS_CONTRACT), 1)
 
     def test_setup_failure_still_reports_preparation_duration(self):
         with tempfile.TemporaryDirectory() as d:
@@ -239,6 +241,13 @@ class SetupAndInformation(unittest.TestCase):
             self.assertEqual(deadline['registered_margin_s'], 3.5)
             embedded = json.loads(captured['question'].split('Packaged task files:\n', 1)[1])
             self.assertIn(REPRODUCTION_CONTRACT, ' '.join(captured['question'].split()))
+            self.assertEqual(captured['question'].count(EXPORT_READINESS_CONTRACT), 1)
+            from eidos.investigator.context import pack
+
+            context = pack({'investigation': {'id': 'fixture', 'status': 'active',
+                            'body': {'question': captured['question']}},
+                            'horizon': 1, 'charter': charter('D03')}, [])
+            self.assertEqual(context['text'].count(EXPORT_READINESS_CONTRACT), 1)
             self.assertEqual(embedded['METHOD.md'], (arm4.ROOT / 'study/METHOD.md').read_text())
             self.assertEqual(embedded['brief.md'], 'Fixture brief')
 
@@ -274,6 +283,7 @@ class SetupAndInformation(unittest.TestCase):
             body = validate_charter(charter(card))
             contract = body['reproduction_contract']
             self.assertEqual(contract, REPRODUCTION_CONTRACT)
+            self.assertEqual(body['export_readiness_contract'], EXPORT_READINESS_CONTRACT)
             self.assertIn('`{out}/<basename of candidate.model_path>`', contract)
             self.assertIn('compatible formats for the locked and fresh checkpoints', contract)
             self.assertIn('prospectively sealed development task', body['known_exposures'][0]['description'].lower())

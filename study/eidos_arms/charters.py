@@ -1,6 +1,7 @@
 """Prospective operator intent, committed before any investigator/model work."""
 from __future__ import annotations
 
+from study.common import EXPORT_READINESS_CONTRACT
 from study.private_card_registry import PRIVATE_CARD_BARS, PRIVATE_CLASSIFICATION, PRIVATE_REGRESSION
 
 from .common import write_json
@@ -26,6 +27,7 @@ def charter(card):
             'question': 'Reproduce the supplied baseline (seed 11), then evaluate the practical accuracy bar.',
             'known_exposures': [{'description': exposure}],
             'reproduction_contract': REPRODUCTION_CONTRACT,
+            'export_readiness_contract': EXPORT_READINESS_CONTRACT,
             'resource_limits': {'wall_seconds': 1800, 'model_tokens': 8_000_000, 'threads': 1}}
     if card in ('D03', 'D04', 'D05', 'D06', 'N01', 'N02', 'N03', 'N04') or card in PRIVATE_CARD_BARS:
         body['pilot_2_setup'] = {
