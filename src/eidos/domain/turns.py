@@ -67,8 +67,8 @@ AUTHORED_FINALIZATION_FAILURES = frozenset({
 
 
 # ADR 0020: the wall reserved for the conclusion, unless the investigation configures its own threshold.
-CONCLUDE_FRACTION = 0.10
-MIN_CONCLUDE_SECONDS = 60.0
+CONCLUDE_FRACTION = 0.15
+MIN_CONCLUDE_SECONDS = 90.0
 MAX_CONCLUDE_SECONDS = 600.0
 MIN_TURN_SECONDS = 10
 WALL_REACHED = "wall-deadline-reached"

@@ -222,7 +222,7 @@ async def test_autonomous_scope_repair_uses_one_real_coordinator_slot(env, lab, 
             [bounded] = run.events("decision.runtime_bounded")
             assert bounded["body"]["runtime_outcome"] == "structured-output-invalid"
             assert bounded["body"]["terminal_cause"] == "conclusion-scope-contract"
-            assert bounded["body"]["prompt_revision"] == "investigator-prompt/4"
+            assert bounded["body"]["prompt_revision"] == "investigator-prompt/5"
             failure = view["body"]["controller_abstention"]["failure"]
             assert failure["reason"] == "conclusion-scope-contract" and failure["runtime_record_id"]
             assert "control.scope.next_test: required" in failure["problems"][0]

@@ -36,7 +36,10 @@ from study.private_card_registry import PRIVATE_CARD_BARS
 from study.run_arm import stop_process_tree, utc_now
 
 
-def plan(seed, cards=None, runs=3):
+def plan(seed, cards=None, runs=3, arms=(1, 2, 3, 4)):
+    arms = tuple(arms)
+    if any(type(arm) is not int for arm in arms) or arms not in ((2, 4), (1, 2, 3, 4)):
+        raise ValueError("unsupported paired arm set")
     blocks = [(card, index) for card in (cards if cards is not None else ("D01", "D02", "D12")) for index in range(1, runs + 1)]
     random.Random(seed).shuffle(blocks)
     return [
@@ -51,7 +54,7 @@ def plan(seed, cards=None, runs=3):
             randomization_seed=seed,
         )
         for order, (card, index) in enumerate(blocks, 1)
-        for arm in (1, 2, 3, 4)
+        for arm in arms
     ]
 
 
@@ -271,6 +274,7 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     planning = sub.add_parser("plan")
     planning.add_argument("--cards", help="comma-separated card IDs")
+    planning.add_argument("--arms", choices=("1,2,3,4", "2,4"), default="1,2,3,4")
     planning.add_argument("--runs", type=int, default=3)
     planning.add_argument("--seed", required=True, type=int)
     planning.add_argument("--out", required=True, type=Path)
@@ -280,24 +284,31 @@ def main():
     running.add_argument("--runs-root", required=True, type=Path)
     running.add_argument("--block", help="1-based randomized block order, or stable ID such as D02-r1")
     running.add_argument(
-        "--stub", action="store_true", help="no model calls, all four arms use baseline stubs"
+        "--stub", action="store_true", help="no model calls, all selected arms use baseline stubs"
     )
     running.add_argument(
-        "--replace-incident", action="store_true", help="archive incident and re-run all four arms"
+        "--replace-incident", action="store_true", help="archive incident and re-run all selected arms"
     )
     args = parser.parse_args()
     if args.command == "plan":
         cards = args.cards.split(",") if args.cards else None
         if args.runs < 1 or (cards and (len(set(cards)) != len(cards) or any(c not in FAMILIES for c in cards))):
             parser.error("invalid cards or runs")
-        design = plan(args.seed, cards, args.runs)
+        design = plan(args.seed, cards, args.runs, tuple(map(int, args.arms.split(","))))
         write_json(args.out, design)
-        print(f"Planned {len(design)//4} randomized paired blocks, {len(design)} assignments.")
+        print(f"Planned {len({r['block_id'] for r in design})} randomized paired blocks, {len(design)} assignments.")
         return
     design = read_json(args.design)
     blocks = {}
     for row in design:
         blocks.setdefault(row["block_id"], []).append(row)
+    if any(type(row.get("arm")) is not int for row in design):
+        parser.error("each block must contain the same supported paired arm set")
+    arms = sorted({row["arm"] for row in design})
+    if arms not in ([2, 4], [1, 2, 3, 4]) or any(
+        sorted(row["arm"] for row in rows) != arms for rows in blocks.values()
+    ):
+        parser.error("each block must contain the same supported paired arm set")
     selected = list(blocks)
     if args.block:
         selected = (
@@ -312,8 +323,6 @@ def main():
         if block_id not in blocks:
             parser.error(f"unknown block {block_id}")
         rows = blocks[block_id]
-        if sorted(r["arm"] for r in rows) != [1, 2, 3, 4]:
-            parser.error("each block must contain exactly four arms")
         jobs.append(pool.submit(run_block, rows, args.runs_root, args.stub, args.replace_incident))
     try:
         for job in jobs:

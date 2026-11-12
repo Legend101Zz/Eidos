@@ -1212,12 +1212,26 @@ def _check_output_refs(ctx: Ctx, calls: list[dict]) -> None:
                               details={"call": i, "path": path, "ref": text, "declared": sorted(declared)})
 
 
+STRUCTURED_OUTPUT_DETAIL_BYTES = 16_384
+
+
+def _structured_output_detail(report: Any) -> dict:
+    """Cap the ledger copy, including escaped previews, at 16 KiB of serialized JSON."""
+    if not isinstance(report, dict):
+        return {}
+    encoded = json.dumps(report, default=str, ensure_ascii=True)
+    if len(encoded) <= STRUCTURED_OUTPUT_DETAIL_BYTES:
+        return report
+    # encoded is ASCII without literal control characters: re-encoding its preview can at most double it.
+    return {"truncated": True, "preview": encoded[:(STRUCTURED_OUTPUT_DETAIL_BYTES - 64) // 2]}
+
+
 def _charge_model_usage(ctx: Ctx, inv_id: str, usage: dict, *, ref: str, reserved: dict | None = None) -> None:
     """Settle actual model usage against any per-decision reservation. Usage entries are written
     even for dimensions without a budget row, so unbudgeted spend is still on the ledger.
 
     F2c: the tokens and dollars ``usage`` reports are those of completed responses (certain unless ``uncertain``).
-    A request abandoned in flight (``aborted.in_flight``) may still be billed: its conservative estimate
+    A request abandoned in flight (including a recovered finalization timeout) may still be billed: its estimate
     (``in_flight_estimate``: the request's admitted input estimate plus output cap, priced) is charged as uncertain
     ``possible-usage``, never as zero; without one, the rest of the reservation is. If the reservation was already
     reconciled as provisional uncertain usage (the turn closed or a retry began first), that provisional charge is
@@ -1226,16 +1240,19 @@ def _charge_model_usage(ctx: Ctx, inv_id: str, usage: dict, *, ref: str, reserve
     reserved = reserved or {}
     uncertain = bool(usage.get("uncertain"))
     detail = {k: usage.get(k) for k in ("provider", "model", "request_ids", "calls")}
-    for k in ("attempt", "elapsed_seconds", "failure", "phase", "runtime_outcome"):  # ADR 0023: each attempt, its time and why it failed
+    # ADRs 0023/0042: retain attempt timing, failure and structured finalization evidence on ledger entries too.
+    for k in ("attempt", "elapsed_seconds", "failure", "phase", "runtime_outcome"):
         if usage.get(k) is not None:
             detail[k] = usage[k]
+    if usage.get("structured_output") is not None:
+        detail["structured_output"] = _structured_output_detail(usage["structured_output"])
     if usage.get("aborted"):  # ADR 0017: why the decision ended and what was abandoned in flight
         detail["aborted"] = usage["aborted"]
     if usage.get("reasoning_tokens") is not None:  # already inside output_tokens (ADR 0016); on the ledger too
         detail["reasoning_tokens"] = usage["reasoning_tokens"]
     tokens = float(usage.get("input_tokens", 0) or 0) + float(usage.get("output_tokens", 0) or 0)
     usd = float(usage.get("usd") or 0)
-    in_flight = bool((usage.get("aborted") or {}).get("in_flight"))
+    in_flight = bool((usage.get("aborted") or {}).get("in_flight") or usage.get("abandoned_requests"))
     est = usage.get("in_flight_estimate")
     estimate: dict[str, float | None] = {"model_tokens": None, "model_usd": None}
     if isinstance(est, dict):

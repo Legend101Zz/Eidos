@@ -85,3 +85,62 @@ def lab(pg_roles, tmp_path):
     lab = Lab(pg_roles, tmp_path)
     yield lab
     lab.ledger.dispose()
+
+
+@pytest.fixture
+def conclude_clock(monkeypatch):
+    """Expire only explicitly stalled providers; scheduler/GC pauses never advance the clock."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from eidos.investigator import pydantic_ai_runtime as runtime_module
+
+    class Clock:
+        now = 0.0
+        cancelled = 0
+        stalled = None
+        on_advance = None
+
+        def __call__(self):
+            return self.now
+
+        def advance(self, seconds):
+            self.now += seconds
+            if self.on_advance is not None:
+                self.on_advance(seconds)
+
+        async def hang(self):
+            self.stalled.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                self.cancelled += 1
+                raise
+
+    clock = Clock()
+    real_wait_for = asyncio.wait_for
+
+    async def accelerated(awaitable, timeout):
+        if timeout is None or timeout < 1:
+            return await real_wait_for(awaitable, timeout)
+        clock.stalled = asyncio.Event()
+        task = asyncio.ensure_future(awaitable)
+        stalled = asyncio.create_task(clock.stalled.wait())
+        try:
+            await asyncio.wait({task, stalled}, return_when=asyncio.FIRST_COMPLETED)
+            if task.done():
+                return task.result()
+            # The provider explicitly entered hang(). Cancel through the real timeout wrapper
+            # and observe cancellation before advancing virtual time by the admitted timeout.
+            try:
+                return await real_wait_for(task, 0)
+            finally:
+                clock.advance(timeout)
+        finally:
+            stalled.cancel()
+            await asyncio.gather(stalled, return_exceptions=True)
+
+    monkeypatch.setattr(runtime_module, "ABORT_POLL_SECONDS", 0.001)
+    monkeypatch.setattr(runtime_module, "time", SimpleNamespace(monotonic=clock))
+    monkeypatch.setattr(asyncio, "wait_for", accelerated)
+    return clock

@@ -182,7 +182,7 @@ def test_exploration_boundary_begins_one_finalization_with_holdback_available(sc
     assert turn['spec']['exploration']['incumbent']['job_id'] == job
     assert turn['spec']['limits']['max_calls'] > 0
     assert turn['spec']['completion']['remaining_seconds'] == 400
-    assert turn['spec']['limits']['deadline_seconds'] == 220
+    assert turn['spec']['limits']['deadline_seconds'] == 130
     assert 'exploration_deadline_unix' not in turn['spec']['completion']
 
 

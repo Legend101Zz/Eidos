@@ -281,18 +281,18 @@ def test_wall_limit_is_recorded_and_the_turn_spec_keeps_the_conclusion_reserve(l
     t0 = time.time()
     inv = _start(lab, w, wall_seconds=1000, turn_deadline_seconds=5000)
     wall = lab.q(lab.admin, "get_record", {"kind": "investigation", "id": inv}, project=w.pid)["body"]["wall"]
-    assert wall["wall_seconds"] == 1000 and wall["conclude_threshold_seconds"] == 100  # 10% of the wall
+    assert wall["wall_seconds"] == 1000 and wall["conclude_threshold_seconds"] == 150  # 15% of the wall
     assert t0 + 1000 <= wall["deadline_unix"] <= time.time() + 1000
 
     b = _begin(w, inv)
     spec = lab.q(lab.admin, "get_turn", {"turn_id": b["turn_id"]}, project=w.pid)["spec"]
     c = spec["completion"]
-    assert c["conclude_now"] is False and c["conclude_threshold_seconds"] == 100
+    assert c["conclude_now"] is False and c["conclude_threshold_seconds"] == 150
     assert c["deadline_unix"] == wall["deadline_unix"] and 990 < c["remaining_seconds"] <= 1000
     assert b["completion"] == c
-    # An earlier turn stops where the reserve begins: 5000 s were configured, about 900 s remain before it. Before the
-    # first lock the turn is exploratory, so it ends where the 150 s hold-back begins (H2, R17 #3): about 750 s.
-    assert 740 <= spec["limits"]["deadline_seconds"] <= 750 and b["model_timeout"] == spec["limits"]["deadline_seconds"]
+    # An earlier turn stops where the reserve begins: 5000 s were configured, about 850 s remain before it. Before the
+    # first lock the turn is exploratory, so it ends where the 150 s hold-back begins (H2, R17 #3): about 700 s.
+    assert 690 <= spec["limits"]["deadline_seconds"] <= 700 and b["model_timeout"] == spec["limits"]["deadline_seconds"]
     # Outside the window a decision that does not conclude is fine.
     assert _propose(lab, w, b["turn_id"], 0, {}, [NOTE])["accepted"]
 
@@ -356,7 +356,7 @@ def test_wall_seconds_of_a_job_is_reduced_to_end_before_the_reserve(lab, world):
     short = _admit(lab, w, w.needs, "hasnum", investigation_id=inv, wall_seconds=60)["job_id"]
     got = {j: lab.q(lab.admin, "get_job", {"job_id": j}, project=w.pid)["lock"]["limits"]["wall_seconds"]
            for j in (long, short)}
-    assert 740 <= got[long] <= 750 and got[short] == 60
+    assert 690 <= got[long] <= 700 and got[short] == 60
     reserved = lab.q(lab.admin, "budgets", {"investigation_id": inv}, project=w.pid)["budgets"]["compute_seconds"]["reserved"]
     assert reserved == got[long] + got[short]  # the budget holds what the job may actually use
     # Without a wall limit the requested limit stands.

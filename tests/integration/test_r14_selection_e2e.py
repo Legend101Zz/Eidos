@@ -430,11 +430,11 @@ def test_an_explore_turn_with_a_wall_limit_ends_where_the_holdback_begins(scene)
     completion = spec["completion"]
     assert spec["exploration"]["phase"] == "explore"
     hold = spec["exploration"]["allowance"]["holdback_seconds"]
-    assert hold == 540.0 and completion["conclude_threshold_seconds"] == 360.0  # 15% of the wall, 10% for the conclusion
+    assert hold == 540.0 and completion["conclude_threshold_seconds"] == 540.0  # 15% of the wall, 15% for the conclusion
     until = completion["exploration_deadline_unix"]
-    assert until == pytest.approx(completion["deadline_unix"] - 360.0 - 540.0, abs=0.01)
+    assert until == pytest.approx(completion["deadline_unix"] - 540.0 - 540.0, abs=0.01)
     assert turn_boundary(completion) == until  # retries and activities end there too
-    # the decision deadline is the time left until then: without the cap it would be min(5000, remaining - 360) = ~3200
+    # the decision deadline is the time left until then: without the cap it would be min(5000, remaining - 540) = ~3060
     assert 2500 <= spec["limits"]["deadline_seconds"] <= until - time.time()
     assert scene.q("get_turn", {"turn_id": turn["turn_id"]})["spec"]["completion"]["exploration_deadline_unix"] == until
 
@@ -444,7 +444,7 @@ def test_a_finalize_turn_may_use_the_holdback_so_it_has_no_exploration_deadline(
     scene.lock(inv, scene.accuracy_job(inv, 0.70), selection=RULE)
     spec = scene.begin(inv)["spec"]
     assert spec["exploration"]["phase"] == "finalize" and "exploration_deadline_unix" not in spec["completion"]
-    assert turn_boundary(spec["completion"]) == spec["completion"]["deadline_unix"] - 360.0
+    assert turn_boundary(spec["completion"]) == spec["completion"]["deadline_unix"] - 540.0
     assert spec["limits"]["deadline_seconds"] > 3000  # not capped at the hold-back
 
 

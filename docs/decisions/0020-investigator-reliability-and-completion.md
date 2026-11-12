@@ -75,9 +75,9 @@ deadline-aware stopping, and null handling. It has no task-specific remedies and
 
 ## Decision 5: deadline-aware completion
 
-An investigation may set `investigator.wall_seconds` and `investigator.conclude_threshold_seconds` (default 10% of
-the wall, within 60 to 600 s). The wall deadline is fixed at start, on the lab's clock, and recorded in the
-investigation body and each turn spec (`completion`).
+An investigation may set `investigator.wall_seconds` and `investigator.conclude_threshold_seconds` (default 15% of
+the wall, within 90 to 600 s, as amended by ADR 0042). The wall deadline is fixed at start, on the lab's clock,
+and recorded in the investigation body and each turn spec (`completion`).
 
 - Remaining wall time is in the pinned facts every turn.
 - Once the reserve begins, the context says CONCLUDE NOW, the coordinator stops waiting and starts the next turn at

@@ -32,12 +32,15 @@ def analyze(design,results,bootstrap=2000,seed=71027):
         missing+=((f,t,r,a) not in obs)
         unknown_cost+=(obs.get((f,t,r,a),{}).get('billed_usd') is None)
     if not blocks:raise ValueError('no primary-eligible assignments')
+    arms=sorted({a for tasks in blocks.values() for runs in tasks.values() for group in runs.values() for a in group})
+    if arms not in ([2,4],[1,2,3,4]):raise ValueError('unsupported paired arm set')
+    indices={arm:index for index,arm in enumerate(arms)}
     arrays={}
     for f,tasks in blocks.items():
         arrays[f]={}
         for t,runs in tasks.items():
-            if any(set(x)!=set([1,2,3,4]) for x in runs.values()):raise ValueError('design must pair all four arms')
-            arrays[f][t]=np.array([[int(x[a]) for a in [1,2,3,4]] for x in runs.values()],dtype=float)
+            if any(set(x)!=set(arms) for x in runs.values()):raise ValueError('design must pair every selected arm')
+            arrays[f][t]=np.array([[int(x[a]) for a in arms] for x in runs.values()],dtype=float)
     family={f:np.mean([a.mean(0) for a in tasks.values()],axis=0) for f,tasks in arrays.items()}
     point=np.mean(list(family.values()),axis=0)
     rng=np.random.default_rng(seed);keys=list(arrays);draws=[]
@@ -48,9 +51,12 @@ def analyze(design,results,bootstrap=2000,seed=71027):
             for ti in rng.integers(len(tk),size=len(tk)):
                 a=tasks[tk[ti]];sample.append(a[rng.integers(len(a),size=len(a))].mean(0))
             families.append(np.mean(sample,axis=0))
-        v=np.mean(families,axis=0);draws.append(v[3]-v[1])
+        v=np.mean(families,axis=0);draws.append(v[indices[4]]-v[indices[2]])
     lo,hi=np.quantile(draws,[.025,.975])
-    return {'status':'draft estimator; intervals exploratory with few families','family_balanced_success_by_arm':point.tolist(),'primary_4_minus_2':float(point[3]-point[1]),'primary_95_percentile_interval':[float(lo),float(hi)],'families':{k:v.tolist() for k,v in family.items()},'assigned_primary_runs':sum(len(rs)*4 for ts in blocks.values() for rs in ts.values()),'missing_results_scored_zero':missing,'unknown_billed_cost_entries':unknown_cost,'bootstrap':bootstrap,'seed':seed}
+    result={'status':'draft estimator; intervals exploratory with few families','family_balanced_success_by_arm':point.tolist(),'primary_4_minus_2':float(point[indices[4]]-point[indices[2]]),'primary_95_percentile_interval':[float(lo),float(hi)],'families':{k:v.tolist() for k,v in family.items()},'assigned_primary_runs':sum(len(rs)*len(arms) for ts in blocks.values() for rs in ts.values()),'missing_results_scored_zero':missing,'unknown_billed_cost_entries':unknown_cost,'bootstrap':bootstrap,'seed':seed}
+    # Preserve the historical four-arm JSON schema and field order byte-for-byte.
+    if arms==[2,4]:result['arms']=arms
+    return result
 
 if __name__=='__main__':
  p=argparse.ArgumentParser();p.add_argument('--design',required=True);p.add_argument('--results',required=True);p.add_argument('--out',required=True);a=p.parse_args();r=analyze(json.loads(Path(a.design).read_text()),json.loads(Path(a.results).read_text()));Path(a.out).write_text(json.dumps(r,indent=2));print('Draft analysis written; no confirmatory claim implied.')

@@ -84,9 +84,11 @@ def test_deadline_margin_returns_runtime_outcome_without_empty_wait_or_provider_
 
 
 @pytest.mark.fixture_llm
-def test_sdk_timeout_at_the_runtime_boundary_is_runtime_exhaustion_with_uncertain_usage(monkeypatch):
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_sdk_timeout_at_the_runtime_boundary_is_runtime_exhaustion_with_uncertain_usage(monkeypatch, wrapped):
     import httpx
     from openai import APITimeoutError
+    from pydantic_ai.exceptions import ModelTimeoutError
 
     from eidos.investigator import pydantic_ai_runtime as runtime_module
 
@@ -96,6 +98,8 @@ def test_sdk_timeout_at_the_runtime_boundary_is_runtime_exhaustion_with_uncertai
     def provider(messages, info):
         assert info.model_settings['timeout'] == 1.0
         now[0] = 1.0
+        if wrapped:
+            raise ModelTimeoutError('fixture', 'request timed out at its deadline clip')
         raise APITimeoutError(request=httpx.Request('POST', 'https://fixture.invalid'))
 
     runtime = PydanticAIRuntime({'_model_object': FunctionModel(provider), 'model': 'openai-compatible:fake',

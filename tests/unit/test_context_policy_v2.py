@@ -545,7 +545,7 @@ def test_policy_v1_truncates_hard_and_appends_the_tool_guide():
 
 
 def test_conclude_threshold_is_a_fraction_of_the_wall_between_the_bounds():
-    assert conclude_threshold(1000) == pytest.approx(1000 * CONCLUDE_FRACTION) == 100.0
+    assert conclude_threshold(1000) == pytest.approx(1000 * CONCLUDE_FRACTION) == 150.0
     assert isinstance(conclude_threshold(1000), float)
 
 
