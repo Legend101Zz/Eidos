@@ -1,0 +1,482 @@
+[
+  {
+    "family": "N06",
+    "task": "N06",
+    "run": 5,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N06-r5",
+    "block_order": 1,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N06",
+    "task": "N06",
+    "run": 5,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N06-r5",
+    "block_order": 1,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N06",
+    "task": "N06",
+    "run": 4,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N06-r4",
+    "block_order": 2,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N06",
+    "task": "N06",
+    "run": 4,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N06-r4",
+    "block_order": 2,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N08",
+    "task": "N08",
+    "run": 6,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N08-r6",
+    "block_order": 3,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N08",
+    "task": "N08",
+    "run": 6,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N08-r6",
+    "block_order": 3,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N07",
+    "task": "N07",
+    "run": 1,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N07-r1",
+    "block_order": 4,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N07",
+    "task": "N07",
+    "run": 1,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N07-r1",
+    "block_order": 4,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N06",
+    "task": "N06",
+    "run": 2,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N06-r2",
+    "block_order": 5,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N06",
+    "task": "N06",
+    "run": 2,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N06-r2",
+    "block_order": 5,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N05",
+    "task": "N05",
+    "run": 4,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N05-r4",
+    "block_order": 6,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N05",
+    "task": "N05",
+    "run": 4,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N05-r4",
+    "block_order": 6,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N07",
+    "task": "N07",
+    "run": 6,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N07-r6",
+    "block_order": 7,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N07",
+    "task": "N07",
+    "run": 6,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N07-r6",
+    "block_order": 7,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N08",
+    "task": "N08",
+    "run": 3,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N08-r3",
+    "block_order": 8,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N08",
+    "task": "N08",
+    "run": 3,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N08-r3",
+    "block_order": 8,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N07",
+    "task": "N07",
+    "run": 4,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N07-r4",
+    "block_order": 9,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N07",
+    "task": "N07",
+    "run": 4,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N07-r4",
+    "block_order": 9,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N08",
+    "task": "N08",
+    "run": 1,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N08-r1",
+    "block_order": 10,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N08",
+    "task": "N08",
+    "run": 1,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N08-r1",
+    "block_order": 10,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N06",
+    "task": "N06",
+    "run": 3,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N06-r3",
+    "block_order": 11,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N06",
+    "task": "N06",
+    "run": 3,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N06-r3",
+    "block_order": 11,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N07",
+    "task": "N07",
+    "run": 2,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N07-r2",
+    "block_order": 12,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N07",
+    "task": "N07",
+    "run": 2,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N07-r2",
+    "block_order": 12,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N06",
+    "task": "N06",
+    "run": 1,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N06-r1",
+    "block_order": 13,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N06",
+    "task": "N06",
+    "run": 1,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N06-r1",
+    "block_order": 13,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N08",
+    "task": "N08",
+    "run": 2,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N08-r2",
+    "block_order": 14,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N08",
+    "task": "N08",
+    "run": 2,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N08-r2",
+    "block_order": 14,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N05",
+    "task": "N05",
+    "run": 2,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N05-r2",
+    "block_order": 15,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N05",
+    "task": "N05",
+    "run": 2,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N05-r2",
+    "block_order": 15,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N08",
+    "task": "N08",
+    "run": 4,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N08-r4",
+    "block_order": 16,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N08",
+    "task": "N08",
+    "run": 4,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N08-r4",
+    "block_order": 16,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N07",
+    "task": "N07",
+    "run": 5,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N07-r5",
+    "block_order": 17,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N07",
+    "task": "N07",
+    "run": 5,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N07-r5",
+    "block_order": 17,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N05",
+    "task": "N05",
+    "run": 3,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N05-r3",
+    "block_order": 18,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N05",
+    "task": "N05",
+    "run": 3,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N05-r3",
+    "block_order": 18,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N07",
+    "task": "N07",
+    "run": 3,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N07-r3",
+    "block_order": 19,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N07",
+    "task": "N07",
+    "run": 3,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N07-r3",
+    "block_order": 19,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N08",
+    "task": "N08",
+    "run": 5,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N08-r5",
+    "block_order": 20,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N08",
+    "task": "N08",
+    "run": 5,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N08-r5",
+    "block_order": 20,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N06",
+    "task": "N06",
+    "run": 6,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N06-r6",
+    "block_order": 21,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N06",
+    "task": "N06",
+    "run": 6,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N06-r6",
+    "block_order": 21,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N05",
+    "task": "N05",
+    "run": 5,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N05-r5",
+    "block_order": 22,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N05",
+    "task": "N05",
+    "run": 5,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N05-r5",
+    "block_order": 22,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N05",
+    "task": "N05",
+    "run": 1,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N05-r1",
+    "block_order": 23,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N05",
+    "task": "N05",
+    "run": 1,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N05-r1",
+    "block_order": 23,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N05",
+    "task": "N05",
+    "run": 6,
+    "arm": 2,
+    "primary_eligible": true,
+    "block_id": "N05-r6",
+    "block_order": 24,
+    "randomization_seed": 20261113
+  },
+  {
+    "family": "N05",
+    "task": "N05",
+    "run": 6,
+    "arm": 4,
+    "primary_eligible": true,
+    "block_id": "N05-r6",
+    "block_order": 24,
+    "randomization_seed": 20261113
+  }
+]
