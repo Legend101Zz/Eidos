@@ -146,7 +146,10 @@ async def test_real_runtime_and_coordinator_preserve_refusal_and_execute_one_cor
         raw = Path(path).read_bytes()
         assert hashlib.sha256(raw).hexdigest() == "7a6ef12975e7bb19e72fdc1be42db2e58d424c2c20059c924f0214597ad093e3"
         text = raw.decode()
-    original = json.loads(text) if text is not None else {"calls": [], "control": RECORDED_SHAPE}
+    original = json.loads(text) if text is not None else {
+        "rationale": "Synthetic projection of the malformed conclusion.",
+        "calls": [], "control": RECORDED_SHAPE,
+    }
     first = decision_reply(original, "malformed-original")
     if text is not None:
         first[1]["choices"][0]["message"]["content"] = text
