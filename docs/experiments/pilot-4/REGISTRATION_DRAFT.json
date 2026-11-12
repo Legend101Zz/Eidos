@@ -1,0 +1,16 @@
+{
+  "schema": "eidos-pilot4-public-draft-summary/1",
+  "status": "INACTIVE / NOT REGISTERED",
+  "pilot_state": "deferred_by_owner",
+  "template_generation": "v9",
+  "summary_only": true,
+  "execution_authorized": false,
+  "registration_commit": null,
+  "runtime_commit": null,
+  "controller_commit": null,
+  "design_sha256": null,
+  "admission_window": null,
+  "prior_admission_cutoff": "retired",
+  "submission_snapshot": "cancelled_by_owner",
+  "note": "This public summary is not an executable registration. The private design, evaluator bindings and activation drafts remain in the private handoff. A future registration must bind all qualified inputs and a new admission window before dispatch."
+}
