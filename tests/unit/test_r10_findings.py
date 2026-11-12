@@ -216,7 +216,8 @@ def test_the_arm_registers_the_wall_time_actually_remaining(tmp_path, monkeypatc
     client = _Client()
     bridge = SimpleNamespace(poll=lambda: 0, pid=1, returncode=0)
 
-    def start_bridge(*a):
+    def start_bridge(*a, eval_audit_config=None):
+        assert eval_audit_config is None
         clock.now += 120.0  # setup after the envelope started: the deadline must not be counted again from here
         return bridge, {"base_url": "http://127.0.0.1:1", "upstream": "u"}
 
