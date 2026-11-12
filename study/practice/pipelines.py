@@ -1,5 +1,6 @@
 """A0–A3 comparators and selection replay. Test scores are read only after selection."""
 import hashlib
+import importlib.metadata
 import importlib.util
 import json
 import time
@@ -7,11 +8,13 @@ import warnings
 from pathlib import Path
 
 import numpy as np
+from sklearn.base import clone
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.model_selection import GroupKFold, KFold, StratifiedKFold
 from threadpoolctl import threadpool_limits
 
 from study.practice.build_cards import ROOT
+from study.practice.guard import check_in_fold
 from study.practice.models import Recipe
 from study.practice.oracle import paired_interval, score, score_se
 
@@ -76,7 +79,7 @@ def replay(table):
         eligible = [row for row in rows if pipeline in row['spec']['pipelines'] and row.get('error') is None]
         result[pipeline] = dict(recipe=choice['spec']['id'], validation_score=choice['validation_score'],
                                 cv_score=choice['cv_score'], test_score=choice['test_score'],
-                                optimism=choice['validation_score'] - choice['test_score'],
+                                optimism=choice['validation_score' if pipeline in ('A0', 'A1') else 'cv_score'] - choice['test_score'],
                                 selection_regret=max(row['test_score'] for row in eligible) - choice['test_score'],
                                 paired_baseline=choice['paired_baseline'])
     # These are replay diagnostics, never pipeline C or a tuned choice on holdout data.
@@ -92,8 +95,24 @@ def replay(table):
     return dict(pipelines=result, ablations=ablations, pipeline_C='not implemented in step 1')
 
 
+class FoldWorkflow:
+    """Actual scoring path, including an optional intentionally leaky pre-CV transform."""
+    def __init__(self, kind, spec, seed, pre_cv_transform):
+        self.kind, self.spec, self.seed, self.pre_cv_transform = kind, spec, seed, pre_cv_transform
+
+    def fit(self, x, y, ids, train):
+        self.pre_ = clone(self.pre_cv_transform) if self.pre_cv_transform is not None else None
+        features = self.pre_.fit_transform(x, y) if self.pre_ is not None else x
+        self.model_ = Recipe(self.kind, self.spec, self.seed).fit(features[train], y[train], ids[train])
+        self.transform_fit_ids_ = self.model_.transform_fit_ids_
+        return self
+
+    def predict(self, x):
+        return self.model_.predict(self.pre_.transform(x) if self.pre_ is not None else x)
+
+
 def compute_table(bundle, test_inputs, test_labels, *, partition_seed=81723, folds=5, model_seed=11, specs=None,
-                  supplied_baseline=None):
+                  supplied_baseline=None, pre_cv_transform=None):
     started = time.perf_counter()
     bundle = Path(bundle)
     task = json.loads((bundle / 'task.json').read_text())
@@ -109,7 +128,7 @@ def compute_table(bundle, test_inputs, test_labels, *, partition_seed=81723, fol
         cls = StratifiedKFold if kind == 'classification' else KFold
         partitions = list(cls(n_splits=folds, shuffle=True, random_state=partition_seed).split(x, y))
     specs = specs or recipe_specs(kind)
-    rows, fitted, validation_predictions, traces = [], {}, {}, []
+    rows, fitted, validation_predictions, traces, audits = [], {}, {}, [], []
     with threadpool_limits(limits=1), warnings.catch_warnings():
         warnings.simplefilter('ignore', ConvergenceWarning)
         for spec in specs:
@@ -118,13 +137,20 @@ def compute_table(bundle, test_inputs, test_labels, *, partition_seed=81723, fol
             try:
                 scores, oof = [], np.empty_like(y)
                 for train, held in partitions:
-                    model = Recipe(kind, spec, model_seed).fit(x[train], y[train], ids[train])
+                    def factory(features, targets, training, frozen_spec=spec):
+                        return FoldWorkflow(kind, frozen_spec, model_seed, pre_cv_transform).fit(features, targets, ids, training)
+                    model = factory(x, y, train)
+                    # One independent poison replay per recipe (first fold); every fold's
+                    # training path is identical. Compare the actual fitted objects.
+                    if not scores:
+                        audits.append(dict(recipe=spec['id'], passed=check_in_fold(factory, x, y, train, held, fitted=model),
+                                           method='held-row poison; fitted pipeline byte equality; first fold'))
                     predictions = model.predict(x[held])
                     oof[held] = predictions
                     scores.append(score(kind, y[held], predictions))
                     traces.append(dict(recipe=spec['id'], train_ids=ids[train].tolist(), held_ids=ids[held].tolist(),
                                        transform_fit_ids=model.transform_fit_ids_))
-                fitted[spec['id']] = model = Recipe(kind, spec, model_seed).fit(x, y, ids)
+                fitted[spec['id']] = model = FoldWorkflow(kind, spec, model_seed, pre_cv_transform).fit(x, y, ids, np.arange(len(x)))
                 prediction = model.predict(xv)
                 validation_predictions[spec['id']] = prediction
                 row.update(fold_scores=scores, cv_score=float(np.mean(scores)),
@@ -166,4 +192,7 @@ def compute_table(bundle, test_inputs, test_labels, *, partition_seed=81723, fol
                        paired_baseline=paired_interval(kind, yv, validation_predictions[row['spec']['id']], baseline))
     return dict(schema='practice-score-table/1', task_type=kind, partition_seed=partition_seed, model_seed=model_seed,
                 folds=folds, choices_before_test=choices, rows=rows, in_fold_trace=traces,
+                in_fold_ok=bool(audits) and all(a['passed'] for a in audits), in_fold_audits=audits,
+                environment={name: importlib.metadata.version(name) for name in ('numpy', 'scikit-learn', 'joblib')},
+                comparator_paired=paired_interval(kind, yt, fitted[choices['A3']].predict(xt), fitted[choices['A1']].predict(xt)),
                 source_digest=source_digest(), wall_seconds=time.perf_counter() - started)

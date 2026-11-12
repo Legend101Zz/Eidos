@@ -14,11 +14,11 @@ from study.practice.generators import generate, registry  # noqa: E402
 
 def test_registry_is_frozen_and_neutral():
     entries = registry()
-    assert len(entries) == 15
+    assert len(entries) == 24
     manifest = json.loads((Path(__file__).parents[2] /
                            'docs/experiments/practice-family/MANIFEST.json').read_text())
     assert entries == manifest['generators']
-    assert len({g['id'] for g in entries}) == 15
+    assert len({g['id'] for g in entries}) == 24
     assert sum(g['role'] == 'holdout-class' for g in entries) == 2
 
 
@@ -67,7 +67,7 @@ def test_build_rejects_repository_output():
 @pytest.mark.parametrize('task_type', ['classification', 'regression'])
 def test_score_table_fits_screens_in_fold_and_selection_cannot_read_test(tmp_path, monkeypatch, task_type):
     from study.practice.build_cards import write_json, write_npz
-    from study.practice.guard import check_in_fold
+    from study.practice.guard import check_fit_trace
     from study.practice.models import CorrelationScreen
     from study.practice.pipelines import compute_table, replay
 
@@ -89,8 +89,9 @@ def test_score_table_fits_screens_in_fold_and_selection_cannot_read_test(tmp_pat
 
     monkeypatch.setattr(CorrelationScreen, 'fit', recording)
     first = compute_table(bundle, bundle / 'test.npz', bundle / 'test.npz', specs=specs)
-    assert fitted_rows == [48] * 5 + [60]
-    assert check_in_fold(first['in_fold_trace'])
+    assert fitted_rows == [48] * 6 + [60]
+    assert check_fit_trace(first['in_fold_trace'])
+    assert first['in_fold_ok']
     assert all(len(row['fold_scores']) == 5 for row in first['rows'])
     with np.load(bundle / 'test.npz') as data:
         write_npz(bundle / 'changed.npz', y=rng.permutation(data['y']), ids=data['ids'])

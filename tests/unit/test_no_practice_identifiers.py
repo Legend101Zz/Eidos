@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def identifiers():
     registry = json.loads((ROOT / 'study/practice/registry.json').read_text())
-    return ({g['id'] for g in registry} | {f'P{i:04d}' for i in range(1, 61)}
+    return ({g['id'] for g in registry} | {f'P{i:04d}' for i in range(1, 4 * len(registry) + 1)}
             | {'N01', 'N02', 'N03', 'N04', 'D02', 'D03', 'D04'}
             | {'oracle_mechanism', 'oracle_informative_columns', 'oracle_true_gain', 'oracle_reference_score'})
 

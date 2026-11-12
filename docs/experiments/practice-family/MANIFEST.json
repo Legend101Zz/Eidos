@@ -1,6 +1,6 @@
 {
   "schema": "practice-manifest/1",
-  "frozen_before": "pipeline C implementation and any holdout scoring",
+  "frozen_before": "pipeline C; r2 construction uses exposed A3-A1 variance only, not C scores",
   "generators": [
     {
       "id": "gen-001",
@@ -134,7 +134,7 @@
     },
     {
       "id": "gen-011",
-      "mechanism": "large-sample",
+      "mechanism": "large-hastie",
       "role": "design",
       "task_type": "classification",
       "sizes": {
@@ -196,6 +196,123 @@
       },
       "instances": 4,
       "seed_stream": 2026261300
+    },
+    {
+      "id": "gen-016",
+      "mechanism": "checkerboard",
+      "role": "holdout",
+      "task_type": "classification",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 2026271300
+    },
+    {
+      "id": "gen-017",
+      "mechanism": "spiral-phase",
+      "role": "holdout",
+      "task_type": "classification",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 2026281300
+    },
+    {
+      "id": "gen-018",
+      "mechanism": "ordinal-threshold",
+      "role": "holdout",
+      "task_type": "classification",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 2026291300
+    },
+    {
+      "id": "gen-019",
+      "mechanism": "sawtooth-additive",
+      "role": "holdout",
+      "task_type": "regression",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 2026301300
+    },
+    {
+      "id": "gen-020",
+      "mechanism": "rational-response",
+      "role": "holdout",
+      "task_type": "regression",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 2026311300
+    },
+    {
+      "id": "gen-021",
+      "mechanism": "max-affine",
+      "role": "holdout",
+      "task_type": "regression",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 2026321300
+    },
+    {
+      "id": "gen-022",
+      "mechanism": "multiplicative-response",
+      "role": "holdout",
+      "task_type": "regression",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 2026331300
+    },
+    {
+      "id": "gen-023",
+      "mechanism": "absolute-additive",
+      "role": "holdout",
+      "task_type": "regression",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 2026341300
+    },
+    {
+      "id": "gen-024",
+      "mechanism": "interaction-threshold",
+      "role": "holdout",
+      "task_type": "regression",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 2026351300
     }
   ],
   "constants": {
@@ -211,12 +328,10 @@
       "neural"
     ],
     "support_threshold": 0.1,
-    "epsilon_se": 0.25,
+    "epsilon_se": 0.5,
     "null_tolerance": 0.0,
     "max_primary_verdicts": 8,
     "max_burns_per_class": 2,
-    "bootstrap_seed": 99127,
-    "bootstrap_samples": 10000,
     "wall_estimate_seconds": 420,
     "wall_limit_seconds": 840,
     "calibration": {
@@ -230,7 +345,10 @@
         "tolerance": 2,
         "units": "test examples A3 minus A1"
       }
-    }
+    },
+    "positive_effect_se": 0.8,
+    "primary_alpha": 0.05,
+    "minimum_holdout_generators": 12
   },
   "primary_verdict": "harness acceptance only; no pipeline C or class improvement claim",
   "burns": [],
@@ -239,5 +357,6 @@
     "missing values",
     "many-class beyond digits",
     "d >> n above 80"
-  ]
+  ],
+  "revision": "r2"
 }

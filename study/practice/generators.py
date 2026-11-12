@@ -1,5 +1,4 @@
 """Trusted generator registry; oracle information never enters task bundles."""
-import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -75,12 +74,19 @@ def generate(entry, instance):
     elif mechanism == 'imbalanced-grouped':
         groups = np.repeat(np.arange(n // 10), 10)
         category = rng.integers(0, 48, n)
-        latent = rng.normal(size=n)
+        latent = rng.normal(size=n) + rng.normal(0, 0.6, n // 10)[groups]
         x = np.c_[latent, np.eye(48)[category], rng.normal(size=(n, 3))]
-        y = (latent + rng.normal(0, 0.4, n) > 2).astype(int)
+        y = (latent + rng.normal(0, 0.4, n) > 0.6).astype(int)
         informative = [0]
-    elif mechanism in ('large-sample', 'mixture-reenactment'):
-        x, y = datasets.make_classification(n_samples=n, n_features=30 if mechanism == 'large-sample' else 20,
+    elif mechanism == 'large-hastie':
+        z, y = datasets.make_hastie_10_2(n_samples=n, random_state=seed)
+        y = (y > 0).astype(int)
+        nuisance = rng.normal(size=(n, 5))
+        # Structured near-duplicates and nonlinear nuisance; no per-class mixtures.
+        x = np.c_[z, nuisance, nuisance + rng.normal(0, .02, nuisance.shape), nuisance ** 2, np.sin(nuisance)]
+        informative = list(range(10))
+    elif mechanism == 'mixture-reenactment':
+        x, y = datasets.make_classification(n_samples=n, n_features=20,
                                             n_informative=8, n_redundant=4, n_clusters_per_class=3,
                                             class_sep=0.8, flip_y=0.02, random_state=seed)
     elif mechanism in ('noise-control', 'weak-control'):
@@ -89,6 +95,34 @@ def generate(entry, instance):
         probability = np.full(n, 0.5) if mechanism == 'noise-control' else 0.5 + 0.01 * np.sign(x[:, 0])
         y = (rng.random(n) < probability).astype(int)
         informative = [] if mechanism == 'noise-control' else [0]
+    elif mechanism in ('checkerboard', 'spiral-phase', 'ordinal-threshold', 'sawtooth-additive',
+                        'rational-response', 'max-affine', 'multiplicative-response', 'absolute-additive',
+                        'interaction-threshold'):
+        z = rng.uniform(-2, 2, (n, 4))
+        if mechanism == 'checkerboard':
+            y = ((np.floor(z[:, 0] * 2) + np.floor(z[:, 1] * 2)) % 2).astype(int)
+        elif mechanism == 'spiral-phase':
+            phase = np.arctan2(z[:, 1], z[:, 0]) + 3 * np.hypot(z[:, 0], z[:, 1])
+            y = (np.sin(phase) > 0).astype(int)
+        elif mechanism == 'ordinal-threshold':
+            y = np.digitize(z[:, 0] + .4 * z[:, 1] ** 2, [-.7, .7])
+        else:
+            if mechanism == 'sawtooth-additive':
+                mean = (z[:, 0] * 2) % 1 + (z[:, 1] > 0)
+            elif mechanism == 'rational-response':
+                mean = z[:, 0] / (1 + z[:, 1] ** 2) + .4 * z[:, 2]
+            elif mechanism == 'max-affine':
+                mean = np.maximum(2 * z[:, 0] - z[:, 1], z[:, 2] + z[:, 3])
+            elif mechanism == 'multiplicative-response':
+                mean = np.exp(.5 * z[:, 0]) * np.cos(z[:, 1])
+            elif mechanism == 'absolute-additive':
+                mean = abs(z[:, 0]) + .5 * abs(z[:, 1] + z[:, 2])
+            else:
+                mean = z[:, 0] * (z[:, 1] > 0) + z[:, 2] * (z[:, 3] > .5)
+            y = mean + rng.normal(0, .15, n)
+        nuisance = rng.normal(size=(n, 3))
+        x = np.c_[z, nuisance, nuisance + rng.normal(0, .03, nuisance.shape), nuisance ** 2]
+        informative = list(range(4))
     else:
         raise ValueError('unregistered mechanism')
     indices = np.arange(n)
@@ -102,8 +136,12 @@ def generate(entry, instance):
         validation, test = train_test_split(rest, train_size=sizes['validation'], random_state=seed + 1,
                                              stratify=y[rest] if kind == 'classification' else None)
         partitions = [train, validation, test]
-    ids = np.array([int.from_bytes(hashlib.sha256(f'practice:{seed}:{i}'.encode()).digest()[:8], 'big')
-                    & ((1 << 63) - 1) for i in indices], dtype=np.int64)
+    # An independent stream assigns random tokens, never a hash of the source index.
+    # In particular, enumerating the wine source indices cannot invert an ID to a class.
+    ids = np.random.default_rng(np.random.SeedSequence([seed, 718239])).integers(
+        0, np.iinfo(np.int64).max, size=n, dtype=np.int64)
+    if len(np.unique(ids)) != n:
+        raise ValueError('row token collision')
     splits = {}
     for name, rows in zip(('train', 'validation', 'test'), partitions, strict=False):
         values = np.asarray(x[rows], dtype=np.float32)

@@ -2,6 +2,7 @@
 import math
 
 import pytest
+from scipy.stats import t
 
 from study.practice.guard import (
     claim_metrics,
@@ -20,28 +21,30 @@ def test_generator_level_arithmetic():
     result = random_effects([1, 2, 3], [0.25, 0.25, 0.25])
     assert result['mean'] == pytest.approx(2)
     assert result['tau_squared'] == pytest.approx(0.75)
-    assert result['lower90'] == pytest.approx(2 - 1.6448536269514722 / math.sqrt(3))
+    assert result['lower90'] == pytest.approx(2 - t.ppf(.95, 2) / math.sqrt(3))
     assert holm([0.01, 0.04, 0.03]) == pytest.approx([0.03, 0.06, 0.06])
     assert normalized_gain(0.8, 0.8, 0.8, 0.02) == 0
     assert normalized_gain(0.82, 0.8, 0.8, 0.02) == pytest.approx(0.5)
 
 
-def test_all_guard_controls_reject():
-    assert guard_selftest() == {
-        'card_specific_patch': 'design-only',
-        'harmful_operator': 'reject-no-harm',
-        'screen_before_cv': 'reject-in-fold',
-    }
+def checked(effects, roles, **kwargs):
+    return evaluate(effects, roles, in_fold_ok=True, null_delta=0., null_tolerance=0., limits_ok=True, **kwargs)
+
+
+def test_noisy_controls_include_accepted_positive():
+    result = guard_selftest()
+    assert result['helpful_operator'] == 'accept-named'
+    assert all(v.startswith('reject') for k, v in result.items() if k != 'helpful_operator')
 
 
 def test_one_generator_cannot_make_a_class_claim():
-    result = evaluate({'g': [0.05] * 4}, {'g': 'holdout'}, epsilon=0.01)
-    assert result['verdict'] == 'no regression on these named generators'
+    result = checked({'g': [.05] * 4}, {'g': 'holdout'})
+    assert result['verdict'] == 'reject-insufficient-transfer'
     assert result['class_claim'] is False
 
 
 def test_named_generator_harm_cannot_be_hidden_by_pooled_instances():
-    result = evaluate({'a': [1] * 100, 'b': [-0.5] * 4}, {'a': 'holdout', 'b': 'holdout'})
+    result = checked({'a': [1] * 100, 'b': [-5.] * 4}, {'a': 'holdout', 'b': 'holdout'})
     assert result['verdict'] == 'reject-no-harm'
 
 
@@ -80,13 +83,44 @@ def test_claim_audit_requires_traceable_visible_paired_evidence():
 
 def test_unrelated_holdouts_cannot_be_pooled_into_a_class_claim():
     effects = {str(i): [0.1] * 4 for i in range(6)}
-    result = evaluate(effects, {key: 'holdout' for key in effects})
+    result = checked(effects, {key: 'holdout' for key in effects})
     assert result['class_claim'] is False
 
 
-def test_real_fold_boundary_catches_screen_fitted_before_cv():
-    from study.practice.guard import check_in_fold
-    assert not check_in_fold([dict(train_ids=[1, 2], held_ids=[3], transform_fit_ids=[[1, 2, 3]])])
+def test_trace_dictionary_is_only_a_supplemental_boundary_check():
+    from study.practice.guard import check_fit_trace
+    assert not check_fit_trace([dict(train_ids=[1, 2], held_ids=[3], transform_fit_ids=[[1, 2, 3]])])
+
+
+def test_unrelated_generators_refused_even_when_class_ids_supplied():
+    with pytest.raises(ValueError, match='holdout-class'):
+        checked({str(i): [.8] * 4 for i in range(6)}, {str(i): 'holdout' for i in range(6)},
+                declared_class_generators=[str(i) for i in range(6)])
+
+
+def test_null_claims_use_d12_even_if_all_numeric_checks_pass():
+    from study.grade_block import success_rule
+    for visible in (False, True):
+        row = dict(visible_claim=visible, fresh_gains=[1., 1., 1.], fresh_process_equal=True, export_eligible=True)
+        actual = claim_metrics([row], practical_bar=.02, null=True)
+        expected = success_rule({'id': 'D12'}, {'status': 'improvement_claimed' if visible else 'abstained',
+                                               'claim_type': 'checkpoint_improvement' if visible else 'no_positive_claim'})
+        assert actual['false_positive_claim_rate'] == float(expected['false_positive_claim'])
+        assert actual['verified_success_rate'] == 0
+
+
+def test_unequal_variance_hk_matches_independent_formula():
+    effects, variances = [0.1, .7, 1.8, -.2], [.05, .4, 2., .2]
+    import numpy as np
+    w = 1 / np.array(variances)
+    fixed = np.average(effects, weights=w)
+    tau = max(0, (np.sum(w * (np.array(effects) - fixed) ** 2) - 3) / (sum(w) - sum(w*w)/sum(w)))
+    w = 1 / (np.array(variances) + tau)
+    mean = np.average(effects, weights=w)
+    se = np.sqrt(max(1., np.sum(w * (np.array(effects) - mean)**2)/3) / sum(w))
+    result = random_effects(effects, variances)
+    assert result['mean'] == pytest.approx(mean)
+    assert result['lower90'] == pytest.approx(mean - t.ppf(.95, 3) * se)
 
 
 def test_zero_variance_ties_and_empty_inputs():
@@ -104,9 +138,32 @@ def test_burn_limit_and_preregistered_verdict_cannot_be_rewritten(tmp_path):
     from study.practice.guard import register_burn
     path = tmp_path / 'burns.json'
     for source in ('a', 'a', 'b'):
-        result = register_burn(path, source_key=source, classes=['holdout'], primary_verdict='frozen')
+        result = register_burn(path, evaluation_id=source, candidate_digest=source, classes=['holdout'], primary_verdict='frozen')
     assert len(result['burns']) == 2
     with pytest.raises(ValueError, match='two-burn'):
-        register_burn(path, source_key='c', classes=['holdout'], primary_verdict='frozen')
+        register_burn(path, evaluation_id='c', candidate_digest='c', classes=['holdout'], primary_verdict='frozen')
     with pytest.raises(ValueError, match='cannot be changed'):
-        register_burn(path, source_key='a', classes=['holdout'], primary_verdict='changed')
+        register_burn(path, evaluation_id='a', candidate_digest='a', classes=['holdout'], primary_verdict='changed')
+
+
+def test_exact_generator_sign_flip_matches_hand_enumeration():
+    import itertools
+
+    import numpy as np
+
+    from study.practice.guard import sign_flip_pvalues
+    effects = np.array([.2, -.1, .7, .4, 1.2])
+    variances = np.array([.1, .4, .2, .3, .8])
+    coefficients = effects / variances
+    observed = sum(coefficients)
+    expected = sum(sum(s * coefficients) >= observed - 1e-12 for s in map(np.array, itertools.product((-1, 1), repeat=5))) / 32
+    assert sign_flip_pvalues(effects, variances)[0] == pytest.approx(expected)
+    assert sign_flip_pvalues(-effects, variances)[0] >= .5
+
+
+def test_statistical_significance_without_practical_gain_is_insufficient():
+    roles = {str(i): 'holdout' for i in range(12)}
+    small = {g: [.19, .2, .21, .2] for g in roles}
+    useful = {g: [.7, .8, .9, .8] for g in roles}
+    assert checked(small, roles)['verdict'] == 'reject-insufficient-transfer'
+    assert checked(useful, roles)['verdict'] == 'accept-named'

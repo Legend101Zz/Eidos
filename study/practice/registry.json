@@ -131,7 +131,7 @@
   },
   {
     "id": "gen-011",
-    "mechanism": "large-sample",
+    "mechanism": "large-hastie",
     "role": "design",
     "task_type": "classification",
     "sizes": {
@@ -193,5 +193,122 @@
     },
     "instances": 4,
     "seed_stream": 2026261300
+  },
+  {
+    "id": "gen-016",
+    "mechanism": "checkerboard",
+    "role": "holdout",
+    "task_type": "classification",
+    "sizes": {
+      "train": 600,
+      "validation": 200,
+      "test": 400
+    },
+    "instances": 4,
+    "seed_stream": 2026271300
+  },
+  {
+    "id": "gen-017",
+    "mechanism": "spiral-phase",
+    "role": "holdout",
+    "task_type": "classification",
+    "sizes": {
+      "train": 600,
+      "validation": 200,
+      "test": 400
+    },
+    "instances": 4,
+    "seed_stream": 2026281300
+  },
+  {
+    "id": "gen-018",
+    "mechanism": "ordinal-threshold",
+    "role": "holdout",
+    "task_type": "classification",
+    "sizes": {
+      "train": 600,
+      "validation": 200,
+      "test": 400
+    },
+    "instances": 4,
+    "seed_stream": 2026291300
+  },
+  {
+    "id": "gen-019",
+    "mechanism": "sawtooth-additive",
+    "role": "holdout",
+    "task_type": "regression",
+    "sizes": {
+      "train": 600,
+      "validation": 200,
+      "test": 400
+    },
+    "instances": 4,
+    "seed_stream": 2026301300
+  },
+  {
+    "id": "gen-020",
+    "mechanism": "rational-response",
+    "role": "holdout",
+    "task_type": "regression",
+    "sizes": {
+      "train": 600,
+      "validation": 200,
+      "test": 400
+    },
+    "instances": 4,
+    "seed_stream": 2026311300
+  },
+  {
+    "id": "gen-021",
+    "mechanism": "max-affine",
+    "role": "holdout",
+    "task_type": "regression",
+    "sizes": {
+      "train": 600,
+      "validation": 200,
+      "test": 400
+    },
+    "instances": 4,
+    "seed_stream": 2026321300
+  },
+  {
+    "id": "gen-022",
+    "mechanism": "multiplicative-response",
+    "role": "holdout",
+    "task_type": "regression",
+    "sizes": {
+      "train": 600,
+      "validation": 200,
+      "test": 400
+    },
+    "instances": 4,
+    "seed_stream": 2026331300
+  },
+  {
+    "id": "gen-023",
+    "mechanism": "absolute-additive",
+    "role": "holdout",
+    "task_type": "regression",
+    "sizes": {
+      "train": 600,
+      "validation": 200,
+      "test": 400
+    },
+    "instances": 4,
+    "seed_stream": 2026341300
+  },
+  {
+    "id": "gen-024",
+    "mechanism": "interaction-threshold",
+    "role": "holdout",
+    "task_type": "regression",
+    "sizes": {
+      "train": 600,
+      "validation": 200,
+      "test": 400
+    },
+    "instances": 4,
+    "seed_stream": 2026351300
   }
 ]

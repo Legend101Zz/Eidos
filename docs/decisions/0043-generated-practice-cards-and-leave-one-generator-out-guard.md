@@ -17,75 +17,48 @@ acceptance bootstrapped across six instances of one generator; and nothing showe
 each point. Tier 1's `tier1-no-regression/1` has tolerance 0 on one seed per card; with 114 validation rows one example is 0.0088 accuracy against a
 binomial standard error of 0.016, so it cannot arbitrate either.
 
-## Decision
+## Decision (r2 exact-source review fixes)
 
-Build a **thin** harness first, in parallel with the library, and grow it only when a gate needs a class-level claim.
+The first implementation was rejected in `V2_STEP1_REVIEW.md`. Its large-n generator reproduced N04's mechanism, its noisy guard had no useful power, and its leak control was a hand-built trace. This revision replaces those claims and their evidence.
 
-Generators live in `study/practice/generators.py` (trusted offline code, never copied into a bundle). Instances are written outside the repository in the
-existing bundle format (`train.npz`, `validation.npz`, `task.json`, supplied baseline `project.py`); an oracle sidecar (mechanism ground truth, a
-large-sample reference score) is never in a bundle; ids are neutral. Fifteen generators, four instances each (about 60 cards):
+The family now contains **24 generators × 4 instances = 96 cards**. Six design generators cover rotated moons, Hastie radial classification, Friedman 2/3, curved Student-t classes, rotated digits and large-n Hastie (20k train rows, 30 columns). The large-n generator has correlated, near-duplicate and nonlinear nuisance columns; it never calls `make_classification`. Twelve machinery holdouts comprise circles/quantiles, low-rank/sparse regression, wine/nuisance, and nine additional mechanisms: checkerboard, spiral phase, ordinal thresholds, sawtooth additive, rational response, max-affine, multiplicative response, absolute additive and threshold interactions. The original periodic/heteroskedastic and grouped/high-cardinality generators remain **separate operator holdout classes**. Grouped classification has genuine group-level latent variation and a .6 threshold, avoiding the former ≥96% majority saturation. Two controls have noise/weak labels. The N04 and additive-offset replicas exist **only in calibration**.
 
-- Eleven **unlike the dev cards**: two-moons with rotated nuisance columns; concentric circles and Gaussian quantiles (with an easy variant on which strong
-  defaults are near the reference); `make_hastie_10_2`; `make_friedman2` and `make_friedman3` (regression); `make_regression(effective_rank, tail_strength)`
-  and sparse-uncorrelated (regression); heavy-tailed (Student-t) class conditionals with curved means, on which a Gaussian mixture is wrong; periodic
-  features with heteroskedastic noise; the bundled wine data with nuisance columns at small n; digits under a rotation shift (not D03's additive offset);
-  extreme imbalance with high-cardinality one-hot columns and group ids (exercising the `groups` port); and a large-n generator (n_train 20k) on which the
-  cost, checkpoint-size and 120 s guards bind.
-- Two **controls**: planted pure-noise labels (true gain 0) and planted weak signal (0.5 x the practical bar).
-- Two **re-enactments** (an N04-like and a D03-like generator), labelled calibration-only and never cited as evidence of generalisation.
+The executed-factory lint in `independence.py` checks the seven public development recipes. It compares N04's mechanism parameters regardless of padding/sample size/seed, detects reused real datasets and unchanged digit shifts, and checks D04's conditioned linear fingerprint. A planted disguised factory must fail it. This is a regression safeguard for known recipes, not proof of universal mechanism independence.
 
-`MANIFEST.json` fixes before any v2 pipeline exists which generators are design and which are holdout, and names two **holdout classes** (periodic/heteroskedastic;
-imbalanced/high-cardinality/grouped) that no design step may touch. Constants (support thresholds, the paired-band multiple, the complexity order) are frozen on
-design generators before any holdout generator is scored.
+Only bundles are candidate-visible. Controller labels, oracle sidecars, references and the index remain separate. Row IDs are random 63-bit tokens from an independent stream, never hashes of source indices. Determinism, uniqueness, inverse-index rejection and label-association tests cover every generator. Public reproducibility is not cryptographic secrecy: code plus a published seed can reconstruct synthetic data. A trusted index still maps sequential card numbers to generators; do not provide it with the bundles.
 
-The gate (`study/practice/run_gate.py`) makes no model calls. Per instance it computes the fold-by-recipe score table and the test score of every recipe once
-and derives argmax, multiples {0.5, 1, 1.5, 2}, with/without priors and complexity-permutation ablations by replay. Pipelines: A0 baseline; A1 v1 sweep winner;
-**A2 strong defaults** (CV-selected LR/SVC/ET/HGB, no structure search); **A3 EDA-aware proxy** (the coding arms' families: screen + MLP ensemble, per-class GMM by BIC,
-PCA-whiten + SVM, CV-selected); C the v2 core. It also emulates the grader's hard gate: every fresh seed retrains the exported candidate under
-`candidate_command(timeout=120)` with OMP/MKL/OPENBLAS/VECLIB set to 1 and must reach the practical bar, and fresh-process predictions must equal the locked ones.
+A0 is the supplied baseline; A1 the unchanged broad v1 validation sweep; A2 strong CV defaults; A3 a fixed EDA proxy, **not a demonstrated coding-agent ceiling**. Pipeline C remains step 2. Choices freeze before test labels open. Tables retain fold scores, OOF digests, measured baseline/fit wall times and compute-time versions. CV-selected recipes report CV minus test as optimism; validation-selected recipes report validation minus test.
 
-Metrics are per-generator paired effects on the test metric in standard-error units and raw units (not a normalised gain whose denominator can be zero; any
-normalisation floors it at twice the test SE of the reference); selection regret; optimism; export eligibility; and **claim-level null metrics** that mirror
-`study/grade_block.py success_rule`: on control and weak-signal instances, `visible_claim_rate` (the playbook rule would permit an improvement claim because the
-paired validation interval against the baseline excludes 0) and `false_positive_claim_rate` (a visible claim that the grader-equivalent rule, with fresh seeds and fresh-process
-equality, would not verify). Pipeline C is compared with A2 on exactly these.
+### Inference and operating characteristics
 
-**Generators are the unit of inference.** Each generator's effect is reported with an instance-level bootstrap used only for that generator's precision. Across generators the
-verdict uses a sign test and a random-effects (DerSimonian-Laird) interval. A class-level claim needs at least three holdout generators; below that the verdict is worded "no
-regression on these named generators" (the lower 90% bound of each named generator's effect is above -epsilon). Each change declares one primary verdict before running; Holm
-adjustment applies across the primary verdicts of the programme (at most eight); everything else is descriptive. At most two holdout burns per class are allowed; replacements
-come from a different seed stream and are reviewed by someone who has not seen the failure.
+Generators are the inference units. The primary named-transfer rule requires an exact inverse-variance-weighted conditional sign-flip test across the **machinery holdouts**, with Holm adjustment over registered primary verdicts, and a positive lower 90% **modified Hartung–Knapp** random-effects interval (DL heterogeneity, t(k−1), variance floor max(.01, .1 × median within-generator variance)). The count-based sign p remains descriptive; the primary sign-flip weights depend only on sign-invariant within-generator variance and enumerate all 2^k assignments (2–16 generators). Under independent symmetric neutral effects its conditional size is ≤.05; one arbitrary generator can at most double this to .10. This uses unequal precision more efficiently than a count-only sign test. Within-generator summaries use t intervals rather than the former four-observation percentile bootstrap. Wine/digits resplits share source rows: use effective instance n=1 and a variance floor of 1.04² (the largest observed moderate instance SD, preventing identical correlated repeats from acquiring spurious precision), retain their finite-source size (178/1,797), and widen uncertainty instead of asserting four independent datasets.
 
-**The guard has its own negative controls** (`guard_selftest`): a planted card-specific patch (an operator or constant tuned on one design generator) must return
-`design-only`; a planted harmful operator must be rejected under the no-harm rule; a planted leak (screening on all of train before CV) must be caught by the in-fold test.
-The guard is not used until it says no to all three. The harness also replays the dev cards through A0-A3 as calibration: A1-versus-A3 should reproduce the known gaps
-(N04 about 0.07-0.09 gain; N01 about 3 test examples), and some generators are chosen so that A1 is already near the reference, giving v2 something to regress.
+No-harm means no statistically detected material regression: one-sided per-generator harm tests at margin **epsilon=.5 test-SE**, familywise Holm .05. This margin is about half the observed moderate SD (.66–1.04); it does not certify per-generator equivalence at n=4. A pooled point gain of at least **+.5 SE** (the same practical margin), positive pooled transfer and this harm screen permit `accept-named`; wording no longer claims proven no regression on every generator. `accept-class` uses only explicitly declared operator holdout-class generators and their own inference; machinery generators cannot supply a class claim. Two existing operator classes cannot support one. At least five positive independent generators are needed even to attain sign-test p≤.05; the default named family has twelve.
 
-A change is accepted when, for its declared class: the motivating-generator effects clear the verdict rule above; no other named generator regresses beyond epsilon; pipeline C's
-false-positive-claim rate is no worse than A2's by more than a pre-registered tolerance; wall and export limits hold. A neutral-elsewhere operator is acceptable; the guard asks for
-no harm elsewhere and gain on a generator unlike the one that motivated it, not for gain everywhere.
+The declared helpful Monte Carlo target is **+.8 test-SE**: below r2 moons +1.064 in paired-test-SE units (the old marginal-SE estimate was +.896); it does not borrow the much larger N04 calibration gap. `operating.py` evaluates neutral, harmful −.5, generic helpful +.8, and a patch helping only one holdout (+2), across SD .1/.3/.66/.8/1.04 and the observed heterogeneous instance SDs. It also stresses fully correlated fixed-source instances, records Monte Carlo intervals, and discloses the power cost of eight simultaneous primaries. Its vector arithmetic is tested against `evaluate`. This power target is for one preregistered primary; eight-primary sensitivity is reported separately. Results and any unmet targets must be read from `step1-r2/operating.json`, not inferred from this ADR.
 
-Hygiene: a lint fails if any file under `components/`, `src/eidos/investigator/` or `study/prompts/` names a **generator id, a card id or an oracle field name** (operator and hypothesis
-names such as `gmm_class` are legitimate and are not on the blocklist); the lint is tested with a planted violation. The model-facing identifier audit list gains the practice ids.
-Practice cards are never added to `PRIVATE_*` registries. The exposure ledger (`docs/experiments/practice-family/EXPOSURE_LEDGER.md`) records that N01 and N04 train/validation data were
-inspected, that the library and priors copy comparison-arm winners on N04 (arm 1 r2 correlation screen + MLP ensemble; arm 2 r1 per-class GMM; arm 1 r1 PCA-whiten + SVM; arm 2 r3 screen
-+ MLP ensemble) and D2's per-image centring on D03, every holdout burn, and that no sealed or reserve card and nothing under `eidos-grading/` was used.
+All checks fail closed: missing in-fold, null-claim, tolerance or resource evidence rejects. Null and weak-signal controls use the grader's **D12 branch**: every positive claim is false even if its numeric fresh gains pass. Fresh reproduction still checks all three seeds, fresh-process prediction equality, checkpoint size and the 120 s candidate limit. Comparator-only runs without fresh claim evidence cannot receive an acceptance verdict.
 
-## Rejected alternatives
+### Controls and leakage
 
-- The 114-card, 19-generator family as a first build: expensive, and its diversity was by construction (it returns if a class-level claim is needed).
-- Leave-one-card-out, and instance-level bootstrap as the unit: instances of one generator share a mechanism.
-- Tuning on N01-N04 and D02-D04, or any sealed or reserve card.
-- Held-out test score of the chosen recipe on pure-noise cards as the null metric: chance by construction.
-- Decisions by live Tier 1 alone.
+`guard_selftest` has noisy positive, neutral, harmful and single-generator effects, never constant vectors. `controls.py` additionally measures real pipeline-output fault controls on actual family data: remove label jitter / regression output noise generically; compare equal independent jitter for neutrality; reverse the repair for harm; repair only gen-002 for a card-specific patch. These deliberately planted fault controls are distinct from the modest +.8-SE simulation and are not pipeline C evidence.
+
+`check_in_fold` reruns the **actual FoldWorkflow** with held-fold features poisoned and held labels permuted; the fitted object must remain byte-identical. `compute_table` runs one poison replay per recipe on its first fold; all folds use that same fit path. This includes any pre-CV transformation. A real `SelectKBest(f_classif)` fitted on full training data before CV inflates noise-label CV and fails this behavioural check. The old ID dict check survives only as a supplemental trace-boundary unit test. The behavioural check does not claim to detect code that explicitly branches to evade an audit or every possible later-fold-only leak.
+
+### References, determinism and programme burns
+
+`references.py` estimates independent attainable references for every generator (20k synthetic training / 2k selection / 5k test; 40k training for large-n). Finite sources use train+validation refits and effective instance n=1. Model choice uses reference validation, not test. These are empirical achievable scores, not Bayes ceilings; independently sampled latent regression coefficients make headroom a generator-distribution estimate. The acceptance report lists reference minus A1 for every generator, and requires multiple near-reference generators **and** measurable holdout headroom beyond the recipe pool.
+
+Criterion (b) needs all generators referenced, at least three named generators within two SE and .02 accuracy / 5% RMSE of reference, at least two holdouts with >two-SE headroom, and A1 mean ≥A3 on at least three named generators including two holdouts. Criterion (c) needs rebuilt byte-identical data, stable semantic replay, and a separate cold score recomputation of at least one card per generator, comparing every recipe's fold/CV/validation/test scores, OOF digest and frozen choices. Cache hits alone fail it.
+
+The protected ledger is fixed at `claude-orch/v2/programme-burns.json`, outside `--out`. File locking and mode 0600 protect writes. Registrations bind evaluation ID, candidate digest, primary verdict and declared generators; unrelated harness/source edits spend no burn. Candidate changes cannot reuse an evaluation ID. At most two evaluations per declared generator/class and eight primaries remain. The two historical construction registrations are reset with an explicit migration receipt, not silently charged to step 2. Descriptive construction/calibration has no candidate acceptance and spends no evaluation burn. Replacement following actual candidate failures still requires a different seed stream and independent review.
 
 ## Verification and limits
 
-Tests: generator determinism (same seed, same bytes); no test labels or oracle fields in any bundle; split sizes and neutral ids; the lint with a planted violation; claim-level metric
-arithmetic against `success_rule`; the sign-test and random-effects arithmetic on synthetic deltas; the denominator floor; `guard_selftest`. Acceptance for the harness itself: calibration
-within tolerance on the dev cards; A1 not uniformly below A3; digest-stable reruns; all three self-test controls reject; per-instance wall within 2x of the estimate (about 7 minutes of one core).
+The report `claude-orch/logs/V2_STEP1_REPORT.md` maps F1–F14 to code, exact validation and evidence. JSON plus a short summary live under `claude-orch/v2/step1-r2/`. No model/provider call, sealed card, Keychain action or grading-directory access is authorized. This is exposed development evidence; a later prospectively sealed pilot is required for held-out or investigator claims. Both pilot arms receive the same components.
 
-Limits: synthetic, small-scale data; with 15 generators the class-level power is low (hence the wording rule); the design remains informed by N04 and N01 and by comparison-arm recipes
-(recorded); wins here are development evidence, not held-out evidence and not evidence about the investigator, because the gate removes the model. Confirmation needs a later, separately
-sealed prospective pilot that binds the build before any model call; under the two-arm pilot, arm 2 shares the components (orchestrator decision Q1), so the harness says nothing about the
-arm-4-minus-arm-2 contrast.
+### r2 measured acceptance
+
+All five criteria passed on 96 family cards and seven public development cards. Independent cold recomputation of 24 cards (one per generator, 1,494 recipes) matched every compared score, fold, OOF digest and frozen choice. The maximum measured family instance wall was 780.55 s, below 840 s.
+
+At +.8 paired-test-SE with one primary, observed-variance Monte Carlo accepted the helper 89.48%, neutrality .38%, harm 0%, and a one-generator patch 3.17% (20,000 trials/cell; Wilson bounds meet the targets). With eight primaries the same +.8 effect has only 70.41% power; that limitation is retained. An unchanged-guard/family alternative targeting **+1.0 paired-test-SE**, still below the observed non-dev moons +1.064, reaches 85.79% acceptance with eight primaries and 85.08% under fully correlated finite-source repeats. Its false-acceptance bounds also meet the targets. `programme-power.json` records this separately; no +.8 eight-primary power claim is made.
