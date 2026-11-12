@@ -108,7 +108,7 @@ def extract_json(text: str) -> tuple[dict[str, Any], list[str]]:
     return obj, repairs
 
 
-def normalize(obj: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+def normalize(obj: dict[str, Any], *, strict_scope: bool = False) -> tuple[dict[str, Any], list[str]]:
     """Map the prompt's lenient shapes onto the typed Decision fields."""
     repairs: list[str] = []
     out = dict(obj)
@@ -132,10 +132,10 @@ def normalize(obj: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     if isinstance(ctl, str):
         out["control"] = {"action": ctl}
         repairs.append("control-string")
-    elif isinstance(ctl, dict) and "scope" in ctl and "scope_json" not in ctl:
+    elif isinstance(ctl, dict) and "scope" in ctl and (strict_scope or "scope_json" not in ctl):
         ctl = dict(ctl)
         scope = ctl.pop("scope")
-        ctl["scope_json"] = scope if isinstance(scope, str) else json.dumps(scope)
+        ctl["scope_json"] = scope if isinstance(scope, str) and not strict_scope else json.dumps(scope)
         out["control"] = ctl
         repairs.append("scope-object")
     return out, sorted(set(repairs))

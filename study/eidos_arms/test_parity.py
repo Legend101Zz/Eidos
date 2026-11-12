@@ -1,4 +1,5 @@
 """Pilot-2 completion and timing regressions; subprocess fixtures make no model calls."""
+import hashlib
 import io
 import json
 import os
@@ -11,7 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from study.common import EXPORT_READINESS_CONTRACT, write_json
+from study.common import EXPORT_READINESS_CONTRACT, record_prompt, write_json
 from study.launcher import outer_deadline
 from study.run_arm import run_claude, run_stream
 
@@ -32,6 +33,14 @@ def abstention(root):
                   unresolved=['Confirmation'], next_discriminating_test='Fresh-seed held-out evaluation.'),
                   cost=cost, exposures=[], deviations=[], confidence=None)
     write_json(root / 'out/answer.json', answer)
+
+
+def assert_prompt_delivery(test, root, arm, content):
+    directory = root.parent / "prompt-receipts"
+    expected = json.loads((directory / f"arm{arm}-expected.json").read_bytes())
+    delivered = json.loads((directory / f"arm{arm}-delivered.json").read_bytes())
+    test.assertEqual(expected["expected_render_sha256"], delivered["expected_render_sha256"])
+    test.assertEqual(delivered["delivered_sha256"], hashlib.sha256(content.encode()).hexdigest())
 
 
 class FinalOutcomes(unittest.TestCase):
@@ -90,10 +99,14 @@ class FinalOutcomes(unittest.TestCase):
 
         for arm in (1, 2):
             with self.subTest(arm=arm), tempfile.TemporaryDirectory() as d:
-                root = Path(d)
-                write_json(root / 'arm.json', dict(arm=arm, card='D03', run_index=1, block_id='fixture'))
+                root = Path(d) / f'arm{arm}'
+                meta = dict(arm=arm, card='D03', run_index=1, block_id='fixture',
+                            charter_amendment_commit='a'*40, charter_amendment_sha256='b'*64)
+                write_json(root / 'arm.json', meta)
+                record_prompt(root, meta)
                 write_json(root / 'out/answer.json', {})
-                with (patch('study.run_arm.agent_env', return_value=dict(os.environ)),
+                with (patch.dict(os.environ, {'EIDOS_STUDY_LIVE_DISPATCH': '1'}),
+                      patch('study.run_arm.agent_env', return_value=dict(os.environ)),
                       patch('study.run_arm.sandbox_command', return_value=command) as sandbox,
                       patch('study.run_arm.subprocess.check_output', side_effect=output),
                       patch('study.toolkit.build_toolkit.build_toolkit')):
@@ -101,6 +114,7 @@ class FinalOutcomes(unittest.TestCase):
                 submitted = sandbox.call_args.args[1]
                 self.assertIn(REPRODUCTION_CONTRACT, ' '.join(submitted[submitted.index('-p') + 1].split()))
                 self.assertEqual(submitted[submitted.index('-p') + 1].count(EXPORT_READINESS_CONTRACT), 1)
+                assert_prompt_delivery(self, root, arm, submitted[submitted.index('-p') + 1])
 
     def test_incident_timeout_and_budget_still_take_precedence(self):
         # Pilot-2 addendum 1 and pilot-3 addendum 2: a provider failure decides a run only when it is the
@@ -132,9 +146,11 @@ class FinalOutcomes(unittest.TestCase):
 class SetupAndInformation(unittest.TestCase):
     def test_mcp_arm_sends_the_shared_checkpoint_contract(self):
         with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            metadata = dict(arm=3, card='N05', run_index=1, block_id='fixture')
+            root = Path(d) / 'arm3'
+            metadata = dict(arm=3, card='N05', run_index=1, block_id='fixture',
+                            charter_amendment_commit='a'*40, charter_amendment_sha256='b'*64)
             write_json(root / 'arm.json', metadata)
+            record_prompt(root, metadata)
             write_json(root / 'lab/config/lab.json', {'api_port': 28767})
             stream = SimpleNamespace(
                 UsageTracker=Mock(),
@@ -143,7 +159,8 @@ class SetupAndInformation(unittest.TestCase):
             client = Mock()
             client.query.return_value = []
             sandbox = Mock(side_effect=lambda _, cmd: ['-f', str(arm3.ROOT / 'study/sandbox/agent.sb'), *cmd])
-            with (patch.object(arm3, 'lane_a', return_value=(lambda _: {}, sandbox, stream)),
+            with (patch.dict(os.environ, {'EIDOS_STUDY_LIVE_DISPATCH': '1'}),
+                  patch.object(arm3, 'lane_a', return_value=(lambda _: {}, sandbox, stream)),
                   patch.object(arm3, 'prepare', return_value=('fixture', {'artifacts': {}, 'charter_id': 'fixture'})),
                   patch.object(arm3.lab, 'start'),
                   patch.object(arm3.lab, 'client', return_value=client),
@@ -153,6 +170,7 @@ class SetupAndInformation(unittest.TestCase):
             submitted = stream.run_stream.call_args.args[1]
             self.assertIn(REPRODUCTION_CONTRACT, ' '.join(submitted[submitted.index('-p') + 1].split()))
             self.assertEqual(submitted[submitted.index('-p') + 1].count(EXPORT_READINESS_CONTRACT), 1)
+            assert_prompt_delivery(self, root, 3, submitted[submitted.index('-p') + 1])
 
     def test_setup_failure_still_reports_preparation_duration(self):
         with tempfile.TemporaryDirectory() as d:
@@ -201,17 +219,20 @@ class SetupAndInformation(unittest.TestCase):
         bridge = SimpleNamespace(pid=42, returncode=0, poll=lambda: 0)
         receipt = dict(base_url='http://127.0.0.1:1/v1', upstream='https://example.invalid/v1')
         with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            (root / 'task').mkdir()
+            root = Path(d) / 'arm4'
+            (root / 'task').mkdir(parents=True)
             (root / 'task/brief.md').write_text('Fixture brief')
-            meta = dict(arm=4, card='D03', run_index=1, block_id='fixture', envelope=dict(wall_s=30))
+            meta = dict(arm=4, card='D03', run_index=1, block_id='fixture', envelope=dict(wall_s=30),
+                        charter_amendment_commit='a'*40, charter_amendment_sha256='b'*64)
             write_json(root / 'arm.json', meta)
+            record_prompt(root, meta)
 
             def export(*args, **kwargs):
                 abstention(root)
                 clock.now = 405.0
 
-            with (patch.object(arm4, 'time', SimpleNamespace(monotonic=lambda: clock.now,
+            with (patch.dict(os.environ, {'EIDOS_STUDY_LIVE_DISPATCH': '1'}),
+                  patch.object(arm4, 'time', SimpleNamespace(monotonic=lambda: clock.now,
                                                            time=lambda: 1000 + clock.now)),
                   patch.object(arm4.lab, 'start', side_effect=start),
                   patch.object(arm4.lab, 'client', return_value=Client()),
@@ -242,6 +263,7 @@ class SetupAndInformation(unittest.TestCase):
             embedded = json.loads(captured['question'].split('Packaged task files:\n', 1)[1])
             self.assertIn(REPRODUCTION_CONTRACT, ' '.join(captured['question'].split()))
             self.assertEqual(captured['question'].count(EXPORT_READINESS_CONTRACT), 1)
+            assert_prompt_delivery(self, root, 4, captured['question'])
             from eidos.investigator.context import pack
 
             context = pack({'investigation': {'id': 'fixture', 'status': 'active',

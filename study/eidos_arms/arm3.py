@@ -69,7 +69,8 @@ def run(run_dir, meta):
             ['/usr/bin/security', 'find-generic-password', '-a', os.environ['USER'],
              '-s', 'minimax_api_key', '-w'], text=True, stderr=subprocess.DEVNULL).strip()
         model = meta.get('model', 'MiniMax-M3.1-Flash').split(':')[-1]
-        command = ['claude', '--bare', '-p', prompt(3, run_dir), '--model', model,
+        initial_prompt = prompt(3, run_dir)
+        command = ['claude', '--bare', '-p', initial_prompt, '--model', model,
                    '--permission-mode', 'bypassPermissions', '--output-format', 'stream-json', '--verbose',
                    '--include-partial-messages', '--mcp-config', str(run_dir / 'mcp.json'), '--strict-mcp-config']
         sandbox = sandbox_command(run_dir, command)
@@ -81,6 +82,8 @@ def run(run_dir, meta):
         profile_path = run_dir / '.agent.sb'
         profile_path.write_text(profile)
         sandbox[sandbox.index('-f') + 1] = str(profile_path)
+        from study.common import record_live_delivery
+        record_live_delivery(run_dir, meta, initial_prompt, 'claude-prompt')
         from .stream_usage import extend_tracker
         original_tracker = stream_module.UsageTracker
         stream_module.UsageTracker = extend_tracker(original_tracker)

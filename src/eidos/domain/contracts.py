@@ -71,7 +71,7 @@ def validate_shape_schema(schema: Any, path: str, depth: int = 0) -> list[str]:
     """Validate the bounded subset used by operator-declared conclusion scope contracts."""
     if not isinstance(schema, dict) or not schema or depth > 8:
         return [f"{path}: expected a nonempty schema object within depth 8"]
-    supported = {"type", "required", "properties", "items", "enum", "anyOf", "minLength", "pattern"}
+    supported = {"type", "required", "properties", "items", "enum", "anyOf", "minLength", "minItems", "pattern"}
     problems = [f"{path}.{key}: unsupported keyword" for key in schema if key not in supported]
     kind = schema.get("type")
     if "type" in schema and (not isinstance(kind, str) or kind not in _TYPES):
@@ -103,6 +103,8 @@ def validate_shape_schema(schema: Any, path: str, depth: int = 0) -> list[str]:
     if "minLength" in schema and (kind != "string" or type(schema["minLength"]) is not int
             or schema["minLength"] < 0):
         problems.append(f"{path}.minLength: expected a nonnegative integer for a string")
+    if "minItems" in schema and (kind != "array" or type(schema["minItems"]) is not int or schema["minItems"] < 0):
+        problems.append(f"{path}.minItems: expected a nonnegative integer for an array")
     if "pattern" in schema and (kind != "string" or schema["pattern"] != r"\S"):
         problems.append(f"{path}.pattern: only the non-whitespace string pattern is supported")
     return problems

@@ -227,11 +227,22 @@ class ArtifactReferences(unittest.TestCase):
 
 class ScientificAnswer(unittest.TestCase):
     def test_model_scientific_fields_survive_receipt_and_artifact_conversion(self):
-        from .arm4 import export_answer, validate
+        from hashlib import sha256
+        from .arm4 import export_answer, export_model_checkpoint, validate
+        from .common import PROJECT_COMMAND_BUNDLE_SHA256, PROJECT_COMMAND_REF
+
+        model = b'fixture'
+        model_digest = sha256(model).hexdigest()
+        receipt = json.dumps({'model_exports': [dict(slot='model', basename='Learned.pth',
+                                                    digest=model_digest, size=len(model))]}).encode()
         job = {'id': 'job_train', 'lock': {'inputs': {}, 'environment': {'installed': {'torch': '2.15.0'}},
+               'component': {'ref': PROJECT_COMMAND_REF, 'bundle': {'digest': PROJECT_COMMAND_BUNDLE_SHA256}},
                'config': {'argv': ['python', 'project.py', 'train', '--steps', '17'], 'seed': 41}},
                'outputs': [{'slot': 'source_snapshot', 'artifact_id': 'source'},
-                           {'slot': 'model', 'role': 'model-export', 'artifact_id': 'model'},
+                           {'slot': 'model', 'role': 'model-export', 'artifact_id': 'model',
+                            'digest': model_digest, 'size': len(model)},
+                           {'slot': 'receipt', 'artifact_id': 'receipt',
+                            'digest': sha256(receipt).hexdigest(), 'size': len(receipt)},
                            {'slot': 'validation_predictions', 'artifact_id': 'pred'}]}
 
         class Client:
@@ -242,7 +253,7 @@ class ScientificAnswer(unittest.TestCase):
                 if aid == 'source':
                     Path(target).write_text(json.dumps({'files': {'project.py': 'print("fixture")\n'}}))
                 else:
-                    Path(target).write_bytes(b'fixture')
+                    Path(target).write_bytes(receipt if aid == 'receipt' else model)
 
         metadata = {'status': 'improvement_claimed', 'claim_type': 'recipe_improvement',
             'claim': 'Investigator authored claim, kept verbatim.', 'scope': 'Visible-validation scope only',
@@ -254,13 +265,20 @@ class ScientificAnswer(unittest.TestCase):
             root = Path(d)
             (root / 'task').mkdir()
             (root / 'task/requirements.lock').write_text('torch==2.7.0\n')
-            export_answer(Client(), 'p', 'inv', root, {'card': 'synthetic'}, 'job_train', 'lock',
+            basename = export_answer(Client(), 'p', 'inv', root, {'card': 'synthetic'}, 'job_train', 'lock',
                           'verbatim conclusion', [], {'input': 3, 'cache_read': 7, 'cache_write': 0, 'output': 2},
                           [{'calls': 1}], answer_metadata=metadata)
             path = root / 'out/answer.json'
             self.assertTrue(validate(path))
             answer = json.loads(path.read_text())
             self.assertEqual(answer['status'], 'improvement_claimed')
+            self.assertEqual(basename, 'Learned.pth')
+            self.assertEqual(answer['candidate']['model_path'], 'candidate/Learned.pth')
+            other = root / 'collision/candidate'
+            other.mkdir(parents=True)
+            (other / 'LEARNED.pth').write_bytes(b'case-variant')
+            with self.assertRaisesRegex(ValueError, 'basename collides'):
+                export_model_checkpoint(Client(), 'p', job, other)
             self.assertEqual(answer['claim'], metadata['claim'])
             self.assertEqual(answer['claim_type'], 'recipe_improvement')
             self.assertEqual(answer['measurements'][0]['evidence_receipt'], 'evidence/job_score.json')

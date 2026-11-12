@@ -226,3 +226,124 @@ def test_native_conclude_only_uses_existing_retry_for_scope_error(initial_read_t
     assert len(seen) == out.usage["calls"] == 2
     assert "control.scope.result.next_test: required" in str(seen[-1])
     assert "next_tset" in str(out.raw_response)
+
+
+@pytest.mark.parametrize("mode", ["repair", "json", "tool"])
+@pytest.mark.parametrize("bad", [None, [], 0, "", "{}", {"bad": True}])
+def test_supplied_scope_is_validated_as_authored_in_every_mode(mode, bad):
+    schema = {"type": "object", "required": ["next_test"]}
+    seen = []
+    bad_decision = {**CONCLUSION, "control": {**CONCLUSION["control"], "scope": bad}}
+    fixed_decision = {**CONCLUSION, "control": {**CONCLUSION["control"], "scope": {"next_test": "visible"}}}
+
+    def model(messages, info):
+        seen.append((messages, info.function_tools))
+        value = bad_decision if len(seen) == 1 else fixed_decision
+        if mode != "tool":
+            return synthetic(value)
+        control = dict(value["control"])
+        control["scope_json"] = json.dumps(control.pop("scope"))
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {**value, "control": control})])
+
+    rt = PydanticAIRuntime({"model": "function:fixture", "_model_object": FunctionModel(model), "output_mode": mode})
+    req = DecisionRequest(turn_id="t", slot=0, context="Conclude only.", turn_so_far=[], limits={"max_calls": 0},
+                          read_tools={"get_job": lambda _: pytest.fail("correction executed a read")},
+                          conclude_only=True, conclusion_scope_schema=schema)
+    out = rt.decide(req)
+    assert out.proposal["control"]["scope"] == {"next_test": "visible"} and out.runtime_outcome is None
+    assert len(seen) == out.usage["calls"] == 2
+    assert "conclusion scope does not match" in str(seen[1][0])
+    assert not seen[1][1]
+
+
+@pytest.mark.parametrize("mode", ["repair", "json", "tool"])
+@pytest.mark.parametrize("bad_control", [{"action": "wait_for_jobs"},
+    {"action": "conclude", "claim_json": '{"disposition":"candidate"}'}])
+def test_early_finalization_rejects_control_and_unlocked_positive_claim(mode, bad_control):
+    seen = []
+
+    def model(messages, info):
+        seen.append((messages, info.function_tools))
+        value = {**CONCLUSION, "control": bad_control} if len(seen) == 1 else CONCLUSION
+        if mode == "tool":
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, value)])
+        return synthetic(value)
+
+    rt = PydanticAIRuntime({"model": "function:fixture", "_model_object": FunctionModel(model), "output_mode": mode})
+    req = DecisionRequest(turn_id="t", slot=0, context="Conclude only.", turn_so_far=[], limits={"max_calls": 0},
+                          read_tools={"get_job": lambda _: pytest.fail("correction executed a read")},
+                          conclude_only=True, finalization_has_eligible_lock=False)
+    out = rt.decide(req)
+    assert out.proposal["control"]["action"] == "stop" and out.usage["calls"] == 2
+    assert not seen[1][1]
+    error = "No eligible locked candidate" if "claim_json" in bad_control else "No further reads are available"
+    assert error in str(seen[1][0])
+
+
+def test_native_finalization_does_not_send_scope_repair_that_cannot_fit():
+    seen = []
+
+    def model(messages, info):
+        seen.append(messages)
+        control = {**CONCLUSION["control"], "scope_json": "{}"}
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {**CONCLUSION, "control": control})],
+                             usage=RequestUsage(input_tokens=61_000, output_tokens=100))
+
+    rt = PydanticAIRuntime({"model": "function:fixture", "_model_object": FunctionModel(model), "output_mode": "tool",
+                            "max_tokens_per_decision": 70_000, "max_output_tokens": 4_096})
+    req = DecisionRequest(turn_id="t", slot=0, context="fixture" * 1_000, turn_so_far=[], limits={"max_calls": 0},
+                          conclude_only=True, conclusion_scope_schema={"type": "object", "required": ["next_test"]})
+    out = rt.decide(req)
+    assert len(seen) == out.usage["calls"] == 1
+    assert out.runtime_outcome == "structured-output-invalid" and out.proposal == {}
+    assert "decision token envelope" in out.usage["limit_reached"]
+    assert out.usage["structured_output"]["last_error_code"] == "conclusion-scope-contract"
+
+
+@pytest.mark.parametrize("offer_initial_read_tools", [True, False])
+def test_native_mixed_read_and_conclusion_executes_neither_and_gets_decision_only_feedback(offer_initial_read_tools):
+    seen = []
+
+    def model(messages, info):
+        seen.append((messages, info.function_tools))
+        parts = [ToolCallPart(info.output_tools[0].name, CONCLUSION)]
+        if len(seen) == 1:
+            parts.append(ToolCallPart("get_job", {"job_id": "fixture"}))
+        return ModelResponse(parts=parts)
+
+    rt = PydanticAIRuntime({"model": "function:fixture", "_model_object": FunctionModel(model), "output_mode": "tool"})
+    req = DecisionRequest(turn_id="t", slot=0, context="Conclude only.", turn_so_far=[], limits={"max_calls": 0},
+                          conclude_only=True,
+                          read_tools={"get_job": lambda _: pytest.fail("mixed read must never execute")}
+                          if offer_initial_read_tools else {})
+    out = rt.decide(req)
+    assert out.runtime_outcome is None and out.proposal["control"]["action"] == "stop"
+    assert len(seen) == out.usage["calls"] == 2
+    assert not seen[1][1] and "Submit one conclusion without read calls" in str(seen[1][0])
+
+
+@pytest.mark.parametrize("mode", ["repair", "json", "tool"])
+def test_prior_shape_correction_does_not_grant_another_scope_repair(mode):
+    seen = []
+
+    def model(messages, info):
+        seen.append(messages)
+        if mode != "tool":
+            if len(seen) == 1:
+                return ModelResponse(parts=[TextPart("synthetic malformed reply")])
+            return synthetic({**CONCLUSION, "control": {**CONCLUSION["control"], "scope": MALFORMED_SCOPE}})
+        args = {"calls": []} if len(seen) == 1 else {
+            **CONCLUSION, "control": {**CONCLUSION["control"], "scope_json": json.dumps(MALFORMED_SCOPE)},
+        }
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args)])
+
+    rt = PydanticAIRuntime({"model": "function:fixture", "_model_object": FunctionModel(model), "output_mode": mode})
+    req = DecisionRequest(turn_id="t", slot=0, context="Conclude only.", turn_so_far=[], limits={"max_calls": 0},
+                          conclude_only=True, conclusion_scope_schema=SCOPE_SCHEMA,
+                          read_tools={"get_job": lambda _: pytest.fail("repair executed a read")})
+    out = rt.decide(req)
+    assert len(seen) == out.usage["calls"] == 2
+    assert out.runtime_outcome == "structured-output-invalid" and out.proposal == {}
+    report = out.usage["structured_output"]
+    assert report["last_error_code"] == "conclusion-scope-contract"
+    assert len(report["errors"]) == 2

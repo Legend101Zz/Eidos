@@ -18,7 +18,8 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from study.common import DEVELOPMENT, ENVELOPE, MODEL, ROOT, STUDY, read_json, research_python, write_json
+from study.common import (DEVELOPMENT, ENVELOPE, MODEL, ROOT, STUDY, read_json, refuse_live_prompt_overrides,
+                          research_python, write_json)
 from study.eidos_arms import lab
 from study.evals.policy import POLICY
 from study.evals.provenance import EVAL_ROOT, controller_record, digest, disk_guard, verify_build
@@ -356,6 +357,8 @@ def run_eval(
         raise ValueError("cards must be distinct development card IDs")
     if tuple(arms) not in {(4,), (2, 4)} or seed_index not in (1, 2, 3):
         raise ValueError("Arms must be 4 or 2,4 and seed-index must be 1, 2 or 3")
+    if not stub:
+        refuse_live_prompt_overrides(os.environ)
     disk_guard()
     research_python()
     controller = controller_record(ROOT, live=not stub)
@@ -423,7 +426,8 @@ def run_eval(
                 "provider_audit_identifiers_sha256": audit_config_sha,
             },
         )
-    os.environ.pop("EIDOS_STUDY_SMOKE_PROMPT", None)
+    if stub:
+        os.environ.pop("EIDOS_STUDY_SMOKE_PROMPT", None)
     for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
         os.environ[name] = "1"
     charter = "docs/experiments/pilot-3/CHARTER.md"

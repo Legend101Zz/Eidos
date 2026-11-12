@@ -2,39 +2,33 @@
 
 [![CI](https://github.com/Legend101Zz/Eidos/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Legend101Zz/Eidos/actions/workflows/ci.yml) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE) ![Platforms: Linux | macOS](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS-lightgrey.svg) ![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)
 
-Over the past two years, LLMs have gone from autocompleting code to doing real machine-learning work. Wrapped in a harness, the loop of tools, memory, feedback and limits around the model, a coding agent such as Claude Code or Codex can read a training script, form a hypothesis, change the code, launch a run and read the result, for hours at a time. Researchers have started to measure how far this goes:
+Eidos is a local research harness for investigating machine-learning models. You bring a project, a question and a budget. An investigator can inspect evidence, propose experiments, run jobs and report what happened; you can also drive the lab yourself through the CLI or an MCP client.
 
-- [AIDE](https://arxiv.org/abs/2502.13138) treats ML engineering as a search over code. It explores a tree of candidate programs and is a strong baseline on practical ML tasks.
-- [MLGym](https://arxiv.org/abs/2502.14499) gives research agents open-ended AI research tasks in a gym-style environment.
-- [RE-Bench](https://arxiv.org/abs/2411.15114) put frontier agents next to human experts on ML research-engineering tasks. The agents scored higher on short time budgets; the experts pulled ahead when both had more time.
-- The [LLM speedrunning benchmark](https://arxiv.org/abs/2506.22419) asked agents to reproduce known speedups of NanoGPT training, and found that they struggled even with detailed hints.
-- [AIRS-Bench](https://arxiv.org/abs/2602.06855) collects diverse AI research tasks and prepares data separately for the agent and for the evaluator.
+The lab keeps a ledger of commands, artifacts, budgets and observed results. For a scientific claim, it can bind a prospectively defined charter to a frozen evidence plan and a separately qualified assessor. Those controls help make the work reviewable; they do not make a model's reasoning correct or guarantee an improvement. A useful result can be a negative or inconclusive one.
 
-Two lessons stand out. First, the harness matters: the same model can behave very differently depending on the loop around it. Second, today's harnesses are built to push a score up. Nothing in them stops an agent from tuning against its own evaluation until something improves, grading its own work, losing track of which results it has already seen, or reporting one lucky seed as a finding. Human researchers have old habits against exactly these failures: decide what counts as success before you look, let someone else check, keep a lab notebook, and report the nulls.
+A typical journey is:
 
-That gap is where Eidos started. **Eidos is a research harness that builds those habits into the loop.**
-- You bring your own PyTorch project, a question about your model and a budget.
-- An LLM, the *investigator*, works on it on your machine, one bounded turn at a time. It diagnoses failures, writes new research components, runs trials and checkpoint branches, and exports models.
-- Success rules are committed before it starts exploring. A claim counts only when it comes from an evidence plan frozen in advance and a separate, qualified assessor agrees.
-- Every command, cost and look at a result is written to a ledger.
-- At the end you get the strongest answer the evidence supports, a model you can load if one really improved, and a report that keeps the failures and the limitations.
+1. Install the lab and check its local services with `lab doctor`.
+2. Register your project and its Python environment, then define the question and success rules.
+3. Start an investigation or connect an MCP client. Inspect the jobs, evidence and costs as work proceeds.
+4. Review the report, limitations and any independently assessed result before using an exported model.
 
-Whether this discipline actually makes an LLM a better researcher is an open question, and Eidos was built to answer it. It is the instrument for a study, written up as a paper in preparation, that compares the same LLM with and without it ([below](#the-research-behind-it-paper-in-preparation)).
+Eidos is an alpha research tool, not a hosted service. Local operation requires PostgreSQL and Temporal; using a hosted model also requires a provider account and credentials. Its sandbox guarantees differ by platform. See [Isolation](#isolation-model) and [Status and evidence](#status-and-evidence) before using it for sensitive work.
 
-**Current release: v1.1.0** (package version `1.1.0`; the tag `eidos-v1.1.0` follows the owner's review). It adds the remaining harness features: the last recovery cases of the failure table, separate-identity sealed evaluation on Linux, provider keys in the OS secret store, a credential broker for component LLM calls, structured-output repair for local models, and optional PyGlove/Composer adapters with a CheckList-style behaviour suite ([release notes](docs/release/RELEASE_NOTES_v1.1.0.md)). Previous: [v1.0.1](docs/release/RELEASE_NOTES_v1.0.1.md). Machine sleep and OS restart recovery are not yet verified on hardware; see [Status](#status-and-evidence).
+The repository's package version is `1.1.0`; see the [release notes](docs/release/RELEASE_NOTES_v1.1.0.md) and [changelog](CHANGELOG.md) for what is in a particular revision. Research comparing Eidos with coding-agent alternatives is ongoing; development experiments and tests do not establish scientific superiority.
 
-Contents: [How it stays honest](#how-eidos-keeps-the-investigator-honest) · [Research](#the-research-behind-it-paper-in-preparation) · [How it works](#how-it-works) · [Use it today](#what-you-can-do-with-it-today) · [Scope](#supported-scope-v1) · [Status](#status-and-evidence) · [Docs](#documentation-map) · [Contributing](#contributing) · [Licence](#license)
+[How it works](#how-it-works) · [Install and quickstart](#what-you-can-do-with-it-today) · [Supported scope](#supported-scope-v1) · [Documentation](#documentation-map) · [Contributing](#contributing)
 
 ## How Eidos keeps the investigator honest
 
-Each habit of a careful researcher maps to something the harness enforces, rather than something the LLM is asked to remember:
+Eidos provides controls for several research practices. Their guarantees depend on the configured policy, the recorded evidence and the isolation profile:
 
 | Habit of a careful researcher | What Eidos enforces |
 |---|---|
 | Decide what counts as success before looking | A **charter** with the success rules is committed before exploration. Plans cannot override its thresholds; a later change is a new revision that keeps the old rule and records what had been seen |
 | Use a sound method | **Evidence plans** come from **qualified templates**: templates that have shown they detect a planted effect and stay silent on a null case |
 | Let someone else judge | A separate **assessor**, qualified the same way, compares the frozen plan with what actually ran |
-| Keep a lab notebook | Every run, cost, isolation receipt and **exposure** (who saw which result, and when) is in the ledger |
+| Keep a lab notebook | Admitted work, available cost and isolation receipts, and recorded **exposures** (who saw which result, and when) are kept in the ledger; uncertain or unavailable usage remains unknown |
 | Claim only what the evidence supports | Claims carry an assessed outcome and a scope; failures, nulls and inconclusive results are kept |
 
 **A worked example** (the switch-order project in [`examples/switch-order-project`](examples/switch-order-project/)). A small PyTorch model must decide which of two switches fired first. One input, the "recorder", agrees with the label 98% of the time, which is a tempting shortcut. The useful metric is *both-correct*: the model gets an example **and** its order-swapped twin right. In the v1.0.0 real-model run, `claude-sonnet-5-5` worked as the investigator on its own ([`a8-sonnet-3-recheck.json`](docs/release/evidence/a8-sonnet-3-recheck.json)):
@@ -71,7 +65,7 @@ flowchart LR
 
 **Decision rule.** The primary contrast is arm 4 minus arm 2. A practically useful advantage needs at least +10 percentage points in verified success rate, with the lower end of the 95% confidence interval above +10 points. The owner fixed this rule before any comparative result.
 
-**No comparative results exist yet.** The public research release is [`research/public/`](research/public/) (release `research-public-v0.1.0`): the study protocol, 14 development task cards, the answer format and draft analysis code. The plan for running the study, and for testing the harness, is [`docs/experiments/README.md`](docs/experiments/README.md).
+The study has development-pilot evidence; it does not establish that Eidos improves research performance. The public research materials are [`research/public/`](research/public/): the study protocol, 14 development task cards, the answer format and draft analysis code. The plan for running the study, and for testing the harness, is [`docs/experiments/README.md`](docs/experiments/README.md).
 
 ## How it works
 
@@ -183,12 +177,12 @@ Details and limits: [`docs/release/SUPPORTED.md`](docs/release/SUPPORTED.md), [A
 
 ## What you can do with it today
 
-Everything below runs on one machine: a laptop or workstation with Linux or macOS, no cloud account and no cluster. The lab manages its own PostgreSQL and Temporal services.
+The lab runs locally on a Linux or macOS machine and manages PostgreSQL and Temporal. A hosted model requires its own provider account and credentials; a compatible local model can be configured separately.
 
 ### Install
 
 Requirements:
-- Python 3.12 and [`uv`](https://docs.astral.sh/uv/);
+- Python 3.12 (recommended; the server supports 3.11–3.13) and [`uv`](https://docs.astral.sh/uv/);
 - PostgreSQL 14 or later server binaries (for example Homebrew `postgresql@16`, or `postgresql-16` on Ubuntu);
 - network access once, for the pinned, digest-verified Temporal Server download.
 
@@ -202,7 +196,7 @@ uv pip install --no-cache --python ~/eidos-venv/bin/python --find-links dist eid
 export PATH="$HOME/eidos-venv/bin:$PATH"
 ```
 
-From release wheels: download the wheels attached to the GitHub release into `dist/`, then run the last two commands.
+If you already have a compatible set of release wheels, place them in `dist/`, create the virtual environment, install from that directory, and add its `bin` directory to your `PATH`.
 
 ### Quickstart
 
@@ -234,16 +228,16 @@ python3 scripts/qualify/mcp_clients/gen_configs.py --home "$EIDOS_HOME" --lab "$
 Then register the generated snippet in your client: `docs/ops/mcp-clients.md`. Claude Code and Codex CLI were verified on read and write paths (`docs/mac/receipts/a14-*.json`).
 
 **4. Run an investigation.**
-- Set `price_per_mtok` to your provider's current list price. A `model_usd` limit is refused without it, because it could not be enforced. A model provider key reaches only the investigator worker. Pass it on stdin: `printf 'ANTHROPIC_API_KEY=%s\n' "$KEY" | lab start --credentials-stdin` (stop the lab first).
-- A charter with prospective success rules must be committed before exploration: `lab charter commit` (see `lab charter commit --help`).
-- Then start the investigation:
+- Set `EIDOS_MODEL` and `EIDOS_SETTINGS_JSON` for your chosen provider. If you use a `model_usd` limit, include the provider's current `price_per_mtok` in the settings; the lab refuses a dollar limit without it. A model provider key reaches only the investigator worker. Pass it on stdin: `printf 'ANTHROPIC_API_KEY=%s\n' "$KEY" | lab start --credentials-stdin` (stop the lab first).
+- A charter with prospective success rules must be committed before exploration: `lab charter commit` (see `lab charter commit --help`). Put the resulting ID in `CHARTER_ID`.
+- Set `INVESTIGATION_ID` to the ID returned by the start command before running the show and report commands:
 
 ```bash
-lab investigate start demo --question "..." --charter <charter id> --runtime pydantic-ai \
-  --model anthropic:claude-sonnet-5-5 --settings '{"price_per_mtok": {"input": 2.0, "output": 10.0}}' \
-  --limit model_usd=2 --limit model_tokens=600000 --limit turns=12
-lab investigate show demo <investigation id>
-lab report demo --investigation <investigation id> --out-dir report/
+lab investigate start demo --question "..." --charter "$CHARTER_ID" --runtime pydantic-ai \
+  --model "$EIDOS_MODEL" --settings "$EIDOS_SETTINGS_JSON" \
+  --limit model_tokens=600000 --limit turns=12
+lab investigate show demo "$INVESTIGATION_ID"
+lab report demo --investigation "$INVESTIGATION_ID" --out-dir report/
 lab stop
 ```
 

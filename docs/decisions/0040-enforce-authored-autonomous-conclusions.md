@@ -1,0 +1,11 @@
+# ADR 0040 — Enforce authored autonomous conclusions before effects
+
+Status: Accepted for the prospective runtime and study adapter.
+
+The independent review reproduced autonomous finalization replies that passed early runtime parsing but failed durable acceptance after their only logical decision slot. It also found supplied scope values that could be treated as omitted and an export fallback that did not identify its author.
+
+A parsed autonomous proposal must have no effect calls and must conclude or stop, including before the read cap. The native output schema and supported JSON response schema advertise this restriction from the first request. Text-only endpoints rely on runtime validation. A positive disposition without the pinned eligible lock is refused. Contract errors may receive the existing single decision-only correction within the original request, token and wall ceilings. Both native-tool and text modes stop offering reads during this correction. A runaway that forces a decision-only continuation records that the model must work from the evidence already available. The lab remains authoritative and applies its own checks before effects. The runtime retains actual replies and structured refusal information without authoring a replacement conclusion.
+
+With an operator contract, the validator checks a supplied scope as authored, including a non-object or null. Omitted scope and legacy investigations without a contract retain their previous behavior. The study contract also requires a genuine abstention to include nonblank reason and next test and a nonempty list of obligations. A terminal scope-contract refusal can be attributed from its durable record and classified as invalid output; provider and wall precedence are preserved. If the adapter generates abstention metadata because authorship is absent or the authored boolean conflicts with the exported status, the export identifies adapter authorship and a private receipt preserves the authored value. Malformed matching metadata is not silently replaced.
+
+The prospective synthetic tests exercise the correction, no-effect refusal, malformed actual values and provider bounds. The study contract is partial shape validation. It does not establish the quality of a conclusion or any scientific verification.

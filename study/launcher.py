@@ -22,10 +22,13 @@ from study.common import (
     FAMILIES,
     IMPROVEMENT_CARDS,
     MODEL,
+    PROMPT_OVERRIDES,
     ROOT,
     STUDY,
     dev_command,
     read_json,
+    record_prompt,
+    refuse_live_prompt_overrides,
     research_python,
     write_json,
 )
@@ -115,6 +118,7 @@ def prepare(row, run_dir):
             charter_amendment_path=os.environ.get("EIDOS_PILOT_CHARTER_PATH", "docs/experiments/pilot-1/CHARTER.md"),
         ),
     )
+    record_prompt(run_dir, read_json(run_dir / "arm.json"))
 
 
 def outer_deadline(run_dir, arm, deadline, *, stub=False):
@@ -128,6 +132,8 @@ def outer_deadline(run_dir, arm, deadline, *, stub=False):
 
 
 def run_block(rows, runs_root, stub=False, replace_incident=False, *, eval_audit_config=None):
+    if not stub:
+        refuse_live_prompt_overrides(os.environ)
     block_id = rows[0]["block_id"]
     block_dir = Path(runs_root).resolve() / block_id
     previous = None
@@ -158,6 +164,10 @@ def run_block(rows, runs_root, stub=False, replace_incident=False, *, eval_audit
     worker_env = dict(os.environ)
     worker_env.pop("EIDOS_PRIVATE_SEAL_ROOT", None)
     worker_env.pop("EIDOS_EVAL_AUDIT_IDENTIFIERS", None)
+    for name in PROMPT_OVERRIDES:
+        worker_env.pop(name, None)
+    if not stub:
+        worker_env["EIDOS_STUDY_LIVE_DISPATCH"] = "1"
     try:
         for row in rows:
             prepare(row, Path(run_dirs[str(row["arm"])]))

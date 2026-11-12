@@ -237,7 +237,7 @@ def test_a_measurement_development_decision_that_finishes_a_pending_round_or_sta
     turn = {"spec": {"exploration": FINALIZE}}
     _check_exploration_phase(turn, _decision("measurement-development", _call(predictions="art_pending")))
     _check_exploration_phase(turn, _decision("measurement-development", {"tool": "record_note", "args": {}}))
-    _check_exploration_phase(turn, _decision("reproduction", _call()))
+    _check_exploration_phase(turn, _decision("reproduction", {"tool": "run_component", "args": {"purpose": "reproduction"}}))
     _check_exploration_phase({"spec": {"exploration": {**FINALIZE, "phase": "explore", "stop": None}}},
                              _decision("measurement-development", _call()))  # still exploring: nothing to refuse
 
@@ -302,7 +302,7 @@ def test_a_decision_in_the_finalize_phase_before_any_lock_is_refused_as_having_n
         _check_exploration_phase({"spec": {"exploration": state}}, _decision("open-search", _call()))
     assert "before any candidate was locked" in caught.value.message and "wall-holdback" in caught.value.message
     assert caught.value.details["candidate"] == "none" and caught.value.details["incumbent"] is None
-    _check_exploration_phase({"spec": {"exploration": state}}, _decision("reproduction", _call()))
+    _check_exploration_phase({"spec": {"exploration": state}}, _decision("reproduction", {"tool": "run_component", "args": {"purpose": "reproduction"}}))
 
 
 def test_the_live_holdback_stops_a_turn_that_began_before_the_first_lock():

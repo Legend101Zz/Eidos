@@ -36,7 +36,7 @@ class Recovery(FakeInvestigator):
     @activity.defn(name='begin_turn')
     async def begin_turn(self, a):
         result = await super().begin_turn(a)
-        if self.mode == 'deadline':
+        if self.mode in ('deadline', 'clipped'):
             if self.deadline is None:
                 self.deadline = time.time() + 10
             result['completion'] = {'deadline_unix': self.deadline, 'conclude_threshold_seconds': 2,
@@ -61,7 +61,12 @@ class Recovery(FakeInvestigator):
         self.decisions.append(a)
         if not self.final:
             if self.mode == 'runtime':
-                return {'accepted': False, 'runtime_outcome': 'deadline-exhausted', 'reason': 'runtime-bounded'}
+                return {'accepted': False, 'runtime_outcome': 'synthetic-unclassified-bound', 'reason': 'runtime-bounded'}
+            if self.mode in ('local', 'clipped') or self.mode == 'single-local' and a['slot'] == 0:
+                return {'accepted': False, 'runtime_outcome': 'deadline-exhausted', 'reason': 'runtime-bounded',
+                        'phase_deadline': self.mode == 'clipped'}
+            if self.mode == 'single-local':
+                return {'accepted': True, 'decision_id': 'corrected', 'n_calls': 0, 'control': {'action': 'conclude'}}
             return {'accepted': False, 'reason': 'invalid', 'decision_id': 'refusal'}
         if self.fail_final:
             return {'accepted': False, 'reason': 'invalid', 'decision_id': 'final-refusal'}
@@ -80,7 +85,7 @@ class Recovery(FakeInvestigator):
         return {'already': False}
 
 
-@pytest.mark.parametrize('mode, expected_turns', [('invalid', 4), ('runtime', 2), ('deadline', 2)])
+@pytest.mark.parametrize('mode, expected_turns', [('invalid', 4), ('runtime', 2), ('deadline', 2), ('local', 4), ('clipped', 2)])
 async def test_coordinator_admits_one_finalization_and_preserves_holdback(env, mode, expected_turns):  # noqa: F811
     fake = Recovery(mode)
     wid = 'inv-r4-' + uuid.uuid4().hex
@@ -93,15 +98,30 @@ async def test_coordinator_admits_one_finalization_and_preserves_holdback(env, m
     assert len(fake.transitions) == 1 and fake.marks == [] and fake.executed == []
     if mode == 'runtime':
         assert fake.completed[0]['stop_reason'] == 'runtime-bounded'
-        assert fake.completed[0]['runtime_outcome'] == 'deadline-exhausted'
+        assert fake.completed[0]['runtime_outcome'] == 'synthetic-unclassified-bound'
         assert len(fake.decisions) == 2  # no fake refusal/retry loop
     if mode == 'invalid':
         assert [r['stop_reason'] for r in fake.completed] == ['invalid-proposals'] * 3 + ['concluded']
-    if mode == 'deadline':
+    if mode == 'local':
+        assert [r['stop_reason'] for r in fake.completed] == ['runtime-local-bound'] * 3 + ['concluded']
+        assert [d['slot'] for d in fake.decisions] == [0, 1] * 3 + [0]
+    if mode in ('deadline', 'clipped'):
         entered_at, trigger = fake.transitions[0]
         assert trigger['trigger'] == 'exploration-boundary'
         assert fake.exploration_boundary <= entered_at < fake.deadline - 5
         assert fake.completed[0]['stop_reason'] == 'deadline'
+
+
+async def test_single_local_bound_can_recover_in_the_existing_slot(env):  # noqa: F811
+    fake = Recovery('single-local')
+    wid = 'inv-r4-local-' + uuid.uuid4().hex
+    async with Worker(env.client, task_queue=WORKFLOW_QUEUE, workflows=ALL_WORKFLOWS), \
+            Worker(env.client, task_queue=INVESTIGATOR_QUEUE, activities=fake.acts()):
+        result = await asyncio.wait_for(env.client.execute_workflow(InvestigationWorkflow.run,
+            {'investigation_id': wid, 'project_id': 'p'}, id=wid, task_queue=WORKFLOW_QUEUE), timeout=20)
+    assert result['reason'] == 'concluded' and result['turn_counter'] == 1
+    assert [d['slot'] for d in fake.decisions] == [0, 1]
+    assert fake.transitions == [] and 'runtime_outcome' not in fake.completed[0]
 
 
 async def test_failed_finalization_is_not_retried_and_has_structured_input_needed(env):  # noqa: F811

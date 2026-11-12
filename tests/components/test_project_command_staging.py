@@ -64,3 +64,23 @@ def test_failure_message_names_what_the_work_dir_held(tmp_path):
     assert res.manifest.status == "failed"
     msg = res.manifest.error["message"]
     assert "missing inputs" in msg and "train.npz" in msg  # the job error the investigator sees says why
+
+
+def test_shared_producer_binds_original_checkpoint_name_to_staged_bytes(tmp_path):
+    import hashlib
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "project.py").write_text(
+        "import sys\nfrom pathlib import Path\n"
+        "Path(sys.argv[1], 'Learned-Model.pth').write_bytes(b'fixture-checkpoint')\n"
+    )
+    component = "eidos.project.command@1.0.8"
+    result = run_component(tmp_path, component, "project_command:run", cwd=project, inputs={},
+                           config={"argv": ["python", "project.py", "{out}"]})
+    assert result.manifest.status == "succeeded", result.manifest.error
+    receipt = json.loads(result.text("receipt"))
+    expected = hashlib.sha256(b"fixture-checkpoint").hexdigest()
+    assert receipt["model_exports"] == [
+        {"slot": "learned-model", "basename": "Learned-Model.pth", "digest": expected, "size": 18}
+    ]

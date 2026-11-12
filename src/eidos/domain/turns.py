@@ -55,8 +55,10 @@ REQUIRED_ARGS = {
 CONTROL_TOOLS = ("wait_for_jobs", "request_input", "conclude", "stop")
 READ_TOOLS = ("inspect_evidence", "search_components", "describe_component", "get_job", "read_artifact")
 STOP_REASONS = ("calls-exhausted", "invalid-proposals", "waiting", "input-requested", "concluded", "budget-exhausted",
-                "deadline", "cancelled", "error", "stale-revision", "runtime-bounded")
+                "deadline", "cancelled", "error", "stale-revision", "runtime-bounded", "runtime-local-bound")
 CONCLUDING_ACTIONS = ("conclude", "stop")
+LOCAL_DECISION_BOUNDS = frozenset({"deadline-exhausted", "request-budget-exhausted",
+                                   "structured-output-invalid", "reasoning-runaway"})
 
 
 # ADR 0020: the wall reserved for the conclusion, unless the investigation configures its own threshold.
@@ -141,12 +143,12 @@ def check_payload(obj: Any, *, limit: int = WORKFLOW_PAYLOAD_LIMIT, what: str = 
 
 def validate_conclusion_scope(control: dict[str, Any], schema: dict[str, Any] | None) -> None:
     """Check the operator's shape contract when a conclusion supplies structured scope."""
-    if schema is None or control.get("action") not in CONCLUDING_ACTIONS or "scope" not in control:
+    if schema is None or control.get("action") not in CONCLUDING_ACTIONS or not ({"scope", "scope_text"} & control.keys()):
         return
-    problems = validate_config(control["scope"], schema, "control.scope")
+    problems = validate_config(control.get("scope", control.get("scope_text")), schema, "control.scope")
     if problems:
         raise Invalid("conclusion scope does not match the operator contract: " + "; ".join(problems),
-                      details={"problems": problems})
+                      details={"problems": problems, "cause": "conclusion-scope-contract"})
 
 
 def validate_decision(proposal: dict[str, Any], *, max_calls: int) -> dict[str, Any]:

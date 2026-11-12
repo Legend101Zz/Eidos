@@ -4,6 +4,11 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.4.0
 
+- [ADR 0041](docs/decisions/0041-study-checkpoint-and-prompt-provenance.md) pins the shared study producer, preserves trusted checkpoint basenames, and records exact live prompt delivery hashes.
+
+- [ADR 0040](docs/decisions/0040-enforce-authored-autonomous-conclusions.md) checks all autonomous proposals before they leave the runtime, preserves the bounded authored correction, and attributes study abstention fallbacks.
+- [ADR 0039](docs/decisions/0039-recover-local-bounds-within-phase.md) distinguishes local decision bounds from the exploration boundary and uses existing slots and retry limits without skipping ordinary finalization.
+
 - [ADR 0038](docs/decisions/0038-study-visible-export-readiness.md) asks all four study arms to check fresh-process inference on visible validation before locking the exact candidate.
 
 - [ADR 0037](docs/decisions/0037-repair-autonomous-conclusion-scope.md) checks the optional operator scope contract during autonomous finalization so an authored correction can use the existing bounded decision-only repair.

@@ -221,8 +221,51 @@ async def test_autonomous_scope_repair_uses_one_real_coordinator_slot(env, lab, 
             assert turn["decisions"] == []
             [bounded] = run.events("decision.runtime_bounded")
             assert bounded["body"]["runtime_outcome"] == "structured-output-invalid"
+            assert bounded["body"]["terminal_cause"] == "conclusion-scope-contract"
+            assert view["body"]["controller_abstention"]["failure"]["reason"] == "conclusion-scope-contract"
             artifact_id = bounded["body"]["response_artifact_id"]
         artifact = lab.q(lab.admin, "get_artifact", {"artifact_id": artifact_id}, project=run.pid)
         messages = json.loads(Path(lab.store.path_for(artifact["digest"])).read_bytes())
         original = next(part["content"] for part in messages[1]["parts"] if part["part_kind"] == "text")
         assert json.loads(original) == invalid
+
+
+async def test_local_runtime_bound_is_feedback_to_existing_slot_in_real_coordinator(env, lab, provider):  # noqa: F811
+    _, malformed = decision_reply({"rationale": "ignored"}, "synthetic-malformed")
+    malformed["choices"][0]["message"]["content"] = "synthetic non-JSON response"
+    conclude = decision_reply({"rationale": "Synthetic conclusion.", "calls": [],
+                               "control": {"action": "stop", "summary": "Synthetic stop."}}, "synthetic-followup")
+    prov = provider([(200, malformed), conclude], conclude)
+    async with running(env, lab, prov, investigator_options={
+        "settings": {"max_tokens_per_decision": 120_000, "max_requests_per_decision": 1},
+    }) as run:
+        result = await asyncio.wait_for(run.handle.result(), timeout=25)
+        assert result["reason"] == "concluded"
+        assert len(run.view()["turns"]) == 1 and prov.count == 2
+        [bound] = run.events("decision.runtime_bounded")
+        assert bound["body"]["slot"] == 0 and bound["body"]["runtime_outcome"] == "structured-output-invalid"
+        assert bound["body"]["response_artifact_id"]
+        [accepted] = run.events("decision.accepted")
+        assert accepted["body"]["slot"] == 1
+        assert "structured-output-invalid" in str(prov.requests[1]["body"]["messages"])
+        assert "synthetic non-JSON response" not in str(prov.requests[1]["body"]["messages"])
+
+
+@pytest.mark.parametrize("value", [None, [], "{}", 0])
+def test_durable_scope_contract_refuses_present_non_object(scene, study_arm4, value):
+    inv = scene.investigation(conclusion_scope_schema=study_arm4.CONCLUSION_SCOPE_SCHEMA)
+    turn = scene.begin(inv)["turn_id"]
+    refused = accept(scene, turn, {"action": "stop", "summary": "Synthetic fixture", "scope": value})
+    assert refused["reason"] == "invalid" and "control.scope: expected object" in refused["error"]["message"]
+    assert not scene.events(inv, "decision.accepted")
+
+
+@pytest.mark.parametrize("field, value", [("reason", None), ("unresolved", []), ("next_discriminating_test", None)])
+def test_genuine_abstention_requires_nonempty_obligations(scene, study_arm4, field, value):
+    inv = scene.investigation(conclusion_scope_schema=study_arm4.CONCLUSION_SCOPE_SCHEMA)
+    turn = scene.begin(inv)["turn_id"]
+    abstention = {"abstained": True, "reason": "Synthetic reason", "unresolved": ["Synthetic obligation"],
+                  "next_discriminating_test": "Synthetic next test", field: value}
+    refused = accept(scene, turn, {"action": "stop", "scope": {"answer": {"abstention": abstention}}})
+    assert refused["reason"] == "invalid" and field in refused["error"]["message"]
+    assert not scene.events(inv, "decision.accepted")

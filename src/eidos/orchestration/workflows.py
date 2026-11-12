@@ -26,7 +26,7 @@ from temporalio.exceptions import (
     RetryState,
 )
 
-from eidos.domain.turns import WALL_REACHED, turn_boundary
+from eidos.domain.turns import LOCAL_DECISION_BOUNDS, WALL_REACHED, turn_boundary
 from eidos.orchestration.names import ASSESSOR_QUEUE, INVESTIGATOR_QUEUE, WORKFLOW_QUEUE
 
 NON_RETRYABLE = ["PAYLOAD_TOO_LARGE", "FORBIDDEN", "INVALID", "NonRetryable"]
@@ -39,7 +39,7 @@ MODEL = RetryPolicy(initial_interval=timedelta(seconds=2), backoff_coefficient=2
 
 HB = timedelta(seconds=30)  # investigator activities heartbeat every 5 s; a killed worker is noticed in ~30 s
 MAX_INVALID_RETRY_TURNS = 2
-WAIT_REASONS = ("waiting", "input-requested", "stale-revision", "calls-exhausted-waiting", "invalid-proposals", "runtime-bounded")
+WAIT_REASONS = ("waiting", "input-requested", "stale-revision", "calls-exhausted-waiting", "invalid-proposals", "runtime-bounded", "runtime-local-bound")
 MAX_CONSECUTIVE_INVALID = 2
 # ADR 0019: a failed turn (stop reason "error") never leaves the investigation active with nothing scheduled. A
 # retryable failure gets at most MAX_FAILED_TURN_RETRIES automatic retry turns, after a recorded, growing backoff;
@@ -381,15 +381,18 @@ class InvestigationWorkflow:
                 # A turn that ended on refused proposals gets a bounded, immediate retry with a fresh view
                 # (the refusals are in the ledger the next context is built from); after that it surfaces
                 # to the operator instead of idling until the max-idle timer.
-                invalid_turns = invalid_turns + 1 if reason == "invalid-proposals" else 0
+                invalid_turns = invalid_turns + 1 if reason in ("invalid-proposals", "runtime-local-bound") else 0
                 if 0 < invalid_turns <= MAX_INVALID_RETRY_TURNS:
                     self._status = f"retrying after refused proposals ({invalid_turns}/{MAX_INVALID_RETRY_TURNS})"
                     continue
                 needs_input = invalid_turns > MAX_INVALID_RETRY_TURNS
             if workflow.patched("bounded-autonomous-finalization-v1") and (needs_input or reason == "runtime-bounded"):
+                trigger = "refused-proposals" if needs_input else reason
+                if res.get("runtime_outcome") == "exploration-exhausted" and workflow.patched("runtime-phase-boundaries-v1"):
+                    trigger = "exploration-token-holdback"
                 final = await workflow.execute_activity(
                     "enter_finalization", {"investigation_id": inv, "project_id": a["project_id"],
-                                           "turn_counter": counter, "trigger": "refused-proposals" if needs_input else reason,
+                                           "turn_counter": counter, "trigger": trigger,
                                            "runtime_outcome": res.get("runtime_outcome")},
                     task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
                 if final.get("enabled"):
@@ -398,14 +401,15 @@ class InvestigationWorkflow:
                     continue
                 needs_input = True
             if needs_input and workflow.patched("needs-input-visible-v1"):
+                runtime_bound = reason in ("runtime-bounded", "runtime-local-bound")
                 terminal = workflow.patched("refused-turn-controller-abstention-v1")
                 marked = await workflow.execute_activity(
                     "mark_needs_input", {"investigation_id": inv, "project_id": a["project_id"], "turn_counter": counter,
                                          "refused_turns": invalid_turns, **({"terminal": True} if terminal else {}),
-                                         "reason": "runtime exhausted after bounded recovery" if reason == "runtime-bounded"
+                                         "reason": "runtime exhausted after bounded recovery" if runtime_bound
                                                    else "repeated refused proposals after bounded retries",
                                          **({"code": "runtime-bounded", "details": {"runtime_outcome": res.get("runtime_outcome")}}
-                                            if reason == "runtime-bounded" else {})},
+                                            if runtime_bound else {})},
                     task_queue=INVESTIGATOR_QUEUE, start_to_close_timeout=timedelta(seconds=60), retry_policy=SHORT)
                 if (marked or {}).get("controller_abstention"):
                     self._status = "controller abstained"
@@ -542,6 +546,7 @@ class TurnWorkflow:
         failure: dict[str, Any] = {}
         invalid_run = 0
         runtime_outcome = None
+        runtime_record_id = None
         failed_waits = 0  # accepted waits whose calls left nothing outstanding
         # ADR 0020 addendum R10: everything in this turn, every retry included, ends at its boundary. A schedule-to-close
         # timeout covers all attempts of one activity; the check before each slot covers the slots between them.
@@ -556,7 +561,8 @@ class TurnWorkflow:
             await workflow.execute_activity("build_context", base, task_queue=INVESTIGATOR_QUEUE,
                                             start_to_close_timeout=timedelta(seconds=120),
                                             heartbeat_timeout=HB, retry_policy=SHORT, **bounded())
-            for slot in range(int(b.get("max_model_calls", 4))):
+            slots = int(b.get("max_model_calls", 4))
+            for slot in range(slots):
                 if boundary is not None and workflow.now().timestamp() >= boundary:
                     stop = "deadline"
                     break
@@ -565,7 +571,19 @@ class TurnWorkflow:
                                                     heartbeat_timeout=HB, retry_policy=MODEL, **bounded())
                 if d.get("runtime_outcome"):
                     runtime_outcome = d["runtime_outcome"]
+                    runtime_record_id = d.get("runtime_record_id")
                     stop = "runtime-bounded"
+                    if (not b.get("finalization") and runtime_outcome in LOCAL_DECISION_BOUNDS
+                            and workflow.patched("runtime-local-feedback-v1")):
+                        if d.get("phase_deadline"):
+                            stop = "deadline"
+                            break
+                        invalid_run += 1
+                        if invalid_run < MAX_CONSECUTIVE_INVALID and slot + 1 < slots:
+                            runtime_outcome = None
+                            runtime_record_id = None
+                            continue
+                        stop = "runtime-local-bound"
                     break
                 if not d.get("accepted"):
                     # Versioned change: histories recorded before it ended the turn on any rejection.
@@ -639,7 +657,8 @@ class TurnWorkflow:
             cause = exc.cause
             stop = "budget-exhausted" if isinstance(cause, ApplicationError) and cause.type == "BUDGET_EXHAUSTED" else "error"
             if stop == "error" and boundary is not None and (
-                    exc.retry_state == RetryState.TIMEOUT or workflow.now().timestamp() >= boundary):
+                    workflow.now().timestamp() >= boundary or (
+                        exc.retry_state == RetryState.TIMEOUT and not workflow.patched("true-phase-activity-timeout-v1"))):
                 # ADR 0020 addendum R10: the boundary ended this activity (a retry that would cross it counts). That is
                 # not a failed turn: the coordinator starts a fresh one, which sees the wall time then left.
                 stop = "deadline"
@@ -649,7 +668,8 @@ class TurnWorkflow:
             done = await workflow.execute_activity("complete_turn", {**base, "stop_reason": stop, "control": control,
                                                                      "receipts": receipts[-20:],
                                                                      **({"failure": failure} if failure else {}),
-                                                                     **({"runtime_outcome": runtime_outcome} if runtime_outcome else {})},
+                                                                     **({"runtime_outcome": runtime_outcome} if runtime_outcome else {}),
+                                                                     **({"runtime_record_id": runtime_record_id} if runtime_record_id else {})},
                                                    task_queue=INVESTIGATOR_QUEUE,
                                                    start_to_close_timeout=timedelta(seconds=60),
                                                    heartbeat_timeout=HB, retry_policy=SHORT)

@@ -18,7 +18,7 @@ from pathlib import Path
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from study.common import ENVELOPE, MODEL, agent_env, read_json, render_prompt, sandbox_command, write_json
+from study.common import ENVELOPE, MODEL, agent_env, read_json, record_live_delivery, render_prompt, sandbox_command, write_json
 
 TOKEN_KEYS = {
     "input": ("input_tokens", "inputTokens"),
@@ -296,11 +296,12 @@ def run_claude(run_dir, arm, wall_s=None):
         text=True,
         stderr=subprocess.DEVNULL,
     ).strip()
+    initial_prompt = render_prompt(arm, metadata["card"])
     command = [
         "claude",
         "--bare",
         "-p",
-        render_prompt(arm, metadata["card"]),
+        initial_prompt,
         "--model",
         MODEL,
         "--permission-mode",
@@ -310,6 +311,7 @@ def run_claude(run_dir, arm, wall_s=None):
         "--verbose",
         "--include-partial-messages",
     ]
+    record_live_delivery(root, metadata, initial_prompt, "claude-prompt")
     limits = metadata.get("envelope", ENVELOPE)
     record = run_stream(
         root,

@@ -12,7 +12,8 @@ import time
 from pathlib import Path
 
 from . import lab
-from .common import ROOT, classify, digest, envelope, ledger, prepare, prompt, usage, utc, write_json
+from .common import (PROJECT_COMMAND_BUNDLE_SHA256, PROJECT_COMMAND_REF, ROOT, classify, digest,
+                     envelope, ledger, prepare, prompt, usage, utc, write_json)
 
 # The study owns the optional answer shape. The coordinator only understands the generic scope contract.
 _ANSWER_TEXT = {'type': 'string', 'pattern': r'\S'}
@@ -30,6 +31,15 @@ CONCLUSION_SCOPE_SCHEMA = {
                 'unresolved': {'type': 'array', 'items': _ANSWER_TEXT},
                 'next_discriminating_test': _NULLABLE_ANSWER_TEXT,
             },
+            'anyOf': [
+                {'type': 'object', 'properties': {'abstained': {'enum': [False]}}},
+                {'type': 'object', 'properties': {
+                    'abstained': {'enum': [True]},
+                    'reason': _ANSWER_TEXT,
+                    'unresolved': {'type': 'array', 'minItems': 1},
+                    'next_discriminating_test': _ANSWER_TEXT,
+                }},
+            ],
         }},
     }},
 }
@@ -137,6 +147,8 @@ def run(run_dir, meta, *, eval_audit_config=None):
         # ADR 0020: completion state, the conclusion's reserve and the "conclude now" turn, inside the watchdog's envelope.
         investigator['wall_seconds'] = remaining_wall_seconds(deadline_utc)
         investigator['wall_deadline_unix'] = deadline_utc - WATCHDOG_MARGIN_SECONDS
+        from study.common import record_live_delivery
+        record_live_delivery(run_dir, meta, question, 'investigation-question')
         start_request_unix = time.time()
         r = c.command('start_investigation', {
             'question': question, 'charter_id': imported['charter_id'], 'environment': 'default',
@@ -226,8 +238,9 @@ def run(run_dir, meta, *, eval_audit_config=None):
         assessments = [r['body'] for r in records['assessment']]
         agent_claim = {'investigator': claim, 'assessor': assessments}
         export_error = None
+        checkpoint_basename = None
         try:
-            export_answer(c, project, inv, run_dir, meta, selected, reason, claim, assessments, tokens, receipts,
+            checkpoint_basename = export_answer(c, project, inv, run_dir, meta, selected, reason, claim, assessments, tokens, receipts,
                           usage_uncertain=uncertain, answer_metadata=answer_metadata, claim_state=claim_state,
                           task_artifacts=imported['artifacts'])
         except (ValueError, TypeError) as exc:
@@ -247,7 +260,7 @@ def run(run_dir, meta, *, eval_audit_config=None):
                 'started_at': began_at,
                 'model_ids_seen': models, 'agent_claim': agent_claim, 'transcript': 'transcript.jsonl',
                 'project': project, 'investigation_id': inv, 'selected_job': selected,
-                'selection_reason': reason, 'investigation_wall_s': round(time.monotonic() - begin, 3),
+                'selection_reason': reason, 'checkpoint_basename': checkpoint_basename, 'investigation_wall_s': round(time.monotonic() - begin, 3),
                 'provider_endpoint': bridge_receipt['upstream'], 'provider_outer_kill': True,
                 'usage_uncertain': uncertain,
                 'evidence_plan_count': len(records['evidence_plan']),
@@ -309,7 +322,7 @@ def select_job(c, project, shown, records):
 def baseline(c, project, inv, imported, remaining):
     # The investigation is stopped, so this explicitly attributed fallback is project-budgeted.
     wall = max(1, int(remaining - 5))
-    r = c.command('run_component', {'component_ref': 'eidos.project.command@1.0.7',
+    r = c.command('run_component', {'component_ref': PROJECT_COMMAND_REF,
         'inputs': imported['artifacts'], 'environment': 'default', 'purpose': 'reproduction',
         'wall_seconds': wall, 'config': {'argv': ['python', 'project.py', 'train', '--inputs',
         '{work}', '--out', '{out}', '--seed', '{seed}'], 'seed': 11, 'timeout_seconds': wall}},
@@ -459,6 +472,45 @@ def export_sweep_evidence(c, project, inv, out, reference, task_artifacts, autho
     return entry, mapping
 
 
+def export_model_checkpoint(client, project, job, candidate_dir):
+    """Resolve a unique checkpoint name from the pinned producer's bound receipt."""
+    from eidos_wire import sha256_file
+
+    producer = job.get("lock", {}).get("component", {})
+    if producer.get("ref") != PROJECT_COMMAND_REF or (
+            producer.get("bundle") or {}).get("digest") != PROJECT_COMMAND_BUNDLE_SHA256:
+        raise ValueError("selected model job lacks the pinned shared producer")
+    outputs = job.get("outputs", [])
+    models = [output for output in outputs if output.get("role") == "model-export"]
+    receipts = [output for output in outputs if output.get("slot") == "receipt"]
+    if len(models) != 1 or len(receipts) != 1:
+        raise ValueError("selected model job must have exactly one checkpoint and producer receipt")
+    model, receipt = models[0], receipts[0]
+
+    def verified_download(output, target):
+        client.download(project, output["artifact_id"], target)
+        if sha256_file(target) != (output.get("digest"), output.get("size")):
+            raise ValueError("downloaded producer artifact differs from bound digest or size")
+
+    receipt_path = candidate_dir.parent / "model_export_receipt.json"
+    verified_download(receipt, receipt_path)
+    bindings = json.loads(receipt_path.read_bytes()).get("model_exports")
+    if not isinstance(bindings, list) or len(bindings) != 1 or not isinstance(bindings[0], dict):
+        raise ValueError("producer receipt lacks one unambiguous model basename")
+    binding = bindings[0]
+    basename = binding.get("basename")
+    if not isinstance(basename, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}\.(?:pt|pth)", basename) or ".." in basename:
+        raise ValueError("unsafe original model basename in producer receipt")
+    if (binding.get("slot"), binding.get("digest"), binding.get("size")) != (
+            model.get("slot"), model.get("digest"), model.get("size")):
+        raise ValueError("model basename receipt differs from selected artifact")
+    target = candidate_dir / basename
+    if any(entry.name.casefold() == basename.casefold() for entry in candidate_dir.iterdir()):
+        raise ValueError("model basename collides with another candidate entry")
+    verified_download(model, target)
+    return target
+
+
 def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessments, tokens, receipts,
                   usage_uncertain=False, answer_metadata=None, claim_state=None, task_artifacts=None):
     out = run_dir / 'out'
@@ -480,6 +532,7 @@ def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessment
         write_json(out / 'training_receipt.json', job)
         cdir = out / 'candidate'
         cdir.mkdir(exist_ok=True)
+        checkpoint = export_model_checkpoint(c, project, job, cdir)
         source_dir = cdir / 'source'
         source_dir.mkdir(exist_ok=True)
         src = (job['lock']['inputs'].get('source') or {}).get('artifact_id')
@@ -498,9 +551,7 @@ def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessment
                 dest.write_bytes(base64.b64decode(data['base64']))
             else:
                 dest.write_text(data)
-        model = next(o['artifact_id'] for o in job['outputs'] if o.get('role') == 'model-export')
         pred = next(o['artifact_id'] for o in job['outputs'] if o['slot'] == 'validation_predictions')
-        c.download(project, model, cdir / 'model.pt')
         c.download(project, pred, cdir / 'validation_predictions.npz')
         shutil.copyfile(run_dir / 'task/requirements.lock', out / 'task-requirements.lock')
         installed = job['lock']['environment'].get('installed') or {}
@@ -536,14 +587,15 @@ def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessment
         write_json(out / 'reproduction.json', recipe)
         (out / 'reproduce.py').write_text(REPRODUCE)
         candidate = {'code_path': 'candidate/source/project.py', 'code_sha256': digest(source_dir / 'project.py'),
-            'model_path': 'candidate/model.pt', 'model_sha256': digest(cdir / 'model.pt'),
+            'model_path': checkpoint.relative_to(out).as_posix(), 'model_sha256': digest(checkpoint),
             'predictions_path': 'candidate/validation_predictions.npz',
             'predictions_sha256': digest(cdir / 'validation_predictions.npz'),
             'environment_lock': 'requirements.lock', 'environment_lock_sha256': digest(out / 'requirements.lock'),
             'reproduce_command': grader_reproduce_command(recipe['argv']),
             'parent_checkpoint': parent_checkpoint,
             'restore_class': 'checkpoint_continuation' if parent_checkpoint else 'fresh_initialization'}
-    for name, role in [('selection_receipt.json', 'candidate-selection'), ('training_receipt.json', 'training')]:
+    for name, role in [('selection_receipt.json', 'candidate-selection'), ('training_receipt.json', 'training'),
+                       ('model_export_receipt.json', 'checkpoint-provenance')]:
         if (out / name).exists():
             evidence.append({'path': name, 'sha256': digest(out / name), 'role': role,
                 'supports': 'Ledger provenance and conservative candidate selection',
@@ -603,7 +655,18 @@ def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessment
     if status == 'abstained':
         claim_type = 'no_positive_claim'
     abstention = answer_metadata.get('abstention')
-    if not isinstance(abstention, dict) or abstention.get('abstained') != (status == 'abstained'):
+    abstention_deviations = []
+    if 'abstention' not in answer_metadata or (
+            isinstance(abstention, dict) and type(abstention.get('abstained')) is bool
+            and abstention['abstained'] != (status == 'abstained')):
+        write_json(run_dir / 'abstention_attribution.json', {
+            'source': 'study-adapter-fallback',
+            'reason': 'authored value conflicts with exported status' if 'abstention' in answer_metadata
+                      else 'no authored abstention metadata',
+            'authored_abstention': abstention,
+            'export_status': status,
+        })
+        abstention_deviations.append('Abstention metadata authored by the study adapter. See the private attribution receipt.')
         abstention = {
             'abstained': status == 'abstained', 'reason': reason if status == 'abstained' else None,
             'unresolved': ['Independent confirmation on evaluator inputs and fresh training seeds'],
@@ -621,11 +684,12 @@ def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessment
                        'macOS Seatbelt uses the same OS identity; memory limits are best effort',
                        'Eidos 1.1.0 has per-turn deadlines; total wall deadline enforced by stop/cancel watchdog '
                        'and a per-run provider forwarding process that exits at the deadline',
-                       *state_deviations, *answer_metadata.get('deviations', [])],
+                       *state_deviations, *abstention_deviations, *answer_metadata.get('deviations', [])],
         'confidence': answer_metadata.get('confidence')}
     if answer['confidence'] is not None:
         answer['confidence_outcome'] = answer_metadata.get('confidence_outcome')
     write_json(out / 'answer.json', answer)
+    return checkpoint.name if candidate is not None else None
 
 
 def validate(path):

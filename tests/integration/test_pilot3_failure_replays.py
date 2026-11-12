@@ -225,8 +225,8 @@ async def test_recorded_failure_tail_reaches_controller_abstention(env, lab, mon
     scene.rule(inv)
     candidate = scene.job(inv, metrics={"accuracy": .91})
     scene.lock(inv, candidate)
-    # The corrected coordinator exits at the first typed budget bound. Exercise
-    # the later historical replies and accepted effects independently of that fork.
+    # Use recorded input where present, including replies after a local bound.
+    # Post-divergence outputs and the terminal recovery are synthetic.
     historical_slots = (
         [await asyncio.to_thread(replay_slot, slot) for slot in fixture["slots"]]
         if fixture_name == "N03-r2" else []
@@ -312,20 +312,13 @@ async def test_recorded_failure_tail_reaches_controller_abstention(env, lab, mon
             id=f"pilot-replay-{fixture_name}-{uuid.uuid4().hex}", task_queue=WORKFLOW_QUEUE,
         ), timeout=30)
     assert result["status"] == "abstained" and result["reason"] == "controller-abstained"
-    consumed = fixture["slots"][:2] if historical_slots else fixture["slots"]
+    consumed = fixture["slots"]
     assert fake.index == len(consumed)
     assert fake.replies == sum(len(item["replies"]) for item in consumed)
     assert fake.effects == [receipt for item in consumed for receipt in item["recorded_effect_receipts"]]
     assert len(fake.transitions) == 1 and not fake.marks
     transition = fake.transitions[0][1]
-    if fixture_name == "N01-r3":
-        assert transition["trigger"] == "runtime-bounded"
-        assert transition["runtime_outcome"] == "deadline-exhausted"
-    elif historical_slots:
-        assert transition["trigger"] == "runtime-bounded"
-        assert transition["runtime_outcome"] == "request-budget-exhausted"
-    else:
-        assert transition["trigger"] == "refused-proposals"
+    assert transition["trigger"] == "refused-proposals"
     shown = scene.q("get_investigation", {"investigation_id": inv})
     assert shown["status"] == "stopped" and shown["needs_input"] is None and "conclusion" not in shown["body"]
     receipt = shown["finalization_export_receipt"]

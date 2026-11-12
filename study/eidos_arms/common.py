@@ -12,6 +12,9 @@ from pathlib import Path
 from . import lab
 
 ROOT = Path(__file__).resolve().parents[2]
+PROJECT_COMMAND_REF = "eidos.project.command@1.0.8"
+PROJECT_COMMAND_BUNDLE_SHA256 = "f6c7f24bce71ae633970b850834cbb36f208293c1080273427d2d5bf549e29b1"
+
 
 
 def write_json(path, value):
@@ -59,6 +62,30 @@ def envelope(meta):
     return int(e.get('wall_s', 1800)), int(e.get('tokens', e.get('model_tokens', 8_000_000)))
 
 
+def install_shared_project_command(client, project, run_dir):
+    """Install the same controller-owned producer in every study runtime."""
+    from eidos.cli.main import bundle_dir, install_component
+
+    directory = ROOT / "components" / PROJECT_COMMAND_REF
+    bundle = bundle_dir(directory)
+    if hashlib.sha256(bundle).hexdigest() != PROJECT_COMMAND_BUNDLE_SHA256:
+        raise RuntimeError("controller project-command bundle differs from its pin")
+    installed = install_component(client, project, directory, "default", False)
+    if installed.get("component_ref") != PROJECT_COMMAND_REF or "bundle_artifact_id" not in installed:
+        raise RuntimeError("shared project-command validation or publication failed")
+    artifact_id = installed["bundle_artifact_id"]
+    artifact = client.query("get_artifact", {"artifact_id": artifact_id}, project=project)
+    if artifact.get("digest") != PROJECT_COMMAND_BUNDLE_SHA256 or artifact.get("size") != len(bundle):
+        raise RuntimeError("installed project-command artifact differs from controller bytes")
+    binding = client.command("bind_component", {"component_ref": PROJECT_COMMAND_REF, "mode": "add"},
+                             project=project, key=f"bind:{PROJECT_COMMAND_REF}")
+    write_json(run_dir / "shared_project_command.json", {
+        "component_ref": PROJECT_COMMAND_REF, "controller_bundle": str(directory.relative_to(ROOT)),
+        "bundle_sha256": PROJECT_COMMAND_BUNDLE_SHA256, "bundle_size": len(bundle),
+        "bundle_artifact_id": artifact_id, "publication": installed, "binding": binding["result"],
+    })
+
+
 def prepare(c, run_dir, arm):
     """One new project per invocation; immutable task bundle is the only scientific input."""
     import uuid
@@ -80,10 +107,11 @@ def prepare(c, run_dir, arm):
     from .charters import commit
     imported.update(commit(c, project, imported['task_id'], run_dir))
     card = imported['task_id']
+    install_shared_project_command(c, project, run_dir)
     for directory in builtin_component_dirs():
         # <id>@<release>/ is an earlier release kept installable so pinned references resolve; it is published, not bound.
         name, pinned = directory.name.split('@')[0], '@' in directory.name
-        if name in ('eidos.project.command', 'eidos.task.score-classification',
+        if name in ('eidos.task.score-classification',
                     'eidos.search.recipe-sweep', 'eidos.diagnose.baseline-errors') or (
                 (card in ('D03', 'D06', 'N01', 'N04') or card in PRIVATE_CLASSIFICATION) and name == 'eidos.task.paired-classification-report'):
             r = install_component(c, project, directory, 'default', not pinned)
@@ -255,4 +283,6 @@ def classify(shown, receipts, models, timed_out=False, answer_valid=True):
         return ('ok' if answer_valid else 'invalid_output'), None
     if provider_failure:
         return 'incident', 'provider/infrastructure failure: ' + text[:1800]
+    if terminal_cause == 'conclusion-scope-contract':
+        return 'invalid_output', None
     return 'crash', 'investigator ended without a conclusion or requires operator input: ' + text[:1800]

@@ -372,7 +372,8 @@ class InvestigatorActivities:
                 rec = []
             out.append({"slot": d["slot"], "calls": [{"tool": c["tool"], "args": c["args"]} for c in d["body"]["calls"]],
                         "control": d["body"].get("control"), "receipts": rec})
-        return out
+        out.extend(turn.get("runtime_outcomes") or [])
+        return sorted(out, key=lambda item: item["slot"])
 
     @activity.defn(name="decide")
     @_hb
@@ -447,10 +448,13 @@ class InvestigatorActivities:
                 return {"accepted": False, "reason": "budget-exhausted", "n_calls": 0}
             raise
         limits = dict(turn["spec"]["limits"])
-        if turn["spec"].get("completion"):
+        phase_deadline = False
+        if completion := turn["spec"].get("completion"):
             from eidos.domain.turns import turn_boundary
-            limits["deadline_seconds"] = min(float(limits.get("deadline_seconds") or 600),
-                                               max(0.01, turn_boundary(turn["spec"]["completion"]) - time.time()))
+            remaining = turn_boundary(completion) - time.time()
+            configured = turn["spec"].get("configured_decision_seconds")
+            phase_deadline = configured is not None and remaining <= configured
+            limits["deadline_seconds"] = min(float(limits.get("deadline_seconds") or 600), max(0.01, remaining))
         abort = DecisionAbort(decision_deadline(started, float(limits.get("deadline_seconds") or 0)))
         view.pop("audit_held_out_attestation", None)  # internal source provenance is never a runtime input
         projected = view.pop("model_evidence_projected", False)
@@ -470,6 +474,9 @@ class InvestigatorActivities:
                                                           evidence_turn_id=turn["id"] if blocked and not finalization else None,
                                                           blocked=blocked, conclude_only=bool(turn["spec"].get("finalization"))),
                               view=view, abort=abort, conclude_only=bool(turn["spec"].get("finalization")),
+                              finalization_has_eligible_lock=((turn["spec"]["finalization"].get("locked_candidate") or {})
+                                                              .get("status") == "succeeded")
+                              if turn["spec"].get("finalization") else None,
                               conclusion_scope_schema=turn["spec"].get("conclusion_scope_schema"))
 
         def aborted() -> dict:
@@ -524,10 +531,12 @@ class InvestigatorActivities:
             if _abort_reason(abort):  # last check before the durable acceptance boundary
                 return aborted()
             if res.runtime_outcome:
-                return self.wf.command("record_runtime_outcome", {
+                recorded = self.wf.command("record_runtime_outcome", {
                     "turn_id": a["turn_id"], "slot": a["slot"], "runtime_outcome": res.runtime_outcome,
-                    "response_artifact_id": resp["result"]["artifact_id"], "usage": res.usage},
+                    "response_artifact_id": resp["result"]["artifact_id"], "usage": res.usage,
+                    **({"phase_deadline": True} if res.runtime_outcome == "deadline-exhausted" and phase_deadline else {})},
                     project=p, key=f"runtime:{a['turn_id']}:{a['slot']}:{attempt}:{epoch}")["result"]
+                return recorded
             try:
                 r = self.wf.command("accept_decision", {"turn_id": a["turn_id"], "slot": a["slot"],
                                     "proposal": res.proposal, "usage": res.usage, "usage_recorded": True,
@@ -762,7 +771,8 @@ class InvestigatorActivities:
                             "control": a.get("control"), "receipts": a.get("receipts", []),
                             "execution": f"{getattr(activity.info(), 'workflow_run_id', '') or ''}/complete",
                             **({"failure": a["failure"]} if a.get("failure") else {}),
-                            **({"runtime_outcome": a["runtime_outcome"]} if a.get("runtime_outcome") else {})},
+                            **({"runtime_outcome": a["runtime_outcome"]} if a.get("runtime_outcome") else {}),
+                            **({"runtime_record_id": a["runtime_record_id"]} if a.get("runtime_record_id") else {})},
                             project=a["project_id"],
                             # per run (F5): a completion refused for a run that lost the turn is not the owner's receipt
                             key=f"complete:{a['turn_id']}:{getattr(activity.info(), 'workflow_run_id', '') or ''}")

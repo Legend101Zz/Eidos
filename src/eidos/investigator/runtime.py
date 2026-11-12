@@ -83,6 +83,7 @@ class DecisionRequest:
     view: dict[str, Any] | None = None  # structured authorized view (same horizon as context)
     abort: DecisionAbort | None = None  # set by the decide activity: stop, pause, cancellation, deadline
     conclude_only: bool = False  # autonomous recovery turn, from the immutable turn spec
+    finalization_has_eligible_lock: bool | None = None  # unknown for legacy/offline callers
     conclusion_scope_schema: dict[str, Any] | None = None  # operator contract, from the immutable turn spec
 
 

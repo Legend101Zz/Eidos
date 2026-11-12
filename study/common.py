@@ -118,8 +118,57 @@ def sandbox_command(run_dir, command, *, network=True, readonly=(), hidden=(), w
     ]
 
 
+PROMPT_OVERRIDES = ("EIDOS_STUDY_SMOKE_PROMPT", "EIDOS_STUDY_LANE_A_ROOT")
+
+
+def refuse_live_prompt_overrides(environment):
+    if any(name in environment for name in PROMPT_OVERRIDES):
+        raise ValueError("live study dispatch forbids smoke prompt and lane-root overrides")
+
+
+def record_prompt(run_dir, meta, *, delivered=None, surface=None):
+    """Bind the normal render and, at dispatch, the exact initial payload without retaining text."""
+    import hashlib
+
+    arm = meta["arm"]
+    expected = render_prompt(arm, meta["card"])
+    identity = {key: meta[key] for key in ("block_id", "card", "run_index", "arm", "charter_amendment_commit",
+                                          "charter_amendment_sha256")}
+    receipt = dict(**identity, common_template_sha256=hashlib.sha256((STUDY / "prompts/task.md").read_bytes()).hexdigest(),
+                   expected_render_sha256=hashlib.sha256(expected.encode()).hexdigest())
+    directory = run_dir.parent / "prompt-receipts"
+    if run_dir.name != f"arm{arm}" or directory.is_symlink():
+        raise ValueError("unsafe trusted prompt receipt location")
+    directory.mkdir(exist_ok=True)
+    expected_path = directory / f"arm{arm}-expected.json"
+    if delivered is None:
+        target = expected_path
+    else:
+        if expected_path.is_symlink() or read_json(expected_path) != receipt:
+            raise ValueError("prepared expected prompt receipt differs at dispatch")
+        if surface == "claude-prompt" and delivered != expected:
+            raise ValueError("delivered Claude prompt differs from expected live render")
+        if surface == "investigation-question" and not delivered.startswith(expected + "\n\nPackaged task files:\n"):
+            raise ValueError("delivered investigation question differs from expected live render")
+        if surface not in ("claude-prompt", "investigation-question"):
+            raise ValueError("unknown prompt delivery surface")
+        receipt.update(surface=surface, delivered_sha256=hashlib.sha256(delivered.encode()).hexdigest())
+        target = directory / f"arm{arm}-delivered.json"
+    with target.open("x") as stream:
+        json.dump(receipt, stream, sort_keys=True)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def record_live_delivery(run_dir, meta, delivered, surface):
+    if os.environ.get("EIDOS_STUDY_LIVE_DISPATCH") == "1":
+        refuse_live_prompt_overrides(os.environ)
+        record_prompt(run_dir, meta, delivered=delivered, surface=surface)
+
+
 EXPORT_READINESS_CONTRACT = (
-    "Before locking or submitting a candidate, use your assigned time and tools to run its declared "
+    "Before the first lock, every replacement lock, or submission without a lock, use your assigned time and tools to run its declared "
     "infer command in a fresh process on the supplied visible validation inputs. Use the exact "
     "candidate source and checkpoint you intend to submit and write to a new output path. Check "
     "that fitted preprocessing and other required state are serialized and reload correctly, and "

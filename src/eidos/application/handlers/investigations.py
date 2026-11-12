@@ -425,11 +425,14 @@ def enter_finalization(ctx: Ctx, p: dict) -> dict:
     if inv.status != "active":
         return {"enabled": False, "reason": f"investigation is {inv.status}"}
     trigger = str(p.get("trigger") or "runtime-outcome")
-    if trigger == "exploration-boundary":
+    if trigger in ("exploration-boundary", "exploration-token-holdback"):
         wall = inv.body.get("wall")
         completion = turn_rules.completion_state(wall["deadline_unix"], time.time(), wall["conclude_threshold_seconds"]) \
             if wall else None
-        if not (completion or {}).get("conclude_now"):
+        budgets = ctx.tx.budgets(inv_scope(inv.id))
+        has_reserve = all(budget["used"] + budget["reserved"] < budget["limit_amount"]
+                          for key, budget in budgets.items() if key in ("model_tokens", "model_usd", "turns"))
+        if has_reserve and not (completion or {}).get("conclude_now"):
             return _ordinary_finalization(ctx, inv, trigger)
     return _enter_finalization(ctx, inv, trigger, p.get("runtime_outcome"))
 
@@ -553,6 +556,7 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
         "limits": {"max_calls": int(cfg.get("max_calls_per_turn", 6)),
                    "max_model_calls": int(cfg.get("max_model_calls_per_turn", 4)),
                    "deadline_seconds": int(cfg.get("turn_deadline_seconds", 600))},
+        "configured_decision_seconds": int(cfg.get("turn_deadline_seconds", 600)),
         **({"completion": completion} if completion else {}),
         "budgets": budgets,
         "tool_vocabulary": sorted(turn_rules.EFFECT_TOOLS) + list(turn_rules.CONTROL_TOOLS),
@@ -852,11 +856,20 @@ def record_runtime_outcome(ctx: Ctx, p: dict) -> dict:
     """A runtime bound is telemetry/control, never an invalid model proposal (ADR 0026)."""
     turn = _turn(ctx, p["turn_id"], lock=True)
     body = {k: p.get(k) for k in ("turn_id", "slot", "runtime_outcome", "response_artifact_id", "usage")}
+    if p.get("phase_deadline") is True:
+        body["phase_deadline"] = True
+    report = (p.get("usage") or {}).get("structured_output") or {}
+    if (p["runtime_outcome"] == "structured-output-invalid"
+            and report.get("last_error_code") == "conclusion-scope-contract"):
+        body["terminal_cause"] = "conclusion-scope-contract"
     rid = f"{turn['id']}:{p['slot']}:{ctx.command_key}"
-    ctx.tx.put_record("runtime_outcome", rid, ctx.project_id, body, created_by=ctx.principal.id, status="recorded")
+    ctx.tx.put_record("runtime_outcome", rid, ctx.project_id, body, created_by=ctx.principal.id,
+                      status="recorded", parent_id=turn["id"])
     ctx.event("decision.runtime_bounded", turn["id"], body, investigation_id=turn["investigation_id"])
     return {"accepted": False, "reason": "runtime-bounded", "n_calls": 0,
-            "runtime_outcome": p["runtime_outcome"], "response_artifact_id": p.get("response_artifact_id")}
+            "runtime_outcome": p["runtime_outcome"], "response_artifact_id": p.get("response_artifact_id"),
+            **({"runtime_record_id": rid} if body.get("terminal_cause") else {}),
+            **({"phase_deadline": True} if body.get("phase_deadline") else {})}
 
 
 @command("accept_decision", "turn")
@@ -914,7 +927,7 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
                 raise Invalid("no eligible locked candidate: finalization must honestly abstain")
         _check_component_contracts(ctx, decision["calls"])
         _check_conclusion_due(turn, decision)  # first: "nothing to wait for" would suggest running something
-        _check_exploration_phase(turn, decision, live_stop=_live_exploration_stop(ctx, inv, turn))
+        _check_exploration_phase(turn, decision, live_stop=_live_exploration_stop(ctx, inv, turn), ctx=ctx)
         _check_resource_policy(ctx, decision)
         _check_something_to_wait_for(ctx, inv, decision)
     except Invalid as exc:
@@ -985,26 +998,62 @@ def _finishes_pending_round(call: dict, calls: list[dict], pending: set[str], me
     return False
 
 
-def _check_exploration_phase(turn: dict, decision: dict, live_stop: str | None = None) -> None:
-    """ADR 0023: once exploration has stopped (the hold-back is reached, a ceiling or the search limit; recorded in the
-    turn spec at begin_turn, or the hold-back reached since: ``live_stop``, R14 #4), a decision that starts new
-    exploratory compute is refused. Reproducing the incumbent (purpose "reproduction"), confirmation, export and the
-    conclusion remain, and so does scoring a pending challenger (R14 #6). A bounded outcome is left to end the turn."""
+def _job_effect_intent(ctx: Ctx | None, call: dict, calls: list[dict]) -> tuple[str | None, dict, str]:
+    """The purpose and input bindings the command will actually use for a job."""
+    args = call["args"]
+    if call["tool"] == "run_component":
+        return (args.get("purpose", "open-search"), call,
+                "run_component args.purpose" if "purpose" in args else "run_component default")
+    if call["tool"] == "author_component":
+        return "build", call, "component validation command"
+    trial_id = args.get("trial_id")
+    if isinstance(trial_id, dict):
+        ref = turn_rules.parse_ref(trial_id.get(turn_rules.REF_KEY, ""))
+        if ref and ref[1] == "trial_id" and ref[0] < len(calls):
+            plan = calls[ref[0]]
+            if plan["tool"] in ("plan_trial", "plan_branch"):
+                return plan["args"].get("purpose", "open-search"), plan, "same-decision trial plan"
+    elif ctx is not None and isinstance(trial_id, str):
+        trial = ctx.tx.get_record("trial", trial_id)
+        if trial is not None and trial.project_id == ctx.project_id:
+            inputs = {port: binding.get("artifact_id") for port, binding in
+                      (trial.body["lock"].get("inputs") or {}).items()}
+            return trial.body.get("purpose"), {"args": {"inputs": inputs}}, "stored trial plan"
+    return None, call, "unresolved trial plan"
+
+
+def _check_exploration_phase(turn: dict, decision: dict, live_stop: str | None = None, *, ctx: Ctx | None = None) -> None:
+    """Once exploration stops, a decision's headline cannot authorize new challenger effects."""
     state = dict(turn["spec"].get("exploration") or {})
     if live_stop and state.get("phase") in exploration_rules.EXPLORING_PHASES:
         state.update(phase="finalize", stop=live_stop, **({} if state.get("incumbent") else {"candidate": "none"}))
-    control = decision.get("control") or {}
-    if state.get("phase") != "finalize" or control.get("bounded_outcome") \
-            or decision.get("purpose", "open-search") not in exploration_rules.REFUSED_WHEN_FINALIZING:
+    if state.get("phase") != "finalize":
         return
+    from eidos.application.handlers.runs import PURPOSES
+
+    headline = decision.get("purpose", "open-search")
+    challenger = exploration_rules.REFUSED_WHEN_FINALIZING
     pending = set(state.get("pending_outputs") or [])
     memo: dict[int, bool] = {}
-    starts = [i for i, c in enumerate(decision["calls"]) if c["tool"] in turn_rules.JOB_TOOLS
-              and not (pending and _finishes_pending_round(c, decision["calls"], pending, memo))]
-    if starts:
+    calls = decision["calls"]
+    refused: list[dict[str, Any]] = []
+    for i, call in enumerate(calls):
+        if call["tool"] not in turn_rules.JOB_TOOLS:
+            continue
+        purpose, bindings, source = _job_effect_intent(ctx, call, calls)
+        conflicts = headline not in challenger and purpose in challenger
+        needs_pending = headline in challenger or purpose in challenger
+        if purpose not in PURPOSES or conflicts or (needs_pending and not (
+                pending and _finishes_pending_round(bindings, calls, pending, memo))):
+            refused.append({"call": i, "purpose": purpose, "source": source})
+    if refused:
         message, next_action = exploration_rules.stopped_message(state)
+        if headline in exploration_rules.FINALIZE_PURPOSES:
+            next_action += (f" For a direct {headline} run, set run_component args.purpose to {headline} explicitly. "
+                            "A trial launch uses the purpose stored in its plan.")
         raise Invalid(message,
-                      details={"stop": state.get("stop"), "calls": starts, "purpose": decision.get("purpose"),
+                      details={"stop": state.get("stop"), "calls": [item["call"] for item in refused], "purpose": headline,
+                               "effect_purposes": refused,
                                "incumbent": state.get("incumbent"), "allowance": state.get("allowance"),
                                **({"candidate": "none"} if not state.get("incumbent") else {})},
                       next_action=next_action)
@@ -1431,6 +1480,10 @@ def _close_turn(ctx: Ctx, turn: dict, p: dict) -> dict:
     if turn["spec"].get("finalization"):
         inv = ctx.tx.require("investigation", inv_id, lock=True)
         final = ctx.tx.require(FINALIZATION_KIND, inv_id)
+        runtime_record = ctx.tx.get_record("runtime_outcome", p["runtime_record_id"]) if p.get("runtime_record_id") else None
+        scope_refusal = (runtime_record and runtime_record.body.get("turn_id") == turn["id"]
+                         and runtime_record.body.get("terminal_cause") == "conclusion-scope-contract"
+                         and reason == "runtime-bounded" and not late_wall)
         receipt = {"schema": "finalization-export-receipt/1", "investigation_id": inv_id,
                    "turn_id": turn["id"], "locked_candidate": turn["spec"]["finalization"].get("locked_candidate"),
                    **{k: turn["spec"]["finalization"].get(k) for k in (
@@ -1444,7 +1497,8 @@ def _close_turn(ctx: Ctx, turn: dict, p: dict) -> dict:
                    "provenance_limits": turn["spec"]["finalization"]["provenance_limits"],
                    "investigator_concluded": reason == "concluded" and not control_refused,
                    "stop_reason": reason, "failure": failure or ({"kind": "finalization-incomplete",
-                                                                   "reason": turn_rules.WALL_REACHED if late_wall else reason}
+                                                                   "reason": turn_rules.WALL_REACHED if late_wall else
+                                                                   "conclusion-scope-contract" if scope_refusal else reason}
                                                                  if reason != "concluded" else None)}
         abstention = _finish_finalization(ctx, inv, final, receipt, turn_rules.WALL_REACHED if late_wall else reason)
     elif late_wall:

@@ -287,7 +287,9 @@ def get_turn(ctx: Ctx, p: dict) -> dict:
     for d in decisions:  # F2c: an accepted decision whose attempt failed is revoked: never recovered or executed
         if d["accepted"] and ctx.tx.get_record("decision_revocation", d["id"]) is not None:
             d["revoked"] = True
-    return {**_jsonable(turn), "context": ctxrec.body if ctxrec else None, "decisions": decisions}
+    bounds = ctx.tx.list_records(ctx.project_id, "runtime_outcome", parent_id=turn["id"])
+    return {**_jsonable(turn), "context": ctxrec.body if ctxrec else None, "decisions": decisions,
+            "runtime_outcomes": [{"slot": b.body["slot"], "runtime_outcome": b.body["runtime_outcome"]} for b in bounds]}
 
 
 @query("get_claim")

@@ -1,6 +1,7 @@
 """Installed-interpreter entry point used by the controller's two dispatcher hooks."""
 import argparse
 import json
+import os
 import time
 import traceback
 from datetime import datetime
@@ -17,6 +18,9 @@ def main():
     a = p.parse_args()
     if a.eval_audit_config is not None and a.arm != 4:
         p.error("provider audit configuration is restricted to arm 4")
+    if os.environ.get("EIDOS_STUDY_LIVE_DISPATCH") == "1":
+        from study.common import refuse_live_prompt_overrides
+        refuse_live_prompt_overrides(os.environ)
     started, t0 = utc(), time.monotonic()
     a.run_dir.mkdir(parents=True, exist_ok=True)
     meta = json.loads((a.run_dir / 'arm.json').read_text())
