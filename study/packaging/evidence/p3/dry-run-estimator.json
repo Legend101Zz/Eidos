@@ -1,0 +1,33 @@
+{
+  "status": "draft estimator; intervals exploratory with few families",
+  "family_balanced_success_by_arm": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "primary_4_minus_2": 0.0,
+  "primary_95_percentile_interval": [
+    0.0,
+    0.0
+  ],
+  "families": {
+    "breast_cancer": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "friedman1": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "assigned_primary_runs": 8,
+  "missing_results_scored_zero": 0,
+  "unknown_billed_cost_entries": 8,
+  "bootstrap": 2000,
+  "seed": 71027
+}

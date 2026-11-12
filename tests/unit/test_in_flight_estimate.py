@@ -109,7 +109,7 @@ def test_stop_in_flight_with_a_price_reports_the_priced_estimate(mode):
 def test_deadline_in_flight_reports_the_admitted_worst_case_in_the_no_effect_decision(mode):
     provider = Provider()
     rt = runtime(provider, mode, max_output_tokens=512, price_per_mtok=PRICE)
-    abort = DecisionAbort(deadline=time.monotonic() + 0.3)
+    abort = DecisionAbort(deadline=time.monotonic() + par.DURABLE_WRITE_MARGIN_SECONDS + 0.3)
     res, _ = timed(lambda: rt.decide(request(abort)))
     assert not isinstance(res, BaseException), res
     u = res.usage

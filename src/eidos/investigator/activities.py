@@ -15,27 +15,29 @@ import contextvars
 import functools
 import hashlib
 import json
+import random
 import tempfile
 import threading
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
+from datetime import timedelta
 from typing import Any
 
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
+from eidos.application.handlers.finalization_evidence import model_projection, sanitize
+from eidos.batches import ACTIVE_JOB_STATUSES, BatchRunner
 from eidos.client import LabClient, LabError
 from eidos.domain.redaction import redact_value
 from eidos.domain.turns import (
     COMPUTE_TOOLS,
     EFFECT_TOOLS,
-    JOB_TOOLS,
     MAX_CONCURRENT_JOBS_KEY,
     PLAN_TOOLS,
     WORKFLOW_PAYLOAD_LIMIT,
     check_payload,
-    resolve_refs,
 )
 from eidos.investigator.context import POLICY_V1, pack
 from eidos.investigator.runtime import (
@@ -74,8 +76,6 @@ def _heartbeating(every: float = 5.0):
 # TurnWorkflow (a durable timer, then another activity), and how often it looks at them meanwhile.
 BATCH_WAIT_SLICE_SECONDS = 45.0
 BATCH_POLL_SECONDS = 0.5
-TERMINAL_JOB_STATUSES = ("succeeded", "failed", "cancelled", "pruned")
-ACTIVE_JOB_STATUSES = ["admitted", "queued", "running", "reconciling", "cancel-requested"]
 
 
 # ADR 0017: a decision is aborted (its in-flight provider request abandoned) when the investigation stops or pauses,
@@ -86,8 +86,7 @@ DEADLINE_MARGIN_SECONDS = 15.0
 
 
 def _admitted_compute(receipt: dict) -> bool:
-    """Did this receipt admit compute? A refused ``assess_candidate`` is a recorded answer, not an error, and admitted
-    nothing: it neither holds the batch's CPU allowance nor gives a wait something to wait for."""
+    """Did this receipt admit compute? (``BatchRunner.admitted_compute`` with the investigator's tools.)"""
     return bool(receipt["ok"]) and receipt["tool"] in COMPUTE_TOOLS and (receipt.get("result") or {}).get("status") != "refused"
 
 
@@ -145,6 +144,66 @@ def _abort_reason(abort: DecisionAbort) -> str | None:
         abort.trigger("activity-cancelled")
         return "activity-cancelled"
     return abort.reason if abort.reason not in (None, "decision-deadline") else None
+
+
+# ADR 0023: provider resilience refines the one retry owner (Temporal's MODEL retry policy and the coordinator's turn
+# retry); nothing here retries by itself. A transient failure with a provider Retry-After sets the next activity attempt's
+# delay (with jitter), bounded by the exploration time left before the conclusion's reserve; quota exhaustion stops at
+# once (non-retryable ``PROVIDER_QUOTA_EXHAUSTED``) and the coordinator records the provider as unavailable.
+QUOTA_ERROR_TYPE = "PROVIDER_QUOTA_EXHAUSTED"
+RETRY_JITTER_FRACTION = 0.2
+MAX_RETRY_DELAY_SECONDS = 300.0
+
+
+def retry_delay(failure: dict[str, Any], completion: dict[str, Any] | None, *, now: float | None = None,
+                rng: Callable[[], float] = random.random) -> float | None:
+    """The delay before the next attempt of a decision that failed with ``failure``: the provider's Retry-After plus up
+    to ``RETRY_JITTER_FRACTION`` of it as jitter, at most ``MAX_RETRY_DELAY_SECONDS`` and never past the start of the
+    conclusion's reserve (``completion``, ADR 0020); 0 when no time is left there (the turn's schedule-to-close bound
+    then ends it as a deadline). None without a Retry-After: Temporal's own backoff applies."""
+    after = failure.get("retry_after_seconds")
+    if after is None:
+        return None
+    delay = min(float(after) * (1.0 + RETRY_JITTER_FRACTION * rng()), MAX_RETRY_DELAY_SECONDS)
+    if completion:
+        delay = min(delay, max(0.0, retry_boundary(completion) - (time.time() if now is None else now)))
+    return round(delay, 3)
+
+
+def retry_boundary(completion: dict[str, Any]) -> float:
+    """R14 #5: the time a retry may not wait past. For an exploratory turn the start of the reproduction hold-back
+    (``exploration_deadline_unix``, set by begin_turn), else the start of the conclusion's reserve."""
+    reserve = float(completion["deadline_unix"]) - float(completion["conclude_threshold_seconds"])
+    if completion.get("exploration_deadline_unix") is not None:
+        return min(float(completion["exploration_deadline_unix"]), reserve)
+    return reserve
+
+
+def retry_fits(failure: dict[str, Any], completion: dict[str, Any] | None, *, now: float | None = None) -> bool:
+    """R14 #5: whether the provider's requested delay (Retry-After) fits before the retry boundary. When it does not,
+    retrying sooner than asked is pointless and waiting would spend the hold-back: the retry stops."""
+    after = failure.get("retry_after_seconds")
+    if after is None or not completion:
+        return True
+    return float(after) <= retry_boundary(completion) - (time.time() if now is None else now)
+
+
+def model_failure_error(exc: ModelCallFailed, completion: dict[str, Any] | None) -> ApplicationError:
+    """The activity error for a failed decision (ADR 0023): quota exhaustion is non-retryable and typed
+    ``PROVIDER_QUOTA_EXHAUSTED``; a transient failure carries the provider's Retry-After as the next retry's delay, and
+    is not retried when that delay cannot fit before the exploration deadline (R14 #5)."""
+    failure = dict(exc.failure or {})
+    if failure.get("kind") == "quota-exhausted":
+        return ApplicationError(f"provider quota exhausted: {exc}"[:500], failure, type=QUOTA_ERROR_TYPE,
+                                non_retryable=True)
+    if exc.retryable and not retry_fits(failure, completion):
+        failure["retry_stopped"] = "retry-after-exceeds-exploration-time"
+        return ApplicationError(str(exc), failure, type="MODEL_CALL_FAILED", non_retryable=True)
+    delay = retry_delay(failure, completion) if exc.retryable else None
+    if delay is not None:
+        failure["next_retry_delay_seconds"] = delay
+    return ApplicationError(str(exc), failure, type="MODEL_CALL_FAILED", non_retryable=not exc.retryable,
+                            next_retry_delay=timedelta(seconds=delay) if delay else None)
 
 
 def _attempt_identity() -> tuple[int, str]:
@@ -205,34 +264,6 @@ def decision_usd_envelope(est_tokens: float, price: dict, cfg: dict) -> float:
     return ((est_tokens - out_tokens) * in_price + out_tokens * out_price) / 1e6
 
 
-class _UnresolvedRef(Exception):
-    def __init__(self, message: str, details: dict):
-        super().__init__(message)
-        self.details = details
-
-
-class _Batch:
-    """What one execute_decision activity knows about its decision's jobs (ADR 0022)."""
-
-    def __init__(self, max_concurrent: int, slice_ends: float, *, final: bool):
-        self.max_concurrent, self.slice_ends, self.final = max_concurrent, slice_ends, final
-        self.launched: list[dict] = []
-
-
-def _not_run(call: dict, code: str, message: str, **details: Any) -> dict:
-    """The recorded receipt of a call that never ran. It still has its index and command key."""
-    return {"tool": call["tool"], "index": call["index"], "ok": False, "code": code, "skipped": True,
-            "command_key": call["command_key"], "depends_on": call.get("depends_on") or [],
-            "error": {"code": code, "message": message, "details": details}}
-
-
-def _job_error(job: dict) -> dict | None:
-    terminal = job.get("terminal") or {}
-    error = terminal.get("error")
-    return {"category": error.get("category"), "message": str(error.get("message", ""))[:500]} \
-        if isinstance(error, dict) else None
-
-
 class InvestigatorActivities:
     def __init__(self, investigator: LabClient, workflow: LabClient, *, runtime_overrides: dict | None = None,
                  batch_wait_slice: float = BATCH_WAIT_SLICE_SECONDS, batch_poll: float = BATCH_POLL_SECONDS):
@@ -259,11 +290,14 @@ class InvestigatorActivities:
                                 key=f"begin:{a['investigation_id']}:{a['index']}:"
                                     f"{getattr(activity.info(), 'workflow_run_id', '') or ''}")["result"]
         except LabError as exc:
+            if exc.code == "BUDGET_EXHAUSTED" and (exc.error.get("details") or {}).get("dimension") == "turns":
+                return {"started": False, "reason": "turn-budget-exhausted"}
             raise _app_error(exc) from exc
         if not r.get("started"):
             return {"started": False, "reason": r.get("reason")}
         lim = r["spec"]["limits"]
         return {"started": True, "turn_id": r["turn_id"], "max_model_calls": lim["max_model_calls"],
+                "finalization": bool(r["spec"].get("finalization")),
                 "resumed": r.get("resumed", False), "model_timeout": lim.get("deadline_seconds", 300),
                 **({"completion": r["spec"]["completion"]} if r["spec"].get("completion") else {})}
 
@@ -274,16 +308,29 @@ class InvestigatorActivities:
         turn = self.wf.query("get_turn", {"turn_id": a["turn_id"]}, project=p)
         if turn.get("context"):
             return {"context_artifact_id": turn["context"]["context_artifact_id"], "reused": True}
-        view = self.inv.query("investigation_view", {"investigation_id": a["investigation_id"], "horizon": turn["horizon"]},
-                              project=p)
+        view = self.inv.query("finalization_view", {"turn_id": a["turn_id"]}, project=p) \
+            if turn["spec"].get("evidence_allowlist") is not None else self.inv.query(
+                "investigation_view", {"investigation_id": a["investigation_id"], "horizon": turn["horizon"]}, project=p)
         view["budgets"] = turn["spec"].get("budgets")  # immutable snapshot taken at begin_turn
         if turn["spec"].get("completion"):
             view["completion"] = turn["spec"]["completion"]  # likewise (ADR 0020)
-        catalog = self.inv.query("search_components", {"limit": 100, "as_of_horizon": turn["horizon"]}, project=p)["components"]
-        packed = pack(view, catalog, policy=turn["spec"].get("context_policy") or POLICY_V1)
+        if turn["spec"].get("exploration"):
+            view["exploration"] = turn["spec"]["exploration"]
+        if turn["spec"].get("finalization"):
+            view["finalization"] = turn["spec"]["finalization"]  # likewise (ADR 0023)
+        catalog = self.inv.query("search_components", {"limit": 100, "as_of_horizon": turn["horizon"],
+            **({"finalization_turn_id": turn["id"]} if turn["spec"].get("evidence_allowlist") is not None else {})}, project=p)["components"]
+        if turn["spec"].get("evidence_allowlist") is not None:
+            catalog = [c for c in catalog if c["ref"] in turn["spec"]["evidence_allowlist"].get("components", [])]
+        blocked = self._model_evidence_exclusions(p, turn, view)
+        model_view, model_catalog = model_projection(view, catalog, blocked)
+        attestation = (view.get("charter") or {}).get("held_out")
+        packed = self._pack_model_context(turn, model_view, model_catalog, blocked)
         # The source manifest includes the catalog snapshot so offline replays see exactly what was
         # installed at the horizon, not components published later.
-        src_bytes = json.dumps({**view, "catalog": catalog}, sort_keys=True, default=str).encode()
+        src_bytes = json.dumps({**model_view, "catalog": model_catalog, "model_evidence_projected": bool(blocked),
+                                **({"audit_held_out_attestation": attestation} if attestation else {})},
+                               sort_keys=True, default=str).encode()
         digest = hashlib.sha256(src_bytes + packed["text"].encode()).hexdigest()[:24]
         src = self.inv.upload(p, data=src_bytes, media_type="application/json",
                               schema="investigation-view/1", role="context", name=f"source-{a['turn_id']}",
@@ -298,6 +345,17 @@ class InvestigatorActivities:
             "horizon": turn["horizon"], "chars": packed["chars"]}, project=p, key=f"ctxrec:{a['turn_id']}:{digest}")
         rec = self.wf.query("get_turn", {"turn_id": a["turn_id"]}, project=p)["context"]  # first write wins
         return {"context_artifact_id": rec["context_artifact_id"], "chars": rec.get("chars")}
+
+    @staticmethod
+    def _pack_model_context(turn: dict, view: dict, catalog: list, blocked: set[str]) -> dict:
+        if turn["spec"].get("finalization"):
+            view = {**view, "finalization": sanitize(turn["spec"]["finalization"], blocked)}
+        return pack(view, catalog, policy=turn["spec"].get("context_policy") or POLICY_V1)
+
+    def _model_evidence_exclusions(self, project: str, turn: dict, view: dict) -> set[str]:
+        if not (view.get("charter") or {}).get("held_out") and turn["spec"].get("evidence_allowlist") is None:
+            return set()
+        return set(self.inv.query("model_evidence_exclusions", {"turn_id": turn["id"]}, project=project)["excluded"])
 
     def _turn_so_far(self, p: str, turn: dict) -> list[dict]:
         out = []
@@ -314,7 +372,8 @@ class InvestigatorActivities:
                 rec = []
             out.append({"slot": d["slot"], "calls": [{"tool": c["tool"], "args": c["args"]} for c in d["body"]["calls"]],
                         "control": d["body"].get("control"), "receipts": rec})
-        return out
+        out.extend(turn.get("runtime_outcomes") or [])
+        return sorted(out, key=lambda item: item["slot"])
 
     @activity.defn(name="decide")
     @_hb
@@ -351,6 +410,18 @@ class InvestigatorActivities:
             view = json.load(open(tmp.name))
         cfg = {**turn["spec"]["runtime"].get("settings", {}), "runtime": turn["spec"]["runtime"]["runtime"],
                "model": turn["spec"]["runtime"].get("model"), **self.runtime_overrides}
+        if turn["spec"].get("finalization"):
+            # Recovery shares the original envelope; shrink its reservation to the remaining budget.
+            envelope = int(cfg.get("max_tokens_per_decision", 0 if cfg.get("runtime") == "fixture" else 120_000))
+            for dim, budget in (turn["spec"].get("budgets") or {}).items():
+                left = max(0.0, budget["limit_amount"] - budget["used"] - budget["reserved"])
+                if dim == "model_tokens":
+                    envelope = min(envelope, int(left))
+                if dim == "model_usd" and cfg.get("price_per_mtok"):
+                    rate = max(float(v) for v in cfg["price_per_mtok"].values())
+                    if rate > 0:
+                        envelope = min(envelope, int(left * 1e6 / rate))
+            cfg["max_tokens_per_decision"] = envelope
         runtime = build_runtime(cfg)
         # Reserve this decision's maximum envelope before any request (checked inside the turn,
         # not only between turns). Failure paths settle the reservation via record_model_usage.
@@ -371,12 +442,48 @@ class InvestigatorActivities:
             reserved, reservation_ref = rr["reserved"], rr.get("reservation_ref")
         except LabError as exc:
             if exc.code == "BUDGET_EXHAUSTED":
+                if (exc.error.get("details") or {}).get("reason") == "exploration-holdback":
+                    return {"accepted": False, "reason": "runtime-bounded", "n_calls": 0,
+                            "runtime_outcome": "exploration-exhausted"}
+                details = exc.error.get("details") or {}
+                if (turn["spec"].get("finalization_phase") and not turn["spec"].get("finalization")
+                        and details.get("dimension") in ("model_tokens", "model_usd")
+                        and details["limit"] > details["used"] + details["reserved"]):
+                    return {"accepted": False, "reason": "runtime-bounded", "n_calls": 0,
+                            "runtime_outcome": "ordinary-finalization-envelope-unavailable"}
                 return {"accepted": False, "reason": "budget-exhausted", "n_calls": 0}
             raise
-        abort = DecisionAbort(decision_deadline(started, float(turn["spec"]["limits"].get("deadline_seconds") or 0)))
+        limits = dict(turn["spec"]["limits"])
+        phase_deadline = False
+        if completion := turn["spec"].get("completion"):
+            from eidos.domain.turns import turn_boundary
+            remaining = turn_boundary(completion) - time.time()
+            configured = turn["spec"].get("configured_decision_seconds")
+            phase_deadline = configured is not None and remaining <= configured
+            limits["deadline_seconds"] = min(float(limits.get("deadline_seconds") or 600), max(0.01, remaining))
+        abort = DecisionAbort(decision_deadline(started, float(limits.get("deadline_seconds") or 0)))
+        view.pop("audit_held_out_attestation", None)  # internal source provenance is never a runtime input
+        projected = view.pop("model_evidence_projected", False)
+        blocked = self._model_evidence_exclusions(p, turn, view)
+        if blocked and not projected:
+            # Older workers persisted context before the held-out projection existed.
+            # Rebuild from its immutable horizon without replacing the audit artifacts.
+            catalog = view.pop("catalog", [])
+            view, catalog = model_projection(view, catalog, blocked)
+            context_text = self._pack_model_context(turn, view, catalog, blocked)["text"]
+            view["catalog"] = catalog
+        finalization = {"turn_id": turn["id"]} if turn["spec"].get("evidence_allowlist") is not None else None
+        turn_so_far = self._turn_so_far(p, turn)
         req = DecisionRequest(turn_id=a["turn_id"], slot=a["slot"], context=context_text,
-                              turn_so_far=self._turn_so_far(p, turn), limits=turn["spec"]["limits"], settings=cfg,
-                              read_tools=self._read_tools(p), view=view, abort=abort)
+                              turn_so_far=sanitize(turn_so_far, blocked) if blocked else turn_so_far, limits=limits, settings=cfg,
+                              read_tools=self._read_tools(p, finalization=finalization,
+                                                          evidence_turn_id=turn["id"] if blocked and not finalization else None,
+                                                          blocked=blocked, conclude_only=bool(turn["spec"].get("finalization"))),
+                              view=view, abort=abort, conclude_only=bool(turn["spec"].get("finalization")),
+                              finalization_has_eligible_lock=((turn["spec"]["finalization"].get("locked_candidate") or {})
+                                                              .get("status") == "succeeded")
+                              if turn["spec"].get("finalization") else None,
+                              conclusion_scope_schema=turn["spec"].get("conclusion_scope_schema"))
 
         def aborted() -> dict:
             if abort.reason == "activity-cancelled" or _activity_cancelled():
@@ -396,7 +503,7 @@ class InvestigatorActivities:
             except DecisionAborted as exc:
                 # Stopped, paused or cancelled: nothing is proposed. Usage is what the responses reported; uncertain
                 # when a request was abandoned in flight (its bill is unknown); the reservation is settled against it.
-                usage = {**exc.possible_usage, "uncertain": bool(exc.in_flight or exc.possible_usage.get("uncertain"))}
+                usage = {**exc.possible_usage, **({"phase": "finalization"} if turn["spec"].get("finalization") else {}), "uncertain": bool(exc.in_flight or exc.possible_usage.get("uncertain"))}
                 self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": usage, "reserved": reserved,
                                 "reservation_ref": reservation_ref}, project=p,
                                 key=f"usage-abort:{a['turn_id']}:{a['slot']}:{attempt}:{epoch}")
@@ -404,13 +511,21 @@ class InvestigatorActivities:
                     raise ApplicationError(str(exc), type="DECISION_ABORTED", non_retryable=True) from exc
                 return {"accepted": False, "reason": exc.reason, "n_calls": 0}
             except ModelCallFailed as exc:
+                # ADR 0023: every attempt's usage, its uncertainty, its elapsed time and why it failed are recorded
+                error = model_failure_error(exc, turn["spec"].get("completion"))
                 self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": {**exc.possible_usage,
-                                "uncertain": True, "error": str(exc)[:500]}, "reserved": reserved,
-                                "reservation_ref": reservation_ref}, project=p,
+                                **({"phase": "finalization"} if turn["spec"].get("finalization") else {}),
+                                "uncertain": True, "error": str(exc)[:500], "attempt": attempt,
+                                "elapsed_seconds": round(time.monotonic() - started, 3),
+                                "failure": error.details[0] if error.details else exc.failure},
+                                "reserved": reserved, "reservation_ref": reservation_ref}, project=p,
                                 key=f"usage-fail:{a['turn_id']}:{a['slot']}:{attempt}:{epoch}")
-                raise ApplicationError(str(exc), type="MODEL_CALL_FAILED", non_retryable=not exc.retryable) from exc
+                raise error from exc
             # Spend is the first durable write: a crash before acceptance must not lose billed requests.
-            self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": res.usage, "reserved": reserved,
+            # ADR 0023: the ledger's entry for this attempt also carries its number and elapsed time (a copy: the
+            # decision's own usage is what the runtime reported)
+            recorded = {**res.usage, **({"phase": "finalization"} if turn["spec"].get("finalization") else {}), "attempt": attempt, "elapsed_seconds": round(time.monotonic() - started, 3)}
+            self.wf.command("record_model_usage", {"turn_id": a["turn_id"], "usage": recorded, "reserved": reserved,
                                                    "reservation_ref": reservation_ref},
                             project=p, key=f"usage:{a['turn_id']}:{a['slot']}:{attempt}:{epoch}")
             if _abort_reason(abort):  # stopped, paused or cancelled after the last response: never proposed (ADR 0017)
@@ -421,6 +536,14 @@ class InvestigatorActivities:
                                    key=f"resp:{a['turn_id']}:{a['slot']}:{attempt}:{epoch}")
             if _abort_reason(abort):  # last check before the durable acceptance boundary
                 return aborted()
+            if res.runtime_outcome:
+                recorded = self.wf.command("record_runtime_outcome", {
+                    "turn_id": a["turn_id"], "slot": a["slot"], "runtime_outcome": res.runtime_outcome,
+                    "response_artifact_id": resp["result"]["artifact_id"], "usage": res.usage,
+                    "prompt_revision": res.prompt_revision,
+                    **({"phase_deadline": True} if res.runtime_outcome == "deadline-exhausted" and phase_deadline else {})},
+                    project=p, key=f"runtime:{a['turn_id']}:{a['slot']}:{attempt}:{epoch}")["result"]
+                return recorded
             try:
                 r = self.wf.command("accept_decision", {"turn_id": a["turn_id"], "slot": a["slot"],
                                     "proposal": res.proposal, "usage": res.usage, "usage_recorded": True,
@@ -439,16 +562,28 @@ class InvestigatorActivities:
         status = self.wf.query("get_record", {"kind": "investigation", "id": investigation_id}, project=p).get("status")
         return None if status in (None, "active") else f"investigation-{status}"
 
-    def _read_tools(self, p: str) -> dict:
-        return {
+    def _read_tools(self, p: str, *, finalization: dict | None = None, evidence_turn_id: str | None = None,
+                    blocked: set[str] | None = None, conclude_only: bool = False) -> dict:
+        isolation = ({"finalization_turn_id": finalization["turn_id"]} if finalization else
+                     {"evidence_turn_id": evidence_turn_id} if evidence_turn_id else {})
+        tools: dict[str, Any] = {
             "inspect_evidence": lambda artifact_id, max_bytes=8192: self.inv.query(
-                "artifact_preview", {"artifact_id": artifact_id, "max_bytes": max_bytes}, project=p),
+                "artifact_preview", {"artifact_id": artifact_id, "max_bytes": max_bytes, **isolation}, project=p),
             "search_components": lambda text="", capability=None: self.inv.query(
-                "search_components", {"text": text, "capability": capability, "limit": 20}, project=p),
+                "search_components", {"text": text, "capability": capability, "limit": 20, **isolation}, project=p),
             "describe_component": lambda component_ref: self.inv.query(
-                "describe_component", {"component_ref": component_ref}, project=p),
-            "get_job": lambda job_id: redact_value(self.inv.query("get_job", {"job_id": job_id, "include_lock": False}, project=p)),
+                "describe_component", {"component_ref": component_ref, **isolation}, project=p),
+            "get_job": lambda job_id: redact_value(self.inv.query("get_job", {"job_id": job_id, "include_lock": False, **isolation}, project=p)),
         }
+        if blocked:
+            def guard(read):
+                def guarded(*args, **kwargs):
+                    result = sanitize(read(*args, **kwargs), blocked)
+                    return result if result is not None else {"error": "evidence contains restricted provenance"}
+                return guarded
+
+            tools = {name: guard(read) for name, read in tools.items()}
+        return {k: v for k, v in tools.items() if not conclude_only or k != "search_components"}
 
     # -- effects (ADR 0022: a decision's calls run in order; dependent calls wait for what they name) ----------
     @activity.defn(name="execute_decision")
@@ -478,11 +613,15 @@ class InvestigatorActivities:
         # pause or turn closure that commits after the handoff refuses the remaining effects (EFFECT_NOT_ADMITTED).
         admission = {"decision_id": dec["id"],
                      "execution": f"{getattr(info, 'workflow_run_id', '')}/{getattr(info, 'activity_id', '')}"}
-        batch = _Batch(int((dec["body"].get("resource_policy") or {}).get(MAX_CONCURRENT_JOBS_KEY) or 1),
-                       time.monotonic() + self.batch_wait_slice, final=bool(a.get("final")))
+        inv_id = a["investigation_id"]
+        batch = BatchRunner(lambda name, params: self.wf.query(name, params, project=p),
+                            max_concurrent=int((dec["body"].get("resource_policy") or {}).get(MAX_CONCURRENT_JOBS_KEY) or 1),
+                            slice_ends=time.monotonic() + self.batch_wait_slice, final=bool(a.get("final")),
+                            poll=self.batch_poll, deadline_message="the turn ran out of time waiting for this batch's jobs",
+                            interrupted=lambda: "activity-cancelled" if _activity_cancelled() else self._not_active(p, inv_id))
         receipts: list[dict] = []
         for call in dec["body"]["calls"]:
-            blocked = self._batch_gate(p, a, batch, call, receipts)
+            blocked = batch.gate(call, receipts)
             if blocked == "pending":  # ADR 0022: committed calls replay by key when the workflow runs this again
                 return {"pending": True, "next_call": call["index"], "continuation": continuation + 1}
             if isinstance(blocked, str):
@@ -500,74 +639,8 @@ class InvestigatorActivities:
                 receipts.append(r)  # the effects before it ran; this one and the rest were refused
                 return self._finish_decision(p, a, dec, receipts, stopped=why)
             receipts.append(r)
-            if _admitted_compute(r):
-                batch.launched.append(r)
+            batch.record(r)
         return self._finish_decision(p, a, dec, receipts)
-
-    def _batch_gate(self, p: str, a: dict, batch: _Batch, call: dict, receipts: list[dict]) -> dict | str | None:
-        """ADR 0022, before one call of a decision. Returns None when the call may run, a receipt when it must not
-        (a dependency failed, or the turn ran out of time for it), ``"pending"`` when it has to wait longer than this
-        activity's slice, or the reason a stop, pause or closed turn ended the wait."""
-        deps = [receipts[d] for d in call.get("depends_on") or []]
-        failed = next((d for d in deps if not d["ok"]), None)
-        if failed is not None:
-            return _not_run(call, "DEPENDENCY_FAILED", f"call {failed['index']} ({failed['tool']}) did not succeed",
-                            depends_on=failed["index"], dependency_code=failed.get("code"))
-        waiting_for = [d for d in deps if d["tool"] in JOB_TOOLS]
-        is_job = call["tool"] in COMPUTE_TOOLS
-        # addendum R11: a plan needs the decision's whole allowance, because its jobs share it; it starts on an idle batch
-        slots = batch.max_concurrent if call["tool"] in PLAN_TOOLS else 1
-        plan_launched = any(r["tool"] in PLAN_TOOLS for r in batch.launched)
-        if not waiting_for and not (is_job and (plan_launched or len(batch.launched) + slots > batch.max_concurrent)):
-            return None
-        while True:
-            jobs = {d["index"]: self._batch_job(p, d) for d in waiting_for}
-            bad = next(((i, j) for i, j in jobs.items() if j["status"] in TERMINAL_JOB_STATUSES
-                        and j["status"] != "succeeded"), None)
-            if bad is not None:  # a job that can no longer succeed: nothing that depends on it runs
-                i, job = bad
-                return _not_run(call, "DEPENDENCY_FAILED", f"job {job['id']} of call {i} ended {job['status']}",
-                                depends_on=i, job_id=job["id"], job_status=job["status"],
-                                error=_job_error(job))
-            ready = all(j["status"] == "succeeded" for j in jobs.values())
-            running, plan_open = self._batch_running(p, batch)
-            if ready and (not is_job or (not plan_open and len(running) + slots <= batch.max_concurrent)):
-                return None
-            if batch.final:
-                return _not_run(call, "BATCH_DEADLINE", "the turn ran out of time waiting for this batch's jobs",
-                                running_jobs=running)
-            if _activity_cancelled():
-                return "activity-cancelled"
-            reason = self._not_active(p, a["investigation_id"])
-            if reason:
-                return reason
-            if time.monotonic() >= batch.slice_ends:
-                return "pending"
-            time.sleep(self.batch_poll)
-
-    def _batch_running(self, p: str, batch: _Batch) -> tuple[list[str], bool]:
-        """(the batch's active job ids, whether a launched plan still holds the whole CPU allowance; addendum R11). A plan's
-        next step is admitted in the transaction that ends its previous one, so a plan with no active job has finished."""
-        running, plan_open = [], False
-        for r in batch.launched:
-            if r["tool"] in PLAN_TOOLS:
-                jobs = self.wf.query("list_jobs", {"plan_id": r["result"]["plan_id"], "statuses": ACTIVE_JOB_STATUSES},
-                                     project=p)
-                running += [str(j["id"]) for j in jobs]
-                plan_open = plan_open or bool(jobs)
-            elif self._batch_job(p, r)["status"] not in TERMINAL_JOB_STATUSES:
-                running.append(str(r["result"]["job_id"]))
-        return running, plan_open
-
-    def _batch_job(self, p: str, receipt: dict) -> dict:
-        """The current record of a job this batch admitted (terminal states are final, so they are cached)."""
-        cached = receipt.get("_job")
-        if cached is not None:
-            return cached
-        job = self.wf.query("get_job", {"job_id": receipt["result"]["job_id"], "include_lock": False}, project=p)
-        if job["status"] in TERMINAL_JOB_STATUSES:
-            receipt["_job"] = job
-        return job
 
     def _finish_decision(self, p: str, a: dict, dec: dict, receipts: list[dict], stopped: str | None = None) -> dict:
         # Replay-invariant record: a retry after committed effects yields identical receipts.
@@ -598,38 +671,20 @@ class InvestigatorActivities:
 
     def _execute_call(self, p: str, inv: str, turn_id: str, dec_id: str, call: dict,
                       admission: dict | None = None, *, receipts: list[dict] | None = None,
-                      batch: _Batch | None = None) -> dict:
+                      batch: BatchRunner | None = None) -> dict:
         key = call["command_key"]
         assert key == command_key(p, turn_id, dec_id, call["index"]), "persisted command key mismatch"
         provenance: dict[str, Any] = {}
         args = dict(call["args"])
-        if call.get("depends_on") and receipts is not None:
-            try:
-                args, used = resolve_refs(args, lambda i, field: self._ref_value(p, receipts[i], field))
-            except _UnresolvedRef as exc:
-                return _not_run(call, "REF_UNRESOLVED", str(exc), **exc.details)
-            provenance = {"command_key": key, "depends_on": call["depends_on"], "resolved": used}
+        if call.get("depends_on") and receipts is not None and batch is not None:
+            resolved = batch.resolve(call, receipts)
+            if isinstance(resolved, dict):
+                return resolved  # REF_UNRESOLVED: recorded, not run
+            args, provenance = resolved
         if batch is not None and call["tool"] in PLAN_TOOLS:  # the decision's checked allowance, not the model's own args
             args[MAX_CONCURRENT_JOBS_KEY] = batch.max_concurrent
         result = self._run_effect(p, inv, turn_id, dec_id, call, args, admission)
         return {**result, **provenance} if provenance else result
-
-    def _ref_value(self, p: str, receipt: dict, field: str) -> Any:
-        """ADR 0022: the value of ``call[i].<field>`` or ``call[i].outputs.<slot>`` from that call's receipt or job."""
-        if field.startswith("outputs."):
-            slot = field.split(".", 1)[1]
-            job = self._batch_job(p, receipt)
-            for output in job.get("outputs") or []:
-                if output["slot"] == slot:
-                    return output["artifact_id"]
-            raise _UnresolvedRef(f"job {job['id']} published no output {slot!r}",
-                                 {"depends_on": receipt["index"], "job_id": job["id"],
-                                  "published": sorted(o["slot"] for o in job.get("outputs") or [])})
-        value = (receipt.get("result") or {}).get(field)
-        if value is None:
-            raise _UnresolvedRef(f"call {receipt['index']} ({receipt['tool']}) returned no {field!r}",
-                                 {"depends_on": receipt["index"]})
-        return value
 
     def _run_effect(self, p: str, inv: str, turn_id: str, dec_id: str, call: dict, args: dict,
                     admission: dict | None) -> dict:
@@ -693,8 +748,20 @@ class InvestigatorActivities:
     def mark_needs_input(self, a: dict) -> dict:
         return self.wf.command("mark_needs_input", {"investigation_id": a["investigation_id"], "reason": a.get("reason"),
                                "refused_turns": a.get("refused_turns", 0),
-                               **{k: a[k] for k in ("code", "details") if a.get(k)}}, project=a["project_id"],
+                               **{k: a[k] for k in ("code", "details", "terminal") if a.get(k)}}, project=a["project_id"],
                                key=f"needs-input:{a['investigation_id']}:{a.get('turn_counter')}:"
+                                   f"{activity.info().workflow_run_id}")["result"]
+
+    @activity.defn(name="enter_finalization")
+    def enter_finalization(self, a: dict) -> dict:
+        result = self.wf.command("enter_finalization", a, project=a["project_id"],
+                                 key=f"finalize:{a['investigation_id']}:{a.get('turn_counter')}")["result"]
+        return {k: result.get(k) for k in ("enabled", "mode", "status", "reason")}
+
+    @activity.defn(name="reconcile_finalization")
+    def reconcile_finalization(self, a: dict) -> dict:
+        return self.wf.command("reconcile_finalization", a, project=a["project_id"],
+                               key=f"reconcile-final:{a['investigation_id']}:{a.get('turn_counter')}:"
                                    f"{activity.info().workflow_run_id}")["result"]
 
     @activity.defn(name="record_turn_retry")
@@ -710,8 +777,12 @@ class InvestigatorActivities:
         r = self.wf.command("complete_turn", {"turn_id": a["turn_id"], "stop_reason": a["stop_reason"],
                             "control": a.get("control"), "receipts": a.get("receipts", []),
                             "execution": f"{getattr(activity.info(), 'workflow_run_id', '') or ''}/complete",
-                            **({"failure": a["failure"]} if a.get("failure") else {})},
+                            **({"failure": a["failure"]} if a.get("failure") else {}),
+                            **({"runtime_outcome": a["runtime_outcome"]} if a.get("runtime_outcome") else {}),
+                            **({"runtime_record_id": a["runtime_record_id"]} if a.get("runtime_record_id") else {})},
                             project=a["project_id"],
                             # per run (F5): a completion refused for a run that lost the turn is not the owner's receipt
                             key=f"complete:{a['turn_id']}:{getattr(activity.info(), 'workflow_run_id', '') or ''}")
-        return {"status": r["result"].get("status")}
+        result = r["result"]
+        return {"status": result.get("status"),
+                **{k: result[k] for k in ("control_refused", "controller_abstention") if result.get(k)}}

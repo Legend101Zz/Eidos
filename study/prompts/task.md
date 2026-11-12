@@ -24,8 +24,11 @@ field `predictions_path` for your locked validation predictions. In
 `reproduce_command`, use `{inputs}`, `{out}` and `{seed}` as argument placeholders
 (for example, `["python", "project.py", "train", "--inputs", "{inputs}", "--out",
 "{out}", "--seed", "{seed}"]`). Keep all imported project modules under `out/`.
-The evaluator will
-provide inference inputs separately. Do not fabricate test predictions or evidence.
+For every requested seed, `reproduce_command` must write the fresh checkpoint to
+`{out}/<basename of candidate.model_path>`. The evaluator passes that file to your
+infer command. Use compatible formats for the locked and fresh checkpoints.
+The evaluator will provide inference inputs separately. Do not fabricate test
+predictions or evidence.
 State your claim, its scope and its supporting evidence explicitly in the answer
 and in your final message. Record uncertainty, failed attempts, costs you know,
 unknown costs, exposures and limitations. A negative or inconclusive result is valid;

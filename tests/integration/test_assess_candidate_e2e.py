@@ -135,8 +135,16 @@ class Scene:
             "environment": "lab", "limits": LIMITS,
             "investigator": {"runtime": "fixture", "settings": {"max_tokens_per_decision": 120_000}}})["investigation_id"]
 
-    def lock(self, inv: str, job_id: str) -> None:
-        self.cmd("record_note", {"investigation_id": inv, "kind": "candidate_lock", "text": json.dumps({"job_id": job_id})})
+    def lock(self, inv: str, job_id: str, *, text: str | None = None, refs: list | None = None) -> None:
+        """A ``candidate_lock`` note as the ledger keeps it. These tests are about which lock assess_candidate reads;
+        the selection checks a lock passes on record_note (a rule recorded first, re-locks only on better recorded
+        evidence: ADR 0023, R14) are covered by test_incumbent_challengers, so the note is written directly."""
+        body = {"investigation_id": inv, "kind": "candidate_lock", "text": text if text is not None
+                else json.dumps({"job_id": job_id}), **({"evidence_refs": refs} if refs is not None else {})}
+        with self.lab.ledger.transaction() as tx:
+            tx.project_id = self.pid
+            tx.put_record("note", f"note_{uuid.uuid4().hex[:12]}", self.pid, body, created_by=self.lab.admin.id,
+                          status="open", parent_id=inv)
 
     def conclude(self, inv: str, claim: dict | None) -> dict:
         """Close a turn of the investigation with control ``conclude``; returns the conclusion's claim state."""
@@ -871,8 +879,7 @@ def test_the_view_does_not_carry_an_assessment_over_to_a_revised_claim(scene):
 
 
 def _note(scene: Scene, inv: str, text: str, refs: list | None = None) -> None:
-    scene.cmd("record_note", {"investigation_id": inv, "kind": "candidate_lock", "text": text,
-                              **({"evidence_refs": refs} if refs is not None else {})})
+    scene.lock(inv, "", text=text, refs=refs)
 
 
 @pytest.mark.parametrize("refs", [lambda job: [job], lambda job: [{"job_id": job}, "art_context"]])
@@ -894,3 +901,24 @@ def test_a_natural_language_lock_with_no_single_job_is_refused_with_the_format(s
     scene.assert_refused(receipt, "candidate-not-locked", claims=claims)
     message = next(r["message"] for r in receipt["reasons"] if r["code"] == "candidate-not-locked")
     assert '{"job_id"' in message and "evidence_refs" in message
+
+
+@pytest.mark.parametrize("case", ["missing", "wrong-schema", "ambiguous"])
+def test_omitted_held_out_labels_require_one_eligible_attested_binding(scene, case):
+    if case == "missing":
+        digests = ["0" * 64]
+    else:
+        schema = "unrelated/1" if case == "wrong-schema" else "class-labels/1"
+        other = scene.flow.artifact(scene.flow.labels()[:-1], schema)
+        digests = [scene.q("get_artifact", {"artifact_id": other})["digest"]]
+        if case == "ambiguous":
+            digests.append(scene.digest)
+    charter_id = scene.commit_charter(case, labels=digests)
+    baseline, candidate = scene.job(BASELINE_RECIPE), scene.job(CANDIDATE_RECIPE)
+    request = scene.request(baseline, candidate, charter_id=charter_id)
+    del request["labels"]
+    receipt = scene.assess_candidate(request)
+    assert receipt["status"] == "refused"
+    assert any(reason["code"] == "output-schema" and "exactly one eligible project label artifact" in reason["message"]
+               for reason in receipt["reasons"]), receipt
+    assert all(digest not in json.dumps(receipt) for digest in digests)

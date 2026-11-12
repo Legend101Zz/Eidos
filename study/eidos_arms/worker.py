@@ -1,6 +1,7 @@
 """Installed-interpreter entry point used by the controller's two dispatcher hooks."""
 import argparse
 import json
+import os
 import time
 import traceback
 from datetime import datetime
@@ -13,7 +14,13 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument('--arm', type=int, choices=(3, 4), required=True)
     p.add_argument('--run-dir', type=Path, required=True)
+    p.add_argument('--eval-audit-config', type=Path)
     a = p.parse_args()
+    if a.eval_audit_config is not None and a.arm != 4:
+        p.error("provider audit configuration is restricted to arm 4")
+    if os.environ.get("EIDOS_STUDY_LIVE_DISPATCH") == "1":
+        from study.common import refuse_live_prompt_overrides
+        refuse_live_prompt_overrides(os.environ)
     started, t0 = utc(), time.monotonic()
     a.run_dir.mkdir(parents=True, exist_ok=True)
     meta = json.loads((a.run_dir / 'arm.json').read_text())
@@ -29,9 +36,10 @@ def main():
                       eidos_build=lab.build_record(), lab_home=str(lab.home()), llm_broker_enabled=False)
         if a.arm == 4:
             from .arm4 import run
+            record.update(run(a.run_dir, meta, eval_audit_config=a.eval_audit_config))
         else:
             from .arm3 import run
-        record.update(run(a.run_dir, meta))
+            record.update(run(a.run_dir, meta))
     except Exception as exc:
         # Tracebacks contain no credential values: credentials are never passed as args.
         (a.run_dir / 'worker_error.txt').write_text(traceback.format_exc())

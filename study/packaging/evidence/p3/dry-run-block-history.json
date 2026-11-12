@@ -1,0 +1,128 @@
+[
+  {
+    "path": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/block_record.json",
+    "block_id": "N01-r1",
+    "card": "N01",
+    "run_index": 1,
+    "complete": true,
+    "status": "ok",
+    "started_at": "2026-11-11T11:32:37.834301+00:00",
+    "run_dirs": {
+      "1": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm1",
+      "2": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm2",
+      "3": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm3",
+      "4": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm4"
+    },
+    "previous_incident": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/incidents/N01-r1-20261111T113237833656Z",
+    "stub": true,
+    "incident_reason": null,
+    "ended_at": "2026-11-11T11:32:47.041885+00:00",
+    "model_ids_seen": [
+      "MiniMax-M3.1-Flash"
+    ]
+  },
+  {
+    "path": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/block_record.json",
+    "block_id": "N03-r1",
+    "card": "N03",
+    "run_index": 1,
+    "complete": true,
+    "status": "ok",
+    "started_at": "2026-11-11T11:32:37.835651+00:00",
+    "run_dirs": {
+      "1": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm1",
+      "2": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm2",
+      "3": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm3",
+      "4": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm4"
+    },
+    "previous_incident": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/incidents/N03-r1-20261111T113237833828Z",
+    "stub": true,
+    "incident_reason": null,
+    "ended_at": "2026-11-11T11:32:47.071782+00:00",
+    "model_ids_seen": [
+      "MiniMax-M3.1-Flash"
+    ]
+  },
+  {
+    "path": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/incidents/N01-r1-20261111T113111294060Z/block_record.json",
+    "block_id": "N01-r1",
+    "card": "N01",
+    "run_index": 1,
+    "complete": true,
+    "status": "incident",
+    "started_at": "2026-11-11T11:30:12.645033+00:00",
+    "run_dirs": {
+      "1": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm1",
+      "2": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm2",
+      "3": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm3",
+      "4": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm4"
+    },
+    "previous_incident": null,
+    "stub": true,
+    "incident_reason": "one or more runs did not record a returned model id",
+    "ended_at": "2026-11-11T11:30:19.493227+00:00",
+    "model_ids_seen": [
+      "MiniMax-M3.1-Flash"
+    ]
+  },
+  {
+    "path": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/incidents/N01-r1-20261111T113237833656Z/block_record.json",
+    "block_id": "N01-r1",
+    "card": "N01",
+    "run_index": 1,
+    "complete": true,
+    "status": "incident",
+    "started_at": "2026-11-11T11:31:11.294649+00:00",
+    "run_dirs": {
+      "1": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm1",
+      "2": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm2",
+      "3": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm3",
+      "4": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm4"
+    },
+    "previous_incident": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/incidents/N01-r1-20261111T113111294060Z",
+    "stub": true,
+    "incident_reason": "launcher: RuntimeError: STOP: less than 12.5 GiB free",
+    "ended_at": "2026-11-11T11:31:11.298914+00:00"
+  },
+  {
+    "path": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/incidents/N03-r1-20261111T113111294252Z/block_record.json",
+    "block_id": "N03-r1",
+    "card": "N03",
+    "run_index": 1,
+    "complete": true,
+    "status": "incident",
+    "started_at": "2026-11-11T11:30:12.644871+00:00",
+    "run_dirs": {
+      "1": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm1",
+      "2": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm2",
+      "3": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm3",
+      "4": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm4"
+    },
+    "previous_incident": null,
+    "stub": true,
+    "incident_reason": "one or more runs did not record a returned model id",
+    "ended_at": "2026-11-11T11:30:19.493928+00:00",
+    "model_ids_seen": [
+      "MiniMax-M3.1-Flash"
+    ]
+  },
+  {
+    "path": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/incidents/N03-r1-20261111T113237833828Z/block_record.json",
+    "block_id": "N03-r1",
+    "card": "N03",
+    "run_index": 1,
+    "complete": true,
+    "status": "incident",
+    "started_at": "2026-11-11T11:31:11.294533+00:00",
+    "run_dirs": {
+      "1": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm1",
+      "2": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm2",
+      "3": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm3",
+      "4": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm4"
+    },
+    "previous_incident": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/incidents/N03-r1-20261111T113111294252Z",
+    "stub": true,
+    "incident_reason": "launcher: RuntimeError: STOP: less than 12.5 GiB free",
+    "ended_at": "2026-11-11T11:31:11.298780+00:00"
+  }
+]

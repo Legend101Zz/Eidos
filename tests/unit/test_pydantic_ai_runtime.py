@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -37,7 +38,7 @@ def test_reads_tool_then_returns_valid_decision():
     rt = PydanticAIRuntime({"_model_object": FunctionModel(fn), "model": "function:test"})
     res = rt.decide(req(tools))
     assert seen == ["pair"]
-    assert res.usage["calls"] == 2 and res.prompt_revision == "investigator-prompt/2"
+    assert res.usage["calls"] == 2 and res.prompt_revision == "investigator-prompt/4"
     assert res.model_settings["transport_retries"] == 0
     d = validate_decision(res.proposal, max_calls=4)
     assert d["calls"][0]["tool"] == "run_component" and d["calls"][0]["args"]["component_ref"] == "a@1.0.0"
@@ -59,11 +60,27 @@ def test_invalid_output_is_repaired_within_bound_and_counted():
     assert res.proposal["rationale"] == "fixed" and res.usage["calls"] == 2
 
 
-def test_repeated_invalid_output_fails_without_unbounded_retries():
+def test_repeated_invalid_output_ends_bounded_after_one_fresh_state_repair():
+    # ADR 0023: invalid through the output retries -> one fresh-state run -> still invalid -> a bounded no-effect outcome
+    seen = []
+
     def fn(messages, info: AgentInfo):
+        seen.append(messages)
         return ModelResponse(parts=[TextPart("I refuse to use the schema")])
 
     rt = PydanticAIRuntime({"_model_object": FunctionModel(fn), "model": "function:test", "output_retries": 1})
+    res = rt.decide(req())
+    assert res.proposal == {} and res.runtime_outcome == res.usage["runtime_outcome"] == "structured-output-invalid"
+    assert res.usage["structured_output"]["fresh_state_repairs"] == 1 and res.usage["calls"] == len(seen) == 4
+    assert len(seen[2]) == 1  # the fresh-state run starts from the original prompt alone, not the malformed history
+
+
+def test_repeated_invalid_output_fails_without_unbounded_retries_when_fresh_state_repair_is_off():
+    def fn(messages, info: AgentInfo):
+        return ModelResponse(parts=[TextPart("I refuse to use the schema")])
+
+    rt = PydanticAIRuntime({"_model_object": FunctionModel(fn), "model": "function:test", "output_retries": 1,
+                            "fresh_state_repairs": 0})
     with pytest.raises(ModelCallFailed):
         rt.decide(req())
 
@@ -102,8 +119,38 @@ def test_request_budget_is_a_bounded_outcome_with_usage_counted():
              "search_components": lambda t="", c=None: {}, "describe_component": lambda r: {}}
     rt = PydanticAIRuntime({"_model_object": FunctionModel(fn), "model": "function:test", "max_requests_per_decision": 3})
     res = rt.decide(req(tools))
-    assert res.proposal["calls"] == [] and res.usage["calls"] == 3 and res.usage["limit_reached"]  # exact cap (Mac 13)
-    assert validate_decision(res.proposal, max_calls=4)["control"]["action"] == "wait_for_jobs"
+    assert res.proposal == {} and res.usage["calls"] == 3 and res.usage["limit_reached"]  # exact cap (Mac 13)
+    assert res.runtime_outcome == res.usage["runtime_outcome"] == "request-budget-exhausted"
+
+
+def test_provider_quota_during_reserved_tool_free_request_keeps_provider_failure():
+    def fn(messages, info: AgentInfo):
+        if info.function_tools:
+            return ModelResponse(parts=[ToolCallPart("get_job", {"job_id": "x"})])
+        raise ModelHTTPError(429, "minimax", {"base_resp": {"status_code": 2056, "status_msg": "usage limit exceeded"}})
+
+    tools = {"get_job": lambda job: {"status": "running"}}
+    rt = PydanticAIRuntime({"_model_object": FunctionModel(fn), "model": "function:test",
+                            "max_requests_per_decision": 3})
+    with pytest.raises(ModelCallFailed) as failure:
+        rt.decide(req(tools))
+    assert failure.value.failure["kind"] == "quota-exhausted"
+    assert failure.value.possible_usage["calls"] == 2
+    assert failure.value.possible_usage["failed_request"]["status_code"] == 429
+
+
+def test_authored_tool_mode_wait_is_still_a_proposal():
+    def fn(messages, info: AgentInfo):
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {
+            "rationale": "A job is pending.",
+            "calls": [],
+            "control": {"action": "wait_for_jobs", "summary": "Wait for the running job."},
+        })])
+
+    rt = PydanticAIRuntime({"_model_object": FunctionModel(fn), "model": "function:test"})
+    decision = rt.decide(req())
+    assert decision.runtime_outcome is None and "runtime_outcome" not in decision.usage
+    assert validate_decision(decision.proposal, max_calls=4)["control"]["action"] == "wait_for_jobs"
 
 
 def test_output_schema_has_no_open_objects_for_strict_providers():

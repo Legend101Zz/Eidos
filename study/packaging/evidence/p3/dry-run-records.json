@@ -1,0 +1,222 @@
+[
+  {
+    "arm": 1,
+    "card": "N01",
+    "run_index": 1,
+    "block_id": "N01-r1",
+    "status": "ok",
+    "incident_reason": null,
+    "started_at": "2026-11-11T11:32:43.237691+00:00",
+    "ended_at": "2026-11-11T11:32:46.867892+00:00",
+    "wall_s": 3.630015790986363,
+    "tokens": {
+      "input": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 0,
+      "total": 0
+    },
+    "billed_usd": null,
+    "model_ids_seen": [
+      "MiniMax-M3.1-Flash"
+    ],
+    "agent_claim": "Baseline exported and reloaded; no model improvement claimed.",
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm1/transcript.jsonl",
+    "stub": true,
+    "llm_broker_enabled": false,
+    "eidos_runtime_used": false
+  },
+  {
+    "arm": 2,
+    "card": "N01",
+    "run_index": 1,
+    "block_id": "N01-r1",
+    "status": "ok",
+    "incident_reason": null,
+    "started_at": "2026-11-11T11:32:43.234692+00:00",
+    "ended_at": "2026-11-11T11:32:46.922710+00:00",
+    "wall_s": 3.6876007500104606,
+    "tokens": {
+      "input": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 0,
+      "total": 0
+    },
+    "billed_usd": null,
+    "model_ids_seen": [
+      "MiniMax-M3.1-Flash"
+    ],
+    "agent_claim": "Baseline exported and reloaded; no model improvement claimed.",
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm2/transcript.jsonl",
+    "stub": true,
+    "llm_broker_enabled": false,
+    "eidos_runtime_used": false
+  },
+  {
+    "arm": 3,
+    "card": "N01",
+    "run_index": 1,
+    "block_id": "N01-r1",
+    "status": "ok",
+    "incident_reason": null,
+    "started_at": "2026-11-11T11:32:43.236230+00:00",
+    "ended_at": "2026-11-11T11:32:46.918965+00:00",
+    "wall_s": 3.682607666007243,
+    "tokens": {
+      "input": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 0,
+      "total": 0
+    },
+    "billed_usd": null,
+    "model_ids_seen": [
+      "MiniMax-M3.1-Flash"
+    ],
+    "agent_claim": "Baseline exported and reloaded; no model improvement claimed.",
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm3/transcript.jsonl",
+    "stub": true,
+    "llm_broker_enabled": false,
+    "eidos_runtime_used": false,
+    "eidos_commit_sha": "ba79b9144b594093fe18df57b1a9dfdc2042cba1"
+  },
+  {
+    "arm": 4,
+    "card": "N01",
+    "run_index": 1,
+    "block_id": "N01-r1",
+    "status": "ok",
+    "incident_reason": null,
+    "started_at": "2026-11-11T11:32:43.229265+00:00",
+    "ended_at": "2026-11-11T11:32:46.956759+00:00",
+    "wall_s": 3.7273098330479115,
+    "tokens": {
+      "input": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 0,
+      "total": 0
+    },
+    "billed_usd": null,
+    "model_ids_seen": [
+      "MiniMax-M3.1-Flash"
+    ],
+    "agent_claim": "Baseline exported and reloaded; no model improvement claimed.",
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm4/transcript.jsonl",
+    "stub": true,
+    "llm_broker_enabled": false,
+    "eidos_runtime_used": false,
+    "eidos_commit_sha": "ba79b9144b594093fe18df57b1a9dfdc2042cba1"
+  },
+  {
+    "arm": 1,
+    "card": "N03",
+    "run_index": 1,
+    "block_id": "N03-r1",
+    "status": "ok",
+    "incident_reason": null,
+    "started_at": "2026-11-11T11:32:43.251816+00:00",
+    "ended_at": "2026-11-11T11:32:46.863715+00:00",
+    "wall_s": 3.611453958961647,
+    "tokens": {
+      "input": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 0,
+      "total": 0
+    },
+    "billed_usd": null,
+    "model_ids_seen": [
+      "MiniMax-M3.1-Flash"
+    ],
+    "agent_claim": "Baseline exported and reloaded; no model improvement claimed.",
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm1/transcript.jsonl",
+    "stub": true,
+    "llm_broker_enabled": false,
+    "eidos_runtime_used": false
+  },
+  {
+    "arm": 2,
+    "card": "N03",
+    "run_index": 1,
+    "block_id": "N03-r1",
+    "status": "ok",
+    "incident_reason": null,
+    "started_at": "2026-11-11T11:32:43.252647+00:00",
+    "ended_at": "2026-11-11T11:32:46.943168+00:00",
+    "wall_s": 3.690348708012607,
+    "tokens": {
+      "input": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 0,
+      "total": 0
+    },
+    "billed_usd": null,
+    "model_ids_seen": [
+      "MiniMax-M3.1-Flash"
+    ],
+    "agent_claim": "Baseline exported and reloaded; no model improvement claimed.",
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm2/transcript.jsonl",
+    "stub": true,
+    "llm_broker_enabled": false,
+    "eidos_runtime_used": false
+  },
+  {
+    "arm": 3,
+    "card": "N03",
+    "run_index": 1,
+    "block_id": "N03-r1",
+    "status": "ok",
+    "incident_reason": null,
+    "started_at": "2026-11-11T11:32:43.252370+00:00",
+    "ended_at": "2026-11-11T11:32:46.930842+00:00",
+    "wall_s": 3.6781510830041952,
+    "tokens": {
+      "input": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 0,
+      "total": 0
+    },
+    "billed_usd": null,
+    "model_ids_seen": [
+      "MiniMax-M3.1-Flash"
+    ],
+    "agent_claim": "Baseline exported and reloaded; no model improvement claimed.",
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm3/transcript.jsonl",
+    "stub": true,
+    "llm_broker_enabled": false,
+    "eidos_runtime_used": false,
+    "eidos_commit_sha": "ba79b9144b594093fe18df57b1a9dfdc2042cba1"
+  },
+  {
+    "arm": 4,
+    "card": "N03",
+    "run_index": 1,
+    "block_id": "N03-r1",
+    "status": "ok",
+    "incident_reason": null,
+    "started_at": "2026-11-11T11:32:43.272311+00:00",
+    "ended_at": "2026-11-11T11:32:46.808878+00:00",
+    "wall_s": 3.5362559169880114,
+    "tokens": {
+      "input": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 0,
+      "total": 0
+    },
+    "billed_usd": null,
+    "model_ids_seen": [
+      "MiniMax-M3.1-Flash"
+    ],
+    "agent_claim": "Baseline exported and reloaded; no model improvement claimed.",
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm4/transcript.jsonl",
+    "stub": true,
+    "llm_broker_enabled": false,
+    "eidos_runtime_used": false,
+    "eidos_commit_sha": "ba79b9144b594093fe18df57b1a9dfdc2042cba1"
+  }
+]

@@ -8,12 +8,17 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from study.private_card_registry import PRIVATE_CARD_BARS
+
 ROOT = Path(__file__).resolve().parents[1]
 STUDY = ROOT / "study"
 DEVELOPMENT = ROOT / "research/public/development"
 MODEL = "MiniMax-M3.1-Flash"
 ENVELOPE = {"wall_s": 1800, "tokens": 8_000_000, "threads": 1}
-FAMILIES = {"D01": "iris", "D02": "digits", "D12": "duplicate-input-null", "D03":"digits_shift", "D04":"conditioning", "D05":"forecast", "D06":"order"}
+FAMILIES = {"D01": "iris", "D02": "digits", "D12": "duplicate-input-null", "D03":"digits_shift", "D04":"conditioning", "D05":"forecast", "D06":"order",
+            "N01":"breast_cancer", "N02":"diabetes", "N03":"friedman1", "N04":"classification", **{card: card for card in PRIVATE_CARD_BARS}}
+IMPROVEMENT_CARDS = frozenset({'D02', 'D03', 'D04', 'D05', 'D06', 'N01', 'N02', 'N03', 'N04'}) | frozenset(PRIVATE_CARD_BARS)
+FRESH_RECIPE_CARDS = IMPROVEMENT_CARDS - {'D02'}
 
 
 def write_json(path, value):
@@ -75,7 +80,7 @@ def agent_env(run_dir):
     return env
 
 
-def sandbox_command(run_dir, command, *, network=True, readonly=()):
+def sandbox_command(run_dir, command, *, network=True, readonly=(), hidden=(), writable=()):
     """Public helper for arms 1–3. Parameters avoid profile string interpolation."""
     python = research_python()
     prefix = subprocess.check_output([python, "-c", "import sys; print(sys.prefix)"], text=True).strip()
@@ -85,6 +90,15 @@ def sandbox_command(run_dir, command, *, network=True, readonly=()):
     for index, path in enumerate(readonly):
         extra += f'\n(deny file-write* (subpath (param "READONLY{index}")))\n'
         readonly_params += ["-D", f"READONLY{index}=" + str(Path(path).resolve())]
+    for index, path in enumerate(hidden):
+        extra += f'\n(deny file-read* file-write* (subpath (param "HIDDEN{index}")))\n'
+        readonly_params += ["-D", f"HIDDEN{index}=" + str(Path(path).resolve())]
+    if writable:
+        allowed = ['(literal "/dev/null")']
+        for index, path in enumerate(writable):
+            allowed.append(f'(subpath (param "WRITE{index}"))')
+            readonly_params += ["-D", f"WRITE{index}=" + str(Path(path).resolve())]
+        extra += "\n(deny file-write* (require-not (require-any " + " ".join(allowed) + ")) )\n"
     profile = (
         ["-p", (STUDY / "sandbox/agent.sb").read_text() + extra]
         if extra
@@ -104,6 +118,68 @@ def sandbox_command(run_dir, command, *, network=True, readonly=()):
     ]
 
 
+PROMPT_OVERRIDES = ("EIDOS_STUDY_SMOKE_PROMPT", "EIDOS_STUDY_LANE_A_ROOT")
+
+
+def refuse_live_prompt_overrides(environment):
+    if any(name in environment for name in PROMPT_OVERRIDES):
+        raise ValueError("live study dispatch forbids smoke prompt and lane-root overrides")
+
+
+def record_prompt(run_dir, meta, *, delivered=None, surface=None):
+    """Bind the normal render and, at dispatch, the exact initial payload without retaining text."""
+    import hashlib
+
+    arm = meta["arm"]
+    expected = render_prompt(arm, meta["card"])
+    identity = {key: meta[key] for key in ("block_id", "card", "run_index", "arm", "charter_amendment_commit",
+                                          "charter_amendment_sha256")}
+    receipt = dict(**identity, common_template_sha256=hashlib.sha256((STUDY / "prompts/task.md").read_bytes()).hexdigest(),
+                   expected_render_sha256=hashlib.sha256(expected.encode()).hexdigest())
+    directory = run_dir.parent / "prompt-receipts"
+    if run_dir.name != f"arm{arm}" or directory.is_symlink():
+        raise ValueError("unsafe trusted prompt receipt location")
+    directory.mkdir(exist_ok=True)
+    expected_path = directory / f"arm{arm}-expected.json"
+    if delivered is None:
+        target = expected_path
+    else:
+        if expected_path.is_symlink() or read_json(expected_path) != receipt:
+            raise ValueError("prepared expected prompt receipt differs at dispatch")
+        if surface == "claude-prompt" and delivered != expected:
+            raise ValueError("delivered Claude prompt differs from expected live render")
+        if surface == "investigation-question" and not delivered.startswith(expected + "\n\nPackaged task files:\n"):
+            raise ValueError("delivered investigation question differs from expected live render")
+        if surface not in ("claude-prompt", "investigation-question"):
+            raise ValueError("unknown prompt delivery surface")
+        receipt.update(surface=surface, delivered_sha256=hashlib.sha256(delivered.encode()).hexdigest())
+        target = directory / f"arm{arm}-delivered.json"
+    with target.open("x") as stream:
+        json.dump(receipt, stream, sort_keys=True)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def record_live_delivery(run_dir, meta, delivered, surface):
+    if os.environ.get("EIDOS_STUDY_LIVE_DISPATCH") == "1":
+        refuse_live_prompt_overrides(os.environ)
+        record_prompt(run_dir, meta, delivered=delivered, surface=surface)
+
+
+EXPORT_READINESS_CONTRACT = (
+    "Before the first lock, every replacement lock, or submission without a lock, use your assigned time and tools to run its declared "
+    "infer command in a fresh process on the supplied visible validation inputs. Use the exact "
+    "candidate source and checkpoint you intend to submit and write to a new output path. Check "
+    "that fitted preprocessing and other required state are serialized and reload correctly, and "
+    "that the declared dependencies cover this inference path. Verify that the output has the same "
+    "unique validation IDs and compare predictions by ID against the validation predictions "
+    "produced during training. If the check fails, diagnose and make any changes through your "
+    "ordinary work before locking, then repeat the check on the intended submission. Report any "
+    "unresolved limitation or abstain. This visible check is separate from independent confirmation."
+)
+
+
 def render_prompt(arm, card, *, base=None):
     """All four arms use the same card table and substitution, including smoke overrides."""
     paragraph = (STUDY / f"prompts/tools_arm{arm}.md").read_text().strip()
@@ -113,17 +189,32 @@ def render_prompt(arm, card, *, base=None):
     if "{{TOOLS_PARAGRAPH}}" not in text:
         raise ValueError("base prompt must contain {{TOOLS_PARAGRAPH}}")
     cards = read_json(STUDY / "cards.json")
+    if card in PRIVATE_CARD_BARS:
+        metric, gain = PRIVATE_CARD_BARS[card]
+        change = f"improves accuracy by {gain} absolute" if metric == "accuracy" else f"reduces RMSE by at least {gain:.0%}"
+        cards[card] = {"practical_bar": (
+            f"The task owner's practical bar: a candidate must show that its recipe {change} "
+            "on the evaluator's held-out data versus the supplied baseline (seed 11) and reproduces "
+            "from fresh initialization. An honest abstention or qualified null is acceptable."
+        )}
     if card not in cards and not base and card != "TOY-REGRESSION":
         raise ValueError(f"unknown study card: {card}")
     if card in cards and "{{PRACTICAL_BAR}}" not in text:
         raise ValueError("study prompt must contain {{PRACTICAL_BAR}}")
-    return text.replace("{{TOOLS_PARAGRAPH}}", paragraph).replace(
+    rendered = text.replace("{{TOOLS_PARAGRAPH}}", paragraph).replace(
         "{{PRACTICAL_BAR}}", cards.get(card, {}).get("practical_bar", ""))
+    return rendered.rstrip() + "\n\n" + EXPORT_READINESS_CONTRACT + "\n"
 
 
 def dev_command(script, *args, **kwargs):
+    if script == "package_task.py" and len(args) == 4 and args[0] == "--task" and args[2] == "--out":
+        if args[1] in PRIVATE_CARD_BARS:
+            from study.private_seal import configured_seal
+
+            configured_seal().stage_bundle(args[1], args[3])
+            return
     return subprocess.run(
-        [research_python(), str(STUDY / "packaging/package_card.py" if script == "package_task.py" and any(str(a) in {"D03","D04","D05","D06"} for a in args) else DEVELOPMENT / script), *map(str, args)],
+        [research_python(), str(STUDY / "packaging/package_card.py" if script == "package_task.py" and any(str(a) in FRESH_RECIPE_CARDS for a in args) else DEVELOPMENT / script), *map(str, args)],
         check=True,
         text=True,
         capture_output=True,

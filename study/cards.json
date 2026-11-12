@@ -19,5 +19,17 @@
   },
   "D06": {
     "practical_bar": "The task owner's practical bar: a candidate counts as a useful improvement only if its accuracy on the evaluator's held-out test data beats the supplied baseline (seed 11) by at least 0.30 absolute, and the recipe reproduces from fresh initialization. If you cannot show that, an honest abstention or a qualified null is the correct answer."
+  },
+  "N01": {
+    "practical_bar": "The task owner's practical bar: a candidate counts as a useful improvement only if its accuracy on the evaluator's held-out test data beats the supplied baseline (seed 11) by at least 0.02 absolute, and the recipe reproduces from fresh initialization. If you cannot show that, an honest abstention or a qualified null is the correct answer."
+  },
+  "N02": {
+    "practical_bar": "The task owner's practical bar: a candidate counts as a useful improvement only if its RMSE on the evaluator's held-out test data beats the supplied baseline (seed 11) by at least 8.900388389192335 RMSE units, and the recipe reproduces from fresh initialization. If you cannot show that, an honest abstention or a qualified null is the correct answer."
+  },
+  "N03": {
+    "practical_bar": "The task owner's practical bar: a candidate counts as a useful improvement only if its RMSE on the evaluator's held-out test data beats the supplied baseline (seed 11) by at least 0.5521391269423149 RMSE units, and the recipe reproduces from fresh initialization. If you cannot show that, an honest abstention or a qualified null is the correct answer."
+  },
+  "N04": {
+    "practical_bar": "The task owner's practical bar: a candidate counts as a useful improvement only if its accuracy on the evaluator's held-out test data beats the supplied baseline (seed 11) by at least 0.02 absolute, and the recipe reproduces from fresh initialization. If you cannot show that, an honest abstention or a qualified null is the correct answer."
   }
 }

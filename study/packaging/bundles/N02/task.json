@@ -1,0 +1,51 @@
+{
+  "schema_version": "eidos-task-bundle/0.1",
+  "task_id": "N02",
+  "project": "diabetes",
+  "role": "public_development",
+  "nclasses": 1,
+  "task_type": "regression",
+  "inputs": {
+    "train": {
+      "shape": [
+        265,
+        10
+      ],
+      "dtype": "float32"
+    },
+    "validation": {
+      "shape": [
+        88,
+        10
+      ],
+      "dtype": "float32"
+    }
+  },
+  "metric": "rmse",
+  "direction": "minimize",
+  "denominator": "fixed evaluator input IDs",
+  "allowed_operations": [
+    "edit model/trainer",
+    "train-only preprocessing/augmentation",
+    "create instruments"
+  ],
+  "reference_visibility": "excluded from this investigator bundle; controller only",
+  "qualification": "see QUALIFICATION_P3.md",
+  "resource_profile": {
+    "threads": 1,
+    "cpu_cores": 1,
+    "ram_gib_estimate": 2,
+    "disk_gib_environment_estimate": 4,
+    "reference_timeout_seconds": 120
+  },
+  "investigator_budget": "UNDECIDED",
+  "answer_schema": "eidos-answer/0.2",
+  "hashes": {
+    "answer_schema.py": "a22da0fc4fa56d555fc46f97eb1958f1c270b97449c23b76aabe9fdb84f01c4c",
+    "brief.md": "f38f92c2a7a229042953399c22f463a615eff997c7ea75ade632e6181b3dadf6",
+    "project.py": "575ddc4fb5ad323ac1e7fb312e4508e807f946c18b60923e13b1991172bbacf7",
+    "requirements.lock": "be1d27623dd05e7d6c630152f4d3c4850786238b28530e9f2a88124027ecec41",
+    "train.npz": "87e4218a03e23750bf04a687c11d399e68f6a3eaa49462989a7d32f2c14ea00f",
+    "validation.npz": "68ab36eb0d81fb47ed8873e2b6424d88ffa69d313a4c588170214b77af6495da"
+  }
+}

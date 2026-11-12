@@ -1,0 +1,30 @@
+{
+ "name": "an unbounded search is refused",
+ "inputs": {},
+ "config": {
+  "command": {
+   "argv": [
+    "python",
+    "fit.py"
+   ]
+  },
+  "space": {
+   "mode": "grid",
+   "parameters": {
+    "lr": {
+     "values": [
+      0.1
+     ]
+    }
+   }
+  },
+  "objective": {
+   "metric": "validation_accuracy"
+  },
+  "budget": {}
+ },
+ "expect": {
+  "status": "failed"
+ },
+ "author_test": true
+}

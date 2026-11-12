@@ -22,21 +22,25 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from temporalio import activity
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
+from test_incumbent_challengers import Scene
 from test_turn_recovery import ShimClient, setup
 
+from eidos.application.handlers import investigations
 from eidos.investigator.activities import InvestigatorActivities
 from eidos.orchestration.names import INVESTIGATOR_QUEUE, WORKFLOW_QUEUE
 from eidos.orchestration.workflows import (
     ALL_WORKFLOWS,
     MAX_FAILED_TURN_RETRIES,
-    MAX_INVALID_RETRY_TURNS,
     InvestigationWorkflow,
 )
 
@@ -94,14 +98,18 @@ class FakeProvider:
             def do_POST(self):
                 raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
                 with outer.lock:
-                    outer.requests.append({"path": self.path, "body": json.loads(raw or b"{}")})
+                    outer.requests.append({"path": self.path, "body": json.loads(raw or b"{}"), "received_at": time.time()})
                     status, body = outer.script.pop(0) if outer.script else outer.default
-                data = json.dumps(body).encode()
+                delay = body.get("_fixture_delay_seconds", 0)
+                if delay:
+                    time.sleep(delay)
+                data = json.dumps({k: v for k, v in body.items() if k != "_fixture_delay_seconds"}).encode()
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
-                self.wfile.write(data)
+                with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+                    self.wfile.write(data)
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.server.daemon_threads = True
@@ -184,21 +192,37 @@ async def until(what: str, probe, timeout: float = 55.0, every: float = 0.3):
 
 
 @contextlib.asynccontextmanager
-async def running(env, lab, prov: FakeProvider, **workflow_args):
+async def running(env, lab, prov: FakeProvider, *, investigator_options=None, investigation_limits=None,
+                  before_complete=None, start_in_finalization=False, scene=None, seed_investigation=None, **workflow_args):
     """Start the real investigation coordinator against ``prov`` and terminate it at the end."""
-    pid, _, _ = setup(lab)  # project, environment, component and charter of the turn-recovery tests
+    pid = scene.pid if scene is not None else setup(lab)[0]  # project, environment, component and charter
     inv = lab.cmd(lab.admin, "start_investigation", {
-        "question": "q", "charter_id": f"charter:s{pid}", "limits": {"model_tokens": 1e6, "trials": 100},
-        "investigator": {"runtime": "pydantic-ai", "model": "openai-compatible:fake",
-                         "settings": {"max_tokens_per_decision": 120_000}}}, project=pid)["result"]["investigation_id"]
+        "question": "q", "charter_id": f"charter:s{pid}",
+        "limits": {"model_tokens": 1e6, "trials": 100, **(investigation_limits or {})},
+        "investigator": {"runtime": "pydantic-ai", "model": "openai-compatible:fake", "finalization": "operator",
+                         "settings": {"max_tokens_per_decision": 120_000},
+                         **(investigator_options or {})}}, project=pid)["result"]["investigation_id"]
+    if seed_investigation is not None:
+        seed_investigation(inv)
+    if start_in_finalization:
+        admitted = lab.cmd(lab.admin, "enter_finalization", {
+            "investigation_id": inv, "trigger": "fixture-recovery",
+        }, project=pid)["result"]
+        assert admitted["enabled"]
     acts = InvestigatorActivities(
         ShimClient(lab, lab.principal(f"inv-{pid}", ["investigator"], [pid])),
         ShimClient(lab, lab.principal(f"wf-{pid}", ["workflow"], [pid])),
         runtime_overrides={"base_url": prov.url, "api_key_env": "EIDOS_TEST_NO_SUCH_KEY", "output_mode": "json",
                            "request_timeout": 30, "abort_poll_seconds": 0.2, "max_output_tokens": MAX_OUTPUT_TOKENS})
+    @activity.defn(name="complete_turn")
+    def delayed_complete(a):
+        before_complete(a)
+        return acts.complete_turn(a)
+
     # The activities the real investigator worker registers (eidos.apps.roots.run_investigator_worker).
-    registered = [acts.begin_turn, acts.build_context, acts.decide, acts.execute_decision, acts.complete_turn,
-                  acts.check_news, acts.mark_needs_input, acts.record_turn_retry]
+    complete = delayed_complete if before_complete else acts.complete_turn
+    registered = [acts.begin_turn, acts.build_context, acts.decide, acts.execute_decision, complete,
+                  acts.check_news, acts.mark_needs_input, acts.record_turn_retry, acts.enter_finalization, acts.reconcile_finalization]
     args = {"investigation_id": inv, "project_id": pid, "idle_poll_seconds": 1, "failed_turn_backoff_seconds": 1,
             **workflow_args}
     pool = ThreadPoolExecutor(max_workers=16)  # the real activities are synchronous
@@ -288,7 +312,7 @@ async def test_a_retryable_provider_error_is_retried_automatically_and_recovers(
         # The retry was recorded on the ledger before its backoff, with the reason.
         [retry] = run.events("investigation.turn_retry_scheduled")
         assert retry["body"]["attempt"] == 1 and retry["body"]["max_attempts"] == 2
-        assert retry["body"]["delay_seconds"] == 1.0
+        assert 1.0 <= retry["body"]["delay_seconds"] <= 1.2  # ADR 0023: up to 20 % deterministic jitter
         assert retry["body"]["failed_turn_id"] == view["turns"][0]["id"]
         assert retry["body"]["failure"]["retryable"] is True
         assert retry["body"]["failure"]["error_type"] == "MODEL_CALL_FAILED"
@@ -343,25 +367,28 @@ async def test_a_repeated_runaway_does_not_stall_the_investigation(env, lab, pro
         view = await until("needs_input after the bounded runaway outcomes",
                            lambda: run.view()["needs_input"] and run.view())
         assert view["status"] == "active"
-        assert view["needs_input"]["code"] == "refused-proposals"  # the existing bounded invalid-turn path
-        assert view["needs_input"]["refused_turns"] == MAX_INVALID_RETRY_TURNS + 1
-        # Every turn ended on refused proposals (the bounded no-effect outcome is a wait on nothing, which the lab
-        # refuses); none of them ended in an error, so no provider failure is reported.
-        assert [t["stop_reason"] for t in view["turns"]] == ["invalid-proposals"] * (MAX_INVALID_RETRY_TURNS + 1)
+        assert view["needs_input"]["code"] == "runtime-bounded"
+        assert view["needs_input"]["details"]["runtime_outcome"] == "reasoning-runaway"
+        assert [t["stop_reason"] for t in view["turns"]] == ["runtime-local-bound"] * 3
         assert run.events("investigation.turn_retry_scheduled") == []
         [marked] = run.events("investigation.needs_input")
-        assert marked["body"]["code"] == "refused-proposals"
-        # Each decision made the first request and exactly one re-ask, both counted and recorded.
+        assert marked["body"]["code"] == "runtime-bounded"
+        bounded = run.events("decision.runtime_bounded")
+        assert [row["body"]["slot"] for row in bounded] == [0, 1] * 3
+        assert all(row["body"]["runtime_outcome"] == "reasoning-runaway" and row["body"]["response_artifact_id"]
+                   for row in bounded)
+        # The existing two-slot refusal limit and two fresh-turn retries bound the total.
         usages = [e["body"]["usage"] for e in run.events("model.usage")]
-        assert usages and all(u["calls"] == 2 for u in usages)
-        for u in usages:
-            assert len(u["structured_output"]["runaway"]) == 2 and u["structured_output"]["runaway_reasks"] == 1
-            assert "reasoning runaway" in u["limit_reached"]
-        assert prov.count == 2 * len(usages)
-        # Nothing was applied from any of those decisions.
-        for t in view["turns"]:
-            turn = run.lab.q(run.lab.admin, "get_turn", {"turn_id": t["id"]}, project=run.pid)
-            assert not any(d["accepted"] for d in turn["decisions"])
+        assert len(usages) == 6 and sum(u["calls"] for u in usages) == prov.count == 12
+        for usage in usages:
+            assert usage["calls"] == 2
+            assert len(usage["structured_output"]["runaway"]) == 2
+            assert usage["structured_output"]["runaway_reasks"] == 1
+            assert "reasoning runaway" in usage["limit_reached"]
+            assert "failed_request" not in usage
+        for ended in view["turns"]:
+            turn = run.lab.q(run.lab.admin, "get_turn", {"turn_id": ended["id"]}, project=run.pid)
+            assert turn["decisions"] == []
 
 
 # -- E: a retryable failure that persists ---------------------------------------------------------------------
@@ -385,7 +412,8 @@ async def test_a_persistent_retryable_failure_stops_after_the_bounded_automatic_
         assert ni["details"]["turn_id"] == view["turns"][-1]["id"]
         # Each automatic retry was on the ledger before its backoff, which doubles (base 1 s here).
         retries = [e["body"] for e in run.events("investigation.turn_retry_scheduled")]
-        assert [(r["attempt"], r["delay_seconds"]) for r in retries] == [(1, 1.0), (2, 2.0)]
+        assert [r["attempt"] for r in retries] == [1, 2]  # base 1 s, doubling, up to 20 % jitter (ADR 0023)
+        assert 1.0 <= retries[0]["delay_seconds"] <= 1.2 and 2.0 <= retries[1]["delay_seconds"] <= 2.4
         assert [r["failed_turn_id"] for r in retries] == [t["id"] for t in view["turns"][:-1]]
         # Every failed turn says why on its turn.completed event; three Temporal attempts of decide per turn.
         completed = run.events("turn.completed")
@@ -395,3 +423,517 @@ async def test_a_persistent_retryable_failure_stops_after_the_bounded_automatic_
         # And then it waits for the operator: no further turn, no further request.
         await asyncio.sleep(3)
         assert run.stop_reasons() == ["error"] * 3 and prov.count == 9
+
+
+async def test_slow_provider_still_records_a_conclusion_before_export_margin(env, lab, provider):
+    export_margin = 5.0  # arm-4 adapter's WATCHDOG_MARGIN_SECONDS, tested at its registration boundary
+    status, delayed = decision_reply(ASK, "delayed-exploration")
+    conclude = decision_reply({
+        "rationale": "no eligible locked candidate",
+        "calls": [],
+        "control": {"action": "conclude", "summary": "Abstain because no candidate was locked.",
+                    "claim_json": json.dumps({"disposition": "abstain"})},
+    }, "conclusion")
+    fake = provider([(status, {**delayed, "_fixture_delay_seconds": 12})], conclude)
+    watchdog_deadline = time.time() + 24.0
+    options = {"finalization": "autonomous", "wall_seconds": 24.0, "conclude_threshold_seconds": 9.0,
+               "wall_deadline_unix": watchdog_deadline - export_margin}
+    async with running(env, lab, fake, investigator_options=options) as run:
+        wall = run.view()["body"]["wall"]
+        assert wall["deadline_unix"] == watchdog_deadline - export_margin
+        result = await asyncio.wait_for(run.handle.result(), 25)
+        assert result["status"] == "finished" and result["reason"] == "concluded"
+        shown = run.view()
+        assert shown["status"] == "concluded" and shown["body"]["conclusion"]["claim_state"]["state"] == "abstained"
+        (closure,) = [event for event in run.events("turn.completed") if event["body"]["stop_reason"] == "concluded"]
+        written_at = datetime.fromisoformat(closure["created_at"]).timestamp()
+        assert watchdog_deadline - written_at > export_margin
+        assert run.view()["needs_input"] is None
+        assert run.stop_reasons()[-1] == "concluded" and fake.count == 2
+
+
+async def test_failed_default_recovery_finishes_with_an_attributed_controller_abstention(env, lab, provider):
+    invalid = decision_reply({
+        "rationale": "an empty wait is not admissible",
+        "calls": [],
+        "control": {"action": "wait_for_jobs", "summary": "scripted refused wait"},
+    })
+    fake = provider([], invalid)
+    async with running(env, lab, fake, investigator_options={"finalization": "autonomous"}) as run:
+        result = await asyncio.wait_for(run.handle.result(), 20)
+        assert result["status"] == "abstained" and result["reason"] == "controller-abstained"
+        shown = run.view()
+        assert shown["status"] == "stopped" and shown["needs_input"] is None
+        assert "conclusion" not in shown["body"]
+        abstention = shown["body"]["controller_abstention"]
+        assert abstention["author"] == "controller" and abstention["investigator_concluded"] is False
+        assert shown["finalization_export_receipt"]["controller_abstention"] == abstention
+        assert len(run.events("investigation.controller_abstained")) == 1
+        assert not run.events("investigation.needs_input")
+
+
+@pytest.mark.parametrize(("reply", "code", "kind"), [
+    ((429, {"error": {"message": "provider quota exhausted, usage limit exceeded", "code": "2056"}}),
+     "provider-unavailable", "quota-exhausted"),
+    (error_reply(401), "turn-failed", "permanent"),
+])
+async def test_default_terminal_non_retryable_provider_before_any_lock_abstains(env, lab, provider, reply, code, kind):
+    fake = provider([reply], reply)
+    async with running(env, lab, fake, investigator_options={"finalization": "autonomous", "wall_seconds": 600}) as run:
+        result = await asyncio.wait_for(run.handle.result(), 20)
+        assert result["status"] == "abstained" and result["reason"] == "controller-abstained"
+        shown = run.view()
+        assert shown["status"] == "stopped" and shown["needs_input"] is None
+        abstention = shown["body"]["controller_abstention"]
+        assert abstention["incumbent"] is None and abstention["code"] == code
+        assert abstention["failure"]["provider"]["kind"] == kind
+        assert abstention["investigator_concluded"] is False
+        assert fake.count == 1 and not run.events("investigation.turn_retry_scheduled")
+
+
+async def test_default_no_lock_abstains_after_retryable_failure_exhausts_its_retries(env, lab, provider):
+    unavailable = error_reply(503)
+    fake = provider([], unavailable)
+    async with running(env, lab, fake, investigator_options={"finalization": "autonomous"}) as run:
+        result = await asyncio.wait_for(run.handle.result(), 45)
+        assert result["status"] == "abstained" and result["reason"] == "controller-abstained"
+        shown = run.view()
+        assert shown["status"] == "stopped" and shown["needs_input"] is None
+        abstention = shown["body"]["controller_abstention"]
+        assert abstention["incumbent"] is None and abstention["code"] == "turn-failed"
+        assert abstention["failure"]["retryable"] is True
+        assert abstention["failure"]["provider"]["status"] == 503 and abstention["investigator_concluded"] is False
+        assert len(run.events("investigation.turn_retry_scheduled")) == MAX_FAILED_TURN_RETRIES
+        assert run.stop_reasons() == ["error"] * (MAX_FAILED_TURN_RETRIES + 1)
+        assert fake.count == 3 * (MAX_FAILED_TURN_RETRIES + 1)
+
+
+@pytest.mark.parametrize(("options", "limits", "cause"), [
+    ({"max_turns": 0}, {}, "max-turns-reached"),
+    ({}, {"turns": 0}, "turn-budget-exhausted"),
+    ({}, {"model_tokens": 0}, "budget-exhausted"),
+    ({"wall_seconds": 0.00001}, {}, "wall-deadline-reached"),
+])
+async def test_default_hard_limit_before_first_turn_abstains_with_exact_cause(env, lab, provider, options, limits, cause):
+    fake = provider([], decision_reply(ASK))
+    async with running(env, lab, fake, investigator_options={"finalization": "autonomous", **options},
+                       investigation_limits=limits) as run:
+        result = await asyncio.wait_for(run.handle.result(), 20)
+        assert result["status"] == "abstained" and result["reason"] == "controller-abstained"
+        shown = run.view()
+        assert shown["status"] == "stopped" and shown["needs_input"] is None
+        abstention = shown["body"]["controller_abstention"]
+        assert abstention["incumbent"] is None and abstention["code"] == "coordinator-stopped"
+        assert abstention["failure"]["error_type"] == cause and abstention["investigator_concluded"] is False
+        assert not shown["turns"] and fake.count == 0
+
+
+@pytest.mark.parametrize("policy", ["autonomous", "operator"])
+async def test_queued_completion_cannot_commit_a_late_conclusion(env, lab, provider, monkeypatch, policy):
+    fake = provider([], decision_reply({
+        "rationale": "timely response", "calls": [],
+        "control": {"action": "conclude", "summary": "No candidate was locked.",
+                    "claim_json": json.dumps({"disposition": "abstain"})},
+    }))
+    queued, release = threading.Event(), threading.Event()
+
+    def hold_completion(a):
+        assert a["stop_reason"] == "concluded"
+        queued.set()
+        assert release.wait(12), "test did not release the completion activity"
+
+    deadline = time.time() + 30
+    async with running(env, lab, fake, before_complete=hold_completion,
+                       investigator_options={"finalization": policy, "wall_seconds": 40,
+                                             "wall_deadline_unix": deadline, "conclude_threshold_seconds": 0}) as run:
+        try:
+            assert await asyncio.to_thread(queued.wait, 10)
+            (decision,) = run.events("decision.accepted")
+            assert datetime.fromisoformat(decision["created_at"]).timestamp() < deadline
+            child = env.client.get_workflow_handle(f"{run.inv}-turn-1")
+            history = await child.fetch_history()
+            (completion,) = [event for event in history.events
+                             if event.activity_task_scheduled_event_attributes.activity_type.name == "complete_turn"]
+            assert completion.event_time.ToDatetime().timestamp() < deadline
+            before = run.view()
+            assert "conclusion" not in before["body"]
+            actual_lab_deadline = before["body"]["wall"]["deadline_unix"]
+            monkeypatch.setattr(investigations, "time", SimpleNamespace(time=lambda: actual_lab_deadline + 1))
+        finally:
+            release.set()
+        result = await asyncio.wait_for(run.handle.result(), 15)
+        shown = run.view()
+        assert "conclusion" not in shown["body"] and run.stop_reasons() == ["deadline"]
+        (closed,) = run.events("turn.completed")
+        assert closed["body"]["control_refused"] == "wall-deadline-reached"
+        if policy == "autonomous":
+            assert result["status"] == "abstained" and shown["status"] == "stopped"
+            assert shown["needs_input"] is None
+            abstention = shown["body"]["controller_abstention"]
+            assert abstention["failure"]["error_type"] == "wall-deadline-reached"
+            assert abstention["investigator_concluded"] is False
+        else:
+            assert result["reason"] == "wall-deadline-reached" and shown["status"] == "active"
+            assert shown["needs_input"]["details"]["failure"]["error_type"] == "wall-deadline-reached"
+
+
+@pytest.mark.parametrize("control, calls", [
+    ({"action": "request_input"}, []),
+    ({"action": "wait_for_jobs"}, [{"tool": "run_component", "args": {"component_ref": "test.echo@1.0.0"}}]),
+])
+async def test_first_autonomous_reply_has_one_effect_free_authored_correction(env, lab, provider, control, calls):
+    first = decision_reply({"rationale": "Synthetic invalid finalization.", "calls": calls, "control": control},
+                           "invalid-finalization")
+    second = decision_reply({"rationale": "Synthetic correction.", "calls": [],
+                             "control": {"action": "stop", "summary": "Synthetic limited conclusion."}},
+                            "authored-correction")
+    fake = provider([first, second], second)
+    async with running(env, lab, fake, investigator_options={"finalization": "autonomous"},
+                       start_in_finalization=True) as run:
+        assert (await asyncio.wait_for(run.handle.result(), 25))["reason"] == "concluded"
+        assert fake.count == 2
+        [accepted] = run.events("decision.accepted")
+        assert accepted["body"]["slot"] == 0 and accepted["body"]["calls"] == []
+        assert not run.events("investigation.controller_abstained")
+        assert not run.events("job.created")
+        first_schema, second_schema = [request["body"]["response_format"]["json_schema"]["schema"]
+                                       for request in fake.requests]
+        assert first_schema["properties"]["control"]["properties"]["action"]["enum"] == ["conclude", "stop"]
+        assert first_schema["properties"]["calls"]["maxItems"] == 0
+        assert "read" in first_schema["properties"] and "read" not in second_schema["properties"]
+        assert "Your reply could not be used" in str(fake.requests[1]["body"]["messages"])
+        assert len(run.view()["turns"]) == 1
+
+
+async def test_early_local_envelope_bound_before_lock_keeps_exploration_open(env, lab, provider):
+    status, first = decision_reply({"rationale": "Inspect a job before deciding.",
+                                    "read": [{"tool": "get_job", "args": {"job_id": "missing-fixture"}}]},
+                                   "read-before-envelope-refusal")
+    first["usage"].update(prompt_tokens=117_000, total_tokens=117_020)
+    second = decision_reply(ASK, "normal-exploration-continuation")
+    fake = provider([(status, first), second], second)
+    async with running(env, lab, fake, investigator_options={"wall_seconds": 600, "finalization": "autonomous"}) as run:
+        await until("first normal post-bound decision", lambda: run.events("decision.accepted"))
+        [bound] = run.events("decision.runtime_bounded")
+        assert bound["body"]["slot"] == 0 and bound["body"]["runtime_outcome"] == "request-budget-exhausted"
+        assert run.events("decision.accepted")[0]["body"]["slot"] == 1 and fake.count == 2
+        assert not run.events("investigation.finalization_started")
+        assert not run.events("investigation.finalization_phase_started")
+        assert run.view()["body"]["wall"]["deadline_unix"] - time.time() > 300
+
+
+async def test_transient_provider_failure_retries_same_recovery_without_double_usage(env, lab, provider):
+    second = decision_reply({"rationale": "Synthetic recovery after transient error.", "calls": [],
+                             "control": {"action": "stop", "summary": "Synthetic limited conclusion."}},
+                            "recovery-after-provider-retry")
+    fake = provider([error_reply(503), second], second)
+    async with running(env, lab, fake, investigator_options={"finalization": "autonomous"},
+                       start_in_finalization=True) as run:
+        assert (await asyncio.wait_for(run.handle.result(), 25))["reason"] == "concluded"
+        assert fake.count == 2 and len(run.view()["turns"]) == 1
+        assert len(run.events("investigation.finalization_started")) == 1
+        [failed, successful] = [event["body"]["usage"] for event in run.events("model.usage")]
+        assert failed["failure"]["status"] == 503 and failed["calls"] == 0
+        assert successful["calls"] == 1 and successful["request_ids"] == ["recovery-after-provider-retry"]
+        assert run.model_tokens()["reserved"] == 0
+
+
+async def test_first_recovery_runaway_requires_evidence_limited_authored_decision(env, lab, provider):
+    second = decision_reply({"rationale": "No extra evidence was read.", "calls": [],
+                             "control": {"action": "stop", "summary": "Synthetic limited conclusion."}},
+                            "limited-after-runaway")
+    fake = provider([runaway_reply(), second], second)
+    async with running(env, lab, fake, investigator_options={"finalization": "autonomous"},
+                       start_in_finalization=True) as run:
+        assert (await asyncio.wait_for(run.handle.result(), 25))["reason"] == "concluded"
+        assert fake.count == 2
+        [usage] = [event["body"]["usage"] for event in run.events("model.usage")]
+        assert usage["calls"] == 2 and usage["structured_output"]["evidence_limited"] is True
+        assert "No new evidence was gathered" in str(fake.requests[1]["body"]["messages"])
+        schema = fake.requests[1]["body"]["response_format"]["json_schema"]["schema"]
+        assert "read" not in schema["properties"]
+
+
+async def test_inflight_exploration_deadline_preserves_ordinary_reproduction_and_conclusion(env, lab, provider):
+    scene = Scene(lab)
+
+    def seed(inv):
+        scene.rule(inv)
+        scene.lock(inv, scene.accuracy_job(inv, .91))
+
+    status, delayed = decision_reply(ASK, "exploration-inflight")
+    reproduction = decision_reply({
+        "rationale": "Synthetic ordinary reproduction of the locked fixture recipe.",
+        "purpose": "reproduction",
+        "calls": [{"tool": "run_component", "args": {"component_ref": scene.trial, "inputs": {}, "environment": "lab",
+                  "config": {"split": "validation"}, "purpose": "reproduction", "wall_seconds": 4}}],
+    }, "ordinary-reproduction")
+    conclusion = decision_reply({
+        "rationale": "Synthetic conclusion that reproduction was admitted, with no verification asserted.",
+        "calls": [], "control": {"action": "stop", "summary": "Synthetic limited conclusion."},
+    }, "ordinary-conclusion")
+    fake = provider([(status, {**delayed, "_fixture_delay_seconds": 17}), reproduction, conclusion], conclusion)
+    options = {"finalization": "autonomous", "wall_seconds": 39, "conclude_threshold_seconds": 9,
+               "exploration": {"min_holdback_seconds": 14, "max_holdback_seconds": 14}}
+    async with running(env, lab, fake, investigator_options=options, scene=scene, seed_investigation=seed) as run:
+        assert (await asyncio.wait_for(run.handle.result(), 35))["reason"] == "concluded"
+        assert fake.count == 3 and not run.events("investigation.finalization_started")
+        [entered] = run.events("investigation.finalization_phase_started")
+        assert entered["body"]["trigger"] == "exploration-boundary"
+        assert run.stop_reasons() == ["deadline", "concluded"]
+        early_turn = scene.q("get_turn", {"turn_id": run.view()["turns"][0]["id"]})
+        boundary = early_turn["spec"]["completion"]["exploration_deadline_unix"]
+        assert 11 <= boundary - fake.requests[0]["received_at"] <= 17
+        assert fake.requests[1]["received_at"] >= boundary
+        ordinary_prompt = str(fake.requests[1]["body"]["messages"])
+        assert 'set decision and run_component args.purpose explicitly' in ordinary_prompt
+        assert "run_component {component_ref, inputs:{port: artifact_id}, config, purpose?" in ordinary_prompt
+        [bounded] = run.events("decision.runtime_bounded")
+        assert bounded["body"]["phase_deadline"] is True and bounded["body"]["usage"]["uncertain"]
+        accepted = run.events("decision.accepted")
+        ordinary_turn = scene.q("get_turn", {"turn_id": accepted[0]["body"]["turn_id"]})
+        first_decision = ordinary_turn["decisions"][0]
+        assert first_decision["accepted"] and first_decision["slot"] == 0
+        attempted = first_decision["body"]
+        assert attempted["purpose"] == attempted["calls"][0]["args"]["purpose"] == "reproduction"
+        admitted = [event for event in run.events("job.admitted") if event["body"]["purpose"] == "reproduction"]
+        assert len(admitted) == 1, attempted
+        [reproduced] = admitted
+        assert reproduced["body"]["component"] == scene.trial
+
+
+async def test_conclusion_reserve_uses_only_recorded_metrics_when_ordinary_time_is_gone(env, lab, provider):
+    scene = Scene(lab)
+    locked = {}
+
+    stop = decision_reply({
+        "rationale": "Synthetic scoped stop, citing only the fixture's recorded visible metric.",
+        "calls": [], "control": {"action": "stop", "summary": "Visible validation accuracy 0.913. No confirmation."},
+    }, "recorded-metric-only")
+    fake = provider([], stop)
+
+    def seed(inv):
+        scene.rule(inv)
+        locked["job_id"] = scene.job(None, metrics={"accuracy": .913})
+        scene.lock(inv, locked["job_id"])
+        fake.script = [decision_reply({"rationale": "Read the recorded locked job.",
+                                      "read": [{"tool": "get_job", "args": {"job_id": locked["job_id"]}}]})]
+        time.sleep(3)  # lock exists before the distinct conclusion reserve begins
+
+    options = {"finalization": "autonomous", "wall_seconds": 22, "conclude_threshold_seconds": 20,
+               "exploration": {"min_holdback_seconds": 0, "max_holdback_seconds": 0}}
+    async with running(env, lab, fake, investigator_options=options, scene=scene, seed_investigation=seed) as run:
+        assert (await asyncio.wait_for(run.handle.result(), 15))["reason"] == "concluded"
+        [entered] = run.events("investigation.finalization_started")
+        assert entered["body"]["trigger"] == "ordinary-finalization-time-exhausted"
+        [turn] = run.view()["turns"]
+        turn = scene.q("get_turn", {"turn_id": turn["id"]})
+        assert turn["spec"]["completion"]["conclude_now"] is True
+        assert turn["spec"]["finalization"]["locked_candidate"]["id"] == locked["job_id"]
+        assert turn["spec"]["finalization"]["metrics"]
+        assert fake.count == 2
+        assert locked["job_id"] in str(fake.requests[0]["body"]["messages"])
+        assert ".913" in str(fake.requests[1]["body"]["messages"])
+
+
+@pytest.mark.parametrize("variant", ["omitted", "explicit", "mixed", "planned", "same-batch-plan", "unresolved"])
+async def test_ordinary_finalization_refuses_challenger_effect_hidden_by_reproduction_headline(
+        env, lab, provider, variant):
+    scene = Scene(lab)
+    stop = decision_reply({"rationale": "Synthetic stop after durable refusal.", "calls": [],
+                           "control": {"action": "stop", "summary": "No verification."}}, "ordinary-stop")
+    fake = provider([], stop)
+    seeded_jobs = []
+
+    def seed(inv):
+        args = {"component_ref": scene.trial, "environment": "lab", "config": {"split": "validation"}}
+        scene.rule(inv)
+        if variant == "planned":
+            plan = scene.cmd("plan_trial", {**args, "investigation_id": inv, "purpose": "open-search"})
+            calls = [{"tool": "launch_trial", "args": {"trial_id": plan["trial_id"], "purpose": "reproduction"}}]
+        elif variant == "unresolved":
+            calls = [{"tool": "launch_trial", "args": {"trial_id": "trial_missing", "purpose": "reproduction"}}]
+        elif variant == "same-batch-plan":
+            calls = [{"tool": "plan_trial", "args": {**args, "purpose": "open-search"}},
+                     {"tool": "launch_trial", "args": {"trial_id": {"$ref": "call[0].trial_id"}}}]
+        else:
+            declared = {} if variant == "omitted" else {"purpose": "open-search"}
+            calls = [{"tool": "run_component", "args": {**args, **declared}}]
+            if variant == "mixed":
+                calls.insert(0, {"tool": "run_component", "args": {**args, "purpose": "reproduction"}})
+        scene.lock(inv, scene.accuracy_job(inv, .91))
+        seeded_jobs.extend(event["subject"] for event in scene.events(inv, "job.admitted"))
+        fake.script = [decision_reply({"rationale": "Synthetic conflicting purpose.", "purpose": "reproduction",
+                                      "calls": calls}, "conflicting-purpose")]
+
+    options = {"finalization": "autonomous", "exploration": {"max_rounds": 0}}
+    async with running(env, lab, fake, investigator_options=options, scene=scene, seed_investigation=seed) as run:
+        assert (await asyncio.wait_for(run.handle.result(), 20))["reason"] == "concluded"
+        [turn] = run.view()["turns"]
+        rejected, accepted = scene.q("get_turn", {"turn_id": turn["id"]})["decisions"]
+        assert not rejected["accepted"] and accepted["accepted"]
+        details = rejected["body"]["error"]["details"]
+        assert details["purpose"] == "reproduction"
+        source = {"omitted": "run_component default", "planned": "stored trial plan",
+                  "same-batch-plan": "same-decision trial plan", "unresolved": "unresolved trial plan"}
+        assert details["effect_purposes"] == [{"call": 1 if variant in ("mixed", "same-batch-plan") else 0,
+                                               "purpose": None if variant == "unresolved" else "open-search",
+                                               "source": source.get(variant, "run_component args.purpose")}]
+        assert "args.purpose to reproduction" in rejected["body"]["error"]["next_action"]
+        assert [event["subject"] for event in run.events("job.admitted")] == seeded_jobs
+
+
+@pytest.mark.parametrize("unrelated_sibling", [False, True])
+async def test_ordinary_finalization_pending_exception_is_bound_to_the_effect(env, lab, provider, unrelated_sibling):
+    scene = Scene(lab)
+    stop = decision_reply({"rationale": "Synthetic limited stop.", "calls": [],
+                           "control": {"action": "stop", "summary": "Pending scoring was admitted."}})
+    fake = provider([], stop)
+    pending = {}
+
+    def seed(inv):
+        scene.rule(inv, scorer="proj.scorer")
+        incumbent = scene.job(inv, config={"variant": "incumbent"})
+        scene.scored(inv, incumbent, {"accuracy": .70})
+        scene.lock(inv, incumbent)
+        pending["artifact"] = scene.output(scene.job(inv, config={"variant": "challenger"}))
+        calls = [{"tool": "run_component", "args": {"component_ref": scene.scorer, "environment": "lab",
+                  "purpose": "measurement-development", "inputs": {"predictions": pending["artifact"]},
+                  "config": {"split": "validation"}}}]
+        if unrelated_sibling:
+            calls.append({"tool": "run_component", "args": {"component_ref": scene.trial, "environment": "lab",
+                          "purpose": "measurement-development", "config": {"split": "validation"}}})
+        fake.script = [decision_reply({"rationale": "Score the already-admitted challenger.",
+                                      "purpose": "measurement-development", "calls": calls})]
+
+    async with running(env, lab, fake, investigator_options={"exploration": {"max_rounds": 1}},
+                       scene=scene, seed_investigation=seed) as run:
+        assert (await asyncio.wait_for(run.handle.result(), 20))["reason"] == "concluded"
+        [phase] = run.events("investigation.finalization_phase_started")
+        assert phase["body"]["trigger"] == "search-limit"
+        admitted = [event for event in run.events("job.admitted")
+                    if event["body"]["purpose"] == "measurement-development"]
+        if unrelated_sibling:
+            assert not admitted
+            [turn] = run.view()["turns"]
+            rejected, _ = scene.q("get_turn", {"turn_id": turn["id"]})["decisions"]
+            assert rejected["body"]["error"]["details"]["calls"] == [1]
+        else:
+            [scorer] = admitted
+            assert scorer["body"]["component"] == scene.scorer
+            job = scene.q("get_job", {"job_id": scorer["subject"]})
+            assert job["lock"]["inputs"]["predictions"]["artifact_id"] == pending["artifact"]
+
+
+async def test_autonomous_claim_shape_correction_reaches_durable_acceptance(env, lab, provider):
+    first = decision_reply({"rationale": "Synthetic invalid claim.", "calls": [],
+                            "control": {"action": "conclude", "claim": {"disposition": "abstain", "point_estimate": .91}}})
+    claim = {"disposition": "abstain", "obligations": ["Synthetic evidence is limited."]}
+    second = decision_reply({"rationale": "Synthetic authored correction.", "calls": [],
+                             "control": {"action": "conclude", "summary": "No verified claim.", "claim": claim}})
+    fake = provider([first, second], second)
+    async with running(env, lab, fake, investigator_options={"finalization": "autonomous"},
+                       start_in_finalization=True) as run:
+        assert (await asyncio.wait_for(run.handle.result(), 25))["reason"] == "concluded"
+        assert fake.count == 2
+        assert "control.claim.point_estimate must be an object" in str(fake.requests[1]["body"]["messages"])
+        [ended] = run.view()["turns"]
+        turn = lab.q(lab.admin, "get_turn", {"turn_id": ended["id"]}, project=run.pid)
+        [accepted] = turn["decisions"]
+        assert accepted["accepted"] and accepted["slot"] == 0 and accepted["body"]["control"]["claim"] == claim
+        [usage] = [event["body"]["usage"] for event in run.events("model.usage")]
+        report = usage["structured_output"]
+        assert report["read_rounds_forfeited"] is True and "last_error_code" not in report
+
+
+@pytest.mark.parametrize("late", [False, True])
+async def test_short_positive_ordinary_reserve_admits_only_an_affordable_conclusion(env, lab, provider, late):
+    scene = Scene(lab)
+    stop = decision_reply({"rationale": "Synthetic scoped closure.", "calls": [],
+                           "control": {"action": "stop", "summary": "No confirmation."}}, "short-reserve-stop")
+    status, spend = decision_reply({"rationale": "Ordinary progress note.", "calls": [
+        {"tool": "record_note", "args": {"kind": "hypothesis", "text": "synthetic"}}]}, "ordinary-spend")
+    spend["usage"].update(prompt_tokens=110_000, total_tokens=110_020)
+    fake = provider([(status, spend), stop] if late else [stop], stop)
+
+    def seed(inv):
+        scene.rule(inv)
+        scene.lock(inv, scene.accuracy_job(inv, .91))
+
+    async with running(env, lab, fake, investigator_options={"finalization": "autonomous", "exploration": {"max_rounds": 0}},
+                       investigation_limits={"model_tokens": 185_000 if late else 95_000}, scene=scene,
+                       seed_investigation=seed if late else None) as run:
+        assert (await asyncio.wait_for(run.handle.result(), 25))["reason"] == "concluded"
+        assert fake.count == (2 if late else 1)
+        assert run.stop_reasons() == (["runtime-bounded", "concluded"] if late else ["concluded"])
+        [entered] = run.events("investigation.finalization_started")
+        assert (entered["body"]["runtime_outcome"] if late else entered["body"]["trigger"]) == (
+            "ordinary-finalization-envelope-unavailable")
+        usages = [event["body"]["usage"] for event in run.events("model.usage")]
+        assert [u["calls"] for u in usages] == ([1, 1] if late else [1])
+        assert run.model_tokens()["reserved"] == 0
+        assert run.model_tokens()["used"] == (110_140 if late else 120)
+
+
+async def test_ordinary_finalization_cannot_relock_a_scored_new_recipe(env, lab, provider):
+    scene = Scene(lab)
+    incumbent = {}
+    stop = decision_reply({"rationale": "Synthetic closure with unchanged incumbent.", "calls": [],
+                           "control": {"action": "stop", "summary": "Keep the original lock."}})
+    reproduction = decision_reply({"rationale": "Synthetic different recipe with reproduction label.",
+        "purpose": "reproduction", "control": {"action": "wait_for_jobs"}, "calls": [
+            {"tool": "run_component", "args": {"component_ref": scene.trial, "environment": "lab",
+             "purpose": "reproduction", "config": {"split": "validation", "recipe": "different"}}}]})
+    fake = provider([reproduction], stop)
+
+    def seed(inv):
+        scene.rule(inv, scorer="proj.scorer")
+        incumbent["job"] = scene.job(inv, config={"recipe": "incumbent"})
+        scene.scored(inv, incumbent["job"], {"accuracy": .71})
+        incumbent["note"] = scene.lock(inv, incumbent["job"])["note_id"]
+        incumbent["digest"] = scene.q("get_record", {"kind": "note", "id": incumbent["note"]})["digest"]
+
+    def admitted(run, component, purpose):
+        return next((event["subject"] for event in run.events("job.admitted")
+                     if event["body"]["purpose"] == purpose and event["body"]["component"] == component), None)
+
+    async with running(env, lab, fake, investigator_options={"exploration": {"max_rounds": 0}},
+                       scene=scene, seed_investigation=seed, idle_poll_seconds=1) as run:
+        recipe = await until("ordinary new labelled recipe", lambda: admitted(run, scene.trial, "reproduction"))
+        # Publication assigns this fixture slot's deterministic artifact ID.
+        predictions = f"art_{recipe[4:]}_predictions"
+        fake.answer_from_now_on(decision_reply({"rationale": "Score the published recipe predictions.",
+            "purpose": "reproduction", "control": {"action": "wait_for_jobs"}, "calls": [
+                {"tool": "run_component", "args": {"component_ref": scene.scorer, "environment": "lab",
+                 "purpose": "reproduction", "inputs": {"predictions": predictions}, "config": {"split": "validation"}}}]}))
+        await asyncio.to_thread(scene.finish_job, recipe)
+        assert scene.output(recipe) == predictions
+        score = await until("ordinary visible scorer", lambda: admitted(run, scene.scorer, "reproduction"))
+        relock = decision_reply({"rationale": "Attempt a different lock after scoring.", "calls": [
+            {"tool": "record_note", "args": {"kind": "candidate_lock", "text": json.dumps({"job_id": recipe})}},
+            {"tool": "record_note", "args": {"kind": "candidate_lock",
+                "text": json.dumps({"job_id": incumbent["job"], "scope": "changed", "claim": "changed"}),
+                "evidence_refs": [predictions]}},
+            {"tool": "record_note", "args": {"kind": "candidate_lock", "text": json.dumps({"job_id": incumbent["job"]})}},
+        ], "control": {"action": "stop", "summary": "Close after the lock check."}})
+        fake.answer_from_now_on(relock)
+        await asyncio.to_thread(scene.finish_job, score, ref=scene.scorer, metrics={"accuracy": .97})
+        assert (await asyncio.wait_for(run.handle.result(), 25))["reason"] == "concluded"
+        notes = scene.notes(run.inv, "candidate_lock")
+        [note] = notes
+        assert note["id"] == incumbent["note"] and note["digest"] == incumbent["digest"]
+        assert json.loads(note["body"]["text"])["job_id"] == incumbent["job"]
+        assert [event["subject"] for event in run.events("note.recorded")
+                if event["body"].get("kind") == "candidate_lock"] == [incumbent["note"]]
+        decision = next(event for event in reversed(run.events("decision.accepted")) if event["body"]["calls"])
+        attempts = scene.q("get_record", {"kind": "decision_receipts", "id": decision["subject"]})["body"]["receipts"]
+        assert attempts[0]["ok"] is False and "ordinary finalization fixes candidate identity" in attempts[0]["error"]["message"]
+        assert attempts[1]["ok"] is False and "fixes candidate lock metadata" in attempts[1]["error"]["message"]
+        assert attempts[2]["ok"] is True
+        reaffirmed = attempts[2]["result"]
+        assert {key: reaffirmed[key] for key in ("note_id", "note_digest", "job_id", "version", "reaffirmed")} == {
+            "note_id": incumbent["note"], "note_digest": incumbent["digest"], "job_id": incumbent["job"],
+            "version": 1, "reaffirmed": True,
+        }
+        assert reaffirmed["incumbent"]["evidence"] == note["body"]["incumbent"]["evidence"]
+        assert scene.q("get_job", {"job_id": score})["terminal"]["receipt"]["metrics"]["accuracy"] == .97

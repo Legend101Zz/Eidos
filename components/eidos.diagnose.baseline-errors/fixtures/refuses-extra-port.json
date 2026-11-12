@@ -1,0 +1,26 @@
+{
+ "name": "a test port is refused",
+ "inputs": {
+  "train": {
+   "file": "fixtures/data/train.npz",
+   "media_type": "application/x-npz"
+  },
+  "validation": {
+   "file": "fixtures/data/validation.npz",
+   "media_type": "application/x-npz"
+  },
+  "predictions": {
+   "file": "fixtures/data/baseline_predictions.npz",
+   "media_type": "application/x-npz"
+  },
+  "test": {
+   "file": "fixtures/data/validation.npz",
+   "media_type": "application/x-npz"
+  }
+ },
+ "config": {},
+ "expect": {
+  "status": "failed"
+ },
+ "author_test": true
+}

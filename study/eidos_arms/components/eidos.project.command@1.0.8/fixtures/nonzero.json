@@ -1,0 +1,15 @@
+{
+ "name": "nonzero exit fails unless allowed",
+ "inputs": {},
+ "config": {
+  "argv": [
+   "python",
+   "-c",
+   "raise SystemExit(3)"
+  ]
+ },
+ "expect": {
+  "status": "failed"
+ },
+ "author_test": true
+}

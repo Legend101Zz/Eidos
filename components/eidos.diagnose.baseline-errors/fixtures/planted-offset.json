@@ -1,0 +1,28 @@
+{
+ "name": "a planted per-example offset ranks first",
+ "inputs": {
+  "train": {
+   "file": "fixtures/data/train.npz",
+   "media_type": "application/x-npz"
+  },
+  "validation": {
+   "file": "fixtures/data/validation.npz",
+   "media_type": "application/x-npz"
+  },
+  "predictions": {
+   "file": "fixtures/data/baseline_predictions.npz",
+   "media_type": "application/x-npz"
+  }
+ },
+ "config": {
+  "seed": 11
+ },
+ "expect": {
+  "status": "succeeded",
+  "receipt": {
+   "top_hypothesis": "per-example-additive-offset",
+   "exploratory": true
+  }
+ },
+ "author_test": true
+}

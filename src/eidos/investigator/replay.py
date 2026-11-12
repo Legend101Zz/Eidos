@@ -18,8 +18,9 @@ import tempfile
 from collections.abc import Callable
 from typing import Any
 
+from eidos.application.handlers.finalization_evidence import model_projection
 from eidos.domain.turns import validate_decision
-from eidos.investigator.context import POLICY_ID, POLICY_V1, pack
+from eidos.investigator.context import POLICY_ID, POLICY_V1, POLICY_V2, pack
 from eidos.investigator.runtime import DecisionRequest, InvestigatorRuntime
 
 ContextPolicy = Callable[[dict[str, Any], list[dict[str, Any]]], dict[str, Any]]
@@ -38,7 +39,11 @@ def _policy_v1(view: dict, catalog: list[dict]) -> dict:
     return pack(view, catalog, policy=POLICY_V1)
 
 
-CONTEXT_POLICIES: dict[str, ContextPolicy] = {POLICY_ID: pack, POLICY_V1: _policy_v1,
+def _policy_v2(view: dict, catalog: list[dict]) -> dict:
+    return pack(view, catalog, policy=POLICY_V2)
+
+
+CONTEXT_POLICIES: dict[str, ContextPolicy] = {POLICY_ID: pack, POLICY_V2: _policy_v2, POLICY_V1: _policy_v1,
                                               "context-policy/minimal-1": minimal_policy}
 
 
@@ -64,9 +69,15 @@ def evaluate_turn(client: Any, project: str, turn_id: str, runtime: Investigator
     rec = load_recorded_turn(client, project, turn_id)
     source = dict(rec["source"])
     catalog = source.pop("catalog", [])
+    source.pop("audit_held_out_attestation", None)
+    if not source.pop("model_evidence_projected", False) and (
+            (source.get("charter") or {}).get("held_out") or rec["turn"]["spec"].get("evidence_allowlist") is not None):
+        blocked = client.query("model_evidence_exclusions", {"turn_id": turn_id}, project=project)["excluded"]
+        source, catalog = model_projection(source, catalog, set(blocked))
     packed = CONTEXT_POLICIES[context_policy](source, catalog)
     req = DecisionRequest(turn_id=f"eval:{turn_id}", slot=0, context=packed["text"], turn_so_far=[],
-                          limits=rec["turn"]["spec"]["limits"], settings={}, read_tools={}, view=source)
+                          limits=rec["turn"]["spec"]["limits"], settings={}, read_tools={}, view=source,
+                          conclude_only=bool(rec["turn"]["spec"].get("finalization")))
     result = runtime.decide(req)
     try:
         proposal = validate_decision(result.proposal, max_calls=rec["turn"]["spec"]["limits"]["max_calls"])

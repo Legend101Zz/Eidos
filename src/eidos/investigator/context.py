@@ -1,4 +1,6 @@
-"""Versioned context policies ``context-policy/2`` (current) and ``context-policy/1`` (replay and older turns).
+"""Versioned context policies ``context-policy/3`` (current, ADR 0023), ``context-policy/2`` and ``context-policy/1``
+(replay and older turns). Policy 3 adds the exploration facts (incumbent, challenger rounds, allowance, phase) and reads
+the baseline from its durable record; policy 2 is unchanged, so its recorded turns replay as they were.
 
 Packs an authorized investigation view (taken at the turn's ledger horizon) into a bounded
 prompt and records exactly what was selected, omitted and truncated. The view itself is stored
@@ -13,28 +15,36 @@ from typing import Any
 
 from eidos.domain.assessment import candidate_lock_job_id
 from eidos.domain.redaction import redact_text as _redact
-from eidos.domain.turns import CONTROL_TOOLS, EFFECT_TOOLS, MODEL_CONTEXT_CHAR_LIMIT
+from eidos.domain.turns import CONTROL_TOOLS, EFFECT_TOOLS, FINALIZATION_READ_ROUNDS, MODEL_CONTEXT_CHAR_LIMIT
 from eidos_wire import canonical_json, sha256_bytes
 
-POLICY_ID = "context-policy/2"  # ADR 0020
+POLICY_ID = "context-policy/3"  # ADR 0023
+POLICY_V2 = "context-policy/2"  # ADR 0020
 POLICY_V1 = "context-policy/1"
+FINALIZATION_PROJECTION = "finalization-context/1"
+FINALIZATION_CONTEXT_CHARS = 8_000
 MAX_JOBS = 25
 MAX_CATALOG = 30
 SWEEP_COMPONENT = "eidos.search.recipe-sweep"
+DIAGNOSIS_COMPONENT = "eidos.diagnose.baseline-errors"  # ADR 0024
 BATCH_NOT_RUN_CODES = ("DEPENDENCY_FAILED", "REF_UNRESOLVED", "BATCH_DEADLINE")
 
 TOOL_GUIDE = """You are the Eidos investigator. Each turn you propose ONE decision as JSON:
 {"rationale": str, "purpose": one of reproduction|measurement-development|open-search|hypothesis-test|confirmation,
  "hypotheses": [{"statement","prediction","falsifier"}], "calls": [{"tool","args"}...], "control": {"action", "summary"}}
 Effect tools (executed in order only after the lab accepts your decision):
-  run_component {component_ref, inputs:{port: artifact_id}, config, environment?, wall_seconds?, prediction?, falsifier?}
-  plan_trial {component_ref, inputs, config, environment?} -> trial_id; launch_trial {trial_id}
-  plan_branch {parent_checkpoint_id, component_ref, migration, stream_policy, seed?, intervention, inputs, config}
+  run_component {component_ref, inputs:{port: artifact_id}, config, purpose?, environment?, wall_seconds?, prediction?, falsifier?}
+  plan_trial {component_ref, inputs, config, purpose?, environment?} -> trial_id; launch_trial {trial_id}
+  plan_branch {parent_checkpoint_id, component_ref, migration, stream_policy, seed?, intervention, inputs, config, purpose?}
     migration = {<every parent state entry, e.g. "model", "optimizer", "rng.torch", "data_cursor">: "copy"|"transform"|
     "init"|"drop"}; stream_policy "paired" or "independent" (independent needs seed); intervention = {"kind": "none"|
     "change-weights"|"change-learning"|"change-structure", "component_ref"?, "config"?}. A refusal lists the parent's
     state entries. -> trial_id; launch_branch {trial_id}. A returned trial_id is listed under "Results of your recent calls" in
     the NEXT turn; launch it there.
+  For direct reproduction or confirmation, set decision and run_component args.purpose explicitly.
+    Direct job purpose defaults to "open-search".
+    Launches use the frozen plan purpose. After exploration stops, challenger decisions/effects may only finish
+    admitted pending work with inputs bound to its pending output.
   author_source {files:{path: text}}  -> a source-bundle artifact id: candidate project files (e.g. a changed project.py)
     for run_component inputs.source of eidos.project.command (the whole-trainer path). No build, no new component.
     Use it in the same decision with a reference (below), or from "Artifacts you created" in a later turn.
@@ -63,9 +73,11 @@ Effect tools (executed in order only after the lab accepts your decision):
   freeze_evidence_plan {plan_id}; launch_evidence_plan {plan_id} (the assessment then runs by itself; its outcome
     appears under "Your evidence plans")
   assess_candidate {success_rule_id, claim_id or claim:{statement, scope}, baseline:{"job_id": <job whose recipe is the
-    baseline>}, candidate:{"job_id": <the locked job>}, seeds:[<seeds neither recipe has run>], labels:<held-out labels
-    artifact id>, predictions_slot?, data_provenance:{split: "held-out"|"selection"}, required_isolation}: the default
-    route to an independent verdict, for when you have held-out data the charter attests. It validates output schemas,
+    baseline>}, candidate:{"job_id": <the locked job>}, seeds:[<seeds neither recipe has run>], labels?, predictions_slot?,
+    data_provenance:{split: "held-out"|"selection"}, required_isolation}: the default route to an independent verdict.
+    For held-out confirmation, omit labels when the charter attests a single eligible label artifact. The lab binds it
+    without exposing its identifier, digest or content. Authorized callers may supply an explicit label artifact ID.
+    The lab validates output schemas,
     seeds, fresh initialization, the charter and data provenance, then freezes the plan and launches fresh runs of both
     recipes, so no confirming result exists when the plan is frozen. Results you have already seen cannot be confirmation,
     and each attested held-out set confirms once (paired-report metrics: train_evaluate {seeds, baseline, candidate,
@@ -76,9 +88,24 @@ Effect tools (executed in order only after the lab accepts your decision):
     expect its refusal, and conclude with disposition "candidate" and your validation point estimate. The outcome is
     "candidate submitted for confirmation" and the independent evaluator decides. That is a normal, complete result.
   export_model {checkpoint_artifact_id, behavior_check_job_id}; record_note {kind, text, evidence_refs}
+  Before each candidate lock, verify fresh inference via the visible readiness check on its exact source and checkpoint.
+    Repair before locking within search authority. No tie re-lock or changes after freeze.
   To lock a candidate: record_note {kind: "candidate_lock", text: "{\\"job_id\\": \\"<job>\\"}"}, the text being exactly
     that JSON naming the selected training job, or any text with exactly one job in evidence_refs. A lock that names no
-    job cannot be assessed.
+    job cannot be assessed. A lock needs the selection rule first: a "selection_rule" note, or "selection" in the lock's
+    JSON: {"metric", "split": "validation"|"training-cv", "direction", "scorer": "<component whose receipt scores a
+    candidate>", "data": {"inputs": {...}, "config"?: {...}}, "reproduce_within"?}. It is fixed once recorded; only that
+    scorer's receipts on that data count (never held-out data; a lock cannot name its own scorer job). A re-lock must
+    beat the incumbent on it, both scored, the challenger run after the rule (refused otherwise); no lock changes after
+    a plan is frozen or an assessment requested.
+  Classification scorer-port example: {"metric": "accuracy", "split": "validation", "direction":
+    "higher_is_better", "scorer": "eidos.task.score-classification@1.0.2", "data": {"inputs":
+    {"reference": "art_selection_labels"}}}. "validation" is the scientific split; the scorer's label port is
+    "reference", not "validation". Inspect describe_component before recording: invalid ports are refused prospectively.
+  Reproduction-seed example: select with data.config {"split": "validation"}, run the locked recipe with seed 11,
+    then reproduce with seed 23 and both purposes "reproduction", scoring on the same reference artifact. Do not fix
+    data.config.seed=11 when fresh-seed reproduction must match: fixed config values match exactly and seed 23 would
+    be unscored. A previously recorded rule is immutable; report its limitations rather than rewriting it.
 Batches: calls run in order, and any argument of a later call can be {"$ref": "call[<i>].<field>"}, an earlier call of
   the SAME decision's result, filled in when the later call runs. So one decision can author, train, infer and score:
   [author_source {files}, run_component {inputs: {source: {"$ref": "call[0].artifact_id"}}, ...}, run_component {inputs:
@@ -91,9 +118,19 @@ Batches: calls run in order, and any argument of a later call can be {"$ref": "c
   refused before anything runs. Jobs of one decision run one at a time (one CPU); several at once need "resource_policy":
   {"max_concurrent_jobs": n} and a project resource policy that allows n. launch_evidence_plan and assess_candidate use the same
   allowance: their jobs run one at a time, and the calls after them that start compute wait until the last job has ended.
-Search: eidos.search.recipe-sweep runs one project command over a parameter space (grid, or random with a seed) on
-  visible validation, with seeds/folds, a budget (max_trials or max_seconds) and a stopping rule, and returns a ranked
-  evidence_table and best_recipe. It is exploratory: no claim, no test data. Lock the winner before confirming it.
+Diagnose, then sweep, then challenge. (1) After the baseline, eidos.diagnose.baseline-errors {inputs: {train, validation,
+  predictions?: <baseline's validation predictions npz>}} returns split statistics, error slices and probes that tell an
+  additive offset, a gain change, a feature-wise shift, a spatial/positional shift and information loss apart, as ranked
+  hypotheses with a prediction and a falsifier each. (2) A broad sweep in ONE call, no authored code:
+  eidos.search.recipe-sweep {inputs: {train, validation}, config: {template: {name: "quick"|"broad", task_type:
+  "classification"|"regression"}}} crosses none / train-fitted standardize / per-example center / per-example standardize
+  with linear, k-NN, kernel ridge, small MLP (and SVM, GBM when scikit-learn exists), screens all on validation,
+  cross-validates finalists within train and returns a ranked evidence_table and best_recipe (with a reproduce command).
+  (3) Targeted challengers: a command sweep (config.command argv over a grid or seeded random space, seeds/folds, budget
+  max_trials or max_seconds, stopping rule) or authored candidates testing the top hypothesis's prediction. All three
+  are exploratory: no claim, no test data. Lock the winner before confirming it. Then: record the selection rule, lock
+  the incumbent, run challenger rounds while the pinned facts say exploration continues, reproduce the incumbent
+  (purpose "reproduction"), assess or submit it, and conclude before the deadline.
 Control actions: wait_for_jobs (sleep until admitted work finishes), request_input, conclude {summary, scope, claim?},
   stop. claim = {disposition: "candidate"|"confirmed"|"null"|"abstain", claim_id?, point_estimate: {metric, value or
   baseline+candidate, split?, direction?: "higher_is_better"|"lower_is_better"} (value means improvement: positive is
@@ -105,11 +142,126 @@ Control actions: wait_for_jobs (sleep until admitted work finishes), request_inp
 Success rules come only from the committed charter; you cannot set thresholds. Cite artifact/job ids for numbers."""
 
 
+FINALIZATION_GUIDE = """You are in the single bounded autonomous finalization turn.
+Use at most FINALIZATION_ROUNDS rounds of reads, with at most four reads in each round. The next request then
+accepts a decision only. Read existing evidence only: get_job {job_id}, inspect_evidence {artifact_id, max_bytes?},
+describe_component {component_ref}. Then return ONE JSON decision with your own short rationale, calls: [], and
+control.action set to conclude or stop. Shape example:
+{"rationale": "<why the recorded evidence supports this scoped outcome>", "calls": [],
+ "control": {"action": "conclude", "summary": "<your conclusion and its limits>", "scope": {}}}
+No search, compute, authoring, rule changes, candidate changes, re-lock or new evidence collection is allowed.
+Report the locked candidate with its source/job/receipt identifiers, visible metrics, provenance limits and recorded
+reproduction status. With no eligible locked candidate, honestly abstain. Missing held-out evidence never passes
+assessment. A candidate may be submitted pending independent confirmation, with limitations stated explicitly.
+Use only the remaining original wall/token budget; do not request operator input or wait for jobs in this turn.""".replace(
+    "FINALIZATION_ROUNDS", str(FINALIZATION_READ_ROUNDS))
+
+
+def _tool_guide(view: dict[str, Any]) -> str:
+    return FINALIZATION_GUIDE if view.get("finalization") else TOOL_GUIDE
+
+
+def _known_tools(view: dict[str, Any]) -> list[str]:
+    return ["get_job", "inspect_evidence", "describe_component", "conclude", "stop"] if view.get("finalization") \
+        else sorted(EFFECT_TOOLS) + list(CONTROL_TOOLS)
+
+
 def pack(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int = MODEL_CONTEXT_CHAR_LIMIT,
          policy: str = POLICY_ID) -> dict[str, Any]:
+    section, projection = "", None
+    if view.get("finalization"):
+        section, projection = _finalization_projection(view, min(FINALIZATION_CONTEXT_CHARS, char_limit // 3))
+    body_limit = char_limit - len(section)
     if policy == POLICY_V1:
-        return _pack_v1(view, catalog, char_limit=char_limit)
-    return _pack_v2(view, catalog, char_limit=char_limit)
+        packed = _pack_v1(view, catalog, char_limit=body_limit)
+    else:
+        packed = _pack_v2(view, catalog, char_limit=body_limit, v3=policy != POLICY_V2)
+    if projection is not None:
+        if len(packed["text"]) > body_limit:
+            guide = "\n## Tools\n" + FINALIZATION_GUIDE
+            keep = max(0, body_limit - len(guide) - len(TRUNCATION_MARK))
+            bounded_body = packed["text"][:keep] + TRUNCATION_MARK + guide
+            packed["text"] = bounded_body[-body_limit:] if body_limit else ""
+            packed["truncations"]["context_truncated"] = True
+        packed["text"] += section
+        packed["chars"] = len(packed["text"])
+        packed["truncations"]["finalization_projection"] = projection
+    return packed
+
+
+def _finalization_projection(view: dict[str, Any], limit: int) -> tuple[str, dict[str, Any]]:
+    """Pack only recorded identities and closure facts; the pinned turn remains the read authority."""
+    source = view["finalization"]
+    header = "\n\n## Bounded autonomous finalization\n"
+    report: dict[str, Any] = {"schema": FINALIZATION_PROJECTION, "omitted": {}}
+    incumbent = source.get("incumbent") or {}
+    locked = source.get("locked_candidate") or {}
+    reproduction = incumbent.get("reproduction") or {}
+    rule = source.get("selection_rule")
+    report["omitted"]["fields"] = [
+        field for field, value in (
+            ("metrics", source.get("metrics")),
+            ("refusals", source.get("refusals")),
+            ("incumbent.evidence", incumbent.get("evidence")),
+            ("incumbent.reproduction.attempts", reproduction.get("attempts")),
+            ("locked_candidate.inputs", locked.get("inputs")),
+            ("locked_candidate.config", locked.get("config")),
+            ("locked_candidate.receipt", locked.get("receipt")),
+            ("locked_candidate.outputs", locked.get("outputs")),
+        ) if value
+    ]
+    facts: dict[str, Any] = {
+        "schema": FINALIZATION_PROJECTION,
+        "turn_id": source.get("turn_id"),
+        "trigger": source.get("trigger"),
+        "runtime_outcome": source.get("runtime_outcome"),
+        "incumbent": {k: incumbent[k] for k in ("job_id", "version", "note_id", "basis", "reproduced_by") if k in incumbent},
+        "reproduction": {k: reproduction[k] for k in ("criterion", "incumbent_value", "reproduced_by")
+                         if k in reproduction},
+        "locked_candidate": {k: locked[k] for k in ("id", "component", "status", "purpose") if k in locked},
+        "selection_rule": rule,
+        "remaining_budget": view.get("budgets"),
+        "remaining_wall": view.get("completion"),
+        "evidence_access": ("This is a projection. Read exact job and artifact details with the authorized tools. "
+                            "Omitted controller metadata remains in the pinned turn."),
+        "addressable": {},
+        "omitted": report["omitted"],
+    }
+    if rule and len(canonical_json(rule)) > min(2_000, limit // 4):
+        facts["selection_rule"] = {
+            "sha256": sha256_bytes(canonical_json(rule).encode()),
+            **{k: rule[k] for k in ("metric", "direction", "split", "scorer", "reproduce_within")
+               if k in rule and len(canonical_json(rule[k])) <= 120},
+        }
+        report["omitted"]["selection_rule"] = "oversized rule fields retained in the pinned turn"
+    allow = source.get("evidence_allowlist") or {}
+    priorities = {
+        "jobs": [locked.get("id"), incumbent.get("job_id"), incumbent.get("reproduced_by")],
+        "artifacts": [row.get("artifact_id") for row in locked.get("outputs") or []],
+        "components": [locked.get("component")],
+    }
+    for index, (kind, preferred) in enumerate(priorities.items()):
+        eligible = list(dict.fromkeys(allow.get(kind) or []))
+        ordered = list(dict.fromkeys([item for item in preferred if isinstance(item, str) and item in eligible] + eligible))
+        facts["addressable"][kind] = selected = []
+        report["omitted"][kind] = len(ordered)
+        # Reserve a share of the remaining section for each identifier kind.
+        # No opaque identifiers are shortened or reconstituted.
+        room = max(0, limit - len(header) - len(canonical_json(facts)) - 100)
+        share = room // (len(priorities) - index)
+        for item in ordered:
+            cost = len(canonical_json(item)) + 1
+            if cost > share:
+                break
+            selected.append(item)
+            share -= cost
+            report["omitted"][kind] -= 1
+    rendered = header + canonical_json(facts)
+    if len(rendered) > limit:
+        # Tiny caller-supplied budgets still get a bounded context and explicit omission.
+        report["omitted"]["section"] = "projection does not fit the supplied context budget"
+        return "", report
+    return rendered, report
 
 
 def _pack_v1(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int) -> dict[str, Any]:
@@ -198,16 +350,16 @@ def _pack_v1(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
     omitted["catalog"] = [c["ref"] for c in catalog[MAX_CATALOG:]]
     if len(catalog) > MAX_CATALOG:
         lines.append("(more components exist: use search via the catalog query; they are data, not tools)")
-    lines.append("## Tools\n" + TOOL_GUIDE)
+    lines.append("## Tools\n" + _tool_guide(view))
     text = "\n".join(lines)
     truncated = False
     if len(text) > char_limit:
-        text = text[: char_limit - 200] + "\n...[context truncated by context-policy/1]\n" + TOOL_GUIDE
+        text = text[: char_limit - 200] + "\n...[context truncated by context-policy/1]\n" + _tool_guide(view)
         truncated = True
     return {"policy": POLICY_V1, "text": text, "selections": sel, "omissions": omitted,
             "truncations": {"context_truncated": truncated}, "chars": len(text),
             "source_manifest_digest": "sha256:" + sha256_bytes(canonical_json(view).encode()),
-            "known_tools": sorted(EFFECT_TOOLS) + list(CONTROL_TOOLS)}
+            "known_tools": _known_tools(view)}
 
 
 def _error_view_v1(err: Any) -> Any:
@@ -242,10 +394,10 @@ PINNED_BUDGETS: dict[str, tuple[int, float, int]] = {
     "revision": (900, 0.02, 900), "model": (400, 0.01, 400), "charter": (3000, 0.06, 3000), "steering": (4000, 0.07, 1200),
     "inputs": (3000, 0.05, 3000), "task": (2000, 0.04, 2000), "notes": (3000, 0.05, 3000), "budget": (1500, 0.03, 1500),
     "wall": (500, 0.06, 500), "baseline": (1200, 0.03, 1200), "lock": (1500, 0.03, 800), "success_rules": (1500, 0.03, 1500),
-    "environments": (6000, 0.10, 900), "failures": (6000, 0.10, 400), "assessment": (2400, 0.04, 700), "search": (1500, 0.03, 600),
-    "batches": (1000, 0.02, 500)}
+    "environments": (6000, 0.10, 900), "failures": (6000, 0.10, 400), "assessment": (2400, 0.04, 700), "search": (2400, 0.04, 600),
+    "batches": (1000, 0.02, 500), "exploration": (1600, 0.04, 600)}
 HEAD_SECTIONS = ("revision", "model", "charter", "steering", "inputs", "task", "notes", "budget")
-FACT_SECTIONS = ("wall", "baseline", "lock", "assessment", "success_rules", "environments", "search", "batches", "failures")
+FACT_SECTIONS = ("wall", "baseline", "lock", "exploration", "assessment", "success_rules", "environments", "search", "batches", "failures")
 # Dropped first when the sections together do not fit a small limit; the facts are not on this list.
 DROP_ORDER = ("notes", "task", "inputs", "budget", "revision", "model")
 MAX_REFUSED_PACKAGES = 10
@@ -327,6 +479,90 @@ def _baseline_fact(view: dict[str, Any]) -> str | None:
     return out[:1200]
 
 
+def _baseline_record_fact(view: dict[str, Any]) -> str | None:
+    """ADR 0023: the durable baseline identity the lab recorded (the investigation's first baseline job and the job that
+    scored it), overridden only by an explicit baseline note. Never inferred from the recent jobs."""
+    named = [n for n in (view.get("pinned_notes") or []) if n.get("kind") == "baseline"]
+    noted = _baseline_fact(view) if named else None
+    if noted:  # a baseline note that names a job wins; one naming none does not hide the record
+        return noted
+    rec = view.get("baseline_record")
+    if not isinstance(rec, dict) or not rec.get("job_id"):
+        return None  # R14 #7: never guessed from a job's purpose (a reproduction may reproduce a candidate)
+    out = (f"- Baseline (recorded): job {rec['job_id']} ({rec.get('component')}, environment {rec.get('environment')}), "
+           f"metrics {json.dumps(rec.get('metrics'), sort_keys=True)}")
+    scored = rec.get("scored_by")
+    if isinstance(scored, dict):
+        out += f"; scored by {scored.get('job_id')}: {json.dumps(scored.get('metrics'), sort_keys=True)}"
+    else:
+        out += "; not scored yet (score its outputs; the scorer is recorded automatically)"
+    return out[:1200]
+
+
+STOP_TEXT = {
+    "selection-frozen": "the selection is frozen (an evidence plan was frozen or an assessment requested)",
+    "ceiling-perfect-score": "the incumbent has a perfect score on the selection rule",
+    "ceiling-no-improvement": "no challenger improved on the incumbent in {patience} rounds",
+    "search-limit": "the declared search limit of {max_rounds} rounds is reached",
+    "wall-holdback": "the wall time held back for reproduction and export is reached",
+    "token-holdback": "the model tokens held back for reproduction and export are reached",
+}
+
+
+def _exploration_facts(view: dict[str, Any]) -> list[str]:
+    """ADR 0023: the incumbent, the selection rule, challenger rounds and the exploration allowance, from the turn spec."""
+    st = view.get("exploration")
+    if not isinstance(st, dict):
+        return []
+    rule, inc, left = st.get("rule"), st.get("incumbent"), st.get("allowance") or {}
+    out = []
+    out.append("- Selection rule: " + (json.dumps(rule, sort_keys=True) if rule else
+               'none recorded. Record it before you lock (a "selection_rule" note, or the "selection" of your first '
+               'lock): {"metric": "<receipt metric>", "split": "validation"|"training-cv", "direction": '
+               '"higher_is_better"|"lower_is_better", "scorer": "<component whose receipt scores>", "data": {"inputs": '
+               '{"<port>": "<selection data artifact>"}, "config": {...}}, "reproduce_within"?: <tolerance>}. A lock '
+               'without it is refused; it is fixed once recorded, and only that scorer on that data is evidence.'))
+    if inc:
+        ev = inc.get("evidence") or {}
+        rep = inc.get("reproduction") or {}
+        crit = rep.get("criterion") or {}
+        out.append(f"- Incumbent v{inc.get('version')}: job {inc.get('job_id')}"
+                   + (f", {ev.get('metric')} {ev.get('value')} (scored by {ev.get('scored_by')})" if ev else
+                      ", no recorded selection evidence (score it with the rule's scorer before any re-lock)")
+                   + (f"; reproduced by {inc['reproduced_by']}" if inc.get("reproduced_by") else
+                      "; not reproduced yet" + (f" (a reproduction must score within {crit.get('within')} of it under "
+                                                "the rule)" if crit else "")))
+    allowance = []
+    if left.get("seconds_left") is not None:
+        allowance.append(f"{max(float(left['seconds_left']), 0):.0f} s (after {left.get('holdback_seconds'):.0f} s held "
+                         "back for reproduction and export, before the conclusion's reserve)")
+    if left.get("tokens_left") is not None:
+        allowance.append(f"{max(int(left['tokens_left']), 0)} model tokens (after {left.get('holdback_tokens')} held back)")
+    rounds = (f"{st.get('rounds')} challenger round(s), {st.get('rounds_without_improvement')} without improvement "
+              f"(stop at {st.get('patience_rounds')})" + (f", search limit {st['max_rounds']}" if st.get("max_rounds")
+                                                          is not None else ""))
+    if st.get("phase") == "finalize" and not st.get("incumbent"):  # H2 (R17 #3): the hold-back reached before a lock
+        why = STOP_TEXT.get(str(st.get("stop")), str(st.get("stop"))).format(
+            patience=st.get("patience_rounds"), max_rounds=st.get("max_rounds"))
+        out.append(f"- Exploration: STOPPED before any candidate was locked, {why}. No new exploratory work (refused). "
+                   "Lock an already scored candidate if one beats the baseline; otherwise conclude, reporting that no "
+                   "candidate was found within the exploration allowance.")
+    elif st.get("phase") == "finalize":
+        why = STOP_TEXT.get(str(st.get("stop")), str(st.get("stop"))).format(
+            patience=st.get("patience_rounds"), max_rounds=st.get("max_rounds"))
+        out.append(f"- Exploration: STOPPED, {why}. No new challengers (refused). Reproduce the incumbent if it is not "
+                   'reproduced (purpose "reproduction"), export, then conclude with it.')
+    elif st.get("phase") == "explore":
+        out.append(f"- Exploration: keep improving. {rounds}. Allowance left: {'; '.join(allowance) or 'no limit'}. "
+                   "Run a challenger round (a batch of alternatives), score each on the selection rule, and re-lock "
+                   "only a challenger that beats the incumbent; the lab refuses any other re-lock.")
+    else:
+        out.append("- Exploration: no incumbent yet. Diagnose the baseline (eidos.diagnose.baseline-errors), run one broad "
+                   "template sweep (eidos.search.recipe-sweep), then lock your best candidate with the selection rule. "
+                   f"Allowance left: {'; '.join(allowance) or 'no limit'}.")
+    return out
+
+
 def _lock_fact(view: dict[str, Any]) -> list[str]:
     out = []
     locks = [n for n in (view.get("pinned_notes") or []) if n.get("kind") in ("candidate_lock", "lock")]
@@ -350,7 +586,9 @@ def _assessment_facts(view: dict[str, Any]) -> list[str]:
     out: list[str] = []
     state = view.get("claim_state") or {}
     chosen = state.get("assessment_id")
-    if chosen:  # derived by the conclusion's rules: current claim revision, plan eligibility, a failure outweighs a pass
+    if state.get("assessment_result_withheld"):
+        out.append("- Independent assessment recorded. Its outcome is sealed and the ledger derives the final claim state.")
+    elif chosen:  # derived by the conclusion's rules: current claim revision, plan eligibility, a failure outweighs a pass
         a: dict[str, Any] = next((x for x in state.get("assessments_considered") or [] if x.get("id") == chosen), {})
         out.append(f"- Candidate state: {state.get('state')} (claim {state.get('claim_id')} revision {state.get('claim_revision')}, "
                    f"plan {state.get('plan_id')}, assessment {chosen}, outcome {a.get('outcome')}, conformance "
@@ -383,16 +621,26 @@ def _assessment_facts(view: dict[str, Any]) -> list[str]:
 
 
 def _sweep_facts(view: dict[str, Any]) -> list[str]:
-    """Recipe sweeps of this investigation (ADR 0022), whose rows the job window can otherwise drop."""
-    out = []
+    """Baseline diagnoses (ADR 0024) and recipe sweeps (ADR 0022) of this investigation, whose rows the job window can
+    otherwise drop."""
+    diagnoses, out = [], []
     for j in view.get("jobs") or []:
+        if str(j.get("component") or "").startswith(DIAGNOSIS_COMPONENT):
+            receipt = j.get("receipt") if isinstance(j.get("receipt"), dict) else {}
+            report = [o["artifact_id"] for o in j.get("outputs", []) if o.get("slot") == "report"]
+            diagnoses.append(f"- Diagnosis {j['id']} ({j.get('status')}): report {report[0] if report else None}, top hypothesis "
+                       f"{receipt.get('top_hypothesis')}, ranked {json.dumps(receipt.get('hypotheses'))}. Exploratory: test "
+                       "its prediction (and falsifier) with a sweep before changing architecture.")
+            continue
         if not str(j.get("component") or "").startswith(SWEEP_COMPONENT):
             continue
         outputs = {o["slot"]: o["artifact_id"] for o in j.get("outputs", []) if o.get("slot") in ("best_recipe", "evidence_table")}
         metrics = (j.get("receipt") or {}).get("metrics") if isinstance(j.get("receipt"), dict) else None
         out.append(f"- Sweep {j['id']} ({j.get('status')}): {json.dumps(outputs, sort_keys=True)}"
                    + (f", metrics {json.dumps(metrics, sort_keys=True)}" if metrics else "") + ". Exploratory: lock the winner before confirming it.")
-    return out[-3:]
+    # H1: the latest diagnosis first, then the three latest sweeps, so later sweeps never push the diagnosis out (the
+    # section keeps its lines in order within its budget)
+    return diagnoses[-1:] + out[-3:]
 
 
 def _batch_facts(view: dict[str, Any]) -> list[str]:
@@ -445,7 +693,7 @@ def _pinned_section(name: str, lines: list[str], char_limit: int, omitted: list[
     return list(reversed(kept)) if newest_first else kept
 
 
-def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int) -> dict[str, Any]:
+def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int, v3: bool = False) -> dict[str, Any]:
     inv = view["investigation"]["body"]
     sel: dict[str, list] = {"jobs": [], "claims": [], "catalog": []}
     omitted: dict[str, list] = {"jobs": [], "claims": [], "catalog": [], "known_failures": [], "sections": []}
@@ -477,8 +725,9 @@ def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
         raw["model"] = [f"Model artifact: {inv['model_artifact_id']}  environment: {inv.get('environment')}"]
 
     wall = _wall_fact(view)
-    baseline = _baseline_fact(view)
+    baseline = _baseline_record_fact(view) if v3 else _baseline_fact(view)
     raw["wall"] = [wall] if wall else []
+    raw["exploration"] = _exploration_facts(view) if v3 else []
     raw["baseline"] = [baseline or "- Baseline: none recorded yet (reproduce it first)."]
     raw["lock"] = _lock_fact(view)
     raw["assessment"] = _assessment_facts(view)
@@ -510,13 +759,14 @@ def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
 
     def assemble_facts() -> list[str]:
         out = ["## Pinned facts (always present; they survive truncation and the job window)"]
-        for name in ("wall", "baseline", "lock", "assessment", "success_rules", "environments", "search", "batches"):
+        for name in ("wall", "baseline", "lock", "exploration", "assessment", "success_rules", "environments", "search",
+                     "batches"):
             out += pinned.get(name, [])
         if pinned.get("failures"):
             out += ["- Known failures so far (do not repeat one without changing what caused it):", *pinned["failures"]]
         return out
 
-    tail = ["## Tools", TOOL_GUIDE]
+    tail = ["## Tools", _tool_guide(view)]
 
     def pinned_chars() -> int:
         return len("\n".join(assemble_head() + assemble_facts() + tail))
@@ -604,7 +854,7 @@ def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
         text = text[:keep] + TRUNCATION_MARK + guide if keep > 0 else text[:char_limit]
     budget_cut = any(omitted[k] for k in ("sections", "known_failures")) or len(sel["jobs"]) < len(job_items) \
         or len(sel["claims"]) < len(claims) or len(sel["catalog"]) < len(shown)
-    return {"policy": POLICY_ID, "text": text, "selections": sel, "omissions": omitted,
+    return {"policy": POLICY_ID if v3 else POLICY_V2, "text": text, "selections": sel, "omissions": omitted,
             "truncations": {"context_truncated": budget_cut, "budget_left": max(room, 0)}, "chars": len(text),
             "source_manifest_digest": "sha256:" + sha256_bytes(canonical_json(view).encode()),
-            "known_tools": sorted(EFFECT_TOOLS) + list(CONTROL_TOOLS)}
+            "known_tools": _known_tools(view)}

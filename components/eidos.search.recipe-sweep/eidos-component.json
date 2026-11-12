@@ -1,10 +1,10 @@
 {
  "id": "eidos.search.recipe-sweep",
- "release": "1.0.0",
+ "release": "1.1.0",
  "implements": "recipe-search/1",
  "kind": "artifact-op",
  "entry": "recipe_sweep:run",
- "summary": "Exploratory recipe search on visible validation. Runs a project command once per recipe x seed x fold in a private work dir: config.command.argv (\"python\" or an absolute path first; {work} {out} {seed} {fold} {folds} {params_json} {recipe} and {param.NAME} substituted), which writes numeric metrics to {out}/receipt.json. config.space is grid or random (with a seed), config.seed_policy gives seeds and folds, config.budget needs max_trials or max_seconds, config.stopping is none, patience or target. Outputs: evidence_table (every recipe, ranked, with its metrics) and best_recipe. Without a source bundle, config.command.copy must list the project files to copy. Each evaluation runs in a scrubbed environment and its own process group. No claim and no test data; lock the winner before independent confirmation.",
+ "summary": "Exploratory recipe search on visible validation, in one call. Either a typed template (config.template: {name: quick|broad, task_type?, preprocess?, families?, finalists?, cv_folds?, seeds?, rank_by?}) that crosses preprocessing (none, train-fitted standardize, per_example_center, per_example_standardize) with model families (linear ridge/logistic, knn, kernel ridge, small mlp; svm and gbm when scikit-learn is importable) on NPZ train and validation ports (x, y), screens every recipe on validation and cross-validates the best finalists within train, with no authored code; or a project command run once per recipe x seed x fold in a private work dir: config.command.argv (\"python\" or an absolute path first; {work} {out} {seed} {fold} {folds} {params_json} {recipe} and {param.NAME} substituted), which writes numeric metrics to {out}/receipt.json, with config.space (grid or random with a seed), config.seed_policy, config.budget (max_trials or max_seconds) and config.stopping (none, patience or target). Outputs: evidence_table (every attempted recipe, ranked, with its metrics) and best_recipe. Without a source bundle, config.command.copy must list the project files to copy. Each evaluation runs in a scrubbed environment and its own process group. No claim and no test data; lock the winner before independent confirmation.",
  "scientific_effects": [
   "change-weights"
  ],
@@ -31,22 +31,20 @@
  "controls": [
   "fixtures/grid.json",
   "fixtures/refuses-unbounded.json",
-  "fixtures/refuses-test-metric.json"
+  "fixtures/refuses-test-metric.json",
+  "fixtures/refuses-template-with-command.json",
+  "fixtures/refuses-unknown-template.json"
  ],
  "receipt": [
   "metrics",
   "stop_reason",
   "evidence_digest",
-  "best_recipe_id"
+  "best_recipe_id",
+  "template",
+  "task_type"
  ],
  "config_schema": {
   "type": "object",
-  "required": [
-   "command",
-   "space",
-   "objective",
-   "budget"
-  ],
   "properties": {
    "command": {
     "type": "object",
@@ -153,7 +151,7 @@
    },
    "budget": {
     "type": "object",
-    "description": "at least one of max_trials (recipes) and max_seconds",
+    "description": "at least one of max_trials (recipes) and max_seconds; with a template, default max_trials = the template's recipe count",
     "properties": {
      "max_trials": {
       "type": "integer",
@@ -186,6 +184,95 @@
      },
      "target": {
       "type": "number"
+     }
+    }
+   },
+   "template": {
+    "type": "object",
+    "required": [
+     "name"
+    ],
+    "additionalProperties": false,
+    "description": "a typed recipe template instead of command/space/objective/recipe: needs train and validation NPZ ports (x, y); no source bundle",
+    "properties": {
+     "name": {
+      "type": "string",
+      "enum": [
+       "quick",
+       "broad"
+      ],
+      "description": "quick: one setting per family; broad: two or three"
+     },
+     "task_type": {
+      "type": "string",
+      "enum": [
+       "classification",
+       "regression"
+      ],
+      "description": "default: the task input's task_type; objective validation_accuracy (maximize) or validation_rmse (minimize)"
+     },
+     "preprocess": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+       "type": "string",
+       "enum": [
+        "none",
+        "standardize",
+        "per_example_center",
+        "per_example_standardize"
+       ]
+      }
+     },
+     "families": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+       "type": "string",
+       "enum": [
+        "linear",
+        "knn",
+        "kernel",
+        "mlp",
+        "svm",
+        "gbm"
+       ]
+      }
+     },
+     "finalists": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "best screened recipes cross-validated within train; default 3"
+     },
+     "cv_folds": {
+      "type": "integer",
+      "minimum": 2,
+      "description": "default 3, at most 20",
+      "maximum": 20
+     },
+     "seeds": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+       "type": "integer"
+      }
+     },
+     "rank_by": {
+      "type": "string",
+      "enum": [
+       "validation",
+       "train-cv"
+      ],
+      "description": "how the best finalist is chosen; default validation (train-CV cannot see a train-validation shift)"
+     },
+     "timeout_seconds": {
+      "type": "number",
+      "minimum": 1
+     },
+     "max_rows": {
+      "type": "integer",
+      "minimum": 2,
+      "description": "training-row cap for kernel, svm and gbm"
      }
     }
    }
@@ -230,6 +317,30 @@
     "budget": {
      "max_trials": 20
     }
+   },
+   {
+    "template": {
+     "name": "broad",
+     "task_type": "classification",
+     "seeds": [
+      11
+     ]
+    }
+   }
+  ],
+  "anyOf": [
+   {
+    "required": [
+     "template"
+    ]
+   },
+   {
+    "required": [
+     "command",
+     "space",
+     "objective",
+     "budget"
+    ]
    }
   ]
  }

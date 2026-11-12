@@ -12,7 +12,7 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from study.audit_transcripts import audit
-from study.common import dev_command, read_json, write_json
+from study.common import IMPROVEMENT_CARDS, dev_command, read_json, write_json
 
 
 def analyze(design_path, results_path, out):
@@ -50,7 +50,7 @@ def analyze(design_path, results_path, out):
                         bool(r.get("card_success", r.get("verified_success", False))) for r in subset
                     ),
                     verified_successes=sum(bool(r.get("verified_success")) for r in subset),
-                    primary_eligible=card in {"D02","D03","D04","D05","D06"},
+                    primary_eligible=card in IMPROVEMENT_CARDS,
                 )
             )
         counts = Counter(r.get("status", "missing") for r in outcomes)
@@ -78,7 +78,7 @@ def analyze(design_path, results_path, out):
     lines = [
         "# Development pilot — descriptive only",
         "",
-        "D02–D06 are in the improvement stratum. D01 reports operational equality; D12 reports",
+        "Assignments marked primary-eligible are in the improvement stratum. D01 reports operational equality; D12 reports",
         "null correctness (never a primary improvement success). Missing assignments remain in n.",
         "",
         "The draft interval is exploratory; these data cannot establish practical superiority.",

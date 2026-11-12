@@ -20,14 +20,19 @@ from study.common import (
     DEVELOPMENT,
     ENVELOPE,
     FAMILIES,
+    IMPROVEMENT_CARDS,
     MODEL,
+    PROMPT_OVERRIDES,
     ROOT,
     STUDY,
     dev_command,
     read_json,
+    record_prompt,
+    refuse_live_prompt_overrides,
     research_python,
     write_json,
 )
+from study.private_card_registry import PRIVATE_CARD_BARS
 from study.run_arm import stop_process_tree, utc_now
 
 
@@ -40,7 +45,7 @@ def plan(seed, cards=None, runs=3):
             task=card,
             run=index,
             arm=arm,
-            primary_eligible=card in {"D02","D03","D04","D05","D06"},
+            primary_eligible=card in IMPROVEMENT_CARDS,
             block_id=f"{card}-r{index}",
             block_order=order,
             randomization_seed=seed,
@@ -55,13 +60,16 @@ def plan(seed, cards=None, runs=3):
 CLIENT_PLACEHOLDER_MODELS = frozenset({"<synthetic>"})
 
 
+ORDINARY_FAILURES = frozenset({"crash", "timeout", "token_budget", "invalid_output"})
+
+
 def version_guard(records):
-    def served(record):
-        return [m for m in record.get("model_ids_seen", []) if m not in CLIENT_PLACEHOLDER_MODELS]
-    models = set(model for record in records for model in served(record))
-    if len(models) != 1:
-        return "block must contain exactly one returned model id; saw " + repr(sorted(models))
-    if any(not served(record) for record in records):
+    served = [set(record.get("model_ids_seen", [])) - CLIENT_PLACEHOLDER_MODELS for record in records]
+    unexpected = set().union(*served) - {MODEL}
+    if unexpected:
+        return "block recorded an unexpected returned model id; saw " + repr(sorted(unexpected))
+    if any(not models and record.get("status") not in ORDINARY_FAILURES | {"incident"}
+           for record, models in zip(records, served, strict=True)):
         return "one or more runs did not record a returned model id"
     return None
 
@@ -91,7 +99,8 @@ def prepare(row, run_dir):
     run_dir.mkdir(parents=True, exist_ok=True)
     dev_command("package_task.py", "--task", row["task"], "--out", run_dir / "task")
     # The common structural interface contains no graders, labels or references.
-    shutil.copyfile(DEVELOPMENT / "validate_answer.py", run_dir / "task/answer_schema.py")
+    if row["task"] not in PRIVATE_CARD_BARS:
+        shutil.copyfile(DEVELOPMENT / "validate_answer.py", run_dir / "task/answer_schema.py")
     if row["arm"] in (2, 3, 4):
         shutil.copyfile(STUDY / "METHOD.md", run_dir / "METHOD.md")
     (run_dir / "out").mkdir()
@@ -112,6 +121,7 @@ def prepare(row, run_dir):
             charter_amendment_path=os.environ.get("EIDOS_PILOT_CHARTER_PATH", "docs/experiments/pilot-1/CHARTER.md"),
         ),
     )
+    record_prompt(run_dir, read_json(run_dir / "arm.json"))
 
 
 def outer_deadline(run_dir, arm, deadline, *, stub=False):
@@ -124,7 +134,9 @@ def outer_deadline(run_dir, arm, deadline, *, stub=False):
     return deadline + read_json(setup)['setup_wall_s']
 
 
-def run_block(rows, runs_root, stub=False, replace_incident=False):
+def run_block(rows, runs_root, stub=False, replace_incident=False, *, eval_audit_config=None):
+    if not stub:
+        refuse_live_prompt_overrides(os.environ)
     block_id = rows[0]["block_id"]
     block_dir = Path(runs_root).resolve() / block_id
     previous = None
@@ -152,6 +164,13 @@ def run_block(rows, runs_root, stub=False, replace_incident=False):
     )
     write_json(record_path, block)
     processes, logs = [], []
+    worker_env = dict(os.environ)
+    worker_env.pop("EIDOS_PRIVATE_SEAL_ROOT", None)
+    worker_env.pop("EIDOS_EVAL_AUDIT_IDENTIFIERS", None)
+    for name in PROMPT_OVERRIDES:
+        worker_env.pop(name, None)
+    if not stub:
+        worker_env["EIDOS_STUDY_LIVE_DISPATCH"] = "1"
     try:
         for row in rows:
             prepare(row, Path(run_dirs[str(row["arm"])]))
@@ -166,10 +185,12 @@ def run_block(rows, runs_root, stub=False, replace_incident=False):
                 "--run-dir",
                 str(run_dir),
             ]
+            if row["arm"] == 4 and not stub and eval_audit_config is not None:
+                command.extend(("--eval-audit-config", str(eval_audit_config)))
             log = (run_dir / "launcher.log").open("w")
             logs.append(log)
             processes.append(
-                subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=log, start_new_session=True)
+                subprocess.Popen(command, cwd=ROOT, env=worker_env, stdout=log, stderr=log, start_new_session=True)
             )
         deadline = time.monotonic() + ENVELOPE["wall_s"] + 60
         while any(process.poll() is None for process in processes):

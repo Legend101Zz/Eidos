@@ -3,13 +3,47 @@ from __future__ import annotations
 
 import base64
 import json
+import math
+import re
 import shutil
+import tempfile
 import threading
 import time
 from pathlib import Path
 
 from . import lab
-from .common import ROOT, classify, digest, envelope, ledger, prepare, prompt, usage, utc, write_json
+from .common import (PROJECT_COMMAND_BUNDLE_SHA256, PROJECT_COMMAND_REF, ROOT, classify, digest,
+                     envelope, ledger, prepare, prompt, usage, utc, write_json)
+
+# The study owns the optional answer shape. The coordinator only understands the generic scope contract.
+_ANSWER_TEXT = {'type': 'string', 'pattern': r'\S'}
+_NULLABLE_ANSWER_TEXT = {'anyOf': [_ANSWER_TEXT, {'enum': [None]}]}
+CONCLUSION_SCOPE_SCHEMA = {
+    'type': 'object',
+    'properties': {'answer': {
+        'type': 'object',
+        'properties': {'abstention': {
+            'type': 'object',
+            'required': ['abstained', 'reason', 'unresolved', 'next_discriminating_test'],
+            'properties': {
+                'abstained': {'type': 'boolean'},
+                'reason': _NULLABLE_ANSWER_TEXT,
+                'unresolved': {'type': 'array', 'items': _ANSWER_TEXT},
+                'next_discriminating_test': _NULLABLE_ANSWER_TEXT,
+            },
+            'anyOf': [
+                {'type': 'object', 'properties': {'abstained': {'enum': [False]}}},
+                {'type': 'object', 'properties': {
+                    'abstained': {'enum': [True]},
+                    'reason': _ANSWER_TEXT,
+                    'unresolved': {'type': 'array', 'minItems': 1},
+                    'next_discriminating_test': _ANSWER_TEXT,
+                }},
+            ],
+        }},
+    }},
+}
+
 
 REPRODUCE = '''"""Replay the selected job's exact source, staged inputs and training argv."""
 import argparse, json, os, shutil, subprocess, sys
@@ -63,12 +97,50 @@ def remaining_wall_seconds(deadline_unix, now=None):
     return max(1.0, deadline_unix - (time.time() if now is None else now) - WATCHDOG_MARGIN_SECONDS)
 
 
+def observed_deadline(outer_deadline, investigation):
+    registered = ((investigation.get('body') or {}).get('wall') or {}).get('deadline_unix')
+    if type(registered) not in (int, float) or not math.isfinite(registered):
+        return {'registered_lab_deadline_unix': None, 'registered_margin_s': None}
+    return {'registered_lab_deadline_unix': registered, 'registered_margin_s': outer_deadline - registered}
+
+
 def stop_investigation(c, project, inv):
     return c.command('stop_investigation', {'investigation_id': inv, 'running_job_policy': 'cancel'},
                      project=project, key='study-outer-stop:' + inv)
 
 
-def run(run_dir, meta):
+def finalization_read_coverage(receipts):
+    reports = [receipt.get("structured_output") or {} for receipt in receipts if receipt.get("phase") == "finalization"]
+    if any(report.get("read_rounds_forfeited") is True for report in reports):
+        return "forfeited"
+    if not reports or any(report.get("read_rounds_forfeited") is not False for report in reports):
+        return None
+    if all(report.get("finalization_read_round_limit") == 0 for report in reports):
+        return "no_read_rounds_available"
+    return "not_forfeited"
+
+
+def investigator_abstention_reason(shown, status):
+    conclusion = (shown.get("body") or {}).get("conclusion") or {}
+    if status != "ok" or (conclusion.get("claim_state") or {}).get("state") != "abstained":
+        return None
+    recovery = shown.get("finalization_export_receipt")
+    ordinary = shown.get("finalization_phase") or {}
+    if recovery:
+        if recovery.get("investigator_concluded") is not True or "locked_candidate" not in recovery:
+            return None
+        locked = recovery["locked_candidate"]
+        if locked is not None and (not isinstance(locked, dict)
+                or locked.get("status") not in {"admitted", "running", "failed", "cancelled", "pruned"}):
+            return None
+    elif not ordinary or "incumbent" not in conclusion or conclusion["incumbent"] is not None:
+        return None
+    triggers = {ordinary.get("trigger"), (shown.get("finalization") or {}).get("trigger")}
+    boundary = {"exploration-boundary", "exploration-token-holdback", "ordinary-finalization-time-exhausted"}
+    return "no-eligible-lock-at-boundary" if triggers & boundary else "no-eligible-lock-at-finalization"
+
+
+def run(run_dir, meta, *, eval_audit_config=None):
     setup_started_at, setup_begin = utc(), time.monotonic()
     lab.start()
     c = lab.client()
@@ -77,6 +149,7 @@ def run(run_dir, meta):
     try:
         project, imported = prepare(c, run_dir, 4)
         investigator = json.loads((Path(__file__).parent / 'investigator.json').read_text())
+        investigator['conclusion_scope_schema'] = CONCLUSION_SCOPE_SCHEMA
         wall, token_cap = envelope(meta)
         investigator['turn_deadline_seconds'] = wall
         # Everything in this context comes from the packaged task and common task prompt.
@@ -87,17 +160,27 @@ def run(run_dir, meta):
         files['METHOD.md'] = (ROOT / 'study/METHOD.md').read_text()
         question = prompt(4, run_dir) + '\n\nPackaged task files:\n' + json.dumps(files, ensure_ascii=False)
         begin = time.monotonic()
+        wall_start_unix = time.time()
+        deadline_utc = wall_start_unix + wall
         began_at = utc()
         write_json(run_dir / 'setup.json', {'setup_started_at': setup_started_at,
                    'setup_ended_at': began_at, 'setup_wall_s': round(begin - setup_begin, 3),
                    'setup_complete': True})
-        deadline_utc = time.time() + wall
         from .provider_bridge import start as start_bridge
+        bridge_start_unix = time.time()
         bridge, bridge_receipt = start_bridge(run_dir, investigator['settings']['base_url'],
-                                              deadline_utc, investigator['settings']['request_timeout'])
+                                              deadline_utc, investigator['settings']['request_timeout'],
+                                              eval_audit_config=eval_audit_config)
+        bridge_ready_unix = time.time()
+        if eval_audit_config is not None and bridge_receipt.get('eval_provider_audit') is not True:
+            raise RuntimeError('required provider audit did not activate')
         investigator['settings']['base_url'] = bridge_receipt['base_url']
         # ADR 0020: completion state, the conclusion's reserve and the "conclude now" turn, inside the watchdog's envelope.
         investigator['wall_seconds'] = remaining_wall_seconds(deadline_utc)
+        investigator['wall_deadline_unix'] = deadline_utc - WATCHDOG_MARGIN_SECONDS
+        from study.common import record_live_delivery
+        record_live_delivery(run_dir, meta, question, 'investigation-question')
+        start_request_unix = time.time()
         r = c.command('start_investigation', {
             'question': question, 'charter_id': imported['charter_id'], 'environment': 'default',
             'inputs': imported['artifacts'], 'task': imported['task'], 'investigator': investigator,
@@ -106,9 +189,23 @@ def run(run_dir, meta):
             'notes': f'Study deadline unix={deadline_utc}; wall_seconds={wall}. '
                      'Outer controller cancels the investigation and jobs at this deadline.',
         }, project=project)
+        start_response_unix = time.time()
         inv = r['result']['investigation_id']
-        write_json(run_dir / 'investigation.json', {'project': project, 'investigation_id': inv,
-                   'deadline_unix': deadline_utc, 'investigator': investigator, 'started_at': utc()})
+        investigation_path = run_dir / 'investigation.json'
+        deadline_evidence = {
+            'wall_start_unix': wall_start_unix,
+            'outer_deadline_unix': deadline_utc,
+            'requested_lab_deadline_unix': investigator['wall_deadline_unix'],
+            'requested_lab_wall_seconds': investigator['wall_seconds'],
+            'bridge_startup_s': bridge_ready_unix - bridge_start_unix,
+            'start_request_unix': start_request_unix,
+            'start_response_unix': start_response_unix,
+            **observed_deadline(deadline_utc, {}),
+        }
+        investigation_record = {'project': project, 'investigation_id': inv, 'deadline_unix': deadline_utc,
+                                'investigator': investigator, 'started_at': utc(),
+                                'deadline_evidence': deadline_evidence}
+        write_json(investigation_path, investigation_record)
         done, expired = threading.Event(), threading.Event()
         stop_error = []
 
@@ -131,6 +228,9 @@ def run(run_dir, meta):
             while not expired.is_set():
                 lab.guard_disk()
                 shown = c.query('get_investigation', {'investigation_id': inv}, project=project)
+                if not observed:
+                    deadline_evidence.update(observed_deadline(deadline_utc, shown))
+                    write_json(investigation_path, investigation_record)
                 observed = shown
                 write_json(run_dir / 'investigation_latest.json', shown)
                 if shown['status'] != 'active' or shown.get('needs_input'):
@@ -142,6 +242,9 @@ def run(run_dir, meta):
             # A parked investigator must not resume after this run has returned.
             stop_investigation(c, project, inv)
         shown, events, records = ledger(c, project, inv, run_dir / 'transcript.jsonl')
+        if deadline_evidence['registered_lab_deadline_unix'] is None:
+            deadline_evidence.update(observed_deadline(deadline_utc, shown))
+            write_json(investigation_path, investigation_record)
         tokens, models, billed, receipts = usage(events, run_dir / 'transcript.jsonl')
         uncertain = any(r.get('uncertain') for r in receipts) or (
             expired.is_set() and any(t['status'] == 'open' for t in shown['turns']))
@@ -166,9 +269,11 @@ def run(run_dir, meta):
         assessments = [r['body'] for r in records['assessment']]
         agent_claim = {'investigator': claim, 'assessor': assessments}
         export_error = None
+        checkpoint_basename = None
         try:
-            export_answer(c, project, inv, run_dir, meta, selected, reason, claim, assessments, tokens, receipts,
-                          usage_uncertain=uncertain, answer_metadata=answer_metadata, claim_state=claim_state)
+            checkpoint_basename = export_answer(c, project, inv, run_dir, meta, selected, reason, claim, assessments, tokens, receipts,
+                          usage_uncertain=uncertain, answer_metadata=answer_metadata, claim_state=claim_state,
+                          task_artifacts=imported['artifacts'])
         except (ValueError, TypeError) as exc:
             export_error = str(exc)
         # Refresh after fallback so the transcript and job receipts include the delivered baseline.
@@ -181,11 +286,14 @@ def run(run_dir, meta):
             valid = False
             write_json(run_dir / 'validation_error.json', {'error': str(exc)})
         status, incident = classify(observed or shown, receipts, models, expired.is_set(), valid)
-        return {'status': status, 'incident_reason': incident, 'tokens': tokens, 'billed_usd': billed,
+        controller_abstention = (shown.get('body') or {}).get('controller_abstention')
+        return {'status': status, 'finalization_read_coverage': finalization_read_coverage(receipts),
+                'investigator_abstention_reason': investigator_abstention_reason(shown, status),
+                **({'controller_abstention': controller_abstention} if controller_abstention else {}), 'incident_reason': incident, 'tokens': tokens, 'billed_usd': billed,
                 'started_at': began_at,
                 'model_ids_seen': models, 'agent_claim': agent_claim, 'transcript': 'transcript.jsonl',
                 'project': project, 'investigation_id': inv, 'selected_job': selected,
-                'selection_reason': reason, 'investigation_wall_s': round(time.monotonic() - begin, 3),
+                'selection_reason': reason, 'checkpoint_basename': checkpoint_basename, 'investigation_wall_s': round(time.monotonic() - begin, 3),
                 'provider_endpoint': bridge_receipt['upstream'], 'provider_outer_kill': True,
                 'usage_uncertain': uncertain,
                 'evidence_plan_count': len(records['evidence_plan']),
@@ -247,7 +355,7 @@ def select_job(c, project, shown, records):
 def baseline(c, project, inv, imported, remaining):
     # The investigation is stopped, so this explicitly attributed fallback is project-budgeted.
     wall = max(1, int(remaining - 5))
-    r = c.command('run_component', {'component_ref': 'eidos.project.command@1.0.7',
+    r = c.command('run_component', {'component_ref': PROJECT_COMMAND_REF,
         'inputs': imported['artifacts'], 'environment': 'default', 'purpose': 'reproduction',
         'wall_seconds': wall, 'config': {'argv': ['python', 'project.py', 'train', '--inputs',
         '{work}', '--out', '{out}', '--seed', '{seed}'], 'seed': 11, 'timeout_seconds': wall}},
@@ -308,9 +416,139 @@ def map_claim_state(claim_state, metadata, candidate, measurements):
     return status, claim_type, scope, deviations + [f'Unknown claim state {state!r}; model status kept']
 
 
+_SWEEP_ARTIFACT = re.compile(r'art_([a-f0-9]{16})_evidence_table')
+_SWEEP_COMPONENT = 'eidos.search.recipe-sweep@1.1.0'
+_SWEEP_BUNDLE_SHA = '22068c870b4463189e8dfde0266a6b695b29858304a71f456d842a870e023e07'
+_SWEEP_SCHEMA = 'recipe-sweep-table/1'
+_SWEEP_SLOT = 'evidence_table'
+
+
+def export_sweep_evidence(c, project, inv, out, reference, task_artifacts, authored_evidence=()):
+    """Copy one eligible visible recipe-sweep table to a study-private export."""
+    match = _SWEEP_ARTIFACT.fullmatch(reference)
+    splits = ('train', 'validation')
+    if not match or not task_artifacts or not all(task_artifacts.get(split) for split in splits):
+        raise ValueError('measurement artifact is outside the recipe-sweep export policy')
+    job_id = 'job_' + match.group(1)
+    try:
+        job = c.query('get_job', {'job_id': job_id}, project=project)
+        art = c.query('get_artifact', {'artifact_id': reference}, project=project)
+        release = c.query('describe_component', {'component_ref': _SWEEP_COMPONENT}, project=project)
+    except Exception as exc:
+        if getattr(exc, 'status', None) in (403, 404):
+            raise ValueError('measurement artifact or its provenance is unavailable') from exc
+        raise
+    lock = job.get('lock') or {}
+    inputs = lock.get('inputs') or {}
+    component = lock.get('component') or {}
+    release_body = release.get('body') or {}
+    config = lock.get('config') or {}
+    outputs = [row for row in job.get('outputs', []) if row.get('artifact_id') == reference]
+    size, sha = art.get('size'), art.get('digest')
+    expected = {'slot': _SWEEP_SLOT, 'role': 'output', 'schema': _SWEEP_SCHEMA,
+                'media_type': 'application/json', 'size': size, 'digest': sha}
+    if (
+        (job.get('id'), job.get('project_id'), job.get('investigation_id'), job.get('status'))
+        != (job_id, project, inv, 'succeeded')
+        or lock.get('project_id') != project or lock.get('grants') != []
+        or lock.get('output_access_class') != 'project'
+        or component.get('ref') != _SWEEP_COMPONENT
+        or release.get('id') != _SWEEP_COMPONENT
+        or release.get('status') != 'active' or not release_body.get('digest')
+        or release_body['digest'] != component.get('digest')
+        or release_body.get('bundle_digest') != _SWEEP_BUNDLE_SHA
+        or (component.get('bundle') or {}).get('digest') != _SWEEP_BUNDLE_SHA
+        or (lock.get('outputs') or {}).get(_SWEEP_SLOT) != _SWEEP_SCHEMA
+        or set(config) != {'template'} or not isinstance(config['template'], dict)
+        or set(inputs) != set(splits)
+        or any((inputs[split].get('artifact_id'), inputs[split].get('schema'))
+               != (task_artifacts[split], 'task-array/1') for split in splits)
+        or (art.get('id'), art.get('project_id'), art.get('producer_job'), art.get('origin'), art.get('access_class'))
+        != (reference, project, job_id, 'job-output', 'project')
+        or not art.get('producer_attempt') or art['producer_attempt'] != job.get('current_attempt')
+        or art['producer_attempt'] != (job.get('terminal') or {}).get('attempt_id')
+        or type(size) is not int or not 0 < size <= 1024**2
+        or not isinstance(sha, str) or not re.fullmatch(r'[a-f0-9]{64}', sha)
+        or any('sha256' in row and row['sha256'] != sha for row in authored_evidence)
+        or len(outputs) != 1 or outputs[0].get('attempt_id') != art['producer_attempt']
+        or any(outputs[0].get(key) != value for key, value in expected.items())
+        or any(art.get(key) != expected[key] for key in ('role', 'schema', 'media_type'))
+    ):
+        raise ValueError('measurement artifact has unverified or restricted recipe-sweep provenance')
+    evidence_dir = out / 'evidence'
+    if out.is_symlink() or evidence_dir.is_symlink():
+        raise ValueError('unsafe evidence export directory')
+    evidence_dir.mkdir(exist_ok=True)
+    target = evidence_dir / (reference + '.json')
+    if target.exists() or target.is_symlink():
+        raise ValueError('measurement artifact export path already exists')
+    with tempfile.TemporaryDirectory(dir=out, prefix='.sweep-evidence-') as scratch:
+        payload = Path(scratch) / 'table.json'
+        c.download(project, reference, payload)
+        if payload.is_symlink() or payload.stat().st_size != size or digest(payload) != sha:
+            raise ValueError('measurement artifact bytes differ from the registered digest or size')
+        table = json.loads(payload.read_bytes())
+        if (not isinstance(table, dict) or table.get('schema') != _SWEEP_SCHEMA
+                or table.get('selection_split') != 'visible-validation' or table.get('exploratory') is not True
+                or 'claim' not in table or table['claim'] is not None or not isinstance(table.get('recipes'), list)):
+            raise ValueError('measurement artifact is outside the visible exploratory export policy')
+        payload.rename(target)
+    filename = target.relative_to(out).as_posix()
+    entry = {'path': filename, 'sha256': sha, 'role': 'investigator-cited-visible-recipe-sweep',
+             'supports': 'The cited exploratory recipe-sweep results on supplied training and visible validation',
+             'limitations': 'No held-out or independent confirmation. Controller mapped the cited artifact to these exact bytes.'}
+    mapping = {'author': 'study-adapter', 'artifact_id': reference, 'path': filename, 'sha256': sha, 'size': size,
+               'producer_job': job_id, 'component_ref': _SWEEP_COMPONENT,
+               'investigation_id': inv, 'producer_attempt': art['producer_attempt'],
+               'selection_split': 'visible-validation', 'authored_evidence': list(authored_evidence),
+               'inputs': {split: inputs[split]['artifact_id'] for split in splits}}
+    return entry, mapping
+
+
+def export_model_checkpoint(client, project, job, candidate_dir):
+    """Resolve a unique checkpoint name from the pinned producer's bound receipt."""
+    from eidos_wire import sha256_file
+
+    producer = job.get("lock", {}).get("component", {})
+    if producer.get("ref") != PROJECT_COMMAND_REF or (
+            producer.get("bundle") or {}).get("digest") != PROJECT_COMMAND_BUNDLE_SHA256:
+        raise ValueError("selected model job lacks the pinned shared producer")
+    outputs = job.get("outputs", [])
+    models = [output for output in outputs if output.get("role") == "model-export"]
+    receipts = [output for output in outputs if output.get("slot") == "receipt"]
+    if len(models) != 1 or len(receipts) != 1:
+        raise ValueError("selected model job must have exactly one checkpoint and producer receipt")
+    model, receipt = models[0], receipts[0]
+
+    def verified_download(output, target):
+        client.download(project, output["artifact_id"], target)
+        if sha256_file(target) != (output.get("digest"), output.get("size")):
+            raise ValueError("downloaded producer artifact differs from bound digest or size")
+
+    receipt_path = candidate_dir.parent / "model_export_receipt.json"
+    verified_download(receipt, receipt_path)
+    bindings = json.loads(receipt_path.read_bytes()).get("model_exports")
+    if not isinstance(bindings, list) or len(bindings) != 1 or not isinstance(bindings[0], dict):
+        raise ValueError("producer receipt lacks one unambiguous model basename")
+    binding = bindings[0]
+    basename = binding.get("basename")
+    if not isinstance(basename, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}\.(?:pt|pth)", basename) or ".." in basename:
+        raise ValueError("unsafe original model basename in producer receipt")
+    if (binding.get("slot"), binding.get("digest"), binding.get("size")) != (
+            model.get("slot"), model.get("digest"), model.get("size")):
+        raise ValueError("model basename receipt differs from selected artifact")
+    target = candidate_dir / basename
+    if any(entry.name.casefold() == basename.casefold() for entry in candidate_dir.iterdir()):
+        raise ValueError("model basename collides with another candidate entry")
+    verified_download(model, target)
+    return target
+
+
 def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessments, tokens, receipts,
-                  usage_uncertain=False, answer_metadata=None, claim_state=None):
+                  usage_uncertain=False, answer_metadata=None, claim_state=None, task_artifacts=None):
     out = run_dir / 'out'
+    if out.is_symlink():
+        raise ValueError('unsafe answer export directory')
     out.mkdir(exist_ok=True)
     candidate, evidence = None, []
     if answer_metadata is None:
@@ -327,6 +565,7 @@ def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessment
         write_json(out / 'training_receipt.json', job)
         cdir = out / 'candidate'
         cdir.mkdir(exist_ok=True)
+        checkpoint = export_model_checkpoint(c, project, job, cdir)
         source_dir = cdir / 'source'
         source_dir.mkdir(exist_ok=True)
         src = (job['lock']['inputs'].get('source') or {}).get('artifact_id')
@@ -345,9 +584,7 @@ def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessment
                 dest.write_bytes(base64.b64decode(data['base64']))
             else:
                 dest.write_text(data)
-        model = next(o['artifact_id'] for o in job['outputs'] if o.get('role') == 'model-export')
         pred = next(o['artifact_id'] for o in job['outputs'] if o['slot'] == 'validation_predictions')
-        c.download(project, model, cdir / 'model.pt')
         c.download(project, pred, cdir / 'validation_predictions.npz')
         shutil.copyfile(run_dir / 'task/requirements.lock', out / 'task-requirements.lock')
         installed = job['lock']['environment'].get('installed') or {}
@@ -383,14 +620,15 @@ def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessment
         write_json(out / 'reproduction.json', recipe)
         (out / 'reproduce.py').write_text(REPRODUCE)
         candidate = {'code_path': 'candidate/source/project.py', 'code_sha256': digest(source_dir / 'project.py'),
-            'model_path': 'candidate/model.pt', 'model_sha256': digest(cdir / 'model.pt'),
+            'model_path': checkpoint.relative_to(out).as_posix(), 'model_sha256': digest(checkpoint),
             'predictions_path': 'candidate/validation_predictions.npz',
             'predictions_sha256': digest(cdir / 'validation_predictions.npz'),
             'environment_lock': 'requirements.lock', 'environment_lock_sha256': digest(out / 'requirements.lock'),
             'reproduce_command': grader_reproduce_command(recipe['argv']),
             'parent_checkpoint': parent_checkpoint,
             'restore_class': 'checkpoint_continuation' if parent_checkpoint else 'fresh_initialization'}
-    for name, role in [('selection_receipt.json', 'candidate-selection'), ('training_receipt.json', 'training')]:
+    for name, role in [('selection_receipt.json', 'candidate-selection'), ('training_receipt.json', 'training'),
+                       ('model_export_receipt.json', 'checkpoint-provenance')]:
         if (out / name).exists():
             evidence.append({'path': name, 'sha256': digest(out / name), 'role': role,
                 'supports': 'Ledger provenance and conservative candidate selection',
@@ -412,6 +650,9 @@ def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessment
     write_json(out / 'usage_receipts.json', {'receipts': receipts, 'tokens': tokens,
                'usage_uncertain': usage_uncertain})
     measurements = []
+    sweep_mappings = {}
+    authored_evidence = answer_metadata.get('evidence')
+    authored_evidence = authored_evidence if isinstance(authored_evidence, list) else []
     for measurement in answer_metadata.get('measurements', []):
         if not isinstance(measurement, dict):
             raise ValueError('conclusion measurements must contain objects')
@@ -431,14 +672,34 @@ def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessment
                 evidence.append({'path': filename, 'sha256': digest(out / filename),
                     'role': 'investigator-cited-job', 'supports': 'Ledger receipt cited by investigator measurement',
                     'limitations': 'Investigator interpretation; confirmation and selection roles remain as recorded'})
+        elif isinstance(reference, str) and reference.startswith('art_'):
+            if reference not in sweep_mappings:
+                cited = [row for row in authored_evidence if isinstance(row, dict) and row.get('path') == reference]
+                entry, mapping = export_sweep_evidence(c, project, inv, out, reference, task_artifacts, cited)
+                sweep_mappings[reference] = mapping
+                evidence.append(entry)
+            m['evidence_receipt'] = sweep_mappings[reference]['path']
         measurements.append(m)
+    if sweep_mappings:
+        write_json(run_dir / 'measurement_receipt_mappings.json', {'mappings': list(sweep_mappings.values())})
     status, claim_type, answer_scope, state_deviations = map_claim_state(claim_state, answer_metadata, candidate, measurements)
     if candidate is None:
         status = 'abstained'
     if status == 'abstained':
         claim_type = 'no_positive_claim'
     abstention = answer_metadata.get('abstention')
-    if not isinstance(abstention, dict) or abstention.get('abstained') != (status == 'abstained'):
+    abstention_deviations = []
+    if 'abstention' not in answer_metadata or (
+            isinstance(abstention, dict) and type(abstention.get('abstained')) is bool
+            and abstention['abstained'] != (status == 'abstained')):
+        write_json(run_dir / 'abstention_attribution.json', {
+            'source': 'study-adapter-fallback',
+            'reason': 'authored value conflicts with exported status' if 'abstention' in answer_metadata
+                      else 'no authored abstention metadata',
+            'authored_abstention': abstention,
+            'export_status': status,
+        })
+        abstention_deviations.append('Abstention metadata authored by the study adapter. See the private attribution receipt.')
         abstention = {
             'abstained': status == 'abstained', 'reason': reason if status == 'abstained' else None,
             'unresolved': ['Independent confirmation on evaluator inputs and fresh training seeds'],
@@ -456,11 +717,12 @@ def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessment
                        'macOS Seatbelt uses the same OS identity; memory limits are best effort',
                        'Eidos 1.1.0 has per-turn deadlines; total wall deadline enforced by stop/cancel watchdog '
                        'and a per-run provider forwarding process that exits at the deadline',
-                       *state_deviations, *answer_metadata.get('deviations', [])],
+                       *state_deviations, *abstention_deviations, *answer_metadata.get('deviations', [])],
         'confidence': answer_metadata.get('confidence')}
     if answer['confidence'] is not None:
         answer['confidence_outcome'] = answer_metadata.get('confidence_outcome')
     write_json(out / 'answer.json', answer)
+    return checkpoint.name if candidate is not None else None
 
 
 def validate(path):

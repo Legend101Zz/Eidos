@@ -1,4 +1,5 @@
 """Pilot-2 completion and timing regressions; subprocess fixtures make no model calls."""
+import hashlib
 import io
 import json
 import os
@@ -9,14 +10,14 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from study.common import write_json
+from study.common import EXPORT_READINESS_CONTRACT, record_prompt, write_json
 from study.launcher import outer_deadline
 from study.run_arm import run_claude, run_stream
 
-from . import arm4, worker
-from .charters import charter
+from . import arm3, arm4, worker
+from .charters import REPRODUCTION_CONTRACT, charter
 from .common import classify
 
 
@@ -32,6 +33,14 @@ def abstention(root):
                   unresolved=['Confirmation'], next_discriminating_test='Fresh-seed held-out evaluation.'),
                   cost=cost, exposures=[], deviations=[], confidence=None)
     write_json(root / 'out/answer.json', answer)
+
+
+def assert_prompt_delivery(test, root, arm, content):
+    directory = root.parent / "prompt-receipts"
+    expected = json.loads((directory / f"arm{arm}-expected.json").read_bytes())
+    delivered = json.loads((directory / f"arm{arm}-delivered.json").read_bytes())
+    test.assertEqual(expected["expected_render_sha256"], delivered["expected_render_sha256"])
+    test.assertEqual(delivered["delivered_sha256"], hashlib.sha256(content.encode()).hexdigest())
 
 
 class FinalOutcomes(unittest.TestCase):
@@ -90,24 +99,38 @@ class FinalOutcomes(unittest.TestCase):
 
         for arm in (1, 2):
             with self.subTest(arm=arm), tempfile.TemporaryDirectory() as d:
-                root = Path(d)
-                write_json(root / 'arm.json', dict(arm=arm, card='D03', run_index=1, block_id='fixture'))
+                root = Path(d) / f'arm{arm}'
+                meta = dict(arm=arm, card='D03', run_index=1, block_id='fixture',
+                            charter_amendment_commit='a'*40, charter_amendment_sha256='b'*64)
+                write_json(root / 'arm.json', meta)
+                record_prompt(root, meta)
                 write_json(root / 'out/answer.json', {})
-                with (patch('study.run_arm.agent_env', return_value=dict(os.environ)),
-                      patch('study.run_arm.sandbox_command', return_value=command),
+                with (patch.dict(os.environ, {'EIDOS_STUDY_LIVE_DISPATCH': '1'}),
+                      patch('study.run_arm.agent_env', return_value=dict(os.environ)),
+                      patch('study.run_arm.sandbox_command', return_value=command) as sandbox,
                       patch('study.run_arm.subprocess.check_output', side_effect=output),
                       patch('study.toolkit.build_toolkit.build_toolkit')):
                     self.assertEqual(run_claude(root, arm)['status'], 'invalid_output')
+                submitted = sandbox.call_args.args[1]
+                self.assertIn(REPRODUCTION_CONTRACT, ' '.join(submitted[submitted.index('-p') + 1].split()))
+                self.assertEqual(submitted[submitted.index('-p') + 1].count(EXPORT_READINESS_CONTRACT), 1)
+                assert_prompt_delivery(self, root, arm, submitted[submitted.index('-p') + 1])
 
     def test_incident_timeout_and_budget_still_take_precedence(self):
-        final = {'type': 'result', 'is_error': False, 'result': 'Answer written.'}
+        # Pilot-2 addendum 1 and pilot-3 addendum 2: a provider failure decides a run only when it is the
+        # terminal event (no valid final result after it). Recovered failures are covered by
+        # test_recovered_errors_then_valid_abstention_are_ok_in_every_arm.
         shown = {'status': 'concluded', 'turns': [{'stop_reason': 'error'}, {'stop_reason': 'concluded'}]}
+        stopped = {'status': 'active', 'needs_input': {'code': 'turn-failed'}, 'turns': [{'stop_reason': 'error'}]}
         for error in ('HTTP 429', 'HTTP 503', 'quota exhausted'):
             for arm in (1, 2, 3):
                 with self.subTest(arm=arm, error=error), tempfile.TemporaryDirectory() as d:
+                    final = {'type': 'result', 'is_error': True, 'errors': [error]}
                     rec = self.coding_run(Path(d), arm, [{'type': 'error', 'error': error}, final])
                     self.assertEqual(rec['status'], 'incident')
-            self.assertEqual(classify(shown, [{'error': error}], [])[0], 'incident')
+            self.assertEqual(classify(stopped, [{'calls': 1}, {'error': error}], [])[0], 'incident')
+            self.assertEqual(classify(stopped | {'needs_input': {'code': 'refused-proposals'}},
+                                      [{'error': error}, {'calls': 2}], [])[0], 'crash')
         self.assertEqual(classify(shown, [{'error': 'Request timeout'}], [], timed_out=True)[0], 'timeout')
         budget = {**shown, 'turns': [*shown['turns'], {'stop_reason': 'budget-exhausted'}]}
         self.assertEqual(classify(budget, [], [])[0], 'token_budget')
@@ -121,6 +144,34 @@ class FinalOutcomes(unittest.TestCase):
 
 
 class SetupAndInformation(unittest.TestCase):
+    def test_mcp_arm_sends_the_shared_checkpoint_contract(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / 'arm3'
+            metadata = dict(arm=3, card='N05', run_index=1, block_id='fixture',
+                            charter_amendment_commit='a'*40, charter_amendment_sha256='b'*64)
+            write_json(root / 'arm.json', metadata)
+            record_prompt(root, metadata)
+            write_json(root / 'lab/config/lab.json', {'api_port': 28767})
+            stream = SimpleNamespace(
+                UsageTracker=Mock(),
+                run_stream=Mock(return_value={'status': 'crash', 'wall_s': 0, 'model_ids_seen': []}),
+            )
+            client = Mock()
+            client.query.return_value = []
+            sandbox = Mock(side_effect=lambda _, cmd: ['-f', str(arm3.ROOT / 'study/sandbox/agent.sb'), *cmd])
+            with (patch.dict(os.environ, {'EIDOS_STUDY_LIVE_DISPATCH': '1'}),
+                  patch.object(arm3, 'lane_a', return_value=(lambda _: {}, sandbox, stream)),
+                  patch.object(arm3, 'prepare', return_value=('fixture', {'artifacts': {}, 'charter_id': 'fixture'})),
+                  patch.object(arm3.lab, 'start'),
+                  patch.object(arm3.lab, 'client', return_value=client),
+                  patch.object(arm3.lab, 'home', return_value=root / 'lab'),
+                  patch.object(arm3.subprocess, 'check_output', return_value='fixture-key')):
+                arm3.run(root, metadata)
+            submitted = stream.run_stream.call_args.args[1]
+            self.assertIn(REPRODUCTION_CONTRACT, ' '.join(submitted[submitted.index('-p') + 1].split()))
+            self.assertEqual(submitted[submitted.index('-p') + 1].count(EXPORT_READINESS_CONTRACT), 1)
+            assert_prompt_delivery(self, root, 3, submitted[submitted.index('-p') + 1])
+
     def test_setup_failure_still_reports_preparation_duration(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
@@ -141,7 +192,8 @@ class SetupAndInformation(unittest.TestCase):
     def test_method_embedding_and_setup_receipt_at_real_adapter_boundary(self):
         clock = SimpleNamespace(now=100.0)
         imported = dict(charter_id='charter', artifacts={}, task={})
-        shown = dict(status='concluded', turns=[], body={'conclusion': {'summary': 'Fixture result.'}})
+        shown = dict(status='concluded', turns=[], body={'conclusion': {'summary': 'Fixture result.'},
+                                                        'wall': {'deadline_unix': 1426.5}})
         captured = {}
 
         def start():
@@ -167,17 +219,20 @@ class SetupAndInformation(unittest.TestCase):
         bridge = SimpleNamespace(pid=42, returncode=0, poll=lambda: 0)
         receipt = dict(base_url='http://127.0.0.1:1/v1', upstream='https://example.invalid/v1')
         with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            (root / 'task').mkdir()
+            root = Path(d) / 'arm4'
+            (root / 'task').mkdir(parents=True)
             (root / 'task/brief.md').write_text('Fixture brief')
-            meta = dict(arm=4, card='D03', run_index=1, block_id='fixture', envelope=dict(wall_s=30))
+            meta = dict(arm=4, card='D03', run_index=1, block_id='fixture', envelope=dict(wall_s=30),
+                        charter_amendment_commit='a'*40, charter_amendment_sha256='b'*64)
             write_json(root / 'arm.json', meta)
+            record_prompt(root, meta)
 
             def export(*args, **kwargs):
                 abstention(root)
                 clock.now = 405.0
 
-            with (patch.object(arm4, 'time', SimpleNamespace(monotonic=lambda: clock.now,
+            with (patch.dict(os.environ, {'EIDOS_STUDY_LIVE_DISPATCH': '1'}),
+                  patch.object(arm4, 'time', SimpleNamespace(monotonic=lambda: clock.now,
                                                            time=lambda: 1000 + clock.now)),
                   patch.object(arm4.lab, 'start', side_effect=start),
                   patch.object(arm4.lab, 'client', return_value=Client()),
@@ -197,8 +252,24 @@ class SetupAndInformation(unittest.TestCase):
             self.assertEqual(record['setup_wall_s'], 300.0)
             self.assertTrue(record['setup_complete'])
             self.assertEqual(record['investigation_wall_s'], 5.0)
-            self.assertEqual(json.loads((root / 'investigation.json').read_text())['deadline_unix'], 1430.0)
+            investigation = json.loads((root / 'investigation.json').read_text())
+            self.assertEqual(investigation['deadline_unix'], 1430.0)
+            self.assertEqual(captured['investigator']['wall_deadline_unix'], 1425.0)
+            deadline = investigation['deadline_evidence']
+            self.assertEqual(deadline['start_request_unix'], 1400.0)
+            self.assertEqual(deadline['start_response_unix'], 1402.0)
+            self.assertEqual(deadline['registered_lab_deadline_unix'], 1426.5)
+            self.assertEqual(deadline['registered_margin_s'], 3.5)
             embedded = json.loads(captured['question'].split('Packaged task files:\n', 1)[1])
+            self.assertIn(REPRODUCTION_CONTRACT, ' '.join(captured['question'].split()))
+            self.assertEqual(captured['question'].count(EXPORT_READINESS_CONTRACT), 1)
+            assert_prompt_delivery(self, root, 4, captured['question'])
+            from eidos.investigator.context import pack
+
+            context = pack({'investigation': {'id': 'fixture', 'status': 'active',
+                            'body': {'question': captured['question']}},
+                            'horizon': 1, 'charter': charter('D03')}, [])
+            self.assertEqual(context['text'].count(EXPORT_READINESS_CONTRACT), 1)
             self.assertEqual(embedded['METHOD.md'], (arm4.ROOT / 'study/METHOD.md').read_text())
             self.assertEqual(embedded['brief.md'], 'Fixture brief')
 
@@ -226,6 +297,22 @@ class SetupAndInformation(unittest.TestCase):
                 'eidos.project.command already copies the supplied registered project.')
         for arm in (3, 4):
             self.assertIn(note, render_prompt(arm, 'D03'))
+
+    def test_pilot4_charters_keep_the_shared_checkpoint_contract(self):
+        from eidos.domain.charter import validate_charter
+
+        for card in ('N05', 'N06', 'N07', 'N08'):
+            body = validate_charter(charter(card))
+            contract = body['reproduction_contract']
+            self.assertEqual(contract, REPRODUCTION_CONTRACT)
+            self.assertEqual(body['export_readiness_contract'], EXPORT_READINESS_CONTRACT)
+            self.assertIn('`{out}/<basename of candidate.model_path>`', contract)
+            self.assertIn('compatible formats for the locked and fresh checkpoints', contract)
+            self.assertIn('prospectively sealed development task', body['known_exposures'][0]['description'].lower())
+            self.assertIn('limited pre-run builder exposure', body['known_exposures'][0]['description'])
+        for card in ('D03', 'N01', 'N03'):
+            self.assertEqual(charter(card)['known_exposures'][0]['description'],
+                             'Public development task; no evaluator test data supplied')
 
 
 if __name__ == '__main__':

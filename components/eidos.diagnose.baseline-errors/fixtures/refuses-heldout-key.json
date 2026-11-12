@@ -1,0 +1,26 @@
+{
+ "name": "an array named after a held-out split is refused",
+ "inputs": {
+  "train": {
+   "file": "fixtures/data/train.npz",
+   "media_type": "application/x-npz"
+  },
+  "validation": {
+   "file": "fixtures/data/validation.npz",
+   "media_type": "application/x-npz"
+  },
+  "predictions": {
+   "file": "fixtures/data/baseline_predictions.npz",
+   "media_type": "application/x-npz"
+  }
+ },
+ "config": {
+  "group_keys": [
+   "test_group"
+  ]
+ },
+ "expect": {
+  "status": "failed"
+ },
+ "author_test": true
+}

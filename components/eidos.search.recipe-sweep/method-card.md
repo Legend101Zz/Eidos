@@ -3,13 +3,50 @@
 **Question.** Which recipe of a project's own training command does best on *visible validation*? Search is the
 purpose; it is not confirmation.
 
-**How.** The caller gives a project command (`config.command.argv`, an argument array) and, optionally, a recipe
+**When to use it.** After `eidos.diagnose.baseline-errors`: diagnosis first, then a broad sweep with a template, then
+targeted challengers (a command sweep over the parameters that mattered). A template is the default when the task has
+NPZ train and validation arrays: one call, no authored code.
+
+**Templates (release 1.1.0).** `config.template = {"name": "quick" | "broad", "task_type"?, "preprocess"?,
+"families"?, "finalists"?, "cv_folds"?, "seeds"?, "rank_by"?, "timeout_seconds"?, "max_rows"?}` replaces `command`,
+`space`, `objective` and `recipe` (giving both is refused, as is a `source` bundle). The sweep runs its own recipe runner
+(`templates/fit_recipe.py`, numpy; its SHA-256 is recorded) on the `train` and `validation` NPZ ports (`x`, `y`,
+optional `ids`; staged as `train.npz` and `validation.npz`):
+
+- *Recipes* cross preprocessing — `none`, train-fitted `standardize`, `per_example_center`, `per_example_standardize`
+  — with model families: `linear` (ridge regression, or L2 multinomial logistic regression), `knn`, `kernel` (RBF kernel
+  ridge), `mlp` (one hidden ReLU layer, Adam), and `svm` (RBF SVC/SVR) and `gbm` (histogram gradient boosting) when
+  scikit-learn is importable in the environment; otherwise those two are left out and listed under
+  `template.skipped_families`. `quick` has one setting per family (4 x 6 = 24 recipes), `broad` two or three (52).
+  `preprocess` and `families` restrict the cross.
+- *Screening.* Every recipe is fitted on train and scored on visible validation for every seed (default: the job's
+  seed), in family order. The objective is `validation_accuracy` (maximize) or `validation_rmse` (minimize), from
+  `task_type` or the `task` input. The budget defaults to the template's recipe count and can be lowered; a seconds
+  budget and the job's wall limit apply as for any sweep. The stopping rule must be `none`.
+- *Finalists.* The `finalists` best screened recipes (default 3) are cross-validated within train only (`cv_folds`, 2 to 20
+  folds, default 3, every seed). Each finalist carries `train_cv`, `finalist_rank` and `transfer_gap` (train-CV minus
+  validation, in the better direction). The winner is the best finalist by `rank_by`: `validation` (default) or
+  `train-cv`. If no finalist was cross-validated (`finalists: 0`, the budget ended first, or every CV failed), the best
+  screened recipe wins on validation with `cross_validated: false` (none under `train-cv`). Cross-validation within train cannot see a difference between the train and validation distributions,
+  which is why validation ranks by default; a large `transfer_gap` says the validation ranking and the training data
+  disagree.
+- *Output.* Every attempted recipe is in `evidence_table` with `stage` `finalist` or `screened`; `best_recipe` adds the
+  template and a `reproduce` entry (`fit_recipe.py train --inputs . --out <out> --seed <s> --params <recipe>`, which writes
+  `validation_predictions.npz` and `receipt.json`), so the winner can be run as an ordinary project command and locked.
+
+**How (command sweeps).** The caller gives a project command (`config.command.argv`, an argument array) and, optionally, a recipe
 template (`config.recipe`, any JSON with `{"$param": name}` entries, written to `{recipe}`). Each recipe is run once per
 seed and per fold (`config.seed_policy`) in its own private working directory. The command reads its parameters from
 `{param.NAME}`, `{params_json}` or `{recipe}`, the fold from `{fold}` of `{folds}` (the command owns how visible data is
 split into folds), and writes numeric metrics to `{out}/receipt.json` (or `command.metrics_file`). Recipes are drawn
 from `config.space`: a grid (Cartesian product, sorted parameter names, evaluated in that order) or a random search with
-a required seed (the same seed draws the same recipes). A repeated draw is skipped.
+a required seed (the same seed draws the same recipes). A repeated draw is skipped. A repeated seed in
+`seed_policy.seeds` or `template.seeds` is refused. Every evaluation has its own directory, and an error preparing one is
+recorded as that evaluation's failure: the evidence table is still written.
+
+**Releases.** This directory is release 1.1.0. Release 1.0.0 (command sweeps only) is kept, unchanged, in
+`components/eidos.search.recipe-sweep@1.0.0/` so a pinned `eidos.search.recipe-sweep@1.0.0` still installs and runs; the
+fixes since 1.0.0 (repeated seeds, test-prefixed data files) are in 1.1.0 only.
 
 **Limits and stopping.** `config.budget` must bound the search (`max_trials` recipes and/or `max_seconds`). The rule in
 `config.stopping` is `none`, `patience` (`patience` recipes in a row without improving the best by more than
@@ -28,8 +65,9 @@ input port. An objective named after a test or held-out split is refused, and a 
 recorded as a failed evaluation. An unbounded search is refused.
 
 **What each evaluation can touch.** Project files come from a `source` bundle or, without one, from the plain file names
-in `command.copy`; nothing is copied implicitly, and a file named after a test or held-out split is refused either way
-(a bundle may still carry code named that way, such as `test_helpers.py`). Each evaluation runs in a scrubbed environment
+in `command.copy`; nothing is copied implicitly, and a data file with any word of its name beginning `test`, `holdout`
+or `heldout` (`test.csv`, `test1.csv`, `testfeatures.csv`, `data/x_test2.npy`) is refused either way (a bundle may still
+carry code named that way, such as `test_helpers.py`). Each evaluation runs in a scrubbed environment
 (`PATH`, locale, thread and device settings; `HOME` and `TMPDIR` are its own directories), so inherited credentials do not
 reach it. Failure text in the table is redacted, including any value of a variable it did not inherit, before it is cut
 to a tail. The only command output ever published is the redacted tail of a failing command's stderr.

@@ -66,6 +66,10 @@ class Ctx:
     settings: dict[str, Any]
     expected_revision: int | None = None
     emitted: list[int] = field(default_factory=list)
+    # F5c: the accepted decision this command is an effect of ({decision_id, execution}), or None for a direct call
+    # (the MCP batch path, CLI). ADR 0023 at admission (H1): only work outside a decision is checked there, because a
+    # decision's exploration phase is checked when it is accepted.
+    admission: dict[str, Any] | None = None
 
     def event(self, etype: str, subject: str | None, body: dict, *, investigation_id: str | None = None,
               wake: bool = False) -> int:
@@ -186,7 +190,7 @@ class CommandService:
                 if normalized_arguments:
                     receipt["normalized_arguments"] = list(normalized_arguments)
                 return receipt
-            ctx = Ctx(tx, principal, pid, command_key, self.store, self.settings, expected_revision)
+            ctx = Ctx(tx, principal, pid, command_key, self.store, self.settings, expected_revision, admission=admission)
             if admission:  # raises before the handler runs; the transaction (and the key's claim) rolls back
                 for admit in EFFECT_ADMISSION:
                     admit(ctx, admission)

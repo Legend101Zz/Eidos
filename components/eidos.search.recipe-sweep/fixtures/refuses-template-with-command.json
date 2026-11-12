@@ -1,0 +1,41 @@
+{
+ "name": "a template with an authored command is refused",
+ "inputs": {
+  "train": {
+   "json": {
+    "x": [
+     [
+      0
+     ]
+    ]
+   },
+   "media_type": "application/json"
+  },
+  "validation": {
+   "json": {
+    "x": [
+     [
+      0
+     ]
+    ]
+   },
+   "media_type": "application/json"
+  }
+ },
+ "config": {
+  "template": {
+   "name": "quick",
+   "task_type": "classification"
+  },
+  "command": {
+   "argv": [
+    "python",
+    "x.py"
+   ]
+  }
+ },
+ "expect": {
+  "status": "failed"
+ },
+ "author_test": true
+}

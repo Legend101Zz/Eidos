@@ -1,0 +1,546 @@
+[
+  {
+    "family": "breast_cancer",
+    "task": "N01",
+    "run": 1,
+    "arm": 1,
+    "primary_eligible": true,
+    "verified_success": false,
+    "card_success": false,
+    "status": "valid",
+    "billed_usd": null,
+    "tokens": {
+      "input": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 0,
+      "total": 0
+    },
+    "wall_s": 3.630015790986363,
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm1/transcript.jsonl",
+    "run_status": "ok",
+    "null_correct": null,
+    "operational_pass": null,
+    "false_positive_claim": false,
+    "grading_scope": "public development pilot; exploratory; no confirmatory certification",
+    "numeric": {
+      "metric": "accuracy",
+      "baseline": 0.9122807017543859,
+      "candidate": 0.9122807017543859,
+      "gain": 0.0,
+      "n": 114,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification"
+    },
+    "fresh_check": {
+      "fresh_process_export_equal": true,
+      "locked_validation_equal": true,
+      "test_reload_equal": true,
+      "prediction_path": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/grading/N01-r1/arm1/workspace/test_predictions.npz",
+      "implementation": "study/fresh_check.py ordinary-project adapter"
+    },
+    "reproduction": [
+      {
+        "seed": 23,
+        "metric": "accuracy",
+        "baseline": 0.9122807017543859,
+        "candidate": 0.8333333333333334,
+        "gain": -0.07894736842105254,
+        "n": 114,
+        "split": "test",
+        "status": "numeric development result; no causal or system certification"
+      },
+      {
+        "seed": 37,
+        "metric": "accuracy",
+        "baseline": 0.9122807017543859,
+        "candidate": 0.8508771929824561,
+        "gain": -0.06140350877192979,
+        "n": 114,
+        "split": "test",
+        "status": "numeric development result; no causal or system certification"
+      }
+    ],
+    "guardrails_pass": true,
+    "scope_check_pass": false,
+    "guardrails_note": "No critical slices specified on these cards; checked immutable inference inputs and prediction schema.",
+    "answer_status": "no_improvement_found",
+    "claim_type": "no_positive_claim"
+  },
+  {
+    "family": "breast_cancer",
+    "task": "N01",
+    "run": 1,
+    "arm": 2,
+    "primary_eligible": true,
+    "verified_success": false,
+    "card_success": false,
+    "status": "valid",
+    "billed_usd": null,
+    "tokens": {
+      "input": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 0,
+      "total": 0
+    },
+    "wall_s": 3.6876007500104606,
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm2/transcript.jsonl",
+    "run_status": "ok",
+    "null_correct": null,
+    "operational_pass": null,
+    "false_positive_claim": false,
+    "grading_scope": "public development pilot; exploratory; no confirmatory certification",
+    "numeric": {
+      "metric": "accuracy",
+      "baseline": 0.9122807017543859,
+      "candidate": 0.9122807017543859,
+      "gain": 0.0,
+      "n": 114,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification"
+    },
+    "fresh_check": {
+      "fresh_process_export_equal": true,
+      "locked_validation_equal": true,
+      "test_reload_equal": true,
+      "prediction_path": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/grading/N01-r1/arm2/workspace/test_predictions.npz",
+      "implementation": "study/fresh_check.py ordinary-project adapter"
+    },
+    "reproduction": [
+      {
+        "seed": 23,
+        "metric": "accuracy",
+        "baseline": 0.9122807017543859,
+        "candidate": 0.8333333333333334,
+        "gain": -0.07894736842105254,
+        "n": 114,
+        "split": "test",
+        "status": "numeric development result; no causal or system certification"
+      },
+      {
+        "seed": 37,
+        "metric": "accuracy",
+        "baseline": 0.9122807017543859,
+        "candidate": 0.8508771929824561,
+        "gain": -0.06140350877192979,
+        "n": 114,
+        "split": "test",
+        "status": "numeric development result; no causal or system certification"
+      }
+    ],
+    "guardrails_pass": true,
+    "scope_check_pass": false,
+    "guardrails_note": "No critical slices specified on these cards; checked immutable inference inputs and prediction schema.",
+    "answer_status": "no_improvement_found",
+    "claim_type": "no_positive_claim"
+  },
+  {
+    "family": "breast_cancer",
+    "task": "N01",
+    "run": 1,
+    "arm": 3,
+    "primary_eligible": true,
+    "verified_success": false,
+    "card_success": false,
+    "status": "valid",
+    "billed_usd": null,
+    "tokens": {
+      "input": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 0,
+      "total": 0
+    },
+    "wall_s": 3.682607666007243,
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm3/transcript.jsonl",
+    "run_status": "ok",
+    "null_correct": null,
+    "operational_pass": null,
+    "false_positive_claim": false,
+    "grading_scope": "public development pilot; exploratory; no confirmatory certification",
+    "numeric": {
+      "metric": "accuracy",
+      "baseline": 0.9122807017543859,
+      "candidate": 0.9122807017543859,
+      "gain": 0.0,
+      "n": 114,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification"
+    },
+    "fresh_check": {
+      "fresh_process_export_equal": true,
+      "locked_validation_equal": true,
+      "test_reload_equal": true,
+      "prediction_path": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/grading/N01-r1/arm3/workspace/test_predictions.npz",
+      "implementation": "study/fresh_check.py ordinary-project adapter"
+    },
+    "reproduction": [
+      {
+        "seed": 23,
+        "metric": "accuracy",
+        "baseline": 0.9122807017543859,
+        "candidate": 0.8333333333333334,
+        "gain": -0.07894736842105254,
+        "n": 114,
+        "split": "test",
+        "status": "numeric development result; no causal or system certification"
+      },
+      {
+        "seed": 37,
+        "metric": "accuracy",
+        "baseline": 0.9122807017543859,
+        "candidate": 0.8508771929824561,
+        "gain": -0.06140350877192979,
+        "n": 114,
+        "split": "test",
+        "status": "numeric development result; no causal or system certification"
+      }
+    ],
+    "guardrails_pass": true,
+    "scope_check_pass": false,
+    "guardrails_note": "No critical slices specified on these cards; checked immutable inference inputs and prediction schema.",
+    "answer_status": "no_improvement_found",
+    "claim_type": "no_positive_claim"
+  },
+  {
+    "family": "breast_cancer",
+    "task": "N01",
+    "run": 1,
+    "arm": 4,
+    "primary_eligible": true,
+    "verified_success": false,
+    "card_success": false,
+    "status": "valid",
+    "billed_usd": null,
+    "tokens": {
+      "input": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 0,
+      "total": 0
+    },
+    "wall_s": 3.7273098330479115,
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N01-r1/arm4/transcript.jsonl",
+    "run_status": "ok",
+    "null_correct": null,
+    "operational_pass": null,
+    "false_positive_claim": false,
+    "grading_scope": "public development pilot; exploratory; no confirmatory certification",
+    "numeric": {
+      "metric": "accuracy",
+      "baseline": 0.9122807017543859,
+      "candidate": 0.9122807017543859,
+      "gain": 0.0,
+      "n": 114,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification"
+    },
+    "fresh_check": {
+      "fresh_process_export_equal": true,
+      "locked_validation_equal": true,
+      "test_reload_equal": true,
+      "prediction_path": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/grading/N01-r1/arm4/workspace/test_predictions.npz",
+      "implementation": "study/fresh_check.py ordinary-project adapter"
+    },
+    "reproduction": [
+      {
+        "seed": 23,
+        "metric": "accuracy",
+        "baseline": 0.9122807017543859,
+        "candidate": 0.8333333333333334,
+        "gain": -0.07894736842105254,
+        "n": 114,
+        "split": "test",
+        "status": "numeric development result; no causal or system certification"
+      },
+      {
+        "seed": 37,
+        "metric": "accuracy",
+        "baseline": 0.9122807017543859,
+        "candidate": 0.8508771929824561,
+        "gain": -0.06140350877192979,
+        "n": 114,
+        "split": "test",
+        "status": "numeric development result; no causal or system certification"
+      }
+    ],
+    "guardrails_pass": true,
+    "scope_check_pass": false,
+    "guardrails_note": "No critical slices specified on these cards; checked immutable inference inputs and prediction schema.",
+    "answer_status": "no_improvement_found",
+    "claim_type": "no_positive_claim"
+  },
+  {
+    "family": "friedman1",
+    "task": "N03",
+    "run": 1,
+    "arm": 1,
+    "primary_eligible": true,
+    "verified_success": false,
+    "card_success": false,
+    "status": "valid",
+    "billed_usd": null,
+    "tokens": {
+      "input": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 0,
+      "total": 0
+    },
+    "wall_s": 3.611453958961647,
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm1/transcript.jsonl",
+    "run_status": "ok",
+    "null_correct": null,
+    "operational_pass": null,
+    "false_positive_claim": false,
+    "grading_scope": "public development pilot; exploratory; no confirmatory certification",
+    "numeric": {
+      "metric": "rmse",
+      "baseline": 11.042782538846298,
+      "candidate": 11.042782538846298,
+      "gain": 0.0,
+      "n": 400,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification"
+    },
+    "fresh_check": {
+      "fresh_process_export_equal": true,
+      "locked_validation_equal": true,
+      "test_reload_equal": true,
+      "prediction_path": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/grading/N03-r1/arm1/workspace/test_predictions.npz",
+      "implementation": "study/fresh_check.py ordinary-project adapter"
+    },
+    "reproduction": [
+      {
+        "seed": 23,
+        "metric": "rmse",
+        "baseline": 11.042782538846298,
+        "candidate": 11.023737510584956,
+        "gain": 0.019045028261341912,
+        "n": 400,
+        "split": "test",
+        "status": "numeric development result; no causal or system certification"
+      },
+      {
+        "seed": 37,
+        "metric": "rmse",
+        "baseline": 11.042782538846298,
+        "candidate": 10.864258361476159,
+        "gain": 0.17852417737013937,
+        "n": 400,
+        "split": "test",
+        "status": "numeric development result; no causal or system certification"
+      }
+    ],
+    "guardrails_pass": true,
+    "scope_check_pass": false,
+    "guardrails_note": "No critical slices specified on these cards; checked immutable inference inputs and prediction schema.",
+    "answer_status": "no_improvement_found",
+    "claim_type": "no_positive_claim"
+  },
+  {
+    "family": "friedman1",
+    "task": "N03",
+    "run": 1,
+    "arm": 2,
+    "primary_eligible": true,
+    "verified_success": false,
+    "card_success": false,
+    "status": "valid",
+    "billed_usd": null,
+    "tokens": {
+      "input": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 0,
+      "total": 0
+    },
+    "wall_s": 3.690348708012607,
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm2/transcript.jsonl",
+    "run_status": "ok",
+    "null_correct": null,
+    "operational_pass": null,
+    "false_positive_claim": false,
+    "grading_scope": "public development pilot; exploratory; no confirmatory certification",
+    "numeric": {
+      "metric": "rmse",
+      "baseline": 11.042782538846298,
+      "candidate": 11.042782538846298,
+      "gain": 0.0,
+      "n": 400,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification"
+    },
+    "fresh_check": {
+      "fresh_process_export_equal": true,
+      "locked_validation_equal": true,
+      "test_reload_equal": true,
+      "prediction_path": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/grading/N03-r1/arm2/workspace/test_predictions.npz",
+      "implementation": "study/fresh_check.py ordinary-project adapter"
+    },
+    "reproduction": [
+      {
+        "seed": 23,
+        "metric": "rmse",
+        "baseline": 11.042782538846298,
+        "candidate": 11.023737510584956,
+        "gain": 0.019045028261341912,
+        "n": 400,
+        "split": "test",
+        "status": "numeric development result; no causal or system certification"
+      },
+      {
+        "seed": 37,
+        "metric": "rmse",
+        "baseline": 11.042782538846298,
+        "candidate": 10.864258361476159,
+        "gain": 0.17852417737013937,
+        "n": 400,
+        "split": "test",
+        "status": "numeric development result; no causal or system certification"
+      }
+    ],
+    "guardrails_pass": true,
+    "scope_check_pass": false,
+    "guardrails_note": "No critical slices specified on these cards; checked immutable inference inputs and prediction schema.",
+    "answer_status": "no_improvement_found",
+    "claim_type": "no_positive_claim"
+  },
+  {
+    "family": "friedman1",
+    "task": "N03",
+    "run": 1,
+    "arm": 3,
+    "primary_eligible": true,
+    "verified_success": false,
+    "card_success": false,
+    "status": "valid",
+    "billed_usd": null,
+    "tokens": {
+      "input": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 0,
+      "total": 0
+    },
+    "wall_s": 3.6781510830041952,
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm3/transcript.jsonl",
+    "run_status": "ok",
+    "null_correct": null,
+    "operational_pass": null,
+    "false_positive_claim": false,
+    "grading_scope": "public development pilot; exploratory; no confirmatory certification",
+    "numeric": {
+      "metric": "rmse",
+      "baseline": 11.042782538846298,
+      "candidate": 11.042782538846298,
+      "gain": 0.0,
+      "n": 400,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification"
+    },
+    "fresh_check": {
+      "fresh_process_export_equal": true,
+      "locked_validation_equal": true,
+      "test_reload_equal": true,
+      "prediction_path": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/grading/N03-r1/arm3/workspace/test_predictions.npz",
+      "implementation": "study/fresh_check.py ordinary-project adapter"
+    },
+    "reproduction": [
+      {
+        "seed": 23,
+        "metric": "rmse",
+        "baseline": 11.042782538846298,
+        "candidate": 11.023737510584956,
+        "gain": 0.019045028261341912,
+        "n": 400,
+        "split": "test",
+        "status": "numeric development result; no causal or system certification"
+      },
+      {
+        "seed": 37,
+        "metric": "rmse",
+        "baseline": 11.042782538846298,
+        "candidate": 10.864258361476159,
+        "gain": 0.17852417737013937,
+        "n": 400,
+        "split": "test",
+        "status": "numeric development result; no causal or system certification"
+      }
+    ],
+    "guardrails_pass": true,
+    "scope_check_pass": false,
+    "guardrails_note": "No critical slices specified on these cards; checked immutable inference inputs and prediction schema.",
+    "answer_status": "no_improvement_found",
+    "claim_type": "no_positive_claim"
+  },
+  {
+    "family": "friedman1",
+    "task": "N03",
+    "run": 1,
+    "arm": 4,
+    "primary_eligible": true,
+    "verified_success": false,
+    "card_success": false,
+    "status": "valid",
+    "billed_usd": null,
+    "tokens": {
+      "input": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 0,
+      "total": 0
+    },
+    "wall_s": 3.5362559169880114,
+    "transcript": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/runs/N03-r1/arm4/transcript.jsonl",
+    "run_status": "ok",
+    "null_correct": null,
+    "operational_pass": null,
+    "false_positive_claim": false,
+    "grading_scope": "public development pilot; exploratory; no confirmatory certification",
+    "numeric": {
+      "metric": "rmse",
+      "baseline": 11.042782538846298,
+      "candidate": 11.042782538846298,
+      "gain": 0.0,
+      "n": 400,
+      "split": "test",
+      "status": "numeric development result; no causal or system certification"
+    },
+    "fresh_check": {
+      "fresh_process_export_equal": true,
+      "locked_validation_equal": true,
+      "test_reload_equal": true,
+      "prediction_path": "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/dry-run/grading/N03-r1/arm4/workspace/test_predictions.npz",
+      "implementation": "study/fresh_check.py ordinary-project adapter"
+    },
+    "reproduction": [
+      {
+        "seed": 23,
+        "metric": "rmse",
+        "baseline": 11.042782538846298,
+        "candidate": 11.023737510584956,
+        "gain": 0.019045028261341912,
+        "n": 400,
+        "split": "test",
+        "status": "numeric development result; no causal or system certification"
+      },
+      {
+        "seed": 37,
+        "metric": "rmse",
+        "baseline": 11.042782538846298,
+        "candidate": 10.864258361476159,
+        "gain": 0.17852417737013937,
+        "n": 400,
+        "split": "test",
+        "status": "numeric development result; no causal or system certification"
+      }
+    ],
+    "guardrails_pass": true,
+    "scope_check_pass": false,
+    "guardrails_note": "No critical slices specified on these cards; checked immutable inference inputs and prediction schema.",
+    "answer_status": "no_improvement_found",
+    "claim_type": "no_positive_claim"
+  }
+]

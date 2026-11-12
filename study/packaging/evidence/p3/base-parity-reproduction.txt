@@ -1,0 +1,54 @@
+test_incident_timeout_and_budget_still_take_precedence (study.eidos_arms.test_parity.FinalOutcomes.test_incident_timeout_and_budget_still_take_precedence) ...
+  test_incident_timeout_and_budget_still_take_precedence (study.eidos_arms.test_parity.FinalOutcomes.test_incident_timeout_and_budget_still_take_precedence) (arm=1, error='HTTP 429') ... FAIL
+  test_incident_timeout_and_budget_still_take_precedence (study.eidos_arms.test_parity.FinalOutcomes.test_incident_timeout_and_budget_still_take_precedence) (arm=2, error='HTTP 429') ... FAIL
+  test_incident_timeout_and_budget_still_take_precedence (study.eidos_arms.test_parity.FinalOutcomes.test_incident_timeout_and_budget_still_take_precedence) (arm=3, error='HTTP 429') ... FAIL
+test_incident_timeout_and_budget_still_take_precedence (study.eidos_arms.test_parity.FinalOutcomes.test_incident_timeout_and_budget_still_take_precedence) ... FAIL
+
+======================================================================
+FAIL: test_incident_timeout_and_budget_still_take_precedence (study.eidos_arms.test_parity.FinalOutcomes.test_incident_timeout_and_budget_still_take_precedence) (arm=1, error='HTTP 429')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/base-check/study/eidos_arms/test_parity.py", line 109, in test_incident_timeout_and_budget_still_take_precedence
+    self.assertEqual(rec['status'], 'incident')
+AssertionError: 'ok' != 'incident'
+- ok
++ incident
+
+
+======================================================================
+FAIL: test_incident_timeout_and_budget_still_take_precedence (study.eidos_arms.test_parity.FinalOutcomes.test_incident_timeout_and_budget_still_take_precedence) (arm=2, error='HTTP 429')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/base-check/study/eidos_arms/test_parity.py", line 109, in test_incident_timeout_and_budget_still_take_precedence
+    self.assertEqual(rec['status'], 'incident')
+AssertionError: 'ok' != 'incident'
+- ok
++ incident
+
+
+======================================================================
+FAIL: test_incident_timeout_and_budget_still_take_precedence (study.eidos_arms.test_parity.FinalOutcomes.test_incident_timeout_and_budget_still_take_precedence) (arm=3, error='HTTP 429')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/base-check/study/eidos_arms/test_parity.py", line 109, in test_incident_timeout_and_budget_still_take_precedence
+    self.assertEqual(rec['status'], 'incident')
+AssertionError: 'ok' != 'incident'
+- ok
++ incident
+
+
+======================================================================
+FAIL: test_incident_timeout_and_budget_still_take_precedence (study.eidos_arms.test_parity.FinalOutcomes.test_incident_timeout_and_budget_still_take_precedence)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Volumes/Mrigesh SSD/eidos-v1/p3-artifacts/base-check/study/eidos_arms/test_parity.py", line 110, in test_incident_timeout_and_budget_still_take_precedence
+    self.assertEqual(classify(shown, [{'error': error}], [])[0], 'incident')
+AssertionError: 'ok' != 'incident'
+- ok
++ incident
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.200s
+
+FAILED (failures=4)

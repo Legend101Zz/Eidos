@@ -89,18 +89,17 @@ def test_one_schema_guided_reask_includes_the_validation_error_and_is_counted():
 def test_a_second_malformed_reply_ends_in_a_bounded_no_effect_decision():
     m, seen = _model(["not json", "still not json"])
     res = PydanticAIRuntime({"_model_object": m, "model": "function:test", "output_mode": "repair",
-                             "max_requests_per_decision": 3}).decide(req())
-    assert len(seen) == 2  # never more than one re-ask
-    assert res.proposal["calls"] == [] and res.proposal["control"]["bounded_outcome"] == "structured-output-invalid"
+                             "max_requests_per_decision": 3, "fresh_state_repairs": 0}).decide(req())
+    assert len(seen) == 2  # never more than one re-ask (the fresh-state repair, ADR 0023, is off here)
+    assert res.proposal == {} and res.runtime_outcome == res.usage["runtime_outcome"] == "structured-output-invalid"
     assert res.usage["calls"] == 2 and res.usage["limit_reached"] and not res.usage["structured_output"]["valid"]
-    validate_decision(res.proposal, max_calls=4)
 
 
 def test_no_reask_when_the_decision_budget_is_one_request():
     m, seen = _model(["not json", json.dumps(GOOD)])
     res = PydanticAIRuntime({"_model_object": m, "model": "function:test", "output_mode": "repair",
                              "max_requests_per_decision": 1}).decide(req())
-    assert len(seen) == 1 and res.proposal["control"]["bounded_outcome"] == "structured-output-invalid"
+    assert len(seen) == 1 and res.proposal == {} and res.runtime_outcome == res.usage["runtime_outcome"] == "structured-output-invalid"
 
 
 def test_json_mode_sends_response_format_to_openai_compatible_endpoints_only():
@@ -160,4 +159,4 @@ def test_no_reask_when_the_decision_token_budget_is_spent():
                              "max_output_tokens": 50}).decide(req())
     # the first request fits the envelope; the re-ask's worst case (10010 tokens of history + 50) no longer does
     assert len(seen) == 1 and res.usage["structured_output"]["reasks"] == 0  # never beyond the token reservation
-    assert res.proposal["control"]["bounded_outcome"] in ("structured-output-invalid", "request-budget-exhausted")
+    assert res.proposal == {} and res.runtime_outcome == res.usage["runtime_outcome"] == "structured-output-invalid"

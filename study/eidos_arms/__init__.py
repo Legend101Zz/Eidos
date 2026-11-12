@@ -7,6 +7,6 @@ def run_arm3(run_dir):
     return dispatch(3, Path(run_dir))
 
 
-def run_arm4(run_dir):
+def run_arm4(run_dir, *, eval_audit_config=None):
     from .common import dispatch
-    return dispatch(4, Path(run_dir))
+    return dispatch(4, Path(run_dir), eval_audit_config=eval_audit_config)

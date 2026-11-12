@@ -1,0 +1,56 @@
+{
+  "source_commit": "627d2d1ce7c245586e8ccd9c4e9e2405501e205b",
+  "source_handler": "investigations._record_controller_abstention",
+  "events": [
+    {
+      "type": "investigation.controller_abstained",
+      "subject": "fixture-investigation",
+      "body": {
+        "schema": "controller-abstention/1",
+        "author": "controller",
+        "code": "finalization-failed",
+        "reason": "conclusion reserve exhausted",
+        "failure": {
+          "kind": "deadline"
+        },
+        "incumbent": {
+          "job_id": "fixture-incumbent"
+        },
+        "investigator_concluded": false,
+        "export_receipt": {
+          "kind": "finalization_export_receipt",
+          "id": "fixture-investigation"
+        }
+      },
+      "investigation_id": "fixture-investigation"
+    }
+  ],
+  "state": {
+    "status": "stopped",
+    "needs_input": null,
+    "turns": [
+      {
+        "id": "fixture-turn"
+      }
+    ],
+    "body": {
+      "controller_abstention": {
+        "schema": "controller-abstention/1",
+        "author": "controller",
+        "code": "finalization-failed",
+        "reason": "conclusion reserve exhausted",
+        "failure": {
+          "kind": "deadline"
+        },
+        "incumbent": {
+          "job_id": "fixture-incumbent"
+        },
+        "investigator_concluded": false,
+        "export_receipt": {
+          "kind": "finalization_export_receipt",
+          "id": "fixture-investigation"
+        }
+      }
+    }
+  }
+}

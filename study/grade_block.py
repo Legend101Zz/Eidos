@@ -10,13 +10,16 @@ import json
 import shutil
 import sys
 from pathlib import Path
+from functools import partial
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from datetime import UTC
 
-from study.common import DEVELOPMENT, FAMILIES, dev_command, read_json, research_python, write_json
+from study.common import DEVELOPMENT, FAMILIES, FRESH_RECIPE_CARDS, IMPROVEMENT_CARDS, dev_command, read_json, research_python, write_json
 from study.fresh_check import candidate_command, fresh_check, infer
+from study.private_card_registry import PRIVATE_CARD_BARS
+from study.private_seal import configured_seal
 
 
 def digest(path):
@@ -98,6 +101,14 @@ def snapshot(out, workspace):
 
 
 def make_inputs(project, path):
+    if project in ('breast_cancer', 'diabetes', 'friedman1', 'classification'):
+        from study.packaging.p3_data import TASKS, dataset
+        import numpy as np
+        card = next(c for c, p in TASKS.items() if p == project)
+        data, _, _ = dataset(card)
+        x, _, ids = data['test']
+        np.savez(path, x=x, ids=ids)
+        return
     # Only this trusted subprocess owns labels. Its serialized export excludes y.
     code = (
         "import sys,numpy as np;sys.path.insert(0,sys.argv[1]);from data import dataset;"
@@ -114,6 +125,9 @@ def make_inputs(project, path):
 
 
 def score(project, baseline, candidate):
+    if project in ('breast_cancer', 'diabetes', 'friedman1', 'classification'):
+        from study.packaging.score_p3 import compare
+        return compare(project, baseline, candidate)
     import subprocess
 
     try:
@@ -153,18 +167,89 @@ def reproduction_command(command, code_path, inputs, output, seed):
     return replaced
 
 
+def make_baseline(trusted_inputs, test_inputs, baseline):
+    import subprocess
+
+    # Baseline is always the supplied functioning project, trained with seed 11.
+    baseline.mkdir(exist_ok=True)
+    subprocess.run(
+        [
+            research_python(),
+            str(trusted_inputs / "project.py"),
+            "train",
+            "--inputs",
+            str(trusted_inputs),
+            "--out",
+            str(baseline),
+            "--seed",
+            "11",
+        ],
+        check=True,
+        capture_output=True,
+        timeout=120,
+    )
+    subprocess.run(
+        [
+            research_python(),
+            str(trusted_inputs / "project.py"),
+            "infer",
+            "--model",
+            str(baseline / "model.pt"),
+            "--inputs",
+            str(test_inputs),
+            "--out",
+            str(baseline / "test_predictions.npz"),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=120,
+    )
+    return baseline / "test_predictions.npz"
+
+
+def confirm_checkpoint(workspace, destination, candidate, output, seed, private):
+    training, training_output = workspace, output
+    checkpoint_name = Path(candidate["model_path"]).name
+    if private:
+        # Give each seed a clean workspace with no earlier inference, model, or submitted predictions.
+        training = destination / f"training-{seed}"
+        if training.exists():
+            shutil.rmtree(training)
+        training.mkdir()
+        shutil.copytree(workspace / "inputs", training / "inputs")
+        shutil.copytree(workspace / "candidate", training / "candidate")
+        for key in ("model_path", "predictions_path"):
+            (training / "candidate" / candidate[key]).unlink(missing_ok=True)
+        (training / "candidate/answer.json").unlink()
+        training_output = training / "out"
+        training_output.mkdir()
+    command = reproduction_command(
+        candidate["reproduce_command"], candidate["code_path"],
+        training / "inputs", training_output, seed,
+    )
+    candidate_command(training, command)
+    checkpoint = output / checkpoint_name
+    if private:
+        trained = training_output / checkpoint_name
+        if trained.is_symlink() or not trained.is_file():
+            raise ValueError("confirmation did not emit the declared checkpoint")
+        shutil.copyfile(trained, checkpoint)
+    return checkpoint
+
+
 def grade_run(run_dir, grading_dir, block_incident=None, expected_meta=None):
     root, destination = Path(run_dir), Path(grading_dir)
     destination.mkdir(parents=True, exist_ok=True)
     meta = expected_meta or read_json(root / "arm.json")
     record_path = root / "run_record.json"
     record = read_json(record_path) if record_path.exists() else {"status": "invalid_output"}
+    private = meta["card"] in PRIVATE_CARD_BARS
     result = dict(
         family=FAMILIES[meta["card"]],
         task=meta["card"],
         run=meta["run_index"],
         arm=meta["arm"],
-        primary_eligible=meta["card"] in {"D02","D03","D04","D05","D06"},
+        primary_eligible=meta["card"] in IMPROVEMENT_CARDS,
         verified_success=False,
         card_success=False,
         status="invalid_output",
@@ -176,7 +261,8 @@ def grade_run(run_dir, grading_dir, block_incident=None, expected_meta=None):
         null_correct=None,
         operational_pass=None,
         false_positive_claim=False,
-        grading_scope="public development pilot; exploratory; no confirmatory certification",
+        grading_scope=("sealed development pilot" if private else "public development pilot")
+        + "; exploratory; no confirmatory certification",
     )
     if block_incident or record["status"] == "incident":
         result.update(status="incident", reason=block_incident or record.get("incident_reason"))
@@ -196,7 +282,17 @@ def grade_run(run_dir, grading_dir, block_incident=None, expected_meta=None):
             if answer["task_id"] != meta["card"]:
                 raise ValueError("answer task_id differs from assignment")
             verify_artifacts(root / "out", answer)
-            card = read_json(DEVELOPMENT / "tasks" / f"{meta['card']}.json")
+            seal = configured_seal() if private else None
+            if private:
+                try:
+                    card = seal.card(meta["card"])
+                except (KeyError, TypeError, ValueError, OSError) as error:
+                    raise RuntimeError("private card manifest failed verification") from error
+            elif meta['card'].startswith('N'):
+                from study.packaging.p3_data import card_spec
+                card = card_spec(meta['card'])
+            else:
+                card = read_json(DEVELOPMENT / "tasks" / f"{meta['card']}.json")
             candidate = answer["candidate"]
             numeric, reproduction, fresh = None, [], None
             reproduces, guardrails, scope_ok = False, False, False
@@ -219,52 +315,28 @@ def grade_run(run_dir, grading_dir, block_incident=None, expected_meta=None):
                 trusted_inputs = destination / "trusted-inputs"
                 if trusted_inputs.exists():
                     shutil.rmtree(trusted_inputs)
-                dev_command("package_task.py", "--task", meta["card"], "--out", trusted_inputs)
-                shutil.copytree(trusted_inputs, workspace / "inputs")
                 test_inputs = workspace / "test_inputs.npz"
-                make_inputs(card["project"], test_inputs)
-                expected_hash = digest(test_inputs)
-                # Baseline is always the supplied functioning project, trained with seed 11.
-                baseline = destination / "baseline"
-                baseline.mkdir(exist_ok=True)
-                import subprocess
-
-                subprocess.run(
-                    [
-                        research_python(),
-                        str(trusted_inputs / "project.py"),
-                        "train",
-                        "--inputs",
-                        str(trusted_inputs),
-                        "--out",
-                        str(baseline),
-                        "--seed",
-                        "11",
-                    ],
-                    check=True,
-                    capture_output=True,
-                    timeout=120,
-                )
-                subprocess.run(
-                    [
-                        research_python(),
-                        str(trusted_inputs / "project.py"),
-                        "infer",
-                        "--model",
-                        str(baseline / "model.pt"),
-                        "--inputs",
-                        str(test_inputs),
-                        "--out",
-                        str(baseline / "test_predictions.npz"),
-                    ],
-                    check=True,
-                    capture_output=True,
-                    timeout=120,
-                )
+                if private:
+                    try:
+                        seal.stage_bundle(meta["card"], trusted_inputs)
+                        seal.stage_test_inputs(meta["card"], test_inputs)
+                    except (KeyError, TypeError, ValueError, OSError) as error:
+                        raise RuntimeError("private grading inputs failed verification") from error
+                    shutil.copytree(trusted_inputs, workspace / "inputs")
+                    expected_hash = digest(test_inputs)
+                    score_candidate = partial(seal.score, meta["card"])
+                else:
+                    dev_command("package_task.py", "--task", meta["card"], "--out", trusted_inputs)
+                    shutil.copytree(trusted_inputs, workspace / "inputs")
+                    make_inputs(card["project"], test_inputs)
+                    expected_hash = digest(test_inputs)
+                    baseline = make_baseline(trusted_inputs, test_inputs, destination / "baseline")
+                    score_candidate = partial(score, card["project"], baseline)
                 code = workspace / "candidate" / candidate["code_path"]
                 model = workspace / "candidate" / candidate["model_path"]
                 locked_validation = destination / "locked_validation.npz"
                 shutil.copyfile(workspace / "candidate" / candidate["predictions_path"], locked_validation)
+                private_options = {"isolated": True} if private else {}
                 fresh = fresh_check(
                     workspace,
                     code,
@@ -272,27 +344,25 @@ def grade_run(run_dir, grading_dir, block_incident=None, expected_meta=None):
                     workspace / "inputs/validation.npz",
                     locked_validation,
                     test_inputs,
+                    **private_options,
                 )
                 reproduces = fresh["fresh_process_export_equal"]
-                numeric = score(card["project"], baseline / "test_predictions.npz", fresh["prediction_path"])
+                numeric = score_candidate(fresh["prediction_path"])
                 # Cards specify no critical slices. Enforce their actual data/CPU/format boundaries;
                 # do not invent a slice threshold from the protocol's explicitly draft defaults.
                 guardrails = digest(test_inputs) == expected_hash
-                if meta["card"] in {"D03","D04","D05","D06"} or (meta["card"] == "D02" and answer["claim_type"] in {"recipe_improvement", "architecture_improvement"}):
+                if meta["card"] in FRESH_RECIPE_CARDS or (meta["card"] == "D02" and answer["claim_type"] in {"recipe_improvement", "architecture_improvement"}):
                     for seed in card["seeds"][1:]:
                         output = workspace / f"confirmation-{seed}"
                         output.mkdir()
-                        command = reproduction_command(
-                            candidate["reproduce_command"],
-                            candidate["code_path"],
-                            workspace / "inputs",
-                            output,
-                            seed,
-                        )
-                        candidate_command(workspace, command)
-                        prediction = output / "test_predictions.npz"
-                        infer(workspace, code, output / "model.pt", test_inputs, prediction)
-                        measured = score(card["project"], baseline / "test_predictions.npz", prediction)
+                        checkpoint = confirm_checkpoint(workspace, destination, candidate, output, seed, private)
+                        prediction = (workspace / f"confirmation-inference-{seed}/predictions.npz"
+                                      if private else output / "test_predictions.npz")
+                        # Pilot-3 addendum 4: confirm with the checkpoint name the candidate declared
+                        # (model_path), not the baseline's "model.pt"; the task contract never fixes it.
+                        infer(workspace, code, checkpoint, test_inputs,
+                              prediction, **private_options)
+                        measured = score_candidate(prediction)
                         reproduction.append({"seed": seed, **measured})
                     reproduces = reproduces and all(
                         r["gain"] >= card["min_reference_gain"] for r in reproduction
@@ -328,7 +398,9 @@ def grade_run(run_dir, grading_dir, block_incident=None, expected_meta=None):
     return result
 
 
-def grade_block(block_record, grading_root, results_path):
+def grade_block(block_record, grading_root, results_path, *, arms=(1, 2, 3, 4)):
+    if not arms or len(set(arms)) != len(arms) or any(arm not in (1, 2, 3, 4) for arm in arms):
+        raise ValueError("arms must be distinct study arm numbers")
     block = read_json(block_record)
     if not block.get("complete"):
         raise ValueError("grading is permitted only after the whole block ends")
@@ -344,7 +416,7 @@ def grade_block(block_record, grading_root, results_path):
         shutil.move(str(grade_directory), archived)
     write_json(grade_directory / "block_record.json", block)
     records = []
-    for arm in (1, 2, 3, 4):
+    for arm in arms:
         root = directory / f"arm{arm}"
         records.append(
             grade_run(
@@ -357,7 +429,7 @@ def grade_block(block_record, grading_root, results_path):
     if any(r["status"] == "incident" for r in records):
         # A grader/infrastructure incident invalidates the entire paired block.
         reason = next(r.get("reason") for r in records if r["status"] == "incident")
-        for arm, result in enumerate(records, 1):
+        for arm, result in zip(arms, records, strict=True):
             result.update(status="incident", verified_success=False, card_success=False, reason=reason)
             write_json(grade_directory / f"arm{arm}/grade.json", result)
         block.update(status="incident", incident_reason=reason)

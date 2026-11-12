@@ -7,18 +7,25 @@ import shutil
 import sys
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 SOURCE = Path(__file__).resolve().parents[2] / 'research/public/development'
-TASKS = {'D03': 'digits_shift', 'D04': 'conditioning', 'D05': 'forecast', 'D06': 'order'}
+TASKS = {'D03': 'digits_shift', 'D04': 'conditioning', 'D05': 'forecast', 'D06': 'order',
+         'N01': 'breast_cancer', 'N02': 'diabetes', 'N03': 'friedman1', 'N04': 'classification'}
 
 def package(task_id, out):
     sys.path.insert(0, str(SOURCE))
     from data import dataset
-    import project  # trusted public source, never included in the bundle
     out = Path(out)
     if out.exists() and any(out.iterdir()): raise ValueError('output must be empty')
-    card = json.loads((SOURCE / 'tasks' / (task_id + '.json')).read_text())
-    data, kind, classes = dataset(TASKS[task_id], seed=card['dataset_seed'])
-    expected = 'classification' if task_id in ('D03', 'D06') else 'regression'
+    prospective = task_id.startswith('N')
+    if prospective:
+        from study.packaging.p3_data import card_spec, dataset as prospective_dataset
+        card = card_spec(task_id)
+        data, kind, classes = prospective_dataset(task_id)
+    else:
+        card = json.loads((SOURCE / 'tasks' / (task_id + '.json')).read_text())
+        data, kind, classes = dataset(TASKS[task_id], seed=card['dataset_seed'])
+    expected = 'classification' if task_id in ('D03', 'D06', 'N01', 'N04') else 'regression'
     if kind != expected: raise ValueError('card/dataset metric mismatch')
     out.mkdir(parents=True, exist_ok=True)
     for split in ('train', 'validation'):
@@ -41,8 +48,8 @@ def package(task_id, out):
                 metric='accuracy' if kind == 'classification' else 'rmse',
                 direction='maximize' if kind == 'classification' else 'minimize',
                 denominator='fixed evaluator input IDs', allowed_operations=card['permitted_operations'],
-                reference_visibility='excluded from this investigator bundle; public elsewhere',
-                qualification='local CPU qualification only; see QUALIFICATION_P2.md',
+                reference_visibility='excluded from this investigator bundle; controller only' if prospective else 'excluded from this investigator bundle; public elsewhere',
+                qualification='see QUALIFICATION_P3.md' if prospective else 'local CPU qualification only; see QUALIFICATION_P2.md',
                 resource_profile={'threads':1,'cpu_cores':1,'ram_gib_estimate':2,'disk_gib_environment_estimate':4,'reference_timeout_seconds':120},
                 investigator_budget='UNDECIDED', answer_schema='eidos-answer/0.2',
                 hashes={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(out.iterdir())})

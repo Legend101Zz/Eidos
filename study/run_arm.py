@@ -18,7 +18,7 @@ from pathlib import Path
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from study.common import ENVELOPE, MODEL, agent_env, read_json, render_prompt, sandbox_command, write_json
+from study.common import ENVELOPE, MODEL, agent_env, read_json, record_live_delivery, render_prompt, sandbox_command, write_json
 
 TOKEN_KEYS = {
     "input": ("input_tokens", "inputTokens"),
@@ -111,15 +111,130 @@ def incident_text(text):
     )
 
 
+ERROR_FIELDS = ("error", "errors")
+ERROR_CODE_FIELDS = ("status", "status_code", "statusCode", "code")
+
+
 def event_error(event):
-    """Inspect error fields, never arbitrary scientific text or tool outputs."""
-    if event.get("type") == "error" or event.get("is_error"):
-        return json.dumps(event)
-    if event.get("error"):
-        return json.dumps(event["error"])
-    if event.get("type") == "result" and event.get("subtype", "").startswith("error"):
-        return json.dumps(event.get("errors", event))
-    return ""
+    """Inspect declared error fields from result, provider error and assistant events."""
+    event_type = event.get("type")
+    if event_type not in ("result", "error", "assistant"):
+        return ""
+    if (event_type != "error" and not event.get("is_error") and not event.get("error")
+            and not (event_type == "result" and event.get("subtype", "").startswith("error"))):
+        return ""
+    details = {field: event[field] for field in ERROR_FIELDS if field in event}
+    if event_type == "error" and isinstance(event.get("message"), str):
+        details["message"] = event["message"]
+    for field in ERROR_CODE_FIELDS:
+        code = event.get(field)
+        if isinstance(code, (int, str)) and re.fullmatch(r"[45]\d{2}", str(code)):
+            details[field] = code
+    return json.dumps(details)
+
+
+def _legacy_rate_limit_text(event):
+    """Return the typed Claude rate-limit text that a legacy final result may echo."""
+    if event.get("type") != "assistant" or event.get("error") != "rate_limit":
+        return None
+    message = event.get("message")
+    if not isinstance(message, dict) or message.get("model") != "<synthetic>":
+        return None
+    content = message.get("content")
+    if not isinstance(content, list) or len(content) != 1:
+        return None
+    block = content[0]
+    if isinstance(block, dict) and block.get("type") == "text":
+        text = block.get("text")
+        if isinstance(text, str) and text.startswith("API Error:"):
+            return text
+    return None
+
+
+def _is_legacy_rate_limit_echo(event, prior_text):
+    return (
+        prior_text is not None
+        and event.get("type") == "result" and event.get("subtype") == "success"
+        and event.get("is_error") is True
+        and not any(field in event for field in (*ERROR_FIELDS, *ERROR_CODE_FIELDS))
+        and event.get("result") == prior_text
+    )
+
+
+TERMINAL_STOP_REASONS = (
+    "end_turn", "tool_use", "max_tokens", "stop_sequence", "pause_turn", "compaction",
+    "refusal", "model_context_window_exceeded",
+)
+
+
+def _provider_message_id(message):
+    if not isinstance(message, dict) or message.get("error"):
+        return None
+    model, message_id = message.get("model"), message.get("id")
+    if isinstance(model, str) and model not in ("", "<synthetic>") and isinstance(message_id, str) and message_id:
+        return message_id
+    return None
+
+
+class ProviderCompletion:
+    """Recognize terminal provider frames without changing stream usage accounting."""
+
+    def __init__(self):
+        self.active = None
+        self.terminal_delta = False
+        self.streamed = set()
+        self.completed = set()
+
+    def observe(self, event, usage, error):
+        if error:
+            self.active = None
+            return False
+        kind = event.get("type")
+        if kind == "stream_event":
+            message_id = self.observe_stream(event, usage)
+        elif kind == "assistant":
+            message = event.get("message")
+            message_id = _provider_message_id(message)
+            if (not message_id or message_id in self.streamed
+                    or message.get("stop_reason") not in TERMINAL_STOP_REASONS
+                    or not isinstance(message.get("usage"), dict)
+                    or not any(UsageTracker.counters(message["usage"]).values())):
+                return False
+        else:
+            return False
+        if not message_id or message_id in self.completed:
+            return False
+        self.completed.add(message_id)
+        return True
+
+    def observe_stream(self, event, usage):
+        part = event.get("event", {})
+        kind = part.get("type")
+        if any(key in envelope for envelope in (event, part) for key in ("abandonedBlocks", "abandoned_blocks")):
+            self.active = None
+            return None
+        if kind == "message_start":
+            message_id = _provider_message_id(part.get("message"))
+            fresh = (message_id not in self.streamed and message_id not in usage.messages
+                     and event.get("apiMessageId", message_id) == message_id)
+            self.active = message_id if fresh else None
+            if message_id:
+                self.streamed.add(message_id)
+            self.terminal_delta = False
+            return None
+        if not self.active:
+            return None
+        frame_id = event.get("apiMessageId", self.active)
+        if frame_id != self.active or kind == "error":
+            self.active = None
+            return None
+        if kind == "message_delta" and part.get("delta", {}).get("stop_reason") in TERMINAL_STOP_REASONS:
+            self.terminal_delta = True
+        if kind == "message_stop":
+            message_id, self.active = self.active, None
+            if self.terminal_delta and any(usage.messages.get(message_id, {}).values()):
+                return message_id
+        return None
 
 
 def utc_now():
@@ -158,7 +273,10 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
     started, clock = utc_now(), time.monotonic()
     usage = UsageTracker()
     status, reason = "ok", None
-    last_incident = None  # pilot-2 addendum 1: provider failure seen; decided at the end
+    last_incident = None  # unresolved provider failure; decided at the end
+    completion = ProviderCompletion()
+    pending_rate_limit_text = None
+    final_error = ""
     transcript = root / "transcript.jsonl"
     process = None
     with transcript.open("w") as log:
@@ -179,7 +297,7 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
                 buffers[name] = b""
 
             def consume(line, name):
-                nonlocal status, reason, last_incident
+                nonlocal status, reason, last_incident, final_error, pending_rate_limit_text
                 text = line.decode("utf-8", errors="replace")
                 for name_of_secret in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
                     secret = env.get(name_of_secret)
@@ -198,18 +316,22 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
                     event = {"type": "runner_stderr", "text": text}
                 log.write(json.dumps(event, ensure_ascii=False) + "\n")
                 log.flush()
+                error = event_error(event)
+                recovered = completion.observe(event, usage, error)
                 usage.observe(event)
                 if status == "ok" and time.monotonic() - clock >= wall_s:
                     status = "timeout"
                 if status == "ok" and usage.tokens["total"] > token_limit:
                     status = "token_budget"
-                error = text if name == "stderr" else event_error(event)
-                # Pilot-2 addendum 1: a provider 429/5xx text never stops a run while it is in progress, and the
-                # client's own retry notices (system/api_retry) are ignored. The run is an incident only if it
-                # then ends without a valid final result (decided after the stream ends).
-                retry_notice = event.get("type") == "system" and event.get("subtype") == "api_retry"
-                if error and not retry_notice and incident_text(error):
+                if event.get("type") == "result":
+                    final_error = last_incident if _is_legacy_rate_limit_echo(event, pending_rate_limit_text) else error
+                # Retry notices, partial stream events and tool output do not show provider recovery.
+                if error and incident_text(error):
                     last_incident = error[:2000]
+                    pending_rate_limit_text = _legacy_rate_limit_text(event)
+                if recovered:
+                    last_incident = None
+                    pending_rate_limit_text = None
 
             while selector.get_map():
                 if time.monotonic() - clock >= wall_s and status == "ok":
@@ -245,8 +367,11 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
             # A successful final result survives recovered tool/request errors and a
             # later process-exit error. The caller still validates out/answer.json.
             if status == "ok" and (not usage.final_seen or usage.final_is_error):
-                if last_incident:
-                    status, reason = "incident", last_incident
+                provider_error = last_incident
+                if usage.final_seen:
+                    provider_error = final_error if incident_text(final_error) else None
+                if provider_error:
+                    status, reason = "incident", provider_error[:2000]
                 else:
                     status = "crash"
         except Exception as exc:
@@ -296,11 +421,12 @@ def run_claude(run_dir, arm, wall_s=None):
         text=True,
         stderr=subprocess.DEVNULL,
     ).strip()
+    initial_prompt = render_prompt(arm, metadata["card"])
     command = [
         "claude",
         "--bare",
         "-p",
-        render_prompt(arm, metadata["card"]),
+        initial_prompt,
         "--model",
         MODEL,
         "--permission-mode",
@@ -310,6 +436,7 @@ def run_claude(run_dir, arm, wall_s=None):
         "--verbose",
         "--include-partial-messages",
     ]
+    record_live_delivery(root, metadata, initial_prompt, "claude-prompt")
     limits = metadata.get("envelope", ENVELOPE)
     record = run_stream(
         root,
@@ -332,7 +459,9 @@ def run_claude(run_dir, arm, wall_s=None):
     return record
 
 
-def dispatch(arm, run_dir, wall_s=None):
+def dispatch(arm, run_dir, wall_s=None, *, eval_audit_config=None):
+    if eval_audit_config is not None and arm != 4:
+        raise ValueError("provider audit configuration is restricted to arm 4")
     if arm in (1, 2):
         return run_claude(run_dir, arm, wall_s)
     try:
@@ -341,6 +470,8 @@ def dispatch(arm, run_dir, wall_s=None):
         if exc.name != "study.eidos_arms":
             raise
         raise NotImplementedError(f"arm {arm} not implemented") from exc
+    if eval_audit_config is not None:
+        return module.run_arm4(Path(run_dir).resolve(), eval_audit_config=eval_audit_config)
     return getattr(module, f"run_arm{arm}")(Path(run_dir).resolve())
 
 
@@ -349,11 +480,12 @@ def main():
     parser.add_argument("--arm", required=True, type=int, choices=(1, 2, 3, 4))
     parser.add_argument("--run-dir", required=True, type=Path)
     parser.add_argument("--wall-s", type=int, help="lower wall ceiling for smoke checks")
+    parser.add_argument("--eval-audit-config", type=Path)
     args = parser.parse_args()
     if args.wall_s is not None and not 0 < args.wall_s <= 1800:
         parser.error("--wall-s must be between 1 and 1800")
     try:
-        record = dispatch(args.arm, args.run_dir, args.wall_s)
+        record = dispatch(args.arm, args.run_dir, args.wall_s, eval_audit_config=args.eval_audit_config)
         if not isinstance(record, dict):
             record = read_json(args.run_dir / "run_record.json")
     except Exception as exc:

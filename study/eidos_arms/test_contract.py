@@ -6,7 +6,7 @@ import time
 import unittest
 from pathlib import Path
 
-from .arm4 import select_job
+from .arm4 import observed_deadline, select_job
 from .common import classify, usage
 
 
@@ -28,6 +28,23 @@ class Receipts(unittest.TestCase):
         self.assertIsNone(billed)
         self.assertEqual(len(receipts), 2)
 
+    def test_observed_deadline_uses_registered_server_value(self):
+        self.assertEqual(observed_deadline(110.0, {'body': {'wall': {'deadline_unix': 105.5}}}),
+                         {'registered_lab_deadline_unix': 105.5, 'registered_margin_s': 4.5})
+        self.assertEqual(observed_deadline(110.0, {'body': {'wall': {'deadline_unix': 110.25}}}),
+                         {'registered_lab_deadline_unix': 110.25, 'registered_margin_s': -0.25})
+        self.assertIsNone(observed_deadline(110.0, {})['registered_lab_deadline_unix'])
+
+    def test_controller_abstention_preserves_terminal_outcome(self):
+        state = {'status': 'stopped', 'body': {'controller_abstention': {
+            'author': 'controller', 'code': 'finalization-failed', 'investigator_concluded': False}}}
+        failure = {'error': 'HTTP 429'}
+        bookkeeping = {'calls': 0, 'runtime_outcome': 'deadline'}
+        self.assertEqual(classify(state, [failure, bookkeeping], [])[0], 'incident')
+        self.assertEqual(classify(state, [failure, {'calls': 2}, bookkeeping], [])[0], 'crash')
+        state['body']['controller_abstention']['failure'] = {'reason': 'wall-deadline-reached'}
+        self.assertEqual(classify(state, [failure], [])[0], 'timeout')
+
     def test_incidents_take_precedence_over_timeout(self):
         # Pilot-2 addendum 1: a timeout keeps its status (symmetric with arms 1-3); a provider failure is an
         # incident only when the investigation ended without concluding; a concluded run with a valid answer is ok.
@@ -39,7 +56,44 @@ class Receipts(unittest.TestCase):
         self.assertEqual(classify({}, [], [], True)[0], 'timeout')
         self.assertEqual(classify({'needs_input': {'reason': 'budget-exhausted'}}, [], [])[0], 'token_budget')
         self.assertEqual(classify({'needs_input': {'reason': 'invalid proposals'}}, [], [])[0], 'crash')
+        # Pilot-3 addendum 2: a recovered 429 followed by successful calls does not decide a later behavioural stop.
+        recovered = [{'calls': 1}, {'error': 'ModelRateLimitError: status_code: 429', 'failed_request': {'status_code': 429}},
+                     {'calls': 2}]
+        self.assertEqual(classify({'status': 'active', 'needs_input': {'code': 'refused-proposals'}}, recovered, [])[0], 'crash')
+        self.assertEqual(classify({'status': 'active', 'needs_input': {'code': 'turn-failed'}}, recovered[:2], [])[0], 'incident')
         self.assertEqual(classify({'status': 'concluded'}, [], [], answer_valid=False)[0], 'invalid_output')
+
+
+    def test_controller_abstention_preserves_failure_and_terminal_provider_incidents(self):
+        abstention = {'status': 'stopped', 'body': {'controller_abstention': {
+            'author': 'controller', 'code': 'finalization-failed', 'investigator_concluded': False}}}
+        self.assertEqual(classify(abstention, [], [])[0], 'crash')
+        rate_limit = {'error': 'HTTP 429'}
+        self.assertEqual(classify(abstention, [rate_limit, {'calls': 0, 'runtime_outcome': 'deadline'}], [])[0], 'incident')
+        self.assertEqual(classify(abstention, [rate_limit, {'calls': 2}], [])[0], 'crash')
+        abstention['body']['controller_abstention']['code'] = 'provider-unavailable'
+        self.assertEqual(classify(abstention, [], [])[0], 'incident')
+
+
+    def test_recorded_terminal_quota_is_a_study_incident(self):
+        root = Path(__file__).parents[2]
+        fixture = root / 'tests/fixtures/deadline/pilot-3/N02-r2-terminal-quota.json'
+        record = json.loads(fixture.read_text())
+        usage = record['receipt']['body']['usage']
+        self.assertEqual(classify({'status': 'stopped'}, [usage], [])[0], record['source']['recorded_outcome'])
+
+
+    def test_terminal_controller_limits_preserve_distinct_study_outcomes(self):
+        provider_receipts = [{'error': 'HTTP 429'}]
+        for cause, expected in (('budget-exhausted', 'token_budget'), ('wall-deadline-reached', 'timeout'),
+                                ('max-turns-reached', 'crash'), ('turn-budget-exhausted', 'crash')):
+            with self.subTest(cause=cause):
+                shown = {'status': 'stopped', 'turns': [], 'body': {'controller_abstention': {
+                    'author': 'controller', 'code': 'coordinator-stopped',
+                    'investigator_concluded': False, 'failure': {'error_type': cause}}}}
+                self.assertEqual(classify(shown, provider_receipts, [])[0], expected)
+        shown['body']['controller_abstention']['failure'] = {'kind': 'finalization-incomplete', 'reason': 'deadline'}
+        self.assertEqual(classify(shown, [], [])[0], 'crash')
 
 
 class Selection(unittest.TestCase):
@@ -100,6 +154,20 @@ class ClaudeStreaming(unittest.TestCase):
 
 
 class ProviderWall(unittest.TestCase):
+    def test_loopback_bridge_startup_avoids_dns(self):
+        from http.server import BaseHTTPRequestHandler
+        from unittest.mock import patch
+
+        from .provider_bridge import LoopbackServer
+
+        with patch('socket.getfqdn', side_effect=AssertionError('unexpected DNS lookup')):
+            server = LoopbackServer(('127.0.0.1', 0), BaseHTTPRequestHandler)
+            try:
+                self.assertEqual(server.server_name, 'localhost')
+                self.assertGreater(server.server_port, 0)
+            finally:
+                server.server_close()
+
     def test_deadline_exits_and_closes_a_blocked_request(self):
         from .provider_bridge import start
         with tempfile.TemporaryDirectory() as d:
@@ -159,11 +227,22 @@ class ArtifactReferences(unittest.TestCase):
 
 class ScientificAnswer(unittest.TestCase):
     def test_model_scientific_fields_survive_receipt_and_artifact_conversion(self):
-        from .arm4 import export_answer, validate
+        from hashlib import sha256
+        from .arm4 import export_answer, export_model_checkpoint, validate
+        from .common import PROJECT_COMMAND_BUNDLE_SHA256, PROJECT_COMMAND_REF
+
+        model = b'fixture'
+        model_digest = sha256(model).hexdigest()
+        receipt = json.dumps({'model_exports': [dict(slot='model', basename='Learned.pth',
+                                                    digest=model_digest, size=len(model))]}).encode()
         job = {'id': 'job_train', 'lock': {'inputs': {}, 'environment': {'installed': {'torch': '2.15.0'}},
+               'component': {'ref': PROJECT_COMMAND_REF, 'bundle': {'digest': PROJECT_COMMAND_BUNDLE_SHA256}},
                'config': {'argv': ['python', 'project.py', 'train', '--steps', '17'], 'seed': 41}},
                'outputs': [{'slot': 'source_snapshot', 'artifact_id': 'source'},
-                           {'slot': 'model', 'role': 'model-export', 'artifact_id': 'model'},
+                           {'slot': 'model', 'role': 'model-export', 'artifact_id': 'model',
+                            'digest': model_digest, 'size': len(model)},
+                           {'slot': 'receipt', 'artifact_id': 'receipt',
+                            'digest': sha256(receipt).hexdigest(), 'size': len(receipt)},
                            {'slot': 'validation_predictions', 'artifact_id': 'pred'}]}
 
         class Client:
@@ -174,7 +253,7 @@ class ScientificAnswer(unittest.TestCase):
                 if aid == 'source':
                     Path(target).write_text(json.dumps({'files': {'project.py': 'print("fixture")\n'}}))
                 else:
-                    Path(target).write_bytes(b'fixture')
+                    Path(target).write_bytes(receipt if aid == 'receipt' else model)
 
         metadata = {'status': 'improvement_claimed', 'claim_type': 'recipe_improvement',
             'claim': 'Investigator authored claim, kept verbatim.', 'scope': 'Visible-validation scope only',
@@ -186,13 +265,20 @@ class ScientificAnswer(unittest.TestCase):
             root = Path(d)
             (root / 'task').mkdir()
             (root / 'task/requirements.lock').write_text('torch==2.7.0\n')
-            export_answer(Client(), 'p', 'inv', root, {'card': 'synthetic'}, 'job_train', 'lock',
+            basename = export_answer(Client(), 'p', 'inv', root, {'card': 'synthetic'}, 'job_train', 'lock',
                           'verbatim conclusion', [], {'input': 3, 'cache_read': 7, 'cache_write': 0, 'output': 2},
                           [{'calls': 1}], answer_metadata=metadata)
             path = root / 'out/answer.json'
             self.assertTrue(validate(path))
             answer = json.loads(path.read_text())
             self.assertEqual(answer['status'], 'improvement_claimed')
+            self.assertEqual(basename, 'Learned.pth')
+            self.assertEqual(answer['candidate']['model_path'], 'candidate/Learned.pth')
+            other = root / 'collision/candidate'
+            other.mkdir(parents=True)
+            (other / 'LEARNED.pth').write_bytes(b'case-variant')
+            with self.assertRaisesRegex(ValueError, 'basename collides'):
+                export_model_checkpoint(Client(), 'p', job, other)
             self.assertEqual(answer['claim'], metadata['claim'])
             self.assertEqual(answer['claim_type'], 'recipe_improvement')
             self.assertEqual(answer['measurements'][0]['evidence_receipt'], 'evidence/job_score.json')

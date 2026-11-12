@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Built-in component tests in CI: lab venv (pytest) + one project venv with CPU torch 2.15 and numpy
-# used as both EIDOS_TORCH_PYTHON and EIDOS_NUMPY_PYTHON. Env: CI_WORK (scratch dir),
+# used as both EIDOS_TORCH_PYTHON and EIDOS_NUMPY_PYTHON (scikit-learn too, for the recipe-sweep template's svm and gbm
+# families; the tests also cover an environment without it). Env: CI_WORK (scratch dir),
 # EIDOS_WHEELHOUSE (CPU torch wheelhouse; fetched into it when the wheel is missing).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -12,7 +13,7 @@ mkdir -p "$CI_WORK" "$EIDOS_WHEELHOUSE"
 uv sync
 bash scripts/dev/fetch_cpu_torch.sh 2.15.0 cp312
 uv venv --python 3.12 --clear "$CI_WORK/project-venv"
-uv pip install --python "$CI_WORK/project-venv/bin/python" --find-links "$EIDOS_WHEELHOUSE" "torch==2.15.0+cpu" numpy
+uv pip install --python "$CI_WORK/project-venv/bin/python" --find-links "$EIDOS_WHEELHOUSE" "torch==2.15.0+cpu" numpy scikit-learn
 
 export EIDOS_TORCH_PYTHON="$CI_WORK/project-venv/bin/python"
 export EIDOS_NUMPY_PYTHON="$EIDOS_TORCH_PYTHON"
