@@ -9,8 +9,6 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
-from study.eidos_arms.arm4 import CONCLUSION_SCOPE_SCHEMA
-from study.eidos_arms.common import classify
 from test_failed_turn_e2e import decision_reply, env, provider, running  # noqa: F401 - fixtures
 from test_incumbent_challengers import Scene
 
@@ -55,8 +53,8 @@ def show(scene, inv):
 
 
 @pytest.mark.parametrize("action", ["conclude", "stop"])
-def test_recorded_malformed_scope_is_refused_and_can_only_be_replaced_by_author(scene, action):
-    inv = scene.investigation(conclusion_scope_schema=CONCLUSION_SCOPE_SCHEMA)
+def test_recorded_malformed_scope_is_refused_and_can_only_be_replaced_by_author(scene, study_arm4, action):
+    inv = scene.investigation(conclusion_scope_schema=study_arm4.CONCLUSION_SCOPE_SCHEMA)
     turn = scene.begin(inv)["turn_id"]
     proposal = deepcopy(RECORDED_SHAPE)
     proposal["action"] = action
@@ -81,8 +79,8 @@ def test_recorded_malformed_scope_is_refused_and_can_only_be_replaced_by_author(
     assert show(scene, inv)["body"]["conclusion"]["scope"] == corrected["scope"]
 
 
-def test_unrepaired_refusal_has_no_investigator_conclusion(scene):
-    inv = scene.investigation(conclusion_scope_schema=CONCLUSION_SCOPE_SCHEMA)
+def test_unrepaired_refusal_has_no_investigator_conclusion(scene, study_arm4):
+    inv = scene.investigation(conclusion_scope_schema=study_arm4.CONCLUSION_SCOPE_SCHEMA)
     turn = scene.begin(inv)["turn_id"]
     assert not accept(scene, turn, RECORDED_SHAPE)["accepted"]
     with pytest.raises(Invalid, match="conclusion scope"):
@@ -90,7 +88,7 @@ def test_unrepaired_refusal_has_no_investigator_conclusion(scene):
     complete(scene, turn, {}, reason="invalid-proposals")
     investigation = show(scene, inv)
     assert "conclusion" not in investigation["body"]
-    assert classify(investigation, [], [])[0] == "crash"
+    assert study_arm4.classify(investigation, [], [])[0] == "crash"
 
 
 @pytest.mark.parametrize("scope", [
@@ -101,9 +99,9 @@ def test_unrepaired_refusal_has_no_investigator_conclusion(scene):
                 "abstention": {"abstained": True, "reason": "Evidence is incomplete.",
                                "unresolved": ["Independent confirmation"], CORRECT_KEY: "Run the independent test."}}},
 ])
-def test_absent_metadata_and_genuine_abstention_remain_accepted(scene, scope):
-    inv = scene.investigation(conclusion_scope_schema=CONCLUSION_SCOPE_SCHEMA)
-    assert show(scene, inv)["body"]["investigator"]["conclusion_scope_schema"] == CONCLUSION_SCOPE_SCHEMA
+def test_absent_metadata_and_genuine_abstention_remain_accepted(scene, study_arm4, scope):
+    inv = scene.investigation(conclusion_scope_schema=study_arm4.CONCLUSION_SCOPE_SCHEMA)
+    assert show(scene, inv)["body"]["investigator"]["conclusion_scope_schema"] == study_arm4.CONCLUSION_SCOPE_SCHEMA
     turn = scene.begin(inv)["turn_id"]
     control = {"action": "conclude", "summary": "The investigator's own conclusion."}
     if scope is not None:
@@ -128,8 +126,8 @@ def test_malformed_operator_schema_is_refused_at_start(scene):
 
 
 @pytest.mark.parametrize("field", ["reason", "next_discriminating_test", "unresolved"])
-def test_non_whitespace_text_matches_export_validator(scene, field):
-    inv = scene.investigation(conclusion_scope_schema=CONCLUSION_SCOPE_SCHEMA)
+def test_non_whitespace_text_matches_export_validator(scene, study_arm4, field):
+    inv = scene.investigation(conclusion_scope_schema=study_arm4.CONCLUSION_SCOPE_SCHEMA)
     turn = scene.begin(inv)["turn_id"]
     control = deepcopy(RECORDED_SHAPE)
     abstention = control["scope"]["answer"]["abstention"]
@@ -142,7 +140,7 @@ def test_non_whitespace_text_matches_export_validator(scene, field):
 
 @pytest.mark.temporal
 @pytest.mark.fixture_llm
-async def test_real_runtime_and_coordinator_preserve_refusal_and_execute_one_correction(env, lab, provider):  # noqa: F811
+async def test_real_runtime_and_coordinator_preserve_refusal_and_execute_one_correction(env, lab, provider, study_arm4):  # noqa: F811
     text = None
     if path := os.environ.get("EIDOS_N01_RECORDED_REPLY"):
         raw = Path(path).read_bytes()
@@ -158,7 +156,7 @@ async def test_real_runtime_and_coordinator_preserve_refusal_and_execute_one_cor
     corrected["calls"] = [{"tool": "record_note", "args": {"kind": "hypothesis", "text": "synthetic replay effect"}}]
     second = decision_reply(corrected, "synthetic-correction")
     prov = provider([first, second], second)
-    async with running(env, lab, prov, investigator_options={"conclusion_scope_schema": CONCLUSION_SCOPE_SCHEMA}) as run:
+    async with running(env, lab, prov, investigator_options={"conclusion_scope_schema": study_arm4.CONCLUSION_SCOPE_SCHEMA}) as run:
         result = await asyncio.wait_for(run.handle.result(), timeout=25)
         assert result["reason"] == "concluded"
         view = run.view()

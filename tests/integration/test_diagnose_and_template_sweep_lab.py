@@ -119,8 +119,7 @@ def test_a_config_that_is_neither_a_template_nor_a_command_sweep_is_refused_at_a
 
 
 
-def test_a_real_sweep_publication_is_exportable_only_as_visible_study_evidence(scene, tmp_path):
-    from study.eidos_arms.arm4 import export_sweep_evidence
+def test_a_real_sweep_publication_is_exportable_only_as_visible_study_evidence(scene, tmp_path, study_arm4):
 
     lab, pid = scene["lab"], scene["pid"]
     charter = lab.cmd(lab.admin, "commit_study_charter", {"charter": {
@@ -135,6 +134,6 @@ def test_a_real_sweep_publication_is_exportable_only_as_visible_study_evidence(s
     assert job["status"] == "succeeded", job.get("terminal")
     publication = next(row for row in job["outputs"] if row["slot"] == "evidence_table")
     client = ShimClient(lab, lab.admin)
-    entry, mapping = export_sweep_evidence(client, pid, inv, tmp_path, publication["artifact_id"], scene["arts"])
+    entry, mapping = study_arm4.export_sweep_evidence(client, pid, inv, tmp_path, publication["artifact_id"], scene["arts"])
     assert entry["sha256"] == publication["digest"] == mapping["sha256"]
     assert (tmp_path / entry["path"]).read_bytes() == Path(lab.store.path_for(entry["sha256"])).read_bytes()
