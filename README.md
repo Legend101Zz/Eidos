@@ -2,28 +2,72 @@
 
 [![CI](https://github.com/Legend101Zz/Eidos/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Legend101Zz/Eidos/actions/workflows/ci.yml) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE) ![Platforms: Linux | macOS](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS-lightgrey.svg) ![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)
 
-Over the past two years, LLMs have gone from autocompleting code to doing real machine-learning work. Wrapped in a harness, the loop of tools, memory, feedback and limits around the model, a coding agent such as Claude Code or Codex can read a training script, form a hypothesis, change the code, launch a run and read the result, for hours at a time. Researchers have started to measure how far this goes:
+**A training harness that builds the scientific method into AI agents, so every model improvement they claim is independently verified.**
 
-- [AIDE](https://arxiv.org/abs/2502.13138) treats ML engineering as a search over code. It explores a tree of candidate programs and is a strong baseline on practical ML tasks.
-- [MLGym](https://arxiv.org/abs/2502.14499) gives research agents open-ended AI research tasks in a gym-style environment.
-- [RE-Bench](https://arxiv.org/abs/2411.15114) put frontier agents next to human experts on ML research-engineering tasks. The agents scored higher on short time budgets; the experts pulled ahead when both had more time.
-- The [LLM speedrunning benchmark](https://arxiv.org/abs/2506.22419) asked agents to reproduce known speedups of NanoGPT training, and found that they struggled even with detailed hints.
-- [AIRS-Bench](https://arxiv.org/abs/2602.06855) collects diverse AI research tasks and prepares data separately for the agent and for the evaluator.
+## Why Eidos exists
 
-Two lessons stand out. First, the harness matters: the same model can behave very differently depending on the loop around it. Second, today's harnesses are built to push a score up. Nothing in them stops an agent from tuning against its own evaluation until something improves, grading its own work, losing track of which results it has already seen, or reporting one lucky seed as a finding. Human researchers have old habits against exactly these failures: decide what counts as success before you look, let someone else check, keep a lab notebook, and report the nulls.
+Agents are moving into the training loop. Some rewrite a run's optimizer code mid-run, and models are reported to write network weights directly. When an agent says it made a model better, how do we know?
 
-That gap is where Eidos started. **Eidos is a research harness that builds those habits into the loop.**
-- You bring your own PyTorch project, a question about your model and a budget.
-- An LLM, the *investigator*, works on it on your machine, one bounded turn at a time. It diagnoses failures, writes new research components, runs trials and checkpoint branches, and exports models.
-- Success rules are committed before it starts exploring. A claim counts only when it comes from an evidence plan frozen in advance and a separate, qualified assessor agrees.
-- Every command, cost and look at a result is written to a ledger.
-- At the end you get the strongest answer the evidence supports, a model you can load if one really improved, and a report that keeps the failures and the limitations.
+Today's harnesses were built for software, where a test passes or fails the same way every time. Training gives noisy evidence, with error bars often wider than the gain being chased, and an agent that searches long enough will find a score that lies. The agent that ran the search is also tempted to grade it.
 
-Whether this discipline actually makes an LLM a better researcher is an open question, and Eidos was built to answer it. It is the instrument for a study, written up as a paper in preparation, that compares the same LLM with and without it ([below](#the-research-behind-it-paper-in-preparation)).
+Science met these traps with human analysts and answered them with institutions: pre-registration, held-out confirmation and independent checking. Eidos puts those into the agent's scaffold, where they are enforced rather than remembered.
 
-**Current release: v1.1.0** (package version `1.1.0`; the tag `eidos-v1.1.0` follows the owner's review). It adds the remaining harness features: the last recovery cases of the failure table, separate-identity sealed evaluation on Linux, provider keys in the OS secret store, a credential broker for component LLM calls, structured-output repair for local models, and optional PyGlove/Composer adapters with a CheckList-style behaviour suite ([release notes](docs/release/RELEASE_NOTES_v1.1.0.md)). Previous: [v1.0.1](docs/release/RELEASE_NOTES_v1.0.1.md). Machine sleep and OS restart recovery are not yet verified on hardware; see [Status](#status-and-evidence).
+## How it works
 
-Contents: [How it stays honest](#how-eidos-keeps-the-investigator-honest) · [Research](#the-research-behind-it-paper-in-preparation) · [How it works](#how-it-works) · [Use it today](#what-you-can-do-with-it-today) · [Scope](#supported-scope-v1) · [Status](#status-and-evidence) · [Docs](#documentation-map) · [Contributing](#contributing) · [Licence](#license)
+- **Rules before results.** A charter commits the success rules before any result exists. Every look at a result is recorded.
+- **Search apart from confirmation.** The agent explores on training and validation data; a locked candidate is then judged under an evidence plan frozen in advance.
+- **Scoped claims.** Each claim says what it covers: a checkpoint, a recipe or an architecture.
+- **Reserved budgets.** Tokens, cost, compute and time are reserved before work and settled after.
+- **A separate assessor.** Only an assessor with its own identity reads held-out data and rules on a claim.
+
+Underneath, one command API is the only write path, with idempotency keys so a crash cannot half-write a result. A PostgreSQL ledger records decisions and receipts, a content-addressed store holds artifacts, and Temporal runs durable workflows. Jobs run in sandboxed workers, and a credential broker keeps provider keys away from component code. Eidos has its own investigator agent, and an MCP server lets coding agents such as Claude Code drive the same lab.
+
+![Eidos architecture: clients propose commands to one command API; a ledger, artifact store and Temporal workflows sit behind it; only the assessor reads held-out data](docs/paper/architecture.png)
+
+## Research
+
+A four-arm study fixed the model (MiniMax-M3.1-Flash) and budget and changed only the harness. An independent grader on two fresh virtual machines judged every outcome.
+
+- In pilot 2 the Eidos investigator matched the strongest coding agent, 12 of 12 verified improvements each, on 5.5× fewer tokens.
+- It made no false improvement claim in any pilot. All 14 of its conclusions in pilots 2 and 3 were confirmed by the grader.
+- Eidos's components, given to an ordinary coding agent as a toolkit, made it the strongest or joint-strongest arm in every pilot.
+- Pilot 3's setback, 2 of 12 against 11 of 12, came from one timing rule in Eidos's own runtime. Round 4 fixed it: on seven practice tasks, completed runs went from 2 of 7 to 7 of 7.
+
+The evidence is exploratory: three small pilots. The paper reports the failures too.
+
+![Results at a glance: pilot 2 scores against tokens, pilot 3 run outcomes, and the round-4 repair](docs/paper/overview.png)
+
+### Research and evaluation
+
+- [Paper (PDF): *Eidos: A Harness for Agents That Train Models*](docs/paper/Eidos-paper.pdf)
+- [Study protocol](research/public/STUDY_PROTOCOL.md)
+- [Pilot charters and addenda](docs/experiments/)
+- [Independent two-VM grader (private until the sealed Pilot-4 study completes)](https://github.com/Legend101Zz/eidos-grading). This repository is private, so the link works only for people who have been given access.
+
+**Current release: v1.1.0** ([release notes](docs/release/RELEASE_NOTES_v1.1.0.md), [status](#status-and-evidence)).
+
+Contents: [Why](#why-eidos-exists) · [How it works](#how-it-works) · [Research](#research) · [Benchmarks](#benchmarks) · [How it stays honest](#how-eidos-keeps-the-investigator-honest) · [Study design](#the-research-behind-it) · [In detail](#how-it-works-in-detail) · [Key features](#key-features) · [Isolation](#isolation-model) · [Budgets](#budget-and-ledger-model) · [Install](#install) · [Quickstart](#quickstart) · [Scope](#supported-scope-v1) · [Testing](#testing) · [Status](#status-and-evidence) · [Docs](#documentation-map) · [Contributing](#contributing) · [Licence](#license)
+
+## Benchmarks
+
+**Four-arm study.** One model (MiniMax-M3.1-Flash), one budget (1,800 s, 8M processed tokens, one CPU thread), four harnesses. Every outcome is decided by an independent grader on two fresh virtual machines. Verified improvements:
+
+| Arm | Pilot 1 (D02) | Pilot 2 | Pilot 3 | Processed tokens, pilots 1 / 2 / 3 |
+|---|---:|---:|---:|---:|
+| Coding agent (Claude Code `--bare`) | 2/3 | 11/12 | 11/12 | 33.7M / 24.8M / 31.6M |
+| Coding agent + Eidos toolkit | **3/3** | **12/12** | **11/12** | 31.3M / 30.6M / 30.5M |
+| Coding agent + Eidos (MCP) | 2/3 | 7/12 | 8/12 | 33.9M / 68.0M / 59.7M |
+| Eidos investigator | 1/3 | **12/12** | 2/12 | **7.5M / 5.6M** / 15.3M |
+
+- Pilot 3's 2/12 is ten runs stopped by one deadline-admission rule before they could report a locked candidate; both runs that reached a conclusion were verified. The round-4 repair (PR #24, not yet on `main`) took seven practice tasks from 2/7 to 7/7 completed runs and from 1 to 6 verified improvements.
+- The Eidos investigator made no false improvement claim in any pilot.
+- These are three small development pilots. Every interval is exploratory; the pre-registered decision rule would need roughly 283 independent pairs.
+
+**A stronger driver** (unregistered probe, one run per card). With Claude Opus 5.5 in the MCP arm, both runs verified: D03 at +0.278 (0.65M tokens, 127 s) and D06 at +0.496 (1.01M tokens, 154 s). MiniMax in the same seat verified 1/3 and 2/3 on those cards. Opus used Eidos sparingly, so this does not yet show what Eidos adds for a strong model.
+
+**Model conformance.** No local model of 14B parameters or fewer passed full release conformance (best: `qwen2.5:14b`, 4/8), and `claude-sonnet-5-5` completed the full autonomous investigation journey. Details are in [Status and evidence](#status-and-evidence).
+
+Methods, statistics and the full defect record: [the paper](docs/paper/Eidos-paper.pdf).
 
 ## How Eidos keeps the investigator honest
 
@@ -45,7 +89,7 @@ Each habit of a careful researcher maps to something the harness enforces, rathe
 
 The run cost USD 1.81 in model calls.
 
-## The research behind it (paper in preparation)
+## The research behind it
 
 The study asks one question: **does the same LLM make more independently verified, useful model improvements through Eidos than as a well-equipped coding agent?** To make that a fair test, it compares four arms that share one LLM, one task set and one resource envelope, so the only difference is what the LLM works through:
 
@@ -71,9 +115,9 @@ flowchart LR
 
 **Decision rule.** The primary contrast is arm 4 minus arm 2. A practically useful advantage needs at least +10 percentage points in verified success rate, with the lower end of the 95% confidence interval above +10 points. The owner fixed this rule before any comparative result.
 
-**No comparative results exist yet.** The public research release is [`research/public/`](research/public/) (release `research-public-v0.1.0`): the study protocol, 14 development task cards, the answer format and draft analysis code. The plan for running the study, and for testing the harness, is [`docs/experiments/README.md`](docs/experiments/README.md).
+**Exploratory results from three development pilots are in [Research](#research) and the [paper](docs/paper/Eidos-paper.pdf).** The public research release is [`research/public/`](research/public/) (release `research-public-v0.1.0`): the study protocol, 14 development task cards, the answer format and draft analysis code. The plan for running the study, and for testing the harness, is [`docs/experiments/README.md`](docs/experiments/README.md).
 
-## How it works
+## How it works in detail
 
 **The research loop.** An investigation moves through the same stages a careful researcher would, and each stage leaves a record:
 
@@ -260,7 +304,22 @@ The complete, scripted version of this journey (setup, qualified protocols and a
 
 Out of scope, with reasons: Windows, CUDA, distributed training, Lima VM, Claude Desktop, hosted multitenancy. Details: [`docs/release/SUPPORTED.md`](docs/release/SUPPORTED.md).
 
-v1 makes **no scientific claim**: whether Eidos helps an LLM do model research (A16) is a separate later release; see [The research behind it](#the-research-behind-it-paper-in-preparation).
+The v1 software release makes **no scientific claim** of its own. Whether Eidos helps an LLM do model research (A16) is studied separately: the paper reports exploratory evidence from three development pilots, and a sealed fourth pilot follows; see [Research](#research).
+
+## Testing
+
+Eidos is tested at four levels. The counts are from the latest `main` CI run ([43003521253](https://github.com/Legend101Zz/Eidos/actions/runs/43003521253), 15/15 jobs green).
+
+| Level | What it covers | Latest on `main` |
+|---|---|---|
+| Unit, MCP and reporting | ledger rules, validators, policies, MCP tools and reports | 2,036 passed |
+| Integration | real PostgreSQL 16 and Temporal: investigations, jobs, assessments and budgets | 450 passed |
+| Components | the built-in research components, on CPU PyTorch | 344 passed |
+| Platform and install | worker SDK on Python 3.9+, macOS arm64, separate identity as root, OS secret stores (macOS and Linux), PyGlove and Composer adapters, fresh install, upgrade across releases, the 154-check switch-order journey | all jobs pass |
+
+The study harness has its own tests (`study/tests`, `study/eidos_arms/test_parity.py`), and the grader is qualified on planted improvements, unchanged baselines, invalid outputs and corrupt uploads before use. The round-4 branch (PR #24) passes 754 integration and 660 component tests in CI.
+
+To run the suites locally, see [Development](#development).
 
 ## Status and evidence
 
@@ -295,6 +354,7 @@ CI runs 15 jobs on every push: lint and unit, integration (PostgreSQL and Tempor
 | [`docs/experiments/README.md`](docs/experiments/README.md) | experiments and testing plan (R0–R3), GitHub workflow, grading |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | branches, pull requests, CI, commit identity |
 | `research/public/` | public research release: study protocol, task cards, answer format (immutable) |
+| [`docs/paper/`](docs/paper/) | the research paper (PDF) and the figures used in this page |
 | `ACCEPTANCE_MATRIX.md` | release acceptance criteria and gate results |
 
 ## Contributing
