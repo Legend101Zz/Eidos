@@ -4,6 +4,8 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.4.0
 
+- [ADR 0034](docs/decisions/0034-bounded-finalization-context.md) keeps autonomous conclusion context within the existing packed budget, shows the required decision rationale, and preserves prior billed replies in the audit after a fresh-state reset.
+
 - [ADR 0032](docs/decisions/0032-investigator-conclusion-scope-contract.md) adds an operator-declared conclusion shape contract. Malformed supplied metadata is refused before effects with the existing bounded feedback path. The study adapter applies it to the investigator's optional abstention metadata.
 
 - [ADR 0033](docs/decisions/0033-study-visible-sweep-evidence-export.md) maps verified investigator citations of same-investigation visible recipe-sweep tables to hashed evidence files in study-private exports.

@@ -348,14 +348,9 @@ class InvestigatorActivities:
 
     @staticmethod
     def _pack_model_context(turn: dict, view: dict, catalog: list, blocked: set[str]) -> dict:
-        packed = pack(view, catalog, policy=turn["spec"].get("context_policy") or POLICY_V1)
         if turn["spec"].get("finalization"):
-            # Exact recovery evidence is supplied independently of context-policy windowing.
-            packed["text"] += "\n\n## Bounded autonomous finalization\n" + json.dumps(sanitize(
-                {**turn["spec"]["finalization"], "remaining_budget": view["budgets"],
-                 "remaining_wall": view.get("completion")}, blocked), sort_keys=True, default=str)
-            packed["chars"] = len(packed["text"])
-        return packed
+            view = {**view, "finalization": sanitize(turn["spec"]["finalization"], blocked)}
+        return pack(view, catalog, policy=turn["spec"].get("context_policy") or POLICY_V1)
 
     def _model_evidence_exclusions(self, project: str, turn: dict, view: dict) -> set[str]:
         if not (view.get("charter") or {}).get("held_out") and turn["spec"].get("evidence_allowlist") is None:

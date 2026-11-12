@@ -650,15 +650,18 @@ class PydanticAIRuntime:
             """Record a runaway reply; the bounded outcome if no re-ask is left, else None (re-ask once)."""
             report["runaway"].append(runaway_record(response, len(billed), was_reask, self._billing()))
             if was_reask:  # the concise re-ask ran away too: a bounded outcome, not a retried failure
-                return self._bounded(history, model, max_requests, f"reasoning runaway: output cap "
+                return self._bounded(archived + history, model, max_requests, f"reasoning runaway: output cap "
                                      f"{output_cap(self.config)} reached twice without an answer",
                                      "reasoning-runaway", report, billed)
             if len(billed) >= max_requests:
-                return self._bounded(history, model, max_requests, f"reasoning runaway in the last of "
+                return self._bounded(archived + history, model, max_requests, f"reasoning runaway in the last of "
                                      f"{max_requests} requests", "reasoning-runaway", report, billed)
             return None
 
         history: list = []
+        # A fresh prompt intentionally starts without previous replies. Preserve the
+        # responses separately for the audit, including when that request cannot fit.
+        archived: list = []
         # Every response of this decision, in order: what it billed. ``history`` (what the model sees next) leaves out
         # a runaway reply, which carries no answer; its tokens and its request still count.
         billed: list = []
@@ -696,12 +699,12 @@ class PydanticAIRuntime:
                     outcome = "reasoning-runaway" if runaway_now else (
                         "structured-output-invalid" if report["errors"] and not report["valid"]
                         else "request-budget-exhausted")
-                    return self._bounded(history, model, max_requests, f"decision token envelope: {exc}", outcome,
+                    return self._bounded(archived + history, model, max_requests, f"decision token envelope: {exc}", outcome,
                                          report, billed)
                 except UsageLimitExceeded as exc:
                     billed += [m for m in captured if isinstance(m, ModelResponse) and m not in billed]
                     history += [m for m in captured if m not in history]
-                    return self._bounded(history, model, max_requests, str(exc), "request-budget-exhausted", report,
+                    return self._bounded(archived + history, model, max_requests, str(exc), "request-budget-exhausted", report,
                                          billed)
                 except ModelCallFailed:
                     raise
@@ -738,12 +741,13 @@ class PydanticAIRuntime:
                     # ADR 0023: still malformed after the re-ask: ask again from a fresh state (bounded, recorded)
                     fresh_left -= 1
                     fresh_pending = {"request": used + 1, "after_error": msg[:300]}  # counted once it is sent
+                    archived = list(billed)
                     history = []
                     message = fresh_message + "\n\n" + FRESH_STATE_NOTE.format(error=msg[:300])
                     continue
                 if report["reasks"] >= 1 or report["fresh_state_repairs"] or used >= max_requests:
                     # at most one schema-guided re-ask and the bounded fresh-state repairs
-                    return self._bounded(history, model, max_requests, msg, "structured-output-invalid", report,
+                    return self._bounded(archived + history, model, max_requests, msg, "structured-output-invalid", report,
                                          billed)
                 reask_pending = True
                 message = ("Your reply could not be used: " + msg + "\nReply with ONLY the corrected JSON object in "
@@ -757,7 +761,7 @@ class PydanticAIRuntime:
             if used >= max_requests:  # no request left to decide with the results: nothing is executed
                 report["reads"] += [{"request": used, "tool": r.get("tool") if isinstance(r, dict) else None,
                                      "executed": False} for r in reads]
-                return self._bounded(history, model, max_requests, f"read request in the last of {max_requests} "
+                return self._bounded(archived + history, model, max_requests, f"read request in the last of {max_requests} "
                                      "requests", "request-budget-exhausted", report, billed)
             results = []
             for i, entry in enumerate(reads):
@@ -785,7 +789,7 @@ class PydanticAIRuntime:
         usage = self._usage(billed)
         usage["structured_output"] = report  # repairs, re-asks, reads and runaways are never silent
         assert proposal is not None
-        return DecisionResult(proposal, usage, json.loads(_messages_json(history)), self._settings(usage, max_requests),
+        return DecisionResult(proposal, usage, json.loads(_messages_json(archived + history)), self._settings(usage, max_requests),
                               PROMPT_REVISION)
 
     def _usage(self, messages: list) -> dict[str, Any]:

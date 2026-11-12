@@ -66,4 +66,6 @@ def test_finalization_context_exposes_evidence_and_conclude_only():
     assert set(packed["known_tools"]) == {"get_job", "inspect_evidence", "describe_component", "conclude", "stop"}
     guide = packed["text"].split("## Tools")[-1]
     assert "calls: []" in guide and "run_component {" not in guide and "author_source {" not in guide
+    assert '"rationale": "<why the recorded evidence supports this scoped outcome>"' in guide
+    assert '"calls": []' in guide and '"action": "conclude"' in guide
     assert "Missing held-out evidence never passes" in guide

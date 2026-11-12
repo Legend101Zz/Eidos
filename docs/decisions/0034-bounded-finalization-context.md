@@ -1,0 +1,11 @@
+# ADR 0034 · Bound the finalization context and retain discarded replies
+
+**Status** Proposed for a subsequent development build.
+
+The settled Tier 1 D04-r1 development run reached its autonomous conclusion turn after a decision deadline. Its packed model context was 123,095 characters. The ordinary context policy packed 59,588 characters, then the activity appended 63,507 characters of finalization data outside that budget. The finalization receipt recorded one read round and two malformed decisions missing the required rationale. The envelope refused the fresh-state request. The runtime recorded a controller-authored failure separately from an investigator conclusion.
+
+The `finalization-context/1` model projection shares the existing total context character budget. It reserves room for the closure guide, recorded incumbent and locked candidate identities, selection rule, remaining limits, and exact eligible evidence identifiers. It omits duplicated raw jobs, configs and receipts from the finalization appendix. The projection records omitted identifier counts and labels any oversized selection-rule omission with a digest and retained fields. The original sanitized source manifest and immutable turn specification retain their full records. The turn continues to enforce the same evidence allowlist, action vocabulary and wall, token and request limits.
+
+The finalization guide shows the actual decision shape and asks the investigator to supply a rationale. A text-mode fresh-state request still excludes earlier replies from provider context. The response artifact retains the billed replies discarded from that context, including when admission refuses the fresh request. No response is reconstructed when the historical source lacks it.
+
+An offline receipt-equivalent test uses the recorded first-three request usage and explicitly synthetic model texts. With the archived oversized packed context the fourth request is refused; the bounded projection admits that request under the same envelope. This demonstrates admission headroom under the witness conditions. It provides no live model counterfactual and does not change the settled development result.

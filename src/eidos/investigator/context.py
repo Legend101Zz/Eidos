@@ -21,6 +21,8 @@ from eidos_wire import canonical_json, sha256_bytes
 POLICY_ID = "context-policy/3"  # ADR 0023
 POLICY_V2 = "context-policy/2"  # ADR 0020
 POLICY_V1 = "context-policy/1"
+FINALIZATION_PROJECTION = "finalization-context/1"
+FINALIZATION_CONTEXT_CHARS = 8_000
 MAX_JOBS = 25
 MAX_CATALOG = 30
 SWEEP_COMPONENT = "eidos.search.recipe-sweep"
@@ -136,7 +138,10 @@ Success rules come only from the committed charter; you cannot set thresholds. C
 
 FINALIZATION_GUIDE = """You are in the single bounded autonomous finalization turn.
 Read existing evidence only: get_job {job_id}, inspect_evidence {artifact_id, max_bytes?},
-describe_component {component_ref}. Then return ONE decision with calls: [] and control.action: conclude or stop.
+describe_component {component_ref}. Then return ONE JSON decision with your own short rationale, calls: [], and
+control.action set to conclude or stop. Shape example:
+{"rationale": "<why the recorded evidence supports this scoped outcome>", "calls": [],
+ "control": {"action": "conclude", "summary": "<your conclusion and its limits>", "scope": {}}}
 No search, compute, authoring, rule changes, candidate changes, re-lock or new evidence collection is allowed.
 Report the locked candidate with its source/job/receipt identifiers, visible metrics, provenance limits and recorded
 reproduction status. With no eligible locked candidate, honestly abstain. Missing held-out evidence never passes
@@ -155,9 +160,87 @@ def _known_tools(view: dict[str, Any]) -> list[str]:
 
 def pack(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int = MODEL_CONTEXT_CHAR_LIMIT,
          policy: str = POLICY_ID) -> dict[str, Any]:
+    section, projection = "", None
+    if view.get("finalization"):
+        section, projection = _finalization_projection(view, min(FINALIZATION_CONTEXT_CHARS, char_limit // 3))
+    body_limit = char_limit - len(section)
     if policy == POLICY_V1:
-        return _pack_v1(view, catalog, char_limit=char_limit)
-    return _pack_v2(view, catalog, char_limit=char_limit, v3=policy != POLICY_V2)
+        packed = _pack_v1(view, catalog, char_limit=body_limit)
+    else:
+        packed = _pack_v2(view, catalog, char_limit=body_limit, v3=policy != POLICY_V2)
+    if projection is not None:
+        if len(packed["text"]) > body_limit:
+            guide = "\n## Tools\n" + FINALIZATION_GUIDE
+            keep = max(0, body_limit - len(guide) - len(TRUNCATION_MARK))
+            bounded_body = packed["text"][:keep] + TRUNCATION_MARK + guide
+            packed["text"] = bounded_body[-body_limit:] if body_limit else ""
+            packed["truncations"]["context_truncated"] = True
+        packed["text"] += section
+        packed["chars"] = len(packed["text"])
+        packed["truncations"]["finalization_projection"] = projection
+    return packed
+
+
+def _finalization_projection(view: dict[str, Any], limit: int) -> tuple[str, dict[str, Any]]:
+    """Pack only recorded identities and closure facts; the pinned turn remains the read authority."""
+    source = view["finalization"]
+    header = "\n\n## Bounded autonomous finalization\n"
+    report: dict[str, Any] = {"schema": FINALIZATION_PROJECTION, "omitted": {}}
+    incumbent = source.get("incumbent") or {}
+    locked = source.get("locked_candidate") or {}
+    reproduction = incumbent.get("reproduction") or {}
+    rule = source.get("selection_rule")
+    facts: dict[str, Any] = {
+        "schema": FINALIZATION_PROJECTION,
+        "turn_id": source.get("turn_id"),
+        "trigger": source.get("trigger"),
+        "runtime_outcome": source.get("runtime_outcome"),
+        "incumbent": {k: incumbent[k] for k in ("job_id", "version", "note_id", "basis", "reproduced_by") if k in incumbent},
+        "reproduction": {k: reproduction[k] for k in ("criterion", "incumbent_value", "reproduced_by")
+                         if k in reproduction},
+        "locked_candidate": {k: locked[k] for k in ("id", "component", "status", "purpose") if k in locked},
+        "selection_rule": rule,
+        "remaining_budget": view.get("budgets"),
+        "remaining_wall": view.get("completion"),
+        "evidence_access": "These are selected eligible identifiers. Read exact evidence through the authorized tools.",
+        "addressable": {},
+        "omitted": report["omitted"],
+    }
+    if rule and len(canonical_json(rule)) > min(2_000, limit // 4):
+        facts["selection_rule"] = {
+            "sha256": sha256_bytes(canonical_json(rule).encode()),
+            **{k: rule[k] for k in ("metric", "direction", "split", "scorer", "reproduce_within")
+               if k in rule and len(canonical_json(rule[k])) <= 120},
+        }
+        report["omitted"]["selection_rule"] = "oversized rule fields retained in the pinned turn"
+    allow = source.get("evidence_allowlist") or {}
+    priorities = {
+        "jobs": [locked.get("id"), incumbent.get("job_id"), incumbent.get("reproduced_by")],
+        "artifacts": [row.get("artifact_id") for row in locked.get("outputs") or []],
+        "components": [locked.get("component")],
+    }
+    for index, (kind, preferred) in enumerate(priorities.items()):
+        eligible = list(dict.fromkeys(allow.get(kind) or []))
+        ordered = list(dict.fromkeys([item for item in preferred if item in eligible] + eligible))
+        facts["addressable"][kind] = selected = []
+        report["omitted"][kind] = len(ordered)
+        # Reserve a share of the remaining section for each identifier kind.
+        # No opaque identifiers are shortened or reconstituted.
+        room = max(0, limit - len(header) - len(canonical_json(facts)) - 100)
+        share = room // (len(priorities) - index)
+        for item in ordered:
+            cost = len(canonical_json(item)) + 1
+            if cost > share:
+                break
+            selected.append(item)
+            share -= cost
+            report["omitted"][kind] -= 1
+    rendered = header + canonical_json(facts)
+    if len(rendered) > limit:
+        # Tiny caller-supplied budgets still get a bounded context and explicit omission.
+        report["omitted"]["section"] = "projection does not fit the supplied context budget"
+        return "", report
+    return rendered, report
 
 
 def _pack_v1(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int) -> dict[str, Any]:
