@@ -13,7 +13,7 @@ from study.evals.policy import POLICY
 REQUIRED_INVARIANTS = tuple(POLICY["invariants"])
 
 
-def inspect_run(run_dir, known_identifiers=()):
+def inspect_run(run_dir, known_identifiers=(), *, audit_config_sha=None):
     root = Path(run_dir)
     record = read_json(root / "run_record.json")
     try:
@@ -117,7 +117,8 @@ def inspect_run(run_dir, known_identifiers=()):
         and expected_turns <= recorded_turns
     )
     isolation = scan_held_out(
-        record, rows, events, root, known_identifiers, complete_turn_export=arm4_records
+        record, rows, events, root, known_identifiers,
+        complete_turn_export=arm4_records, audit_config_sha=audit_config_sha
     )
     dead_end = bool(locked and not concluded and not controller_abstention)
     if (not dead_end and not (stub or arm4_records)) or disposition == "unknown_controller_attribution":
@@ -145,7 +146,8 @@ def inspect_run(run_dir, known_identifiers=()):
     )
 
 
-def scan_held_out(record, rows, events, run_dir=None, known_identifiers=(), *, complete_turn_export=False):
+def scan_held_out(record, rows, events, run_dir=None, known_identifiers=(), *,
+                  complete_turn_export=False, audit_config_sha=None):
     """Match known evaluator digests/IDs in model-facing bytes and structured read receipts."""
     known = set(known_identifiers)
     frozen = read_json(STUDY / "packaging/p3_frozen.json")
@@ -195,7 +197,7 @@ def scan_held_out(record, rows, events, run_dir=None, known_identifiers=(), *, c
     missing_contexts = sorted(context_ids - packed)
     content = json.dumps(model_facing)
     matches = {value for value in known if isinstance(value, str) and value in content}
-    requests, request_error = audited_requests(run_dir, set(known_identifiers))
+    requests, request_error = audited_requests(run_dir, set(known_identifiers), audit_config_sha=audit_config_sha)
     for request in requests:
         matches.update(request["matched_identifiers"])
     usage_calls = sum(
@@ -234,12 +236,15 @@ def scan_held_out(record, rows, events, run_dir=None, known_identifiers=(), *, c
     )
 
 
-def audited_requests(run_dir, known):
+def audited_requests(run_dir, known, *, audit_config_sha=None):
     if run_dir is None or not known:
         return [], "provider audit identifiers unavailable"
     try:
-        if read_json(run_dir / "provider_bridge.json").get("eval_provider_audit") is not True:
+        bridge = read_json(run_dir / "provider_bridge.json")
+        if bridge.get("eval_provider_audit") is not True:
             return [], "provider bridge did not attest audit activation"
+        if audit_config_sha is not None and bridge.get("eval_provider_audit_config_sha256") != audit_config_sha:
+            return [], "provider bridge audit configuration differs from the attempt pin"
         rows = [json.loads(line) for line in (run_dir / "eval_provider_audit.jsonl").read_text().splitlines()]
         if not rows or any(
             not re.fullmatch(r"[0-9a-f]{64}", row["request_sha256"])

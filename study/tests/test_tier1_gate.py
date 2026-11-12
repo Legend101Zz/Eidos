@@ -17,6 +17,7 @@ from study.evals.provenance import MIN_FREE, disk_guard, verify_build
 from study.evals.provider_audit import RequestAudit
 from study.evals.records import inspect_run
 from study.evals.regenerate_references import CARDS, regenerate
+from study.tests.test_provider_audit_dispatch import audit_fixture
 
 
 class GateTests(unittest.TestCase):
@@ -175,11 +176,10 @@ class GateTests(unittest.TestCase):
 
     def test_provider_audit_retains_only_digests_and_matches(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
             known = "a" * 64
-            (root / "arm.json").write_text('{"card":"N01"}')
-            config = root / "config.json"
-            config.write_text(json.dumps({"N01": [known]}))
+            root, config, _ = audit_fixture(Path(directory), "N01", known)
+            root.mkdir(parents=True)
+            (root / "arm.json").write_text('{"arm":4,"card":"N01","run_index":1,"block_id":"N01-r1"}')
             state = root / "provider_bridge.json"
             audit = RequestAudit(config, state)
             request = json.dumps({"messages": [{"content": "transient-body " + known}]}).encode()
@@ -196,13 +196,12 @@ class GateTests(unittest.TestCase):
 
     def test_audit_requires_context_and_requests_and_excludes_internal_manifest(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
             known = "a" * 64
-            (root / "arm.json").write_text('{"card":"D02"}')
-            config = root / "config.json"
-            config.write_text(json.dumps({"D02": [known]}))
+            root, config, sha = audit_fixture(Path(directory), "D02", known)
+            root.mkdir(parents=True)
+            (root / "arm.json").write_text('{"arm":4,"card":"D02","run_index":1,"block_id":"D02-r1"}')
             state = root / "provider_bridge.json"
-            state.write_text('{"eval_provider_audit":true}')
+            state.write_text(json.dumps({"eval_provider_audit": True, "eval_provider_audit_config_sha256": sha}))
             (root / "run_record.json").write_text(
                 json.dumps(
                     {
@@ -247,12 +246,12 @@ class GateTests(unittest.TestCase):
             ]
             transcript = root / "transcript.jsonl"
             transcript.write_text("\n".join(map(json.dumps, rows)))
-            self.assertIsNone(inspect_run(root, [known])["invariant_flags"]["held_out_reads"])
+            self.assertIsNone(inspect_run(root, [known], audit_config_sha=sha)["invariant_flags"]["held_out_reads"])
             audit = RequestAudit(config, state)
             audit.scan(b'{"messages":[{"content":"visible safe context"}]}')
-            self.assertIs(inspect_run(root, [known])["invariant_flags"]["held_out_reads"], False)
+            self.assertIs(inspect_run(root, [known], audit_config_sha=sha)["invariant_flags"]["held_out_reads"], False)
             audit.scan(json.dumps({"messages": [{"content": "actual tool response " + known}]}).encode())
-            self.assertIs(inspect_run(root, [known])["invariant_flags"]["held_out_reads"], True)
+            self.assertIs(inspect_run(root, [known], audit_config_sha=sha)["invariant_flags"]["held_out_reads"], True)
 
     def test_locked_silent_stop_and_unavailable_audit_are_not_clean(self):
         with tempfile.TemporaryDirectory() as directory:

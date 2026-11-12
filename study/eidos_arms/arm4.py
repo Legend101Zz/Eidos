@@ -99,7 +99,7 @@ def stop_investigation(c, project, inv):
                      project=project, key='study-outer-stop:' + inv)
 
 
-def run(run_dir, meta):
+def run(run_dir, meta, *, eval_audit_config=None):
     setup_started_at, setup_begin = utc(), time.monotonic()
     lab.start()
     c = lab.client()
@@ -128,8 +128,11 @@ def run(run_dir, meta):
         from .provider_bridge import start as start_bridge
         bridge_start_unix = time.time()
         bridge, bridge_receipt = start_bridge(run_dir, investigator['settings']['base_url'],
-                                              deadline_utc, investigator['settings']['request_timeout'])
+                                              deadline_utc, investigator['settings']['request_timeout'],
+                                              eval_audit_config=eval_audit_config)
         bridge_ready_unix = time.time()
+        if eval_audit_config is not None and bridge_receipt.get('eval_provider_audit') is not True:
+            raise RuntimeError('required provider audit did not activate')
         investigator['settings']['base_url'] = bridge_receipt['base_url']
         # ADR 0020: completion state, the conclusion's reserve and the "conclude now" turn, inside the watchdog's envelope.
         investigator['wall_seconds'] = remaining_wall_seconds(deadline_utc)

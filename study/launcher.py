@@ -127,7 +127,7 @@ def outer_deadline(run_dir, arm, deadline, *, stub=False):
     return deadline + read_json(setup)['setup_wall_s']
 
 
-def run_block(rows, runs_root, stub=False, replace_incident=False):
+def run_block(rows, runs_root, stub=False, replace_incident=False, *, eval_audit_config=None):
     block_id = rows[0]["block_id"]
     block_dir = Path(runs_root).resolve() / block_id
     previous = None
@@ -157,6 +157,7 @@ def run_block(rows, runs_root, stub=False, replace_incident=False):
     processes, logs = [], []
     worker_env = dict(os.environ)
     worker_env.pop("EIDOS_PRIVATE_SEAL_ROOT", None)
+    worker_env.pop("EIDOS_EVAL_AUDIT_IDENTIFIERS", None)
     try:
         for row in rows:
             prepare(row, Path(run_dirs[str(row["arm"])]))
@@ -171,6 +172,8 @@ def run_block(rows, runs_root, stub=False, replace_incident=False):
                 "--run-dir",
                 str(run_dir),
             ]
+            if row["arm"] == 4 and not stub and eval_audit_config is not None:
+                command.extend(("--eval-audit-config", str(eval_audit_config)))
             log = (run_dir / "launcher.log").open("w")
             logs.append(log)
             processes.append(

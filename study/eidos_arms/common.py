@@ -30,11 +30,18 @@ def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def dispatch(arm, run_dir):
+def dispatch(arm, run_dir, *, eval_audit_config=None):
     """Always use the recorded fixed wheel build, regardless of lane A controller's interpreter."""
     run_dir = run_dir.resolve()
-    r = subprocess.run([lab.python(), '-m', 'study.eidos_arms.worker', '--arm', str(arm),
-                        '--run-dir', str(run_dir)], cwd=ROOT, env=lab.environment(), stdin=subprocess.DEVNULL)
+    command = [lab.python(), '-m', 'study.eidos_arms.worker', '--arm', str(arm), '--run-dir', str(run_dir)]
+    if eval_audit_config is not None:
+        if arm != 4:
+            raise ValueError('provider audit configuration is restricted to arm 4')
+        from study.evals.provider_audit import read_config
+
+        read_config(eval_audit_config, run_dir)
+        command.extend(('--eval-audit-config', str(eval_audit_config)))
+    r = subprocess.run(command, cwd=ROOT, env=lab.environment(), stdin=subprocess.DEVNULL)
     record = run_dir / 'run_record.json'
     if record.exists():
         return json.loads(record.read_text())

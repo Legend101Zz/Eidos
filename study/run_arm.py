@@ -332,7 +332,9 @@ def run_claude(run_dir, arm, wall_s=None):
     return record
 
 
-def dispatch(arm, run_dir, wall_s=None):
+def dispatch(arm, run_dir, wall_s=None, *, eval_audit_config=None):
+    if eval_audit_config is not None and arm != 4:
+        raise ValueError("provider audit configuration is restricted to arm 4")
     if arm in (1, 2):
         return run_claude(run_dir, arm, wall_s)
     try:
@@ -341,6 +343,8 @@ def dispatch(arm, run_dir, wall_s=None):
         if exc.name != "study.eidos_arms":
             raise
         raise NotImplementedError(f"arm {arm} not implemented") from exc
+    if eval_audit_config is not None:
+        return module.run_arm4(Path(run_dir).resolve(), eval_audit_config=eval_audit_config)
     return getattr(module, f"run_arm{arm}")(Path(run_dir).resolve())
 
 
@@ -349,11 +353,12 @@ def main():
     parser.add_argument("--arm", required=True, type=int, choices=(1, 2, 3, 4))
     parser.add_argument("--run-dir", required=True, type=Path)
     parser.add_argument("--wall-s", type=int, help="lower wall ceiling for smoke checks")
+    parser.add_argument("--eval-audit-config", type=Path)
     args = parser.parse_args()
     if args.wall_s is not None and not 0 < args.wall_s <= 1800:
         parser.error("--wall-s must be between 1 and 1800")
     try:
-        record = dispatch(args.arm, args.run_dir, args.wall_s)
+        record = dispatch(args.arm, args.run_dir, args.wall_s, eval_audit_config=args.eval_audit_config)
         if not isinstance(record, dict):
             record = read_json(args.run_dir / "run_record.json")
     except Exception as exc:

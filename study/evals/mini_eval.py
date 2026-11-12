@@ -130,7 +130,7 @@ def scorecard(
             run_dir = out / "runs" / f"{card}-r{seed_index}" / f"arm{arm}"
             record = read_json(run_dir / "run_record.json")
             grade = read_json(out / "grading" / f"{card}-r{seed_index}" / f"arm{arm}/grade.json")
-            observations = inspect_run(run_dir, identifiers.get(card, []))
+            observations = inspect_run(run_dir, identifiers.get(card, []), audit_config_sha=audit_config_sha)
             investigation = run_dir / "investigation.json"
             deadline = (
                 read_json(investigation).get("deadline_evidence")
@@ -181,6 +181,7 @@ def scorecard(
                             "run_record.json",
                             "transcript.jsonl",
                             "eval_provider_audit.jsonl",
+                            "provider_bridge.json",
                             "investigation.json",
                             "setup.json",
                         )
@@ -378,6 +379,7 @@ def run_eval(
     attempt_id = uuid.uuid4().hex
     identifiers = {}
     audit_config_sha = None
+    audit_config = None
     os.environ.pop("EIDOS_EVAL_AUDIT_IDENTIFIERS", None)
     history = None
     build_receipt = Path(lab.python()).parent.parent / "pilot-build.json"
@@ -401,6 +403,11 @@ def run_eval(
             / (f"{controller['git_sha']}-seed{seed_index}-{attempt_id}")
         )
         history.mkdir(parents=True, mode=0o700, exist_ok=False)
+        identifiers = audit_identifiers(cards)
+        audit_config = history / "audit-identifiers.json"
+        write_json(audit_config, identifiers)
+        audit_config.chmod(0o600)
+        audit_config_sha = digest(audit_config)
         write_json(
             history / "attempt.json",
             {
@@ -413,13 +420,9 @@ def run_eval(
                 "pilot_build": build,
                 "pilot_build_sha256": initial_build_receipt_sha,
                 "reference_gains_sha256": hashlib.sha256(reference).hexdigest(),
+                "provider_audit_identifiers_sha256": audit_config_sha,
             },
         )
-        identifiers = audit_identifiers(cards)
-        config = history / "audit-identifiers.json"
-        write_json(config, identifiers)
-        config.chmod(0o600)
-        audit_config_sha = digest(config)
     os.environ.pop("EIDOS_STUDY_SMOKE_PROMPT", None)
     for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
         os.environ[name] = "1"
@@ -440,17 +443,12 @@ def run_eval(
 
     def guarded_run(rows):
         disk_guard()
-        return run_block(rows, out / "runs", stub)
+        return run_block(rows, out / "runs", stub, eval_audit_config=audit_config)
 
-    if history is not None:
-        os.environ["EIDOS_EVAL_AUDIT_IDENTIFIERS"] = str(history / "audit-identifiers.json")
-    try:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            jobs = [pool.submit(guarded_run, rows) for rows in blocks.values()]
-            for job in jobs:
-                job.result()
-    finally:
-        os.environ.pop("EIDOS_EVAL_AUDIT_IDENTIFIERS", None)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        jobs = [pool.submit(guarded_run, rows) for rows in blocks.values()]
+        for job in jobs:
+            job.result()
     for card in cards:
         disk_guard()
         grade_block(

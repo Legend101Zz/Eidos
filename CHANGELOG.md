@@ -4,6 +4,8 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.4.0
 
+- [ADR 0035](docs/decisions/0035-route-tier1-provider-audit-to-arm4.md) passes the private Tier 1 audit path only to the trusted Arm 4 adapter and bridge, and binds audit activation to the original attempt configuration digest.
+
 - [ADR 0034](docs/decisions/0034-bounded-finalization-context.md) keeps autonomous conclusion context within the existing packed budget, shows the required decision rationale, and preserves prior billed replies in the audit after a fresh-state reset.
 
 - [ADR 0032](docs/decisions/0032-investigator-conclusion-scope-contract.md) adds an operator-declared conclusion shape contract. Malformed supplied metadata is refused before effects with the existing bounded feedback path. The study adapter applies it to the investigator's optional abstention metadata.
