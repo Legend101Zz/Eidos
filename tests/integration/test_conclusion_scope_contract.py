@@ -1,11 +1,17 @@
 """Prospective conclude-scope contract exercised through the real command ledger."""
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import json
+import os
 from copy import deepcopy
+from pathlib import Path
 
 import pytest
 from study.eidos_arms.arm4 import CONCLUSION_SCOPE_SCHEMA
 from study.eidos_arms.common import classify
+from test_failed_turn_e2e import decision_reply, env, provider, running  # noqa: F401 - fixtures
 from test_incumbent_challengers import Scene
 
 from eidos.domain.errors import Invalid
@@ -115,4 +121,62 @@ def test_legacy_start_and_free_form_conclusion_remain_accepted(scene):
 
 def test_malformed_operator_schema_is_refused_at_start(scene):
     with pytest.raises(Invalid, match="invalid conclusion scope schema"):
-        scene.investigation(conclusion_scope_schema={"type": "object", "properties": {"x": {"pattern": "["}}})
+        scene.investigation(conclusion_scope_schema={"type": "object", "properties": {"x": {
+            "type": "string", "pattern": "[",
+        }}})
+
+
+
+@pytest.mark.parametrize("field", ["reason", "next_discriminating_test", "unresolved"])
+def test_non_whitespace_text_matches_export_validator(scene, field):
+    inv = scene.investigation(conclusion_scope_schema=CONCLUSION_SCOPE_SCHEMA)
+    turn = scene.begin(inv)["turn_id"]
+    control = deepcopy(RECORDED_SHAPE)
+    abstention = control["scope"]["answer"]["abstention"]
+    abstention[CORRECT_KEY] = abstention.pop("next_discraminating_test")
+    abstention[field] = [" \t"] if field == "unresolved" else " \t"
+    refused = accept(scene, turn, control)
+    assert refused["reason"] == "invalid"
+    assert f"control.scope.answer.abstention.{field}" in refused["error"]["message"]
+
+
+@pytest.mark.temporal
+@pytest.mark.fixture_llm
+async def test_real_runtime_and_coordinator_preserve_refusal_and_execute_one_correction(env, lab, provider):  # noqa: F811
+    text = None
+    if path := os.environ.get("EIDOS_N01_RECORDED_REPLY"):
+        raw = Path(path).read_bytes()
+        assert hashlib.sha256(raw).hexdigest() == "7a6ef12975e7bb19e72fdc1be42db2e58d424c2c20059c924f0214597ad093e3"
+        text = raw.decode()
+    original = json.loads(text) if text is not None else {"calls": [], "control": RECORDED_SHAPE}
+    first = decision_reply(original, "malformed-original")
+    if text is not None:
+        first[1]["choices"][0]["message"]["content"] = text
+    corrected = deepcopy(original)
+    abstention = corrected["control"]["scope"]["answer"]["abstention"]
+    abstention[CORRECT_KEY] = abstention.pop("next_discraminating_test")
+    corrected["calls"] = [{"tool": "record_note", "args": {"kind": "hypothesis", "text": "synthetic replay effect"}}]
+    second = decision_reply(corrected, "synthetic-correction")
+    prov = provider([first, second], second)
+    async with running(env, lab, prov, investigator_options={"conclusion_scope_schema": CONCLUSION_SCOPE_SCHEMA}) as run:
+        result = await asyncio.wait_for(run.handle.result(), timeout=25)
+        assert result["reason"] == "concluded"
+        view = run.view()
+        assert view["body"]["conclusion"]["scope"] == corrected["control"]["scope"]
+        assert len(view["turns"]) == 1 and prov.count == 2
+        turn = lab.q(lab.admin, "get_turn", {"turn_id": view["turns"][0]["id"]}, project=run.pid)
+        refused, accepted = turn["decisions"]
+        assert not refused["accepted"] and refused["body"]["response_artifact_id"]
+        assert refused["body"]["proposal"]["control"]["scope"] == original["control"]["scope"]
+        artifact = lab.q(lab.admin, "get_artifact", {
+            "artifact_id": refused["body"]["response_artifact_id"],
+        }, project=run.pid)
+        messages = json.loads(Path(lab.store.path_for(artifact["digest"])).read_bytes())
+        retained = next(part["content"] for part in messages[-1]["parts"] if part["part_kind"] == "text")
+        assert json.loads(retained) == original
+        if text is not None:
+            assert retained == text
+        assert accepted["accepted"] and accepted["slot"] == 1
+        assert f"control.scope.answer.abstention.{CORRECT_KEY}: required" in str(prov.requests[1]["body"]["messages"])
+        notes = lab.q(lab.admin, "list_records", {"kind": "note", "summary": False}, project=run.pid)
+        assert [row["body"]["text"] for row in notes] == ["synthetic replay effect"]

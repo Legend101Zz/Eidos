@@ -72,10 +72,11 @@ def scene(lab, tmp_path):
     return {"lab": lab, "pid": pid, "refs": refs, "arts": arts, "runner": runner}
 
 
-def _run(scene, name: str, config: dict) -> dict:
+def _run(scene, name: str, config: dict, *, investigation: str | None = None) -> dict:
     lab, pid = scene["lab"], scene["pid"]
     job_id = lab.cmd(lab.admin, "run_component", {"component_ref": scene["refs"][name], **RUN, "config": config,
-                                                  "inputs": dict(scene["arts"])}, project=pid)["result"]["job_id"]
+                                                  "inputs": dict(scene["arts"]),
+                                                  **({"investigation_id": investigation} if investigation else {})}, project=pid)["result"]["job_id"]
     scene["runner"].run_job(job_id, pid, activity_attempt=1)
     return lab.q(lab.admin, "get_job", {"job_id": job_id}, project=pid)
 
@@ -115,3 +116,25 @@ def test_a_config_that_is_neither_a_template_nor_a_command_sweep_is_refused_at_a
                 project=pid)
     problems = refused.value.details["problems"]
     assert any("matches none of its alternatives" in problem for problem in problems), problems
+
+
+
+def test_a_real_sweep_publication_is_exportable_only_as_visible_study_evidence(scene, tmp_path):
+    from study.eidos_arms.arm4 import export_sweep_evidence
+
+    lab, pid = scene["lab"], scene["pid"]
+    charter = lab.cmd(lab.admin, "commit_study_charter", {"charter": {
+        "study_id": "visible-sweep", "question": "Which recipe is promising?", "exploration_only": True,
+    }}, project=pid)["result"]["charter_id"]
+    inv = lab.cmd(lab.admin, "start_investigation", {
+        "question": "Compare recipes on visible validation.", "charter_id": charter,
+    }, project=pid)["result"]["investigation_id"]
+    job = _run(scene, "eidos.search.recipe-sweep", {"template": {
+        "name": "quick", "task_type": "classification", "families": ["linear"], "seeds": [7],
+    }}, investigation=inv)
+    assert job["status"] == "succeeded", job.get("terminal")
+    publication = next(row for row in job["outputs"] if row["slot"] == "evidence_table")
+    client = ShimClient(lab, lab.admin)
+    entry, mapping = export_sweep_evidence(client, pid, inv, tmp_path, publication["artifact_id"], scene["arts"])
+    assert entry["sha256"] == publication["digest"] == mapping["sha256"]
+    assert (tmp_path / entry["path"]).read_bytes() == Path(lab.store.path_for(entry["sha256"])).read_bytes()

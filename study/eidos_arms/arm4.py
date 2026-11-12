@@ -4,7 +4,9 @@ from __future__ import annotations
 import base64
 import json
 import math
+import re
 import shutil
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -13,7 +15,7 @@ from . import lab
 from .common import ROOT, classify, digest, envelope, ledger, prepare, prompt, usage, utc, write_json
 
 # The study owns the optional answer shape. The coordinator only understands the generic scope contract.
-_ANSWER_TEXT = {'type': 'string', 'minLength': 1}
+_ANSWER_TEXT = {'type': 'string', 'pattern': r'\S'}
 _NULLABLE_ANSWER_TEXT = {'anyOf': [_ANSWER_TEXT, {'enum': [None]}]}
 CONCLUSION_SCOPE_SCHEMA = {
     'type': 'object',
@@ -223,7 +225,8 @@ def run(run_dir, meta):
         export_error = None
         try:
             export_answer(c, project, inv, run_dir, meta, selected, reason, claim, assessments, tokens, receipts,
-                          usage_uncertain=uncertain, answer_metadata=answer_metadata, claim_state=claim_state)
+                          usage_uncertain=uncertain, answer_metadata=answer_metadata, claim_state=claim_state,
+                          task_artifacts=imported['artifacts'])
         except (ValueError, TypeError) as exc:
             export_error = str(exc)
         # Refresh after fallback so the transcript and job receipts include the delivered baseline.
@@ -364,8 +367,95 @@ def map_claim_state(claim_state, metadata, candidate, measurements):
     return status, claim_type, scope, deviations + [f'Unknown claim state {state!r}; model status kept']
 
 
+_SWEEP_ARTIFACT = re.compile(r'art_([a-f0-9]{16})_evidence_table')
+_SWEEP_COMPONENT = 'eidos.search.recipe-sweep@1.1.0'
+_SWEEP_SCHEMA = 'recipe-sweep-table/1'
+_SWEEP_SLOT = 'evidence_table'
+
+
+def export_sweep_evidence(c, project, inv, out, reference, task_artifacts, authored_digests=()):
+    """Copy one eligible visible recipe-sweep table to a study-private export."""
+    match = _SWEEP_ARTIFACT.fullmatch(reference)
+    splits = ('train', 'validation')
+    if not match or not task_artifacts or not all(task_artifacts.get(split) for split in splits):
+        raise ValueError('measurement artifact is outside the recipe-sweep export policy')
+    job_id = 'job_' + match.group(1)
+    try:
+        job = c.query('get_job', {'job_id': job_id}, project=project)
+        art = c.query('get_artifact', {'artifact_id': reference}, project=project)
+        release = c.query('describe_component', {'component_ref': _SWEEP_COMPONENT}, project=project)
+    except Exception as exc:
+        if getattr(exc, 'status', None) in (403, 404):
+            raise ValueError('measurement artifact or its provenance is unavailable') from exc
+        raise
+    lock = job.get('lock') or {}
+    inputs = lock.get('inputs') or {}
+    component = lock.get('component') or {}
+    release_body = release.get('body') or {}
+    config = lock.get('config') or {}
+    outputs = [row for row in job.get('outputs', []) if row.get('artifact_id') == reference]
+    size, sha = art.get('size'), art.get('digest')
+    expected = {'slot': _SWEEP_SLOT, 'role': 'output', 'schema': _SWEEP_SCHEMA,
+                'media_type': 'application/json', 'size': size, 'digest': sha}
+    if (
+        (job.get('id'), job.get('project_id'), job.get('investigation_id'), job.get('status'))
+        != (job_id, project, inv, 'succeeded')
+        or lock.get('project_id') != project or lock.get('grants') != []
+        or lock.get('output_access_class') != 'project'
+        or component.get('ref') != _SWEEP_COMPONENT
+        or release.get('id') != _SWEEP_COMPONENT
+        or release.get('status') != 'active' or not release_body.get('digest')
+        or release_body['digest'] != component.get('digest')
+        or not release_body.get('bundle_digest')
+        or release_body['bundle_digest'] != (component.get('bundle') or {}).get('digest')
+        or (lock.get('outputs') or {}).get(_SWEEP_SLOT) != _SWEEP_SCHEMA
+        or set(config) != {'template'} or not isinstance(config['template'], dict)
+        or set(inputs) != set(splits)
+        or any((inputs[split].get('artifact_id'), inputs[split].get('schema'))
+               != (task_artifacts[split], 'task-array/1') for split in splits)
+        or (art.get('id'), art.get('project_id'), art.get('producer_job'), art.get('origin'), art.get('access_class'))
+        != (reference, project, job_id, 'job-output', 'project')
+        or not art.get('producer_attempt') or art['producer_attempt'] != job.get('current_attempt')
+        or art['producer_attempt'] != (job.get('terminal') or {}).get('attempt_id')
+        or type(size) is not int or not 0 < size <= 1024**2
+        or not isinstance(sha, str) or not re.fullmatch(r'[a-f0-9]{64}', sha)
+        or any(authored_sha != sha for authored_sha in authored_digests)
+        or len(outputs) != 1 or outputs[0].get('attempt_id') != art['producer_attempt']
+        or any(outputs[0].get(key) != value for key, value in expected.items())
+        or any(art.get(key) != expected[key] for key in ('role', 'schema', 'media_type'))
+    ):
+        raise ValueError('measurement artifact has unverified or restricted recipe-sweep provenance')
+    evidence_dir = out / 'evidence'
+    if out.is_symlink() or evidence_dir.is_symlink():
+        raise ValueError('unsafe evidence export directory')
+    evidence_dir.mkdir(exist_ok=True)
+    target = evidence_dir / (reference + '.json')
+    if target.exists() or target.is_symlink():
+        raise ValueError('measurement artifact export path already exists')
+    with tempfile.TemporaryDirectory(dir=out, prefix='.sweep-evidence-') as scratch:
+        payload = Path(scratch) / 'table.json'
+        c.download(project, reference, payload)
+        if payload.is_symlink() or payload.stat().st_size != size or digest(payload) != sha:
+            raise ValueError('measurement artifact bytes differ from the registered digest or size')
+        table = json.loads(payload.read_bytes())
+        if (not isinstance(table, dict) or table.get('schema') != _SWEEP_SCHEMA
+                or table.get('selection_split') != 'visible-validation' or table.get('exploratory') is not True
+                or 'claim' not in table or table['claim'] is not None or not isinstance(table.get('recipes'), list)):
+            raise ValueError('measurement artifact is outside the visible exploratory export policy')
+        payload.rename(target)
+    filename = target.relative_to(out).as_posix()
+    entry = {'path': filename, 'sha256': sha, 'role': 'investigator-cited-visible-recipe-sweep',
+             'supports': 'The cited exploratory recipe-sweep results on supplied training and visible validation',
+             'limitations': 'No held-out or independent confirmation. Controller mapped the cited artifact to these exact bytes.'}
+    mapping = {'author': 'study-adapter', 'artifact_id': reference, 'path': filename, 'sha256': sha, 'size': size,
+               'producer_job': job_id, 'component_ref': _SWEEP_COMPONENT,
+               'producer_attempt': art['producer_attempt'], 'selection_split': 'visible-validation',
+               'inputs': {split: inputs[split]['artifact_id'] for split in splits}}
+    return entry, mapping
+
+
 def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessments, tokens, receipts,
-                  usage_uncertain=False, answer_metadata=None, claim_state=None):
+                  usage_uncertain=False, answer_metadata=None, claim_state=None, task_artifacts=None):
     out = run_dir / 'out'
     out.mkdir(exist_ok=True)
     candidate, evidence = None, []
@@ -468,6 +558,9 @@ def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessment
     write_json(out / 'usage_receipts.json', {'receipts': receipts, 'tokens': tokens,
                'usage_uncertain': usage_uncertain})
     measurements = []
+    sweep_mappings = {}
+    authored_evidence = answer_metadata.get('evidence')
+    authored_evidence = authored_evidence if isinstance(authored_evidence, list) else []
     for measurement in answer_metadata.get('measurements', []):
         if not isinstance(measurement, dict):
             raise ValueError('conclusion measurements must contain objects')
@@ -487,7 +580,17 @@ def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessment
                 evidence.append({'path': filename, 'sha256': digest(out / filename),
                     'role': 'investigator-cited-job', 'supports': 'Ledger receipt cited by investigator measurement',
                     'limitations': 'Investigator interpretation; confirmation and selection roles remain as recorded'})
+        elif isinstance(reference, str) and reference.startswith('art_'):
+            if reference not in sweep_mappings:
+                authored_digests = [row['sha256'] for row in authored_evidence
+                                    if isinstance(row, dict) and row.get('path') == reference and 'sha256' in row]
+                entry, mapping = export_sweep_evidence(c, project, inv, out, reference, task_artifacts, authored_digests)
+                sweep_mappings[reference] = mapping
+                evidence.append(entry)
+            m['evidence_receipt'] = sweep_mappings[reference]['path']
         measurements.append(m)
+    if sweep_mappings:
+        write_json(run_dir / 'measurement_receipt_mappings.json', {'mappings': list(sweep_mappings.values())})
     status, claim_type, answer_scope, state_deviations = map_claim_state(claim_state, answer_metadata, candidate, measurements)
     if candidate is None:
         status = 'abstained'
