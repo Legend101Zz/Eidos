@@ -44,6 +44,13 @@ def charter(card):
                            'the launcher excludes it from the outer run deadline. Provider bridge startup, '
                            'investigation, export and accounting remain inside the timed interval. '
                            'adapter_wall_s includes setup and teardown.'}
+    if card in PRIVATE_CARD_BARS:
+        # Pilot 4 onward uses two arms; retain historical public-card charter bytes.
+        body['pilot_2_setup'].update(
+            environments='All selectable environments use the coding-agent research interpreter, '
+                         'including lab infrastructure controls; only the packaged task is the project root.',
+            information='Arm 2 receives METHOD.md; arm 4 embeds the same METHOD.md with task text. '
+                        'Arm 4 is told that baseline project-command needs no authored source.')
     if card == 'D01':
         return {**body, 'question': 'Operational import and reproduction; no improvement requested.',
                 'exploration_only': True}

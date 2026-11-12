@@ -398,12 +398,18 @@ def grade_run(run_dir, grading_dir, block_incident=None, expected_meta=None):
     return result
 
 
-def grade_block(block_record, grading_root, results_path, *, arms=(1, 2, 3, 4)):
-    if not arms or len(set(arms)) != len(arms) or any(arm not in (1, 2, 3, 4) for arm in arms):
-        raise ValueError("arms must be distinct study arm numbers")
+def grade_block(block_record, grading_root, results_path, *, arms=None):
     block = read_json(block_record)
     if not block.get("complete"):
         raise ValueError("grading is permitted only after the whole block ends")
+    raw_arms = block.get("run_dirs", {})
+    if not isinstance(raw_arms, dict) or not raw_arms or any(key not in {"1", "2", "3", "4"} for key in raw_arms):
+        raise ValueError("block must record its paired arm set")
+    recorded_arms = tuple(sorted(map(int, raw_arms)))
+    arms = recorded_arms if arms is None else tuple(arms)
+    if (recorded_arms not in ((4,), (2, 4), (1, 2, 3, 4))
+            or any(type(arm) is not int for arm in arms) or tuple(sorted(arms)) != recorded_arms):
+        raise ValueError("grading arms must match the complete recorded paired block")
     directory = Path(block_record).resolve().parent
     grade_directory = Path(grading_root) / block["block_id"]
     previous = grade_directory / "block_record.json"

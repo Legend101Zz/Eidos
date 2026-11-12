@@ -1,0 +1,18 @@
+# Frozen from 782d6c8: study/launcher.py; historical regression oracle.
+def plan(seed, cards=None, runs=3):
+    blocks = [(card, index) for card in (cards if cards is not None else ("D01", "D02", "D12")) for index in range(1, runs + 1)]
+    random.Random(seed).shuffle(blocks)
+    return [
+        dict(
+            family=FAMILIES[card],
+            task=card,
+            run=index,
+            arm=arm,
+            primary_eligible=card in IMPROVEMENT_CARDS,
+            block_id=f"{card}-r{index}",
+            block_order=order,
+            randomization_seed=seed,
+        )
+        for order, (card, index) in enumerate(blocks, 1)
+        for arm in (1, 2, 3, 4)
+    ]

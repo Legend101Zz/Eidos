@@ -33,7 +33,7 @@ jobs:
         run: |
           mkdir -p "$TMPDIR"
           uv venv --python 3.12 "$RUNNER_TEMP/study-evals/research"
-          uv pip install --python "$RUNNER_TEMP/study-evals/research/bin/python" numpy==2.5.4 scikit-learn==1.9.1 torch==2.15.0
+          uv pip install --python "$RUNNER_TEMP/study-evals/research/bin/python" numpy==2.5.4 scikit-learn==1.9.1 torch==2.15.0 -r study/requirements-analysis.txt
           uv build --all-packages -o "$RUNNER_TEMP/study-evals/wheels"
           uv venv --python 3.12 "$RUNNER_TEMP/study-evals/lab"
           uv pip install --python "$RUNNER_TEMP/study-evals/lab/bin/python" "$RUNNER_TEMP/study-evals/wheels/"*.whl

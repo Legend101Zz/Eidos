@@ -33,8 +33,9 @@ def analyze(design_path, results_path, out):
     write_json(
         out / "transcript_audit.json", [audit(r["transcript"]) for r in results if r.get("transcript")]
     )
+    arms = sorted({row["arm"] for row in design})
     rows, statuses, resources = [], [], []
-    for arm in (1, 2, 3, 4):
+    for arm in arms:
         assigned = [r for r in design if r["arm"] == arm]
         outcomes = [observed.get((r["family"], r["task"], r["run"], arm), {}) for r in assigned]
         for card in sorted({r["task"] for r in assigned}):
@@ -109,12 +110,14 @@ def analyze(design_path, results_path, out):
     cards = sorted({r["task"] for r in design})
     fig, ax = plt.subplots(figsize=(8, 4.5))
     positions = np.arange(len(cards))
-    for i, arm in enumerate((1, 2, 3, 4)):
+    # Retain historical four-arm geometry so Pilot 1–3 figures reproduce exactly.
+    width = 0.18 if arms == [1, 2, 3, 4] else 0.8 / len(arms)
+    for i, arm in enumerate(arms):
         selected = [next(r for r in rows if r["arm"] == arm and r["card"] == card) for card in cards]
         ax.bar(
-            positions + (i - 1.5) * 0.18,
+            positions + (i - (len(arms) - 1) / 2) * width,
             [r["successes"] / r["n"] for r in selected],
-            width=0.18,
+            width=width,
             label=f"Arm {arm}",
         )
     ax.set(
@@ -124,15 +127,15 @@ def analyze(design_path, results_path, out):
         ylabel="Correct task outcomes / assigned",
         title="Development pilot: operational, improvement and null strata",
     )
-    ax.legend(ncols=4, loc="upper center", bbox_to_anchor=(0.5, -0.12))
+    ax.legend(ncols=len(arms), loc="upper center", bbox_to_anchor=(0.5, -0.12))
     fig.tight_layout()
     fig.savefig(out / "success_by_arm_card.png", dpi=160)
     plt.close(fig)
     fig, axes = plt.subplots(1, 2, figsize=(9, 4))
     axes[0].bar([r["arm"] for r in resources], [r["total_tokens"] for r in resources])
-    axes[0].set(title="Recorded processed tokens", xlabel="Arm", ylabel="Tokens", xticks=[1, 2, 3, 4])
+    axes[0].set(title="Recorded processed tokens", xlabel="Arm", ylabel="Tokens", xticks=arms)
     axes[1].bar([r["arm"] for r in resources], [r["wall_s"] for r in resources])
-    axes[1].set(title="Recorded wall time", xlabel="Arm", ylabel="Seconds", xticks=[1, 2, 3, 4])
+    axes[1].set(title="Recorded wall time", xlabel="Arm", ylabel="Seconds", xticks=arms)
     fig.suptitle("Development pilot resources (missing receipts excluded)")
     fig.tight_layout()
     fig.savefig(out / "resources_by_arm.png", dpi=160)
