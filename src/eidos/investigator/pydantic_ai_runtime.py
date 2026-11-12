@@ -16,7 +16,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from eidos.domain.turns import FINALIZATION_READ_ROUNDS
+from eidos.domain.errors import Invalid
+from eidos.domain.turns import FINALIZATION_READ_ROUNDS, validate_conclusion_scope
 from eidos.investigator import structured_output as so
 from eidos.investigator.playbook import PLAYBOOK
 from eidos.investigator.runtime import (
@@ -527,8 +528,14 @@ class PydanticAIRuntime:
         if terminal:
             @agent.output_validator
             def conclude(output: Decision) -> Decision:
-                if not _conclusion(to_proposal(output)):
+                proposal = to_proposal(output)
+                if not _conclusion(proposal):
                     raise ModelRetry(FINALIZATION_DECISION_ONLY)
+                if req.conclude_only:
+                    try:
+                        validate_conclusion_scope(proposal.get("control") or {}, req.conclusion_scope_schema)
+                    except Invalid as exc:
+                        raise ModelRetry(so.validation_message(exc)) from exc
                 return output
         return agent
 
@@ -695,6 +702,8 @@ class PydanticAIRuntime:
             misuse = so.read_tools_in_calls(proposal["calls"], reads_allowed)
             if misuse:  # never accepted as effects: refused here (one re-ask) and by the lab's validator
                 raise so.StructuredOutputError(misuse)
+            if req.conclude_only:
+                validate_conclusion_scope(proposal.get("control") or {}, req.conclusion_scope_schema)
             return None, proposal
 
         def runaway(response: Any, was_reask: bool) -> DecisionResult | None:
@@ -800,9 +809,12 @@ class PydanticAIRuntime:
             used = len(billed)
             try:
                 reads, proposal = parse(run.output, decision_only=runaway_now or terminal)
-            except (so.StructuredOutputError, ValidationError, ValueError) as exc:
+            except (Invalid, ValidationError, ValueError) as exc:
                 msg = so.validation_message(exc)
                 report["errors"].append(msg)
+                if isinstance(exc, Invalid):
+                    # A malformed conclusion starts decision-only repair even before all read rounds are used.
+                    terminal = True
                 if terminal:
                     if report["reasks"] < 1 and used < max_requests:
                         reask_pending = True
@@ -917,7 +929,7 @@ class PydanticAIRuntime:
         limits = UsageLimits(request_limit=self._terminal_requests(max_requests) if terminal else
                              (tool_budget if req.read_tools else max_requests),
                              total_tokens_limit=int(self.config.get("max_tokens_per_decision", 120_000)))
-        limit_error: BaseException
+        limit_error: Exception
         with capture_run_messages() as messages:
             try:
                 result = agent.run_sync(prompt, usage_limits=limits, model_settings=settings or None)
@@ -953,46 +965,62 @@ class PydanticAIRuntime:
                 proposal = to_proposal(result.output)
                 if terminal and not _conclusion(proposal):
                     return self._runtime_bound(list(result.all_messages()), usage, max_requests, "structured-output-invalid")
-                raw = json.loads(result.all_messages_json())
-                return DecisionResult(proposal, usage, raw, self._settings(usage, max_requests),
-                                      PROMPT_REVISION)
+                try:
+                    if req.conclude_only:
+                        validate_conclusion_scope(proposal.get("control") or {}, req.conclusion_scope_schema)
+                except Invalid as exc:
+                    # The early conclusion already used its initial attempt. Correct it without read tools.
+                    limit_error = exc
+                else:
+                    raw = json.loads(result.all_messages_json())
+                    return DecisionResult(proposal, usage, raw, self._settings(usage, max_requests),
+                                          PROMPT_REVISION)
 
         # The reserved request starts outside the prior UsageLimitExceeded
         # handler, so its provider failure has no local-limit exception context.
         return self._tool_after_limit(req, list(messages), limit_error, max_requests, tool_budget, settings)
 
-    def _tool_after_limit(self, req: DecisionRequest, messages: list, error: BaseException,
+    def _tool_after_limit(self, req: DecisionRequest, messages: list, error: Exception,
                           max_requests: int, tool_budget: int, settings: dict[str, Any]) -> DecisionResult:
         from pydantic_ai import capture_run_messages
         from pydantic_ai.exceptions import UsageLimitExceeded
         from pydantic_ai.usage import UsageLimits
 
         reason = str(error)
-        outcome = "request-budget-exhausted"
+        scope_refused = isinstance(error, Invalid)
+        outcome = "structured-output-invalid" if scope_refused else "request-budget-exhausted"
+        if scope_refused:
+            self._report = {"mode": "tool", "errors": [so.validation_message(error)]}
         if req.read_tools and max_requests > 1 and tool_budget > 0:
-            # Read-tool loop hit its share: one final request WITHOUT tools over the same history,
-            # so the model must decide from the evidence it has already gathered.
+            # Continue without tools over the evidence already gathered.
             first = list(messages)
             final_agent = self._agent(req, with_tools=False, terminal=req.conclude_only)
             billed = int(self._usage(first)["calls"])
             remaining = max_requests - billed
             terminal_requests = self._terminal_requests(remaining) if req.conclude_only else 1
+            if scope_refused:
+                terminal_requests = min(terminal_requests, int(int(self.config.get("output_retries", 1)) > 0))
             if terminal_requests <= 0:
                 usage = self._usage(first)
                 usage["limit_reached"] = reason[:300]
                 return self._runtime_bound(first, usage, max_requests, outcome)
+            prompt = FINALIZATION_DECISION_ONLY if req.conclude_only else (
+                "Your read-tool budget for this decision is used up. No further evidence is available. "
+                "Return your decision now from what you have gathered."
+            )
+            if scope_refused:
+                prompt += "\n\nYour reply could not be used: " + so.validation_message(error)
             with capture_run_messages() as final_messages:
                 try:
                     result = final_agent.run_sync(
-                        FINALIZATION_DECISION_ONLY if req.conclude_only else
-                        ("Your read-tool budget for this decision is used up. No further evidence is "
-                         "available. Return your decision now from what you have gathered."),
+                        prompt,
                         message_history=_close_tool_calls(first),
                         # Finalization can use its existing one correction if the original bounds permit.
                         usage_limits=UsageLimits(request_limit=terminal_requests),
                         model_settings=settings or None)
                     usage = self._usage(first + [m for m in result.new_messages()])
-                    usage["tool_budget_exhausted"] = True
+                    if not scope_refused:
+                        usage["tool_budget_exhausted"] = True
                     complete = first + list(result.new_messages())
                     proposal = to_proposal(result.output)
                     if req.conclude_only and not _conclusion(proposal):
@@ -1095,6 +1123,13 @@ class PydanticAIRuntime:
         proposal = to_proposal(result.output)
         if req.conclude_only and not _conclusion(proposal):
             return self._runtime_bound(complete, usage, max_requests, "structured-output-invalid")
+        if req.conclude_only:
+            # The runaway recovery already used its one tool-free request.
+            try:
+                validate_conclusion_scope(proposal.get("control") or {}, req.conclusion_scope_schema)
+            except Invalid as exc:
+                usage["limit_reached"] = so.validation_message(exc, limit=300)
+                return self._runtime_bound(complete, usage, max_requests, "structured-output-invalid")
         return DecisionResult(proposal, usage, json.loads(_messages_json(complete)),
                               self._settings(usage, max_requests), PROMPT_REVISION)
 

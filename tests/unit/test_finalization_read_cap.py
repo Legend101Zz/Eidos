@@ -18,6 +18,9 @@ from eidos.investigator.runtime import DecisionRequest
 CONCLUSION = {"rationale": "Synthetic scoped conclusion for request admission only.", "calls": [],
               "control": {"action": "stop", "summary": "No scientific verification is asserted."}}
 READ = {"rationale": "Inspect the visible results.", "read": [{"tool": "get_job", "args": {"job_id": "fixture"}}]}
+SCOPE_SCHEMA = {"type": "object", "properties": {"result": {"type": "object", "required": ["next_test"]}}}
+MALFORMED_SCOPE = {"result": {"next_tset": "fixture"}}
+FIXED_SCOPE = {"result": {"next_test": "fixture"}}
 
 
 def synthetic(value, *, input_tokens=15_000, output_tokens=300):
@@ -46,7 +49,7 @@ def reply_and_results():
     return user_prompt(0).split("\n\n## This turn so far", 1)[0], replies, results
 
 
-def run_text(mode, replies, results, *, conclude_only=True, context="fixture", tokens=262_144):
+def run_text(mode, replies, results, *, conclude_only=True, context="fixture", tokens=262_144, scope_schema=None):
     seen, executed, schemas = [], [], []
     expected = iter(entry for batch in results for entry in batch)
 
@@ -66,6 +69,7 @@ def run_text(mode, replies, results, *, conclude_only=True, context="fixture", t
         "output_mode": mode, "max_tokens_per_decision": tokens, "max_output_tokens": 16_384})
     req = DecisionRequest(turn_id="t", slot=0, context=context, turn_so_far=[],
         limits={"max_calls": 0, "deadline_seconds": 90}, conclude_only=conclude_only,
+        conclusion_scope_schema=scope_schema,
         read_tools={name: lambda *args: None for name in ("get_job", "inspect_evidence", "describe_component")})
     with patch("eidos.investigator.pydantic_ai_runtime._read", side_effect=read):
         out = rt.decide(req)
@@ -155,3 +159,70 @@ def test_terminal_text_repair_not_sent_if_original_budget_cannot_admit_it():
     assert out.runtime_outcome == "structured-output-invalid" and not out.proposal
     assert out.usage["structured_output"]["reasks"] == 0
     assert "decision token envelope" in out.usage["limit_reached"]
+
+
+def scoped_reply(scope, action="conclude", *, calls=None):
+    return {**CONCLUSION, "calls": calls or [], "control": {**CONCLUSION["control"], "action": action, "scope": scope}}
+
+
+def test_scope_feedback_preserves_initial_reply_and_two_read_rounds():
+    replies = [synthetic(READ), synthetic(READ), synthetic(scoped_reply(MALFORMED_SCOPE))]
+    results = [[{"tool": "get_job", "args": {"job_id": "fixture"}, "result": {"visible": True}}]] * 2
+    fixed, error = scoped_reply(FIXED_SCOPE), "control.scope.result.next_test: required"
+    out, seen, _, reads, _ = run_text("json", [*replies, synthetic(fixed)], results, scope_schema=SCOPE_SCHEMA)
+    assert out.runtime_outcome is None and out.proposal["control"]["scope"] == fixed["control"]["scope"]
+    assert len(seen) == out.usage["calls"] == 4 and out.usage["structured_output"]["reasks"] == 1
+    assert reads == [entry for batch in results for entry in batch]
+    assert error in out.usage["structured_output"]["errors"][0] and error in str(seen[-1])
+    assert [message["kind"] for message in out.raw_response] == ["request", "response"] * 4
+    for expected, retained in zip(replies, out.raw_response[1:6:2], strict=True):
+        actual = ModelMessagesTypeAdapter.validate_python([retained])[0]
+        assert actual.parts == expected.parts and actual.usage == expected.usage
+
+
+@pytest.mark.parametrize("action", ["conclude", "stop"])
+def test_conclusion_scope_is_optional_and_normal_turn_keeps_durable_refusal(action):
+    malformed = synthetic(scoped_reply(MALFORMED_SCOPE, action))
+    for options in ({}, {"conclude_only": False, "scope_schema": SCOPE_SCHEMA}):
+        out, seen, _, _, _ = run_text("repair", [malformed], [], **options)
+        assert len(seen) == 1 and out.proposal["control"]["scope"] == MALFORMED_SCOPE
+    omitted = synthetic({**CONCLUSION, "control": {"action": action, "summary": "No scope supplied."}})
+    out, seen, _, _, _ = run_text("json", [omitted], [], scope_schema=SCOPE_SCHEMA)
+    assert len(seen) == 1 and out.proposal["control"]["action"] == action
+    assert "scope" not in out.proposal["control"]
+
+
+def test_scope_repair_has_no_effects_and_no_extra_budget():
+    malformed = synthetic(scoped_reply(MALFORMED_SCOPE), input_tokens=45_000)
+    out, seen, _, reads, _ = run_text("json", [malformed], [], tokens=65_000, context="x" * 12_000,
+                                      scope_schema=SCOPE_SCHEMA)
+    assert len(seen) == 1 and not reads and not out.proposal
+    assert out.runtime_outcome == "structured-output-invalid"
+    assert "decision token envelope" in out.usage["limit_reached"]
+    effect = {"tool": "record_note", "args": {"kind": "hypothesis", "text": "must not execute"}}
+    out, seen, _, reads, _ = run_text("json", [malformed, synthetic(scoped_reply(FIXED_SCOPE, calls=[effect]))],
+                                      [], scope_schema=SCOPE_SCHEMA)
+    assert len(seen) == 2 and not reads and not out.proposal
+    assert out.runtime_outcome == "structured-output-invalid"
+
+
+@pytest.mark.parametrize("initial_read_tools", [False, True])
+def test_native_conclude_only_uses_existing_retry_for_scope_error(initial_read_tools):
+    seen = []
+
+    def model(messages, info):
+        seen.append(messages)
+        assert bool(info.function_tools) == (initial_read_tools and len(seen) == 1)
+        scope = MALFORMED_SCOPE if len(seen) == 1 else FIXED_SCOPE
+        output = {**CONCLUSION, "control": {**CONCLUSION["control"], "scope_json": json.dumps(scope)}}
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, output)])
+
+    rt = PydanticAIRuntime({"model": "function:fixture", "_model_object": FunctionModel(model), "output_mode": "tool"})
+    req = DecisionRequest(turn_id="t", slot=0, context="Conclude only.", turn_so_far=[], limits={"max_calls": 0},
+                          conclude_only=True, conclusion_scope_schema=SCOPE_SCHEMA,
+                          read_tools={"get_job": lambda _: pytest.fail("unexpected read")} if initial_read_tools else {})
+    out = rt.decide(req)
+    assert out.runtime_outcome is None and out.proposal["control"]["scope"] == FIXED_SCOPE
+    assert len(seen) == out.usage["calls"] == 2
+    assert "control.scope.result.next_test: required" in str(seen[-1])
+    assert "next_tset" in str(out.raw_response)

@@ -192,7 +192,7 @@ async def until(what: str, probe, timeout: float = 55.0, every: float = 0.3):
 
 @contextlib.asynccontextmanager
 async def running(env, lab, prov: FakeProvider, *, investigator_options=None, investigation_limits=None,
-                  before_complete=None, **workflow_args):
+                  before_complete=None, start_in_finalization=False, **workflow_args):
     """Start the real investigation coordinator against ``prov`` and terminate it at the end."""
     pid, _, _ = setup(lab)  # project, environment, component and charter of the turn-recovery tests
     inv = lab.cmd(lab.admin, "start_investigation", {
@@ -201,6 +201,11 @@ async def running(env, lab, prov: FakeProvider, *, investigator_options=None, in
         "investigator": {"runtime": "pydantic-ai", "model": "openai-compatible:fake", "finalization": "operator",
                          "settings": {"max_tokens_per_decision": 120_000},
                          **(investigator_options or {})}}, project=pid)["result"]["investigation_id"]
+    if start_in_finalization:
+        admitted = lab.cmd(lab.admin, "enter_finalization", {
+            "investigation_id": inv, "trigger": "fixture-recovery",
+        }, project=pid)["result"]
+        assert admitted["enabled"]
     acts = InvestigatorActivities(
         ShimClient(lab, lab.principal(f"inv-{pid}", ["investigator"], [pid])),
         ShimClient(lab, lab.principal(f"wf-{pid}", ["workflow"], [pid])),

@@ -181,3 +181,48 @@ async def test_real_runtime_and_coordinator_preserve_refusal_and_execute_one_cor
         assert f"control.scope.answer.abstention.{CORRECT_KEY}: required" in str(prov.requests[1]["body"]["messages"])
         notes = lab.q(lab.admin, "list_records", {"kind": "note", "summary": False}, project=run.pid)
         assert [row["body"]["text"] for row in notes] == ["synthetic replay effect"]
+
+
+@pytest.mark.parametrize("repair", [True, False])
+async def test_autonomous_scope_repair_uses_one_real_coordinator_slot(env, lab, provider, repair):  # noqa: F811
+    # Synthetic, generic operator contract and replies. No study answer fields or data.
+    schema = {"type": "object", "required": ["next_test"]}
+    invalid = {"rationale": "Synthetic proposed stop.", "calls": [], "control": {
+        "action": "stop", "summary": "Synthetic no-claim result.", "scope": {"next_tset": "fixture"},
+    }}
+    corrected = deepcopy(invalid)
+    corrected["control"]["scope"] = {"next_test": "Synthetic correction."}
+    first = decision_reply(invalid, "synthetic-malformed")
+    second = decision_reply(corrected if repair else invalid, "synthetic-followup")
+    prov = provider([first, second], second)
+    async with running(env, lab, prov, investigator_options={
+        "finalization": "autonomous", "conclusion_scope_schema": schema,
+    }, start_in_finalization=True) as run:
+        result = await asyncio.wait_for(run.handle.result(), timeout=25)
+        view = run.view()
+        [ended] = view["turns"]
+        turn = lab.q(lab.admin, "get_turn", {"turn_id": ended["id"]}, project=run.pid)
+        assert turn["spec"]["conclusion_scope_schema"] == schema
+        assert turn["spec"]["limits"]["max_model_calls"] == 1
+        assert prov.count == 2
+        assert "control.scope.next_test: required" in str(prov.requests[1]["body"]["messages"])
+        assert "control.scope.next_test: required" not in str(prov.requests[0]["body"]["messages"])
+        [usage] = [event["body"]["usage"] for event in run.events("model.usage")]
+        assert usage["calls"] == 2 and usage["structured_output"]["reasks"] == 1
+        assert "control.scope.next_test: required" in usage["structured_output"]["errors"][0]
+        if repair:
+            assert result["reason"] == "concluded"
+            assert view["body"]["conclusion"]["scope"] == corrected["control"]["scope"]
+            [decision] = turn["decisions"]
+            assert decision["slot"] == 0 and decision["accepted"]
+            artifact_id = decision["body"]["response_artifact_id"]
+        else:
+            assert result["reason"] == "controller-abstained" and "conclusion" not in view["body"]
+            assert turn["decisions"] == []
+            [bounded] = run.events("decision.runtime_bounded")
+            assert bounded["body"]["runtime_outcome"] == "structured-output-invalid"
+            artifact_id = bounded["body"]["response_artifact_id"]
+        artifact = lab.q(lab.admin, "get_artifact", {"artifact_id": artifact_id}, project=run.pid)
+        messages = json.loads(Path(lab.store.path_for(artifact["digest"])).read_bytes())
+        original = next(part["content"] for part in messages[1]["parts"] if part["part_kind"] == "text")
+        assert json.loads(original) == invalid

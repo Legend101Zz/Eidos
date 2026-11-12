@@ -4,6 +4,8 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.4.0
 
+- [ADR 0037](docs/decisions/0037-repair-autonomous-conclusion-scope.md) checks the optional operator scope contract during autonomous finalization so an authored correction can use the existing bounded decision-only repair.
+
 - [ADR 0036](docs/decisions/0036-bound-autonomous-finalization-read-rounds.md) allows two read rounds during autonomous conclude-only finalization before a decision-only request within the existing budget.
 
 - [ADR 0035](docs/decisions/0035-route-tier1-provider-audit-to-arm4.md) passes the private Tier 1 audit path only to the trusted Arm 4 adapter and bridge, and binds audit activation to the original attempt configuration digest.

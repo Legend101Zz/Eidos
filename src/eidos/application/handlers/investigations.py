@@ -549,6 +549,7 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
         "runtime": {"runtime": cfg["runtime"], "model": cfg.get("model"), "settings": cfg.get("settings", {}),
                     "runtime_release": p.get("runtime_release")},
         "context_policy": cfg.get("context_policy", "context-policy/1"),
+        **({"conclusion_scope_schema": cfg["conclusion_scope_schema"]} if "conclusion_scope_schema" in cfg else {}),
         "limits": {"max_calls": int(cfg.get("max_calls_per_turn", 6)),
                    "max_model_calls": int(cfg.get("max_model_calls_per_turn", 4)),
                    "deadline_seconds": int(cfg.get("turn_deadline_seconds", 600))},
@@ -933,13 +934,7 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
 
 
 def _check_conclusion_scope(inv: Record, control: dict) -> None:
-    schema = inv.body["investigator"].get("conclusion_scope_schema")
-    if schema is None or control.get("action") not in turn_rules.CONCLUDING_ACTIONS or "scope" not in control:
-        return
-    problems = validate_config(control["scope"], schema, "control.scope")
-    if problems:
-        raise Invalid("conclusion scope does not match the operator contract: " + "; ".join(problems),
-                      details={"problems": problems})
+    turn_rules.validate_conclusion_scope(control, inv.body["investigator"].get("conclusion_scope_schema"))
 
 
 def _check_conclusion_due(turn: dict, decision: dict) -> None:

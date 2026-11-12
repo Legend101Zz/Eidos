@@ -9,6 +9,7 @@ import re
 from typing import Any
 
 from eidos.domain.assessment import validate_claim_block
+from eidos.domain.contracts import validate_config
 from eidos.domain.errors import Invalid, PayloadTooLarge
 from eidos_wire import canonical_json, command_key
 
@@ -136,6 +137,16 @@ def check_payload(obj: Any, *, limit: int = WORKFLOW_PAYLOAD_LIMIT, what: str = 
         raise PayloadTooLarge(f"{what} is {size} bytes, above the {limit}-byte workflow envelope",
                               details={"size": size, "limit": limit})
     return size
+
+
+def validate_conclusion_scope(control: dict[str, Any], schema: dict[str, Any] | None) -> None:
+    """Check the operator's shape contract when a conclusion supplies structured scope."""
+    if schema is None or control.get("action") not in CONCLUDING_ACTIONS or "scope" not in control:
+        return
+    problems = validate_config(control["scope"], schema, "control.scope")
+    if problems:
+        raise Invalid("conclusion scope does not match the operator contract: " + "; ".join(problems),
+                      details={"problems": problems})
 
 
 def validate_decision(proposal: dict[str, Any], *, max_calls: int) -> dict[str, Any]:
