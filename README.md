@@ -46,7 +46,28 @@ The evidence is exploratory: three small pilots. The paper reports the failures 
 
 **Current release: v1.1.0** ([release notes](docs/release/RELEASE_NOTES_v1.1.0.md), [status](#status-and-evidence)).
 
-Contents: [Why](#why-eidos-exists) · [How it works](#how-it-works) · [Research](#research) · [How it stays honest](#how-eidos-keeps-the-investigator-honest) · [Study design](#the-research-behind-it) · [In detail](#how-it-works-in-detail) · [Key features](#key-features) · [Isolation](#isolation-model) · [Budgets](#budget-and-ledger-model) · [Install](#install) · [Quickstart](#quickstart) · [Scope](#supported-scope-v1) · [Status](#status-and-evidence) · [Docs](#documentation-map) · [Contributing](#contributing) · [Licence](#license)
+Contents: [Why](#why-eidos-exists) · [How it works](#how-it-works) · [Research](#research) · [Benchmarks](#benchmarks) · [How it stays honest](#how-eidos-keeps-the-investigator-honest) · [Study design](#the-research-behind-it) · [In detail](#how-it-works-in-detail) · [Key features](#key-features) · [Isolation](#isolation-model) · [Budgets](#budget-and-ledger-model) · [Install](#install) · [Quickstart](#quickstart) · [Scope](#supported-scope-v1) · [Testing](#testing) · [Status](#status-and-evidence) · [Docs](#documentation-map) · [Contributing](#contributing) · [Licence](#license)
+
+## Benchmarks
+
+**Four-arm study.** One model (MiniMax-M3.1-Flash), one budget (1,800 s, 8M processed tokens, one CPU thread), four harnesses. Every outcome is decided by an independent grader on two fresh virtual machines. Verified improvements:
+
+| Arm | Pilot 1 (D02) | Pilot 2 | Pilot 3 | Processed tokens, pilots 1 / 2 / 3 |
+|---|---:|---:|---:|---:|
+| Coding agent (Claude Code `--bare`) | 2/3 | 11/12 | 11/12 | 33.7M / 24.8M / 31.6M |
+| Coding agent + Eidos toolkit | **3/3** | **12/12** | **11/12** | 31.3M / 30.6M / 30.5M |
+| Coding agent + Eidos (MCP) | 2/3 | 7/12 | 8/12 | 33.9M / 68.0M / 59.7M |
+| Eidos investigator | 1/3 | **12/12** | 2/12 | **7.5M / 5.6M** / 15.3M |
+
+- Pilot 3's 2/12 is ten runs stopped by one deadline-admission rule before they could report a locked candidate; both runs that reached a conclusion were verified. The round-4 repair (PR #24, not yet on `main`) took seven practice tasks from 2/7 to 7/7 completed runs and from 1 to 6 verified improvements.
+- The Eidos investigator made no false improvement claim in any pilot.
+- These are three small development pilots. Every interval is exploratory; the pre-registered decision rule would need roughly 283 independent pairs.
+
+**A stronger driver** (unregistered probe, one run per card). With Claude Opus 5.5 in the MCP arm, both runs verified: D03 at +0.278 (0.65M tokens, 127 s) and D06 at +0.496 (1.01M tokens, 154 s). MiniMax in the same seat verified 1/3 and 2/3 on those cards. Opus used Eidos sparingly, so this does not yet show what Eidos adds for a strong model.
+
+**Model conformance.** No local model of 14B parameters or fewer passed full release conformance (best: `qwen2.5:14b`, 4/8), and `claude-sonnet-5-5` completed the full autonomous investigation journey. Details are in [Status and evidence](#status-and-evidence).
+
+Methods, statistics and the full defect record: [the paper](docs/paper/Eidos-paper.pdf).
 
 ## How Eidos keeps the investigator honest
 
@@ -284,6 +305,21 @@ The complete, scripted version of this journey (setup, qualified protocols and a
 Out of scope, with reasons: Windows, CUDA, distributed training, Lima VM, Claude Desktop, hosted multitenancy. Details: [`docs/release/SUPPORTED.md`](docs/release/SUPPORTED.md).
 
 The v1 software release makes **no scientific claim** of its own. Whether Eidos helps an LLM do model research (A16) is studied separately: the paper reports exploratory evidence from three development pilots, and a sealed fourth pilot follows; see [Research](#research).
+
+## Testing
+
+Eidos is tested at four levels. The counts are from the latest `main` CI run ([43003521253](https://github.com/Legend101Zz/Eidos/actions/runs/43003521253), 15/15 jobs green).
+
+| Level | What it covers | Latest on `main` |
+|---|---|---|
+| Unit, MCP and reporting | ledger rules, validators, policies, MCP tools and reports | 2,036 passed |
+| Integration | real PostgreSQL 16 and Temporal: investigations, jobs, assessments and budgets | 450 passed |
+| Components | the built-in research components, on CPU PyTorch | 344 passed |
+| Platform and install | worker SDK on Python 3.9+, macOS arm64, separate identity as root, OS secret stores (macOS and Linux), PyGlove and Composer adapters, fresh install, upgrade across releases, the 154-check switch-order journey | all jobs pass |
+
+The study harness has its own tests (`study/tests`, `study/eidos_arms/test_parity.py`), and the grader is qualified on planted improvements, unchanged baselines, invalid outputs and corrupt uploads before use. The round-4 branch (PR #24) passes 754 integration and 660 component tests in CI.
+
+To run the suites locally, see [Development](#development).
 
 ## Status and evidence
 
