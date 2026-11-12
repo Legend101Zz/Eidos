@@ -140,7 +140,8 @@ def test_receipt_equivalent_repair_fits_without_replaying_archived_responses_to_
     bounded, old_requests, _ = receipt_equivalent_decision(original)
     assert bounded.runtime_outcome == "structured-output-invalid" and len(old_requests) == 3
     assert "97599 of 262144 left" in bounded.usage["limit_reached"]
-    assert len([message for message in bounded.raw_response if message["kind"] == "response"]) == 3
+    assert [message["kind"] for message in bounded.raw_response] == ["request", "response"] * 3
+    assert all(message.get("timestamp") for message in bounded.raw_response)
     packed = pack_view(view, catalog)
     corrected, new_requests, admitted = receipt_equivalent_decision(packed["text"])
     assert corrected.runtime_outcome is None and len(new_requests) == 4
@@ -149,6 +150,7 @@ def test_receipt_equivalent_repair_fits_without_replaying_archived_responses_to_
     assert admitted[-1]["input_estimate"] + admitted[-1]["output_cap"] <= 97_599
     assert "SYNTHETIC_MALFORMED_FIRST" not in repr(new_requests[-1])
     assert "SYNTHETIC_MALFORMED_SECOND" not in repr(new_requests[-1])
+    assert [message["kind"] for message in corrected.raw_response] == ["request", "response"] * 4
     archived = [m for m in corrected.raw_response if m["kind"] == "response"]
     assert len(archived) == 4
     assert "SYNTHETIC_MALFORMED_FIRST" in str(archived[1])

@@ -660,7 +660,7 @@ class PydanticAIRuntime:
 
         history: list = []
         # A fresh prompt intentionally starts without previous replies. Preserve the
-        # responses separately for the audit, including when that request cannot fit.
+        # request/response pairs separately for the audit, including when that request cannot fit.
         archived: list = []
         # Every response of this decision, in order: what it billed. ``history`` (what the model sees next) leaves out
         # a runaway reply, which carries no answer; its tokens and its request still count.
@@ -741,7 +741,7 @@ class PydanticAIRuntime:
                     # ADR 0023: still malformed after the re-ask: ask again from a fresh state (bounded, recorded)
                     fresh_left -= 1
                     fresh_pending = {"request": used + 1, "after_error": msg[:300]}  # counted once it is sent
-                    archived = list(billed)
+                    archived.extend(history)
                     history = []
                     message = fresh_message + "\n\n" + FRESH_STATE_NOTE.format(error=msg[:300])
                     continue
