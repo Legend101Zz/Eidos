@@ -277,15 +277,15 @@ def test_an_exploratory_job_outside_a_decision_is_capped_at_the_exploration_dead
     wall = scene.q("get_investigation", {"investigation_id": inv})["body"]["wall"]
     hold = 540.0  # 15% of the 3600 s wall limit (between the policy's 120 s and 900 s)
     until = wall["deadline_unix"] - wall["conclude_threshold_seconds"] - hold
-    assert wall["wall_seconds"] == 3600 and wall["conclude_threshold_seconds"] == 360.0
+    assert wall["wall_seconds"] == 3600 and wall["conclude_threshold_seconds"] == 540.0
 
     started = time.time()
     capped = _admitted(_only(_batch(client, scene, inv, "b-wall", scene.trial, purpose="open-search", wall_seconds=3000)))
     ended = time.time()
-    # the investigation's reserve alone would leave ~3240 s: the hold-back leaves ~2700 s, and the lock records it
+    # the investigation's reserve alone would leave ~3060 s: the hold-back leaves ~2520 s, and the lock records it
     cap = _lock_wall(scene, capped)
     assert until - ended - 1 <= cap <= until - started < 3000, (cap, until - started)
-    assert cap > 2600
+    assert cap > 2420
     hypothesis = _admitted(_only(_batch(client, scene, inv, "b-wall-h", scene.trial, purpose="hypothesis-test",
                                         wall_seconds=3000)))
     assert _lock_wall(scene, hypothesis) <= until - started

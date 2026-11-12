@@ -4,6 +4,8 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.4.0
 
+- [ADR 0042](docs/decisions/0042-split-conclude-only-reserve.md) raises the conclude-only reserve to 15% (90–600 s), limits read admission by time, and preserves one terminal timeout fallback with full uncertain-usage accounting. The output cap and ordinary reproduction/export holdback stay unchanged.
+
 - Preserve the prospective study commitments and mark the Pilot 4 charter and v9 public draft summary inactive, not registered and deferred. A future registration must set a new admission window.
 
 - [ADR 0041](docs/decisions/0041-study-checkpoint-and-prompt-provenance.md) pins the shared study producer, preserves trusted checkpoint basenames, and records exact live prompt delivery hashes. Its concise tool guidance preserves pinned investigation facts within the existing context cap.
