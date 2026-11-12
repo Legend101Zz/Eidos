@@ -69,6 +69,8 @@ def test_projection_reserves_total_cap_and_keeps_exact_authority_and_locked_ids(
         assert projected["addressable"]["jobs"][:2] == [final["incumbent"]["job_id"], final["incumbent"]["reproduced_by"]]
         assert projected["addressable"]["artifacts"][0] == final["locked_candidate"]["outputs"][0]["artifact_id"]
         assert projected["omitted"]["artifacts"] > 0
+        assert "metrics" in projected["omitted"]["fields"]
+        assert "locked_candidate.outputs" in projected["omitted"]["fields"]
         assert set(projected["addressable"]["artifacts"]) <= set(final["evidence_allowlist"]["artifacts"])
         assert "private_marker" not in packed["text"] and "duplicated_receipt" not in packed["text"]
         assert packed["truncations"]["finalization_projection"]["omitted"] == projected["omitted"]

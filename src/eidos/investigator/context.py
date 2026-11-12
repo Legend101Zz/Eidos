@@ -190,6 +190,18 @@ def _finalization_projection(view: dict[str, Any], limit: int) -> tuple[str, dic
     locked = source.get("locked_candidate") or {}
     reproduction = incumbent.get("reproduction") or {}
     rule = source.get("selection_rule")
+    report["omitted"]["fields"] = [
+        field for field, value in (
+            ("metrics", source.get("metrics")),
+            ("refusals", source.get("refusals")),
+            ("incumbent.evidence", incumbent.get("evidence")),
+            ("incumbent.reproduction.attempts", reproduction.get("attempts")),
+            ("locked_candidate.inputs", locked.get("inputs")),
+            ("locked_candidate.config", locked.get("config")),
+            ("locked_candidate.receipt", locked.get("receipt")),
+            ("locked_candidate.outputs", locked.get("outputs")),
+        ) if value
+    ]
     facts: dict[str, Any] = {
         "schema": FINALIZATION_PROJECTION,
         "turn_id": source.get("turn_id"),
@@ -202,7 +214,8 @@ def _finalization_projection(view: dict[str, Any], limit: int) -> tuple[str, dic
         "selection_rule": rule,
         "remaining_budget": view.get("budgets"),
         "remaining_wall": view.get("completion"),
-        "evidence_access": "These are selected eligible identifiers. Read exact evidence through the authorized tools.",
+        "evidence_access": ("This is a projection. Read exact job and artifact details with the authorized tools. "
+                            "Omitted controller metadata remains in the pinned turn."),
         "addressable": {},
         "omitted": report["omitted"],
     }
@@ -221,7 +234,7 @@ def _finalization_projection(view: dict[str, Any], limit: int) -> tuple[str, dic
     }
     for index, (kind, preferred) in enumerate(priorities.items()):
         eligible = list(dict.fromkeys(allow.get(kind) or []))
-        ordered = list(dict.fromkeys([item for item in preferred if item in eligible] + eligible))
+        ordered = list(dict.fromkeys([item for item in preferred if isinstance(item, str) and item in eligible] + eligible))
         facts["addressable"][kind] = selected = []
         report["omitted"][kind] = len(ordered)
         # Reserve a share of the remaining section for each identifier kind.
