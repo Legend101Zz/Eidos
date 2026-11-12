@@ -369,11 +369,12 @@ def map_claim_state(claim_state, metadata, candidate, measurements):
 
 _SWEEP_ARTIFACT = re.compile(r'art_([a-f0-9]{16})_evidence_table')
 _SWEEP_COMPONENT = 'eidos.search.recipe-sweep@1.1.0'
+_SWEEP_BUNDLE_SHA = '22068c870b4463189e8dfde0266a6b695b29858304a71f456d842a870e023e07'
 _SWEEP_SCHEMA = 'recipe-sweep-table/1'
 _SWEEP_SLOT = 'evidence_table'
 
 
-def export_sweep_evidence(c, project, inv, out, reference, task_artifacts, authored_digests=()):
+def export_sweep_evidence(c, project, inv, out, reference, task_artifacts, authored_evidence=()):
     """Copy one eligible visible recipe-sweep table to a study-private export."""
     match = _SWEEP_ARTIFACT.fullmatch(reference)
     splits = ('train', 'validation')
@@ -406,8 +407,8 @@ def export_sweep_evidence(c, project, inv, out, reference, task_artifacts, autho
         or release.get('id') != _SWEEP_COMPONENT
         or release.get('status') != 'active' or not release_body.get('digest')
         or release_body['digest'] != component.get('digest')
-        or not release_body.get('bundle_digest')
-        or release_body['bundle_digest'] != (component.get('bundle') or {}).get('digest')
+        or release_body.get('bundle_digest') != _SWEEP_BUNDLE_SHA
+        or (component.get('bundle') or {}).get('digest') != _SWEEP_BUNDLE_SHA
         or (lock.get('outputs') or {}).get(_SWEEP_SLOT) != _SWEEP_SCHEMA
         or set(config) != {'template'} or not isinstance(config['template'], dict)
         or set(inputs) != set(splits)
@@ -419,7 +420,7 @@ def export_sweep_evidence(c, project, inv, out, reference, task_artifacts, autho
         or art['producer_attempt'] != (job.get('terminal') or {}).get('attempt_id')
         or type(size) is not int or not 0 < size <= 1024**2
         or not isinstance(sha, str) or not re.fullmatch(r'[a-f0-9]{64}', sha)
-        or any(authored_sha != sha for authored_sha in authored_digests)
+        or any('sha256' in row and row['sha256'] != sha for row in authored_evidence)
         or len(outputs) != 1 or outputs[0].get('attempt_id') != art['producer_attempt']
         or any(outputs[0].get(key) != value for key, value in expected.items())
         or any(art.get(key) != expected[key] for key in ('role', 'schema', 'media_type'))
@@ -449,7 +450,8 @@ def export_sweep_evidence(c, project, inv, out, reference, task_artifacts, autho
              'limitations': 'No held-out or independent confirmation. Controller mapped the cited artifact to these exact bytes.'}
     mapping = {'author': 'study-adapter', 'artifact_id': reference, 'path': filename, 'sha256': sha, 'size': size,
                'producer_job': job_id, 'component_ref': _SWEEP_COMPONENT,
-               'producer_attempt': art['producer_attempt'], 'selection_split': 'visible-validation',
+               'investigation_id': inv, 'producer_attempt': art['producer_attempt'],
+               'selection_split': 'visible-validation', 'authored_evidence': list(authored_evidence),
                'inputs': {split: inputs[split]['artifact_id'] for split in splits}}
     return entry, mapping
 
@@ -457,6 +459,8 @@ def export_sweep_evidence(c, project, inv, out, reference, task_artifacts, autho
 def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessments, tokens, receipts,
                   usage_uncertain=False, answer_metadata=None, claim_state=None, task_artifacts=None):
     out = run_dir / 'out'
+    if out.is_symlink():
+        raise ValueError('unsafe answer export directory')
     out.mkdir(exist_ok=True)
     candidate, evidence = None, []
     if answer_metadata is None:
@@ -582,9 +586,8 @@ def export_answer(c, project, inv, run_dir, meta, jid, reason, claim, assessment
                     'limitations': 'Investigator interpretation; confirmation and selection roles remain as recorded'})
         elif isinstance(reference, str) and reference.startswith('art_'):
             if reference not in sweep_mappings:
-                authored_digests = [row['sha256'] for row in authored_evidence
-                                    if isinstance(row, dict) and row.get('path') == reference and 'sha256' in row]
-                entry, mapping = export_sweep_evidence(c, project, inv, out, reference, task_artifacts, authored_digests)
+                cited = [row for row in authored_evidence if isinstance(row, dict) and row.get('path') == reference]
+                entry, mapping = export_sweep_evidence(c, project, inv, out, reference, task_artifacts, cited)
                 sweep_mappings[reference] = mapping
                 evidence.append(entry)
             m['evidence_receipt'] = sweep_mappings[reference]['path']

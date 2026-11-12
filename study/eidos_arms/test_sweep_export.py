@@ -11,6 +11,7 @@ AID = 'art_0123456789abcdef_evidence_table'
 JOB = 'job_0123456789abcdef'
 COMPONENT = 'eidos.search.recipe-sweep@1.1.0'
 SCHEMA = 'recipe-sweep-table/1'
+BUNDLE_SHA = '22068c870b4463189e8dfde0266a6b695b29858304a71f456d842a870e023e07'
 INPUTS = {'train': 'art_task_train', 'validation': 'art_task_validation', 'task': 'art_task_manifest'}
 TABLE = {'schema': SCHEMA, 'selection_split': 'visible-validation', 'exploratory': True,
          'claim': None, 'recipes': [{'name': 'linear'}]}
@@ -31,12 +32,12 @@ class SweepClient:
                     'current_attempt': 'a1', 'terminal': {'attempt_id': 'a1'},
                     'outputs': [{**expected, 'artifact_id': AID, 'slot': 'evidence_table', 'attempt_id': 'a1'}],
                     'lock': {'project_id': 'p', 'grants': [], 'output_access_class': 'project', 'config': {'template': {'name': 'quick'}},
-                             'component': {'ref': COMPONENT, 'digest': 'release-sha', 'bundle': {'digest': 'bundle-sha'}},
+                             'component': {'ref': COMPONENT, 'digest': 'release-sha', 'bundle': {'digest': BUNDLE_SHA}},
                              'outputs': {'evidence_table': SCHEMA},
                              'inputs': {split: {'artifact_id': INPUTS[split], 'schema': 'task-array/1'}
                                         for split in ('train', 'validation')}}}
         self.release = {'id': COMPONENT, 'status': 'active',
-                        'body': {'digest': 'release-sha', 'bundle_digest': 'bundle-sha'}}
+                        'body': {'digest': 'release-sha', 'bundle_digest': BUNDLE_SHA}}
         self.downloads = []
 
     def query(self, name, params, *, project):
@@ -60,7 +61,9 @@ def test_export_preserves_an_authored_abstention_and_maps_only_the_verified_byte
     client = SweepClient()
     abstention = {'abstained': True, 'reason': 'Independent evidence is incomplete.',
                   'unresolved': ['Held-out comparison'], 'next_discriminating_test': 'Run independent confirmation.'}
-    metadata = {'status': 'abstained', 'claim_type': 'no_positive_claim', 'claim': 'No verified improvement.',
+    cited = {'path': AID, 'sha256': client.art['digest'], 'role': 'search table',
+             'supports': 'The investigator observed a validation difference.', 'limitations': 'Visible data only.'}
+    metadata = {'evidence': [cited], 'status': 'abstained', 'claim_type': 'no_positive_claim', 'claim': 'No verified improvement.',
                 'measurements': [MEASUREMENT, MEASUREMENT], 'abstention': abstention}
     authored = deepcopy(metadata)
     export_answer(client, 'p', 'inv', tmp_path, {'card': 'N02'}, None, 'No locked export',
@@ -80,6 +83,7 @@ def test_export_preserves_an_authored_abstention_and_maps_only_the_verified_byte
     mapping, = json.loads((tmp_path / 'measurement_receipt_mappings.json').read_bytes())['mappings']
     assert (mapping['author'], mapping['artifact_id'], mapping['path'], mapping['sha256']) == (
         'study-adapter', AID, relative, client.art['digest'])
+    assert mapping['authored_evidence'] == [cited] and mapping['investigation_id'] == 'inv'
 
 
 @pytest.mark.parametrize(('record', 'path', 'value'), [
@@ -128,5 +132,24 @@ def test_bytes_and_split_mismatch_are_never_exported(tmp_path, bad):
 def test_authored_digest_mismatch_never_downloads(tmp_path):
     client = SweepClient()
     with pytest.raises(ValueError, match='unverified or restricted'):
-        export_sweep_evidence(client, 'p', 'inv', tmp_path, AID, INPUTS, ['0' * 64])
+        export_sweep_evidence(client, 'p', 'inv', tmp_path, AID, INPUTS, [{'path': AID, 'sha256': '0' * 64}])
     assert not client.downloads
+
+
+
+def test_matching_job_and_release_with_replaced_bundle_never_download(tmp_path):
+    client = SweepClient()
+    client.release['body']['bundle_digest'] = '1' * 64
+    client.job['lock']['component']['bundle']['digest'] = '1' * 64
+    with pytest.raises(ValueError, match='unverified or restricted'):
+        export_sweep_evidence(client, 'p', 'inv', tmp_path, AID, INPUTS)
+    assert not client.downloads
+
+
+def test_linked_answer_directory_is_refused_before_any_export(tmp_path):
+    destination = tmp_path / 'destination'
+    destination.mkdir()
+    (tmp_path / 'out').symlink_to(destination)
+    with pytest.raises(ValueError, match='unsafe answer export directory'):
+        export_answer(SweepClient(), 'p', 'inv', tmp_path, {'card': 'N02'}, None, 'No export', '', [], {}, [])
+    assert list(destination.iterdir()) == []

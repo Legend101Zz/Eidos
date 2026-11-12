@@ -56,7 +56,7 @@ def scene(lab, tmp_path):
     lab.cmd(lab.admin, "register_environment", {"name": "numpy", "python_executable": NUMPY_PY,
                                                 "project_root": str(tmp_path), "python_version": "3.12", "installed": {}},
             project=pid)
-    refs = {name: _publish(lab, pid, *_bundle(name))["component_ref"]
+    refs = {name: _publish(lab, pid, *_bundle(name), bundle_bytes=bundle_dir(ROOT / "components" / name))["component_ref"]
             for name in ("eidos.diagnose.baseline-errors", "eidos.search.recipe-sweep")}
     subprocess.run([NUMPY_PY, "-c", GENERATE, str(tmp_path)], check=True, timeout=120)
     arts = {}

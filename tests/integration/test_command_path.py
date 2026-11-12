@@ -138,12 +138,13 @@ def _register_lab_env(lab, pid):
             project=pid)
 
 
-def _publish(lab, pid, manifest: dict, files: dict):
+def _publish(lab, pid, manifest: dict, files: dict, *, bundle_bytes: bytes | None = None):
     """Publish via the real path but with a synthetic passing validation job (unit-level)."""
     import json as _json
-    bundle = {"files": {"eidos-component.json": _json.dumps(manifest), **files}}
-    data = _json.dumps(bundle).encode()
-    digest, size = lab.store.put_bytes(data)
+    if bundle_bytes is None:
+        bundle = {"files": {"eidos-component.json": _json.dumps(manifest), **files}}
+        bundle_bytes = _json.dumps(bundle).encode()
+    digest, size = lab.store.put_bytes(bundle_bytes)
     art = lab.cmd(lab.admin, "register_artifact", {"digest": digest, "size": size, "schema": "source-bundle/1",
                                                    "media_type": "application/vnd.eidos.source-bundle+json"},
                   project=pid)["result"]["artifact_id"]
