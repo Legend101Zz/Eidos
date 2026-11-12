@@ -6,7 +6,7 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 - Support selected-arm pilot blocks (arms 2 and 4) in study planning, grading and analysis while preserving historical four-arm outputs; no runtime change.
 
-- [ADR 0042](docs/decisions/0042-split-conclude-only-reserve.md) raises the conclude-only reserve to 15% (90–600 s), limits read admission by time, and preserves one terminal timeout fallback with full uncertain-usage accounting. The output cap and ordinary reproduction/export holdback stay unchanged.
+- [ADR 0042](docs/decisions/0042-split-conclude-only-reserve.md) raises the conclude-only reserve to 15% (90–600 s), limits read admission by time, and protects every conclude-only request, including read-capable requests, with one shared decision-only timeout fallback and full uncertain-usage accounting. Timing reports cover admitted requests, refused fallbacks are explicit, and ledger report copies are bounded. The output cap and ordinary reproduction/export holdback stay unchanged.
 
 - Preserve the prospective study commitments and mark the Pilot 4 charter and v9 public draft summary inactive, not registered and deferred. A future registration must set a new admission window.
 

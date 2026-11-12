@@ -1212,6 +1212,20 @@ def _check_output_refs(ctx: Ctx, calls: list[dict]) -> None:
                               details={"call": i, "path": path, "ref": text, "declared": sorted(declared)})
 
 
+STRUCTURED_OUTPUT_DETAIL_BYTES = 16_384
+
+
+def _structured_output_detail(report: Any) -> dict:
+    """Cap the ledger copy, including escaped previews, at 16 KiB of serialized JSON."""
+    if not isinstance(report, dict):
+        return {}
+    encoded = json.dumps(report, default=str, ensure_ascii=True)
+    if len(encoded) <= STRUCTURED_OUTPUT_DETAIL_BYTES:
+        return report
+    # encoded is ASCII without literal control characters: re-encoding its preview can at most double it.
+    return {"truncated": True, "preview": encoded[:(STRUCTURED_OUTPUT_DETAIL_BYTES - 64) // 2]}
+
+
 def _charge_model_usage(ctx: Ctx, inv_id: str, usage: dict, *, ref: str, reserved: dict | None = None) -> None:
     """Settle actual model usage against any per-decision reservation. Usage entries are written
     even for dimensions without a budget row, so unbudgeted spend is still on the ledger.
@@ -1227,9 +1241,11 @@ def _charge_model_usage(ctx: Ctx, inv_id: str, usage: dict, *, ref: str, reserve
     uncertain = bool(usage.get("uncertain"))
     detail = {k: usage.get(k) for k in ("provider", "model", "request_ids", "calls")}
     # ADRs 0023/0042: retain attempt timing, failure and structured finalization evidence on ledger entries too.
-    for k in ("attempt", "elapsed_seconds", "failure", "phase", "runtime_outcome", "structured_output"):
+    for k in ("attempt", "elapsed_seconds", "failure", "phase", "runtime_outcome"):
         if usage.get(k) is not None:
             detail[k] = usage[k]
+    if usage.get("structured_output") is not None:
+        detail["structured_output"] = _structured_output_detail(usage["structured_output"])
     if usage.get("aborted"):  # ADR 0017: why the decision ended and what was abandoned in flight
         detail["aborted"] = usage["aborted"]
     if usage.get("reasoning_tokens") is not None:  # already inside output_tokens (ADR 0016); on the ledger too

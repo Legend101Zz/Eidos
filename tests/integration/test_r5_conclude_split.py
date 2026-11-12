@@ -1,7 +1,6 @@
 """D02's phase transition, abandoned terminal request and fallback through real coordinator activities and ledger."""
 from __future__ import annotations
 
-import asyncio
 import json
 from copy import deepcopy
 from types import SimpleNamespace
@@ -32,37 +31,25 @@ def scene(lab):
 
 @pytest.mark.parametrize("mode", ["json", "tool"])
 @pytest.mark.parametrize("fallback_concludes", [True, False])
-def test_d02_ordinary_deadline_then_two_read_rounds_and_timeout_fallback(scene, monkeypatch, mode, fallback_concludes):
+@pytest.mark.parametrize("read_rounds", [0, 1, 2])
+def test_d02_ordinary_deadline_then_conclude_timeout_fallback(
+        scene, monkeypatch, conclude_clock, mode, fallback_concludes, read_rounds):
     inv, job = _locked(scene, wall_seconds=1800, decision_deadline_seconds=600)
     wall = scene.q("get_investigation", {"investigation_id": inv})["body"]["wall"]
     assert wall["conclude_threshold_seconds"] == 270
-    wall_now, mono = [wall["deadline_unix"] - 400], [0.0]
-    clock = SimpleNamespace(time=lambda: wall_now[0], monotonic=lambda: mono[0])
+    wall_now = [wall["deadline_unix"] - 400]
+    conclude_clock.on_advance = lambda seconds: wall_now.__setitem__(0, wall_now[0] + seconds)
+    clock = SimpleNamespace(time=lambda: wall_now[0], monotonic=conclude_clock)
     monkeypatch.setattr("eidos.application.handlers.investigations.time", clock)
     monkeypatch.setattr(activities_module, "time", clock)
     monkeypatch.setattr(runtime_module, "time", clock)
     monkeypatch.setattr(activities_module, "DecisionAbort", lambda deadline: DecisionAbort(deadline, clock=clock.monotonic))
-    real_wait_for = asyncio.wait_for
-
-    async def accelerated(awaitable, timeout):
-        if timeout is None or timeout < 1:
-            return await real_wait_for(awaitable, timeout)
-        task = asyncio.ensure_future(awaitable)
-        try:
-            return await real_wait_for(task, 0.02)
-        except TimeoutError:
-            if task.cancelled():
-                mono[0] += timeout
-                wall_now[0] += timeout
-            raise
-
-    monkeypatch.setattr(asyncio, "wait_for", accelerated)
     ordinary_seen, recovery_seen, read_jobs = [], [], []
 
     async def ordinary_provider(messages, info):
         ordinary_seen.append(deepcopy(info))
         if len(ordinary_seen) > 1:
-            await asyncio.Future()
+            await conclude_clock.hang()
         # Ordinary finalization begins with one quick read, then a request hangs at the reserve boundary.
         if mode == "tool":
             parts = [ToolCallPart("get_job", {"job_id": job})]
@@ -74,17 +61,16 @@ def test_d02_ordinary_deadline_then_two_read_rounds_and_timeout_fallback(scene, 
     async def conclude_provider(messages, info):
         recovery_seen.append((deepcopy(messages), deepcopy(info)))
         index = len(recovery_seen)
-        if index <= 2:
+        if index <= read_rounds:
             elapsed = 5.7 if index == 1 else 5.0
-            mono[0] += elapsed
-            wall_now[0] += elapsed
+            conclude_clock.advance(elapsed)
             if mode == "tool":
                 parts = [ToolCallPart("get_job", {"job_id": job}) for _ in range(4)]
             else:
                 parts = [TextPart(json.dumps({"rationale": "Inspect visible receipts.", "read": [
                     {"tool": "get_job", "args": {"job_id": job}} for _ in range(4)]}))]
-        elif index == 3 or not fallback_concludes:
-            await asyncio.Future()
+        elif index == read_rounds + 1 or not fallback_concludes:
+            await conclude_clock.hang()
         else:
             assert FINALIZATION_FALLBACK_NOTE in str(messages)
             assert not info.function_tools
@@ -131,11 +117,19 @@ def test_d02_ordinary_deadline_then_two_read_rounds_and_timeout_fallback(scene, 
     decision = env.run(acts.decide, {**base, "slot": 0})
     usage = scene.events(inv, "model.usage")[-1]["body"]["usage"]
     report = usage["structured_output"]
-    assert len(ordinary_seen) == 2 and len(recovery_seen) == 4 and len(read_jobs) == 8
+    assert len(ordinary_seen) == 2 and len(recovery_seen) == read_rounds + 2 and len(read_jobs) == 4 * read_rounds
     assert report["time_split"]["window_s"] == pytest.approx(253, abs=1)
     assert report["time_split"]["read_slot_s"] == 30 and report["time_split"]["armed"] is True
     assert report["time_split"]["fallback_reserve_s"] == pytest.approx(75.9, abs=0.3)
-    assert report["time_split"]["final_timeout_s"] == pytest.approx(164.4, abs=1)
+    assert report["time_split"]["final_timeout_s"] == pytest.approx(175.1 - [0, 5.7, 10.7][read_rounds], abs=1)
+    requests = report["time_split"]["requests"]
+    assert len(requests) == len(recovery_seen)
+    assert all(entry["armed"] for entry in requests[:-1])
+    assert requests[-1]["armed"] is False
+    if read_rounds < 2 and mode == "tool":
+        assert recovery_seen[read_rounds][1].function_tools
+    assert not recovery_seen[-1][1].function_tools
+    assert conclude_clock.cancelled == (2 if fallback_concludes else 3)
     assert report["fallback_used"] and report["final_attempt_timed_out"] and usage["uncertain"]
     assert usage["in_flight_estimate"]["input_tokens"] > 0
     assert usage["in_flight_estimate"]["output_tokens"] == 16_384 * (1 if fallback_concludes else 2)
@@ -168,8 +162,9 @@ def test_d02_ordinary_deadline_then_two_read_rounds_and_timeout_fallback(scene, 
     estimate = usage["in_flight_estimate"]
     assert float(possible[0]["amount"]) == estimate["input_tokens"] + estimate["output_tokens"]
     known = [entry for entry in entries if entry["kind"] == "usage"]
-    assert len(known) == 1
-    assert float(known[0]["amount"]) == usage["input_tokens"] + usage["output_tokens"]
-    assert known[0]["detail"]["structured_output"]["time_split"] == report["time_split"]
+    assert len(known) == int(read_rounds > 0 or fallback_concludes)
+    if known:
+        assert float(known[0]["amount"]) == usage["input_tokens"] + usage["output_tokens"]
+        assert known[0]["detail"]["structured_output"]["time_split"] == report["time_split"]
     assert possible[0]["detail"]["structured_output"]["time_split"] == report["time_split"]
     assert possible[0]["detail"]["structured_output"]["fallback_outcome"] == report["fallback_outcome"]

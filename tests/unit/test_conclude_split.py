@@ -4,14 +4,12 @@ from __future__ import annotations
 import asyncio
 import json
 from copy import deepcopy
-from types import SimpleNamespace
 
 import pytest
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.usage import RequestUsage
 
-from eidos.investigator import pydantic_ai_runtime as runtime_module
 from eidos.investigator.conclude_split import ConcludeSplit
 from eidos.investigator.pydantic_ai_runtime import FINALIZATION_FALLBACK_NOTE, PydanticAIRuntime
 from eidos.investigator.runtime import DecisionAbort, DecisionAborted, DecisionRequest, ModelCallFailed
@@ -46,34 +44,7 @@ def test_clamps_and_d02_windows(window, reads, fallback):
         assert timeout == pytest.approx(min(300, window - 10.7 - fallback - 2))
 
 
-class FastClock:
-    """Real hanging coroutines are cancelled by wait_for after milliseconds, then virtual time advances."""
-
-    def __init__(self, monkeypatch):
-        self.now = 0.0
-        real_wait_for = asyncio.wait_for
-
-        async def accelerated(awaitable, timeout):
-            if timeout is None or timeout < 1:
-                return await real_wait_for(awaitable, timeout)
-            task = asyncio.ensure_future(awaitable)
-            try:
-                return await real_wait_for(task, 0.01)
-            except TimeoutError:
-                if task.cancelled():
-                    self.now += timeout
-                raise
-
-        monkeypatch.setattr(runtime_module, "ABORT_POLL_SECONDS", 0.001)
-        monkeypatch.setattr(runtime_module, "time", SimpleNamespace(monotonic=lambda: self.now))
-        monkeypatch.setattr(asyncio, "wait_for", accelerated)
-
-    def __call__(self):
-        return self.now
-
-
-def exercise(monkeypatch, mode, actions, *, window=253, tools=False, config=None):
-    clock = FastClock(monkeypatch)
+def exercise(clock, mode, actions, *, window=253, tools=False, config=None):
     abort = DecisionAbort(window, clock=clock)
     seen, reads = [], []
 
@@ -83,6 +54,8 @@ def exercise(monkeypatch, mode, actions, *, window=253, tools=False, config=None
         if action in ("hang", "stop", "pause", "cancel"):
             if action != "hang":
                 abort.trigger(action)
+            if action == "hang":
+                await clock.hang()
             await asyncio.Future()
         if action == "early-timeout":
             raise TimeoutError("provider timeout before the admitted timeout")
@@ -90,7 +63,7 @@ def exercise(monkeypatch, mode, actions, *, window=253, tools=False, config=None
             return ModelResponse(parts=[TextPart("")], finish_reason="length",
                                  usage=RequestUsage(input_tokens=100, output_tokens=16_384))
         if isinstance(action, tuple) and action[0] == "read":
-            clock.now += action[1]
+            clock.advance(action[1])
             value = {"rationale": "Read visible receipts.", "read": [
                 {"tool": "get_job", "args": {"job_id": str(i)}} for i in range(4)]}
             parts = [ToolCallPart("get_job", {"job_id": str(i)}) for i in range(4)] if mode == "tool" else [
@@ -110,14 +83,16 @@ def exercise(monkeypatch, mode, actions, *, window=253, tools=False, config=None
 
 
 @pytest.mark.parametrize("mode", ["json", "repair", "tool"])
-def test_hanging_final_attempt_falls_back_with_uncertain_usage(monkeypatch, mode):
-    rt, req, seen, _, _ = exercise(monkeypatch, mode, ["hang", "valid"],
+def test_hanging_final_attempt_falls_back_with_uncertain_usage(conclude_clock, mode):
+    rt, req, seen, _, _ = exercise(conclude_clock, mode, ["hang", "valid"],
                                    config={"runaway_reasoning_effort": "low", "price_per_mtok": {"input": 1, "output": 2}})
     out = rt.decide(req)
     assert out.runtime_outcome is None and out.proposal["control"]["action"] == "conclude"
     report = out.usage["structured_output"]
     assert report["time_split"] == {"window_s": 253, "read_slot_s": 30, "fallback_reserve_s": pytest.approx(75.9),
-                                    "final_timeout_s": pytest.approx(175.1), "armed": True}
+                                    "final_timeout_s": pytest.approx(175.1), "armed": True,
+                                    "requests": [{"request": 1, "timeout_s": pytest.approx(175.1), "armed": True},
+                                                 {"request": 2, "timeout_s": pytest.approx(75.9), "armed": False}]}
     assert report["final_attempt_timed_out"] and report["fallback_used"] and report["fallback_outcome"] == "valid"
     assert len(seen) == len(rt.envelope.admitted) == 2 and out.usage["calls"] == 1
     assert out.usage["uncertain"] is True and out.usage["input_tokens"] == 100
@@ -138,8 +113,8 @@ def test_hanging_final_attempt_falls_back_with_uncertain_usage(monkeypatch, mode
 
 
 @pytest.mark.parametrize("mode", ["json", "tool"])
-def test_both_requests_hang_without_fabricating_a_proposal(monkeypatch, mode):
-    rt, req, seen, _, _ = exercise(monkeypatch, mode, ["hang", "hang"])
+def test_both_requests_hang_without_fabricating_a_proposal(conclude_clock, mode):
+    rt, req, seen, _, _ = exercise(conclude_clock, mode, ["hang", "hang"])
     out = rt.decide(req)
     assert out.runtime_outcome == "deadline-exhausted" and not out.proposal and len(seen) == 2
     assert out.usage["structured_output"]["fallback_outcome"] == "deadline-exhausted"
@@ -148,8 +123,8 @@ def test_both_requests_hang_without_fabricating_a_proposal(monkeypatch, mode):
 
 
 @pytest.mark.parametrize("mode", ["json", "tool"])
-def test_first_attempt_returns_without_fallback(monkeypatch, mode):
-    rt, req, seen, _, _ = exercise(monkeypatch, mode, ["valid"])
+def test_first_attempt_returns_without_fallback(conclude_clock, mode):
+    rt, req, seen, _, _ = exercise(conclude_clock, mode, ["valid"])
     out = rt.decide(req)
     report = out.usage["structured_output"]
     assert report["time_split"]["armed"] is True and report["fallback_used"] is False
@@ -159,8 +134,8 @@ def test_first_attempt_returns_without_fallback(monkeypatch, mode):
 
 @pytest.mark.parametrize("mode", ["json", "tool"])
 @pytest.mark.parametrize("reason", ["stop", "pause", "cancel"])
-def test_abort_during_first_attempt_never_falls_back(monkeypatch, mode, reason):
-    rt, req, seen, _, _ = exercise(monkeypatch, mode, [reason])
+def test_abort_during_first_attempt_never_falls_back(conclude_clock, mode, reason):
+    rt, req, seen, _, _ = exercise(conclude_clock, mode, [reason])
     with pytest.raises(DecisionAborted) as caught:
         rt.decide(req)
     assert caught.value.reason == reason and len(seen) == 1
@@ -169,8 +144,8 @@ def test_abort_during_first_attempt_never_falls_back(monkeypatch, mode, reason):
 
 
 @pytest.mark.parametrize("mode", ["json", "tool"])
-def test_small_window_uses_one_clipped_attempt(monkeypatch, mode):
-    rt, req, seen, _, _ = exercise(monkeypatch, mode, ["hang"], window=100)
+def test_small_window_uses_one_clipped_attempt(conclude_clock, mode):
+    rt, req, seen, _, _ = exercise(conclude_clock, mode, ["hang"], window=100)
     out = rt.decide(req)
     assert out.runtime_outcome == "deadline-exhausted" and len(seen) == 1
     assert seen[0][1].model_settings["timeout"] == 98
@@ -180,8 +155,8 @@ def test_small_window_uses_one_clipped_attempt(monkeypatch, mode):
 @pytest.mark.parametrize("mode", ["json", "tool"])
 @pytest.mark.parametrize("actions", [["runaway", "valid"], ["runaway", "hang"], ["hang", "runaway"],
                                       [("read", 5), ("read", 5.7), "runaway", "valid"]])
-def test_timeout_and_runaway_share_one_extra_terminal_request(monkeypatch, mode, actions):
-    rt, req, seen, _, _ = exercise(monkeypatch, mode, actions, tools=isinstance(actions[0], tuple))
+def test_timeout_and_runaway_share_one_extra_terminal_request(conclude_clock, mode, actions):
+    rt, req, seen, _, _ = exercise(conclude_clock, mode, actions, tools=isinstance(actions[0], tuple))
     out = rt.decide(req)
     assert len(seen) == len(actions)
     report = out.usage["structured_output"]
@@ -193,26 +168,27 @@ def test_timeout_and_runaway_share_one_extra_terminal_request(monkeypatch, mode,
 
 
 @pytest.mark.parametrize("mode", ["json", "tool"])
-def test_expired_read_slot_forfeits_second_round(monkeypatch, mode):
-    rt, req, seen, reads, _ = exercise(monkeypatch, mode, [("read", 30), "valid"], tools=True)
+def test_expired_read_slot_forfeits_second_round(conclude_clock, mode):
+    rt, req, seen, reads, _ = exercise(conclude_clock, mode, [("read", 30), "valid"], tools=True)
     out = rt.decide(req)
     assert len(seen) == 2 and len(reads) == 4 and not seen[1][1].function_tools
     assert out.proposal["control"]["action"] == "conclude"
     assert out.usage["structured_output"]["read_rounds_forfeited"] is True
     assert seen[1][1].model_settings["timeout"] == pytest.approx(145.1)
+    assert "1 finalization read round(s) left" not in str(seen[1][0])
 
 
 @pytest.mark.parametrize("mode", ["json", "tool"])
-def test_fallback_malformed_reply_uses_only_existing_correction(monkeypatch, mode):
-    rt, req, seen, _, _ = exercise(monkeypatch, mode, ["hang", "malformed", "valid"])
+def test_fallback_malformed_reply_uses_only_existing_correction(conclude_clock, mode):
+    rt, req, seen, _, _ = exercise(conclude_clock, mode, ["hang", "malformed", "valid"])
     out = rt.decide(req)
     assert len(seen) == 3 and out.proposal["control"]["action"] == "conclude"
     assert out.usage["structured_output"]["fallback_outcome"] == "valid"
 
 
 @pytest.mark.parametrize("mode", ["json", "tool"])
-def test_early_provider_timeout_does_not_trigger_fallback(monkeypatch, mode):
-    rt, req, seen, _, _ = exercise(monkeypatch, mode, ["early-timeout"])
+def test_early_provider_timeout_does_not_trigger_fallback(conclude_clock, mode):
+    rt, req, seen, _, _ = exercise(conclude_clock, mode, ["early-timeout"])
     with pytest.raises(ModelCallFailed) as caught:
         rt.decide(req)
     assert not isinstance(caught.value, DecisionAborted) and len(seen) == 1
@@ -220,17 +196,19 @@ def test_early_provider_timeout_does_not_trigger_fallback(monkeypatch, mode):
 
 
 @pytest.mark.parametrize("mode", ["json", "tool"])
-def test_fallback_must_fit_original_token_envelope(monkeypatch, mode):
-    rt, req, seen, _, _ = exercise(monkeypatch, mode, ["hang"], config={"max_tokens_per_decision": 30_000})
+def test_fallback_must_fit_original_token_envelope(conclude_clock, mode):
+    rt, req, seen, _, _ = exercise(conclude_clock, mode, ["hang"], config={"max_tokens_per_decision": 30_000})
     out = rt.decide(req)
     assert not out.proposal and out.runtime_outcome == "request-budget-exhausted" and len(seen) == 1
     assert out.usage["uncertain"] and out.usage["in_flight_estimate"]["output_tokens"] == 16_384
-    assert not out.usage["structured_output"]["fallback_used"]
+    report = out.usage["structured_output"]
+    assert not report["fallback_used"] and report["final_attempt_timed_out"]
+    assert report["fallback_outcome"] == "refused"
 
 
 @pytest.mark.parametrize("mode", ["json", "tool"])
-def test_fallback_uses_all_remaining_time_beyond_configured_request_timeout(monkeypatch, mode):
-    rt, req, seen, _, _ = exercise(monkeypatch, mode, ["hang", "valid"],
+def test_fallback_uses_all_remaining_time_beyond_configured_request_timeout(conclude_clock, mode):
+    rt, req, seen, _, _ = exercise(conclude_clock, mode, ["hang", "valid"],
                                    config={"request_timeout": 120})
     out = rt.decide(req)
     assert out.proposal["control"]["action"] == "conclude"
@@ -241,8 +219,8 @@ def test_fallback_uses_all_remaining_time_beyond_configured_request_timeout(monk
 
 
 @pytest.mark.parametrize("mode", ["json", "tool"])
-def test_request_budget_counts_the_abandoned_attempt(monkeypatch, mode):
-    rt, req, seen, _, _ = exercise(monkeypatch, mode, ["hang", "malformed"],
+def test_request_budget_counts_the_abandoned_attempt(conclude_clock, mode):
+    rt, req, seen, _, _ = exercise(conclude_clock, mode, ["hang", "malformed"],
                                    config={"max_requests_per_decision": 2})
     out = rt.decide(req)
     assert not out.proposal and len(seen) == len(rt.envelope.admitted) == 2
@@ -251,10 +229,79 @@ def test_request_budget_counts_the_abandoned_attempt(monkeypatch, mode):
 
 
 @pytest.mark.parametrize("mode", ["json", "tool"])
-def test_provider_error_in_fallback_preserves_its_outcome_and_abandoned_usage(monkeypatch, mode):
-    rt, req, seen, _, _ = exercise(monkeypatch, mode, ["hang", "early-timeout"])
+def test_provider_error_in_fallback_preserves_its_outcome_and_abandoned_usage(conclude_clock, mode):
+    rt, req, seen, _, _ = exercise(conclude_clock, mode, ["hang", "early-timeout"])
     with pytest.raises(ModelCallFailed) as caught:
         rt.decide(req)
     usage = caught.value.possible_usage
     assert usage["structured_output"]["fallback_outcome"] == "provider-failed" and len(seen) == 2
     assert usage["in_flight_estimate"]["output_tokens"] == 16_384
+
+
+@pytest.mark.parametrize("mode", ["json", "repair", "tool"])
+@pytest.mark.parametrize("actions", [["hang", "valid"], [("read", 5), "hang", "valid"]])
+def test_slow_read_capable_conclusion_gets_decision_only_fallback(conclude_clock, mode, actions):
+    rt, req, seen, reads, clock = exercise(conclude_clock, mode, actions, tools=True)
+    out = rt.decide(req)
+    report = out.usage["structured_output"]
+    assert out.proposal["control"]["action"] == "conclude" and report["fallback_outcome"] == "valid"
+    assert len(seen) == len(actions) and len(reads) == 4 * (len(actions) - 2)
+    requests = report["time_split"]["requests"]
+    assert all(entry["armed"] for entry in requests[:-1]) and requests[-1]["armed"] is False
+    assert report["fallback_used"] and report["final_attempt_timed_out"] and clock.cancelled == 1
+    assert len(rt.envelope.abandoned) == 1 and out.usage["in_flight_estimate"]["output_tokens"] == 16_384
+    for index, (_, info) in enumerate(seen):
+        assert f"usable request budget: {requests[index]['timeout_s']:.3f}" in info.instructions
+        assert info.model_settings["max_tokens"] == 16_384
+        if mode == "tool":
+            assert bool(info.function_tools) is (index < len(seen) - 1)
+        elif mode == "json":
+            schema = info.model_settings["extra_body"]["response_format"]["json_schema"]["schema"]
+            assert ("read" in schema["properties"]) is (index < len(seen) - 1)
+    assert FINALIZATION_FALLBACK_NOTE in str(seen[-1][0])
+
+
+@pytest.mark.parametrize("mode", ["json", "tool"])
+def test_envelope_refusal_does_not_report_an_armed_request(conclude_clock, mode):
+    rt, req, seen, _, _ = exercise(conclude_clock, mode, [], config={"max_tokens_per_decision": 12_000})
+    out = rt.decide(req)
+    split = out.usage["structured_output"]["time_split"]
+    assert not seen and not rt.envelope.admitted
+    assert split["armed"] is False and split["final_timeout_s"] is None and split["requests"] == []
+
+
+@pytest.mark.parametrize("mode", ["json", "tool"])
+def test_request_budget_refuses_fallback_explicitly(conclude_clock, mode):
+    rt, req, seen, _, _ = exercise(conclude_clock, mode, ["hang"], config={"max_requests_per_decision": 1})
+    out = rt.decide(req)
+    report = out.usage["structured_output"]
+    assert len(seen) == 1 and out.runtime_outcome == "request-budget-exhausted"
+    assert report["final_attempt_timed_out"] and not report["fallback_used"]
+    assert report["fallback_outcome"] == "refused"
+
+
+@pytest.mark.parametrize("mode", ["json", "tool"])
+def test_stop_at_split_timeout_never_starts_fallback(conclude_clock, mode):
+    rt, req, seen, _, clock = exercise(conclude_clock, mode, ["hang"], tools=True)
+    clock.on_advance = lambda seconds: req.abort.trigger("stop")
+    with pytest.raises(DecisionAborted) as caught:
+        rt.decide(req)
+    assert caught.value.reason == "stop" and len(seen) == 1 and clock.cancelled == 1
+    assert caught.value.possible_usage["in_flight_estimate"]["output_tokens"] == 16_384
+    assert not caught.value.possible_usage["structured_output"]["fallback_used"]
+
+
+@pytest.mark.parametrize("report", [{"errors": ["\\\"" * 20_000] * 4}, {"reads": ["λ" * 20_000]},
+                                  {"time_split": {"armed": True}, "errors": []}])
+def test_ledger_structured_output_copy_has_a_hard_size_cap(report):
+    from eidos.application.handlers.investigations import (
+        STRUCTURED_OUTPUT_DETAIL_BYTES,
+        _structured_output_detail,
+    )
+
+    detail = _structured_output_detail(report)
+    assert len(json.dumps(detail).encode()) <= STRUCTURED_OUTPUT_DETAIL_BYTES
+    if len(json.dumps(report).encode()) <= STRUCTURED_OUTPUT_DETAIL_BYTES:
+        assert detail == report
+    else:
+        assert detail["truncated"] is True

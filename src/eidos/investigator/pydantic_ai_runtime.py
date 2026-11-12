@@ -364,12 +364,12 @@ def _guarded(model: Any, envelope: TokenEnvelope, abort: DecisionAbort | None = 
                     raise DecisionAborted("decision-deadline")
                 return usable
 
-            def admit(settings: dict[str, Any]) -> None:
+            def admit(settings: dict[str, Any], params: Any) -> None:
                 check_abort()
                 if runtime is not None and len(envelope.admitted) >= int(
                         runtime.config.get("max_requests_per_decision", 8)):
                     raise UsageLimitExceeded("finalization request budget exhausted")
-                envelope.admit(messages, settings, model_request_parameters)
+                envelope.admit(messages, settings, params)
 
             check_abort()
             settings = dict(model_settings or {})
@@ -379,22 +379,24 @@ def _guarded(model: Any, envelope: TokenEnvelope, abort: DecisionAbort | None = 
                     if runtime._report is not None:
                         runtime._report["read_rounds_forfeited"] = True
                     raise UsageLimitExceeded("finalization read slot exhausted")
-                if terminal and not runtime._terminal_started:
+                if not runtime._extra_terminal_used:
                     usable, armed = runtime._final_timeout()
-                    runtime._terminal_started = True
-                    assert runtime._report is not None
-                    runtime._report["time_split"].update(final_timeout_s=usable, armed=armed)
             settings["timeout"] = usable
-            admit(settings)
+            admit(settings, model_request_parameters)
+            if runtime is not None and runtime._split is not None:
+                assert runtime._report is not None
+                runtime._report["time_split"].update(final_timeout_s=usable, armed=armed)
+                runtime._report["time_split"]["requests"].append(
+                    {"request": len(envelope.admitted), "timeout_s": usable, "armed": armed})
 
-            async def send(active_settings: Any, timeout: float) -> Any:
-                call = super(EnvelopeModel, self).request(messages, active_settings, model_request_parameters)
+            async def send(active_settings: Any, timeout: float, params: Any) -> Any:
+                call = super(EnvelopeModel, self).request(messages, active_settings, params)
                 pending = _abortable(call, abort, envelope.admitted[-1]) if abort is not None else call
                 return await asyncio.wait_for(pending, timeout=timeout)
 
             sent_at = time.monotonic()
             try:
-                response = await send(settings, usable)
+                response = await send(settings, usable, model_request_parameters)
             except Exception as exc:
                 import httpx
 
@@ -422,7 +424,7 @@ def _guarded(model: Any, envelope: TokenEnvelope, abort: DecisionAbort | None = 
                         from pydantic_ai.messages import UserPromptPart
 
                         # Keep the exact fallback note in the captured request as well as on the wire.
-                        messages[-1].parts = [*messages[-1].parts, UserPromptPart(FINALIZATION_FALLBACK_NOTE)]
+                        messages[-1].parts = [*messages[-1].parts, UserPromptPart(FINALIZATION_DECISION_ONLY + "\n\n" + FINALIZATION_FALLBACK_NOTE)]
                         instructions = messages[-1].instructions or ""
                         time_note = runtime._time_note(request_budget=fallback_timeout)
                         messages[-1].instructions = instructions.rsplit("Runtime time left:", 1)[0] + time_note
@@ -431,12 +433,19 @@ def _guarded(model: Any, envelope: TokenEnvelope, abort: DecisionAbort | None = 
                                 replace(part, content=part.content.rsplit("Runtime time left:", 1)[0] + time_note)
                                 if "Runtime time left:" in part.content else part
                                 for part in model_request_parameters.instruction_parts]
-                        admit(fallback_settings)
+                        fallback_params = replace(model_request_parameters, function_tools=[])
+                        try:
+                            admit(fallback_settings, fallback_params)
+                        except (EnvelopeRefused, UsageLimitExceeded):
+                            report["fallback_outcome"] = "refused"
+                            raise
+                        report["time_split"]["requests"].append(
+                            {"request": len(envelope.admitted), "timeout_s": fallback_timeout, "armed": False})
                         report["fallback_used"] = True
                         report["fallback_outcome"] = "pending"
                         fallback_sent_at = time.monotonic()
                         try:
-                            response = await send(fallback_settings, fallback_timeout)
+                            response = await send(fallback_settings, fallback_timeout, fallback_params)
                         except Exception as fallback_exc:
                             fallback_timed_out = isinstance(fallback_exc, (TimeoutError, httpx.TimeoutException)) or (
                                 type(fallback_exc).__name__ in ("APITimeoutError", "ModelTimeoutError"))
@@ -583,7 +592,6 @@ class PydanticAIRuntime:
         self._native_error_response: Any = None
         self._split: ConcludeSplit | None = None
         self._decision_started = 0.0
-        self._terminal_started = False
         self._extra_terminal_used = False
 
     def _model(self, *, finalization: bool = False, terminal: bool = False) -> Any:
@@ -608,7 +616,7 @@ class PydanticAIRuntime:
             return {}
         return {"time_split": {"window_s": self._split.window_s, "read_slot_s": self._split.read_slot_s,
                                "fallback_reserve_s": self._split.fallback_reserve_s,
-                               "final_timeout_s": None, "armed": False},
+                               "final_timeout_s": None, "armed": False, "requests": []},
                 "final_attempt_timed_out": False, "fallback_used": False, "fallback_outcome": "not-used"}
 
     def _time_note(self, *, terminal: bool = False, request_budget: float | None = None) -> str:
@@ -618,7 +626,7 @@ class PydanticAIRuntime:
         usable = float(self.config.get("request_timeout", 120)) if request_budget is None else request_budget
         if left is not None:
             usable = max(0.0, min(usable, left - DURABLE_WRITE_MARGIN_SECONDS))
-        if terminal and self._split is not None and not self._terminal_started:
+        if self._split is not None and not self._extra_terminal_used and request_budget is None:
             usable = max(0.0, self._final_timeout()[0])
         return f"Runtime time left: {left} seconds; usable request budget: {usable:.3f} seconds."
 
@@ -632,6 +640,8 @@ class PydanticAIRuntime:
 
         def call(ctx, name: str, *a: Any) -> Any:
             if req.conclude_only:
+                if (self._report or {}).get("fallback_used"):
+                    return {"available": False, "error": "No further reads are available after the fallback."}
                 response = next((m for m in reversed(ctx.messages) if isinstance(m, ModelResponse)), None)
                 if response:
                     calls = [part for part in response.parts if isinstance(part, ToolCallPart)]
@@ -706,7 +716,7 @@ class PydanticAIRuntime:
             self.abort.deadline = min(self.abort.deadline, bound) if self.abort.deadline is not None else bound
         self._report = None
         self._native_error_response = None
-        self._terminal_started = self._extra_terminal_used = False
+        self._extra_terminal_used = False
         self._decision_started = started
         self._split = ConcludeSplit(max(0.0, self.abort.deadline - self._decision_started)) \
             if req.conclude_only and self.abort is not None and self.abort.deadline is not None else None
@@ -907,7 +917,6 @@ class PydanticAIRuntime:
                                      f"{max_requests} requests", "reasoning-runaway", report, billed)
             if req.conclude_only:
                 self._extra_terminal_used = True
-                self._terminal_started = True  # a runaway recovery is never split again
             return None
 
         history: list = []
@@ -1003,7 +1012,7 @@ class PydanticAIRuntime:
             history = list(run.all_messages())
             used = len(self.envelope.admitted)
             try:
-                reads, proposal = parse(run.output, decision_only=runaway_now or terminal)
+                reads, proposal = parse(run.output, decision_only=runaway_now or terminal or report.get("fallback_used", False))
             except (Invalid, ValidationError, ValueError) as exc:
                 msg = so.validation_message(exc)
                 report["errors"].append(msg)
@@ -1073,7 +1082,10 @@ class PydanticAIRuntime:
             remaining = max_requests - used
             if read_round_limit is not None:
                 rounds_left = read_round_limit - report["read_requests"]
-                terminal = rounds_left <= 0 or remaining <= 1
+                slot_expired = not self._reads_allowed()
+                terminal = rounds_left <= 0 or remaining <= 1 or slot_expired
+                if slot_expired and rounds_left > 0:
+                    report["read_rounds_forfeited"] = True
             note = ("This is your last request for this decision: reply with your decision now; a read request will "
                     "not be executed." if remaining == 1 else
                     f"You have {remaining} model requests left for this decision, including your decision.")
@@ -1362,7 +1374,6 @@ class PydanticAIRuntime:
             return bounded(f"reasoning runaway in the last of {max_requests} requests", kept)
         if req.conclude_only:
             self._extra_terminal_used = True
-            self._terminal_started = True
         effort = self._runaway_effort()
         final_settings = {**settings, **({"extra_body": {"reasoning_effort": effort}} if effort else {})}
         report["runaway_reasks"] = 1
