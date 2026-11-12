@@ -76,9 +76,9 @@ def run_text(mode, replies, results, *, conclude_only=True, context="fixture", t
 @pytest.mark.parametrize("terminal_read", [False, True])
 def test_d02_two_source_rounds_then_decision_only(mode, terminal_read):
     context, recorded, results = reply_and_results()
-    terminal = synthetic(READ if terminal_read else CONCLUSION)
-    out, seen, schemas, executed, admitted = run_text(mode, [*recorded, terminal], results, context=context)
-    assert len(seen) == 3 and out.usage["calls"] == 3
+    terminal = [synthetic(READ), synthetic(READ)] if terminal_read else [synthetic(CONCLUSION)]
+    out, seen, schemas, executed, admitted = run_text(mode, [*recorded, *terminal], results, context=context)
+    assert len(seen) == 2 + len(terminal) and out.usage["calls"] == len(seen)
     assert admitted[-1]["spent_before"] + admitted[-1]["input_estimate"] + admitted[-1]["output_cap"] <= 262_144
     assert out.usage["structured_output"]["read_requests"] == 2
     assert executed == [entry for batch in results for entry in batch]
@@ -94,7 +94,8 @@ def test_d02_two_source_rounds_then_decision_only(mode, terminal_read):
         assert out.runtime_outcome == "structured-output-invalid" and not out.proposal
     else:
         assert out.runtime_outcome is None and out.proposal["control"]["action"] == "stop"
-    assert [message["kind"] for message in out.raw_response] == ["request", "response"] * 3
+    assert [message["kind"] for message in out.raw_response] == ["request", "response"] * len(seen)
+    assert out.usage["structured_output"]["reasks"] == int(terminal_read)
 
 
 def test_decision_only_request_not_sent_when_original_envelope_cannot_admit_it():
@@ -113,7 +114,8 @@ def test_exploration_can_use_more_than_two_read_rounds():
     assert out.runtime_outcome is None
 
 
-def test_native_tool_finalization_rejects_oversized_batch_and_disables_reads_for_terminal_request():
+@pytest.mark.parametrize("repair", [False, True])
+def test_native_tool_finalization_rejects_oversized_batch_and_disables_reads_for_terminal_request(repair):
     calls, reads = [], []
 
     def model(messages, info):
@@ -121,14 +123,35 @@ def test_native_tool_finalization_rejects_oversized_batch_and_disables_reads_for
         if len(calls) <= 2:
             count = 5 if len(calls) == 1 else 4
             return ModelResponse(parts=[ToolCallPart("get_job", {"job_id": str(i)}) for i in range(count)])
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, CONCLUSION)])
+        reply = {**CONCLUSION, "control": {"action": "wait_for_jobs"}} if repair and len(calls) == 3 else CONCLUSION
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, reply)])
 
     rt = PydanticAIRuntime({"model": "function:fixture", "_model_object": FunctionModel(model), "output_mode": "tool"})
     req = DecisionRequest(turn_id="t", slot=0, context="Conclude only.", turn_so_far=[], limits={"max_calls": 0},
                           read_tools={"get_job": lambda jid: reads.append(jid) or {"result": jid}}, conclude_only=True)
     out = rt.decide(req)
-    assert len(calls) == 3
-    assert calls[2][1] == []
+    assert len(calls) == 3 + int(repair)
+    assert all(not tools for _, tools in calls[2:])
     assert sorted(reads) == ["0", "1", "2", "3"]
     assert "read batch refused" in str(calls[2][0])
     assert out.runtime_outcome is None and out.proposal["control"]["action"] == "stop"
+
+
+
+def test_terminal_text_repair_can_conclude_without_any_additional_read():
+    results = [[{"tool": "get_job", "args": {"job_id": "fixture"}, "result": {"visible": True}}]] * 2
+    out, seen, schemas, executed, _ = run_text("json", [synthetic(READ)] * 3 + [synthetic(CONCLUSION)], results)
+    assert len(seen) == 4 and len(executed) == 2
+    assert all("read" not in schema["json_schema"]["schema"]["properties"] for schema in schemas[2:])
+    assert out.runtime_outcome is None and out.usage["structured_output"]["reasks"] == 1
+
+
+
+def test_terminal_text_repair_not_sent_if_original_budget_cannot_admit_it():
+    results = [[{"tool": "get_job", "args": {"job_id": "fixture"}, "result": {"visible": "x" * 5_000}}]] * 2
+    replies = [synthetic(READ, input_tokens=19_000)] * 2 + [synthetic(READ, input_tokens=42_000)]
+    out, seen, _, executed, _ = run_text("json", replies, results, tokens=100_000, context="x" * 18_000)
+    assert len(seen) == 3 and len(executed) == 2
+    assert out.runtime_outcome == "structured-output-invalid" and not out.proposal
+    assert out.usage["structured_output"]["reasks"] == 0
+    assert "decision token envelope" in out.usage["limit_reached"]

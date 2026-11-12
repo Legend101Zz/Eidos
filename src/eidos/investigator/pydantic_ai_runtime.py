@@ -33,6 +33,12 @@ from eidos.investigator.runtime import (
 FINALIZATION_DECISION_ONLY = ("No further reads are available. Return only your scoped conclude or stop decision, "
                               "with your own short rationale and no effect calls, using the evidence already shown.")
 
+FINALIZATION_JSON_SHAPE = (
+    "Reply with one JSON object only. Use conclude or stop as control.action. Example:\n"
+    '{"rationale": "<your rationale>", "calls": [], '
+    '"control": {"action": "conclude", "summary": "<scoped result and limitations>", "scope": {}}}'
+)
+
 PROMPT_REVISION = "investigator-prompt/3"  # ADR 0023: investigator-playbook/2
 SYSTEM = (
     "You are the internal investigator of a model-research lab. Diagnose failures, propose the most "
@@ -479,8 +485,8 @@ class PydanticAIRuntime:
         return f"Runtime time left: {left} seconds; usable request budget: {usable:.3f} seconds."
 
     def _agent(self, req: DecisionRequest, *, with_tools: bool = True, output_type: Any = None,
-               instructions: str | None = None):
-        from pydantic_ai import Agent, Tool
+               instructions: str | None = None, terminal: bool = False):
+        from pydantic_ai import Agent, ModelRetry, Tool
         from pydantic_ai.messages import ModelResponse, ToolCallPart
 
         tools = req.read_tools
@@ -512,11 +518,22 @@ class PydanticAIRuntime:
         def current_instructions() -> str:
             return (instructions or SYSTEM) + "\n\n" + self._time_note()
 
-        return Agent(self._model(), output_type=output_type or Decision,
-                     instructions=current_instructions,
-                     retries=int(self.config.get("output_retries", 1)),
-                     tools=[Tool(t, takes_ctx=True) for t in (inspect_evidence, search_components, describe_component, get_job)
-                            if t.__name__ in tools] if (tools and with_tools) else [])
+        agent = Agent(self._model(), output_type=output_type or Decision,
+                      instructions=current_instructions,
+                      retries=int(self.config.get("output_retries", 1)),
+                      tools=[Tool(t, takes_ctx=True)
+                             for t in (inspect_evidence, search_components, describe_component, get_job)
+                             if t.__name__ in tools] if (tools and with_tools) else [])
+        if terminal:
+            @agent.output_validator
+            def conclude(output: Decision) -> Decision:
+                if not _conclusion(to_proposal(output)):
+                    raise ModelRetry(FINALIZATION_DECISION_ONLY)
+                return output
+        return agent
+
+    def _terminal_requests(self, remaining: int) -> int:
+        return min(remaining, 1 + int(int(self.config.get("output_retries", 1)) > 0))
 
     def decide(self, req: DecisionRequest) -> DecisionResult:
         mode = self.config.get("output_mode", "tool")
@@ -604,11 +621,11 @@ class PydanticAIRuntime:
             raise ModelCallFailed(f"runaway_reasoning_effort must be one of {REASONING_EFFORTS}", retryable=False)
         return str(effort)
 
-    def _runaway_settings(self, settings: dict[str, Any], mode: str) -> dict[str, Any]:
+    def _runaway_settings(self, settings: dict[str, Any], mode: str, *, conclude_only: bool = False) -> dict[str, Any]:
         """Settings of a runaway re-ask: the same output cap (a smaller one would only cut the answer shorter), the
         decision-only response schema in JSON mode (no read request), and the reduced reasoning request if configured."""
         out = dict(settings)
-        body = dict(self._json_mode_settings(()) or {}) if mode == "json" else {}
+        body = dict(self._json_mode_settings(conclude_only=conclude_only) or {}) if mode == "json" else {}
         effort = self._runaway_effort()
         if effort:
             body["reasoning_effort"] = effort
@@ -650,7 +667,9 @@ class PydanticAIRuntime:
                                   "runaway_reasks": 0, "fresh_state_repairs": 0, "fresh_state": [], **report_limit}
         fresh_left = int(self.config.get("fresh_state_repairs", DEFAULT_FRESH_STATE_REPAIRS))
         self._report = report
-        shape = so.JSON_SHAPE + ("\n\n" + so.read_shape(reads_allowed) if reads_allowed and not terminal else "")
+        shape = FINALIZATION_JSON_SHAPE if terminal else so.JSON_SHAPE
+        if reads_allowed and not terminal:
+            shape += "\n\n" + so.read_shape(reads_allowed)
         instructions = SYSTEM + "\n\n" + shape
         agent = self._agent(req, with_tools=False, output_type=str, instructions=instructions)
         message = (req.context + "\n\n## This turn so far\n" + json.dumps(req.turn_so_far, default=str)[:20000]
@@ -723,7 +742,7 @@ class PydanticAIRuntime:
             if terminal:
                 if terminal_agent is None:
                     terminal_agent = self._agent(req, with_tools=False, output_type=str,
-                                                 instructions=SYSTEM + "\n\n" + so.JSON_SHAPE)
+                                                 instructions=SYSTEM + "\n\n" + FINALIZATION_JSON_SHAPE)
                 active_agent = terminal_agent
             active_settings = terminal_settings if terminal else settings
             with capture_run_messages() as captured:
@@ -733,7 +752,8 @@ class PydanticAIRuntime:
                         + ("\n\n" + RUNAWAY_NOTE.format(cap=output_cap(self.config)) if runaway_now and not terminal else ""),
                         message_history=history or None,
                         usage_limits=UsageLimits(request_limit=1, total_tokens_limit=left),
-                        model_settings=(self._runaway_settings(active_settings, mode) if runaway_now else active_settings) or None)
+                        model_settings=(self._runaway_settings(active_settings, mode, conclude_only=terminal)
+                                        if runaway_now else active_settings) or None)
                 except EnvelopeRefused as exc:  # not started: nothing billed, a re-ask that was not sent is not counted
                     report["reasks"] -= int(reask_now)
                     report["runaway_reasks"] -= int(runaway_now)
@@ -741,7 +761,7 @@ class PydanticAIRuntime:
                         report["fresh_state_repairs"] -= 1
                         report["fresh_state"].pop()
                     outcome = "reasoning-runaway" if runaway_now else (
-                        "structured-output-invalid" if report["errors"] and not report["valid"] and not terminal
+                        "structured-output-invalid" if report["errors"] and not report["valid"] and (not terminal or reask_now)
                         else "request-budget-exhausted")
                     return self._bounded(archived + history, model, max_requests, f"decision token envelope: {exc}", outcome,
                                          report, billed)
@@ -784,6 +804,10 @@ class PydanticAIRuntime:
                 msg = so.validation_message(exc)
                 report["errors"].append(msg)
                 if terminal:
+                    if report["reasks"] < 1 and used < max_requests:
+                        reask_pending = True
+                        message = "Your reply could not be used: " + msg
+                        continue
                     return self._bounded(archived + history, model, max_requests, msg,
                                          "structured-output-invalid", report, billed)
                 if (report["reasks"] >= 1 or report["fresh_state_repairs"]) and fresh_left > 0 and used < max_requests:
@@ -883,14 +907,15 @@ class PydanticAIRuntime:
         if req.conclude_only:
             tool_budget = min(FINALIZATION_READ_ROUNDS, max_requests - 1) if req.read_tools else 0
         terminal = req.conclude_only and tool_budget <= 0
-        agent = self._agent(req, with_tools=not terminal)
+        agent = self._agent(req, with_tools=not terminal, terminal=terminal)
         prompt = (req.context + "\n\n## This turn so far\n" + json.dumps(req.turn_so_far, default=str)[:20000]
                   + f"\n\n## Decision budget\nYou may make at most {max_requests} model requests for this decision, "
                   "including read-tool round trips. Reserve the last one for your final decision.")
         settings = {"max_tokens": output_cap(self.config)}  # the cap the envelope admits with; temperature unset
         if terminal:
             prompt += "\n\n" + FINALIZATION_DECISION_ONLY
-        limits = UsageLimits(request_limit=1 if terminal else (tool_budget if req.read_tools else max_requests),
+        limits = UsageLimits(request_limit=self._terminal_requests(max_requests) if terminal else
+                             (tool_budget if req.read_tools else max_requests),
                              total_tokens_limit=int(self.config.get("max_tokens_per_decision", 120_000)))
         limit_error: BaseException
         with capture_run_messages() as messages:
@@ -948,7 +973,14 @@ class PydanticAIRuntime:
             # Read-tool loop hit its share: one final request WITHOUT tools over the same history,
             # so the model must decide from the evidence it has already gathered.
             first = list(messages)
-            final_agent = self._agent(req, with_tools=False)
+            final_agent = self._agent(req, with_tools=False, terminal=req.conclude_only)
+            billed = int(self._usage(first)["calls"])
+            remaining = max_requests - billed
+            terminal_requests = self._terminal_requests(remaining) if req.conclude_only else 1
+            if terminal_requests <= 0:
+                usage = self._usage(first)
+                usage["limit_reached"] = reason[:300]
+                return self._runtime_bound(first, usage, max_requests, outcome)
             with capture_run_messages() as final_messages:
                 try:
                     result = final_agent.run_sync(
@@ -956,8 +988,8 @@ class PydanticAIRuntime:
                         ("Your read-tool budget for this decision is used up. No further evidence is "
                          "available. Return your decision now from what you have gathered."),
                         message_history=_close_tool_calls(first),
-                        # exactly the one reserved request: the per-decision cap is a hard cap
-                        usage_limits=UsageLimits(request_limit=1),
+                        # Finalization can use its existing one correction if the original bounds permit.
+                        usage_limits=UsageLimits(request_limit=terminal_requests),
                         model_settings=settings or None)
                     usage = self._usage(first + [m for m in result.new_messages()])
                     usage["tool_budget_exhausted"] = True
