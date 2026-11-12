@@ -1,0 +1,197 @@
+[
+  {
+    "id": "gen-001",
+    "mechanism": "moons-rotated",
+    "role": "design",
+    "task_type": "classification",
+    "sizes": {
+      "train": 600,
+      "validation": 200,
+      "test": 400
+    },
+    "instances": 4,
+    "seed_stream": 2026121300
+  },
+  {
+    "id": "gen-002",
+    "mechanism": "circles-quantiles",
+    "role": "holdout",
+    "task_type": "classification",
+    "sizes": {
+      "train": 600,
+      "validation": 200,
+      "test": 400
+    },
+    "instances": 4,
+    "seed_stream": 2026131300
+  },
+  {
+    "id": "gen-003",
+    "mechanism": "hastie-radial",
+    "role": "design",
+    "task_type": "classification",
+    "sizes": {
+      "train": 600,
+      "validation": 200,
+      "test": 400
+    },
+    "instances": 4,
+    "seed_stream": 2026141300
+  },
+  {
+    "id": "gen-004",
+    "mechanism": "friedman-two-three",
+    "role": "design",
+    "task_type": "regression",
+    "sizes": {
+      "train": 600,
+      "validation": 200,
+      "test": 400
+    },
+    "instances": 4,
+    "seed_stream": 2026151300
+  },
+  {
+    "id": "gen-005",
+    "mechanism": "lowrank-sparse",
+    "role": "holdout",
+    "task_type": "regression",
+    "sizes": {
+      "train": 600,
+      "validation": 200,
+      "test": 400
+    },
+    "instances": 4,
+    "seed_stream": 2026161300
+  },
+  {
+    "id": "gen-006",
+    "mechanism": "student-curved",
+    "role": "design",
+    "task_type": "classification",
+    "sizes": {
+      "train": 600,
+      "validation": 200,
+      "test": 400
+    },
+    "instances": 4,
+    "seed_stream": 2026171300
+  },
+  {
+    "id": "gen-007",
+    "mechanism": "periodic-heteroskedastic",
+    "role": "holdout-class",
+    "task_type": "regression",
+    "sizes": {
+      "train": 600,
+      "validation": 200,
+      "test": 400
+    },
+    "instances": 4,
+    "seed_stream": 2026181300
+  },
+  {
+    "id": "gen-008",
+    "mechanism": "wine-nuisance",
+    "role": "holdout",
+    "task_type": "classification",
+    "sizes": {
+      "train": 106,
+      "validation": 36,
+      "test": 36
+    },
+    "instances": 4,
+    "seed_stream": 2026191300
+  },
+  {
+    "id": "gen-009",
+    "mechanism": "digits-rotation",
+    "role": "design",
+    "task_type": "classification",
+    "sizes": {
+      "train": 1000,
+      "validation": 300,
+      "test": 497
+    },
+    "instances": 4,
+    "seed_stream": 2026201300
+  },
+  {
+    "id": "gen-010",
+    "mechanism": "imbalanced-grouped",
+    "role": "holdout-class",
+    "task_type": "classification",
+    "sizes": {
+      "train": 600,
+      "validation": 200,
+      "test": 400
+    },
+    "instances": 4,
+    "seed_stream": 2026211300
+  },
+  {
+    "id": "gen-011",
+    "mechanism": "large-sample",
+    "role": "design",
+    "task_type": "classification",
+    "sizes": {
+      "train": 20000,
+      "validation": 2000,
+      "test": 2000
+    },
+    "instances": 4,
+    "seed_stream": 2026221300
+  },
+  {
+    "id": "gen-012",
+    "mechanism": "noise-control",
+    "role": "control",
+    "task_type": "classification",
+    "sizes": {
+      "train": 600,
+      "validation": 200,
+      "test": 400
+    },
+    "instances": 4,
+    "seed_stream": 2026231300
+  },
+  {
+    "id": "gen-013",
+    "mechanism": "weak-control",
+    "role": "control",
+    "task_type": "classification",
+    "sizes": {
+      "train": 600,
+      "validation": 200,
+      "test": 400
+    },
+    "instances": 4,
+    "seed_stream": 2026241300
+  },
+  {
+    "id": "gen-014",
+    "mechanism": "mixture-reenactment",
+    "role": "calibration-only",
+    "task_type": "classification",
+    "sizes": {
+      "train": 1800,
+      "validation": 600,
+      "test": 600
+    },
+    "instances": 4,
+    "seed_stream": 2026251300
+  },
+  {
+    "id": "gen-015",
+    "mechanism": "offset-reenactment",
+    "role": "calibration-only",
+    "task_type": "classification",
+    "sizes": {
+      "train": 1000,
+      "validation": 300,
+      "test": 497
+    },
+    "instances": 4,
+    "seed_stream": 2026261300
+  }
+]

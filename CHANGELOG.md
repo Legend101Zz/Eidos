@@ -4,6 +4,8 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.4.0
 
+- [ADR 0043](docs/decisions/0043-generated-practice-cards-and-leave-one-generator-out-guard.md) adds an offline 60-card practice harness with neutral bundles, controller-only labels and oracle sidecars, cached A0–A3 comparator replay, generator-level no-harm inference, claim audits, exposure tracking and three adversarial guard controls. Pipeline C remains a later build step.
+
 - Support selected-arm pilot blocks (arms 2 and 4) in study planning, grading and analysis while preserving historical four-arm outputs; no runtime change.
 
 - [ADR 0042](docs/decisions/0042-split-conclude-only-reserve.md) raises the conclude-only reserve to 15% (90–600 s), limits read admission by time, and protects every conclude-only request, including read-capable requests, with one shared decision-only timeout fallback and full uncertain-usage accounting. Timing reports cover admitted requests, refused fallbacks are explicit, and ledger report copies are bounded. The output cap and ordinary reproduction/export holdback stay unchanged.
