@@ -53,6 +53,7 @@ from urllib.parse import urlparse
 if sys.argv[2] != "study.eidos_arms.worker":
     os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
 sys.path.insert(0, str(Path.cwd()))
+from study.common import MODEL
 from study.eidos_arms import arm4, lab, provider_bridge, worker
 
 assert "EIDOS_EVAL_AUDIT_IDENTIFIERS" not in os.environ
@@ -96,7 +97,7 @@ def run_with_probe(run_dir, meta, **kwargs):
         try:
             return real_run(run_dir, meta, **kwargs)
         except StopAfterProbe:
-            return {"status": "ok", "model_ids_seen": ["loopback-fixture"]}
+            return {"status": "ok", "model_ids_seen": [MODEL]}
 
 with socket.socket() as unused:
     unused.bind(("127.0.0.1", 0))  # Reserved without a listener, so the upstream cannot receive anything.

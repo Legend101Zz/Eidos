@@ -1,0 +1,101 @@
+{
+ "id": "eidos.project.command",
+ "release": "1.0.9",
+ "implements": "project-command/1",
+ "kind": "artifact-op",
+ "entry": "project_command:run",
+ "summary": "Whole-trainer escape hatch: run a project CLI (argv array, no shell) in a private working copy of the project. Declared inputs are staged into the work dir as <port><ext> (.npz/.json/.csv/.txt by media type, .pt for model-file/1) unless config.files maps port->filename; {work}/{out}/{seed} are substituted in argv. Example: inputs {train, validation, task} + argv [\"python\", \"project.py\", \"train\", \"--inputs\", \"{work}\", \"--out\", \"{out}\", \"--seed\", \"{seed}\"] gives train.npz, validation.npz, task.json in {work}.",
+ "scientific_effects": [
+  "change-weights"
+ ],
+ "optional_inputs": {
+  "source": "source-bundle/1",
+  "train": "task-array/1",
+  "validation": "task-array/1",
+  "test_inputs": "task-array/1",
+  "task": "task-manifest/1",
+  "model": "model-file/1",
+  "extra_a": "*",
+  "extra_b": "*",
+  "extra_c": "*",
+  "extra_d": "*"
+ },
+ "output": {
+  "receipt": "project-receipt/1"
+ },
+ "reads": [
+  "project files",
+  "declared inputs"
+ ],
+ "writes": [
+  "output:*"
+ ],
+ "isolation": "private-copy",
+ "card": "method-card.md",
+ "controls": [
+  "fixtures/hello.json",
+  "fixtures/nonzero.json"
+ ],
+ "receipt": [
+  "argv",
+  "returncode",
+  "outputs",
+  "metrics",
+  "source",
+  "model_exports"
+ ],
+ "config_schema": {
+  "type": "object",
+  "required": [
+   "argv"
+  ],
+  "properties": {
+   "argv": {
+    "type": "array",
+    "minItems": 2,
+    "items": {
+     "type": "string"
+    },
+    "firstItemPattern": "^(python|/.+)$",
+    "description": "argument array; first item 'python' (project interpreter) or an absolute path; {work} {out} {seed} substituted"
+   },
+   "files": {
+    "type": "object",
+    "description": "optional port->plain filename map; ports not listed are staged as <port><ext> (.npz/.json/.csv/.txt by media type, .pt for model-file/1)"
+   },
+   "seed": {
+    "type": "integer",
+    "minimum": 0
+   },
+   "copy": {
+    "type": "array",
+    "items": {
+     "type": "string"
+    }
+   },
+   "allow_nonzero_exit": {
+    "type": "boolean"
+   },
+   "timeout_seconds": {
+    "type": "number",
+    "minimum": 1
+   }
+  },
+  "examples": [
+   {
+    "argv": [
+     "python",
+     "project.py",
+     "train",
+     "--inputs",
+     "{work}",
+     "--out",
+     "{out}",
+     "--seed",
+     "{seed}"
+    ]
+   }
+  ]
+ },
+ "dynamic_outputs": true
+}

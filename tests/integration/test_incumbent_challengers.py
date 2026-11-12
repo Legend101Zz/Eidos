@@ -26,7 +26,9 @@ real ``assess_candidate`` to freeze the selection.
 from __future__ import annotations
 
 import json
+import time
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from test_assess_candidate_e2e import Scene as AssessScene
@@ -603,10 +605,59 @@ def test_another_investigations_frozen_plan_does_not_freeze_this_one(scene):
 def test_relocking_the_incumbent_itself_after_the_freeze_changes_nothing_and_is_not_refused(scene):
     inv = scene.investigation()
     a = scene.accuracy_job(inv, 0.7)
-    scene.lock(inv, a, selection=RULE)
+    original = scene.lock(inv, a, selection=RULE)["note_id"]
+    digest = scene.q("get_record", {"kind": "note", "id": original})["digest"]
     _plan(scene, inv, "frozen")
     out = scene.lock(inv, a)
     assert out["incumbent"]["version"] == 1 and out["incumbent"]["basis"] == "same-incumbent"
+    assert out["reaffirmed"] and (out["note_id"], out["note_digest"]) == (original, digest)
+    assert [e["subject"] for e in scene.events(inv, "note.recorded")] == [original]
+
+
+@pytest.mark.parametrize("stop", ["wall-holdback", "token-holdback", "search-limit"])
+def test_reaffirmation_is_inert_with_both_selection_freeze_and_an_exploration_stop(scene, monkeypatch, stop):
+    options = {"wall_seconds": 3600} if stop == "wall-holdback" else (
+        {"exploration": {"max_rounds": 0}} if stop == "search-limit" else {})
+    inv = scene.investigation(**options)
+    incumbent = scene.accuracy_job(inv, .70)
+    other = scene.accuracy_job(inv, .95)
+    note = scene.lock(inv, incumbent, selection=RULE)["note_id"]
+    original = scene.q("get_record", {"kind": "note", "id": note})
+    if stop == "wall-holdback":
+        now = time.time() + 3000
+        for module in ("exploration", "investigations"):
+            monkeypatch.setattr(f"eidos.application.handlers.{module}.time", SimpleNamespace(time=lambda: now))
+    elif stop == "token-holdback":
+        with scene.lab.ledger.transaction() as tx:
+            tx.project_id = scene.pid
+            tx.reserve(f"inv:{inv}", "model_tokens", 875_000, "fixture:reserve")
+    with pytest.raises(Invalid, match="candidate lock must identify the existing job"):
+        scene.note(inv, "candidate_lock", '{"job_id": null}')
+    turn = scene.begin(inv)
+    assert turn["spec"]["finalization_phase"]["trigger"] == stop
+    _plan(scene, inv, "frozen")
+    with pytest.raises(Invalid, match="frozen"):
+        scene.lock(inv, other)
+    with pytest.raises(Invalid, match="fixes candidate lock metadata"):
+        scene.lock(inv, incumbent, scope="changed")
+    reaffirmed = scene.lock(inv, incumbent)
+    assert reaffirmed["reaffirmed"] and reaffirmed["note_id"] == note and reaffirmed["note_digest"] == original["digest"]
+    assert reaffirmed["version"] == 1
+    assert scene.q("get_record", {"kind": "note", "id": note}) == original
+    assert [e["subject"] for e in scene.events(inv, "note.recorded")] == [note]
+    (pinned_lock,) = [entry for entry in scene.view(inv)["pinned_notes"] if entry["kind"] == "candidate_lock"]
+    assert candidate_lock_job_id(pinned_lock) == incumbent
+    assert incumbent in turn["spec"]["evidence_allowlist"]["jobs"]
+    context = pack({**scene.view(inv), "exploration": turn["spec"]["exploration"]}, [])["text"]
+    assert f"Incumbent v1: job {incumbent}" in context and "names no job" not in context
+
+
+def test_legacy_candidate_lock_without_a_job_can_be_recorded_during_exploration(scene):
+    inv = scene.investigation()
+    note = scene.note(inv, "candidate_lock", "No candidate selected yet.")["note_id"]
+    assert [event["subject"] for event in scene.events(inv, "note.recorded")] == [note]
+    (pinned_lock,) = [entry for entry in scene.view(inv)["pinned_notes"] if entry["kind"] == "candidate_lock"]
+    assert candidate_lock_job_id(pinned_lock) is None
 
 
 def test_a_launched_assess_candidate_freezes_the_selection(lab, tmp_path):
@@ -827,7 +878,9 @@ def test_when_exploration_has_stopped_a_challenger_decision_is_refused_and_repro
         assert again["accepted"] is False and again["reason"] == "invalid", again
         assert "exploration has stopped" in again["error"]["message"]
 
-    accepted = scene.propose(tid, 3, {"rationale": "r", "purpose": "reproduction", "calls": _calls(scene.trial)})
+    reproduction = _calls(scene.trial)
+    reproduction[0]["args"]["purpose"] = "reproduction"
+    accepted = scene.propose(tid, 3, {"rationale": "r", "purpose": "reproduction", "calls": reproduction})
     assert accepted["accepted"] is True and [c["tool"] for c in accepted["calls"]] == ["run_component"]
     assert [d["accepted"] for d in scene.q("get_turn", {"turn_id": tid})["decisions"]].count(True) == 1
 
@@ -913,7 +966,7 @@ def test_challenger_rounds_are_counted_from_the_turns_that_admitted_them_and_pat
 
 
 def test_a_new_incumbent_restarts_the_count_of_rounds_without_improvement(scene):
-    inv = scene.investigation(exploration={"patience_rounds": 2})
+    inv = scene.investigation(exploration={"patience_rounds": 3})
 
     def lock(depth: int, value: float):
         def work():
@@ -932,8 +985,10 @@ def test_a_new_incumbent_restarts_the_count_of_rounds_without_improvement(scene)
     assert (state["phase"], state["rounds"], state["rounds_without_improvement"], state["versions"]) == ("explore", 2, 0, 2)
     state = scene.round(inv, challenger(5, 0.85))
     assert (state["phase"], state["rounds"], state["rounds_without_improvement"]) == ("explore", 3, 1)
+    state = scene.round(inv, challenger(6, 0.84))
+    assert (state["phase"], state["rounds"], state["rounds_without_improvement"]) == ("explore", 4, 2)
     final = scene.begin(inv)["spec"]["exploration"]
-    assert (final["rounds"], final["rounds_without_improvement"]) == (4, 2)
+    assert (final["rounds"], final["rounds_without_improvement"]) == (5, 3)
     assert final["phase"] == "finalize" and final["stop"] == "ceiling-no-improvement"
     assert final["incumbent"]["version"] == 2 and final["incumbent"]["evidence"]["value"] == 0.90
 
@@ -991,3 +1046,14 @@ def test_an_unknown_needs_input_code_is_still_refused(scene):
         scene.lab.cmd(scene.wf, "mark_needs_input", {"investigation_id": inv, "code": "provider-on-fire"}, project=scene.pid)
     assert scene.q("get_investigation", {"investigation_id": inv})["needs_input"] is None
 
+
+
+def test_ordinary_finalization_without_an_incumbent_refuses_a_first_lock(scene):
+    inv = scene.investigation()
+    scene.rule(inv)
+    candidate = scene.accuracy_job(inv, .91)
+    phase = scene.cmd("enter_finalization", {"investigation_id": inv, "trigger": "exploration-boundary"})
+    assert phase["mode"] == "ordinary"
+    with pytest.raises(Invalid, match="no new or replacement lock"):
+        scene.lock(inv, candidate)
+    assert scene.locked_job(inv) is None

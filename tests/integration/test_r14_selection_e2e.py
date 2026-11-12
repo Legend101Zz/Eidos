@@ -473,7 +473,9 @@ def test_after_the_exploration_deadline_an_explore_turn_refuses_new_challengers_
     assert refused["accepted"] is False and refused["reason"] == "invalid"
     assert "exploration has stopped" in refused["error"]["message"] and "wall-holdback" in refused["error"]["message"]
     assert refused["error"]["details"]["stop"] == "wall-holdback" and refused["error"]["details"]["calls"] == [0]
-    repro = scene.propose(tid, 2, {**_challenger(scene), "purpose": "reproduction"})
+    proposal = {**_challenger(scene), "purpose": "reproduction"}
+    proposal["calls"][0]["args"]["purpose"] = "reproduction"
+    repro = scene.propose(tid, 2, proposal)
     assert repro["accepted"] is True  # reproduction is what the hold-back is for
     concluding = scene.propose(tid, 3, {"rationale": "r", "calls": [], "control": {"action": "conclude", "summary": "s"}})
     assert concluding["accepted"] is True
@@ -487,14 +489,19 @@ def test_after_the_exploration_deadline_an_explore_turn_refuses_new_challengers_
 def test_a_turn_begins_in_finalize_when_one_decision_does_not_fit_before_the_token_holdback(
         scene, decision_tokens, phase, stop):
     inv = scene.investigation(limits=TOKEN_LIMITS, settings={"max_tokens_per_decision": decision_tokens})
-    # H2 (R17 #3): the token hold-back holds before the first lock too, so where one decision does not fit, the
-    # pre-lock phase has stopped already; the candidate here is run as non-exploratory work.
+    # The token hold-back protects the phase before the first lock as well.
     pre = _exploration(scene, inv)
     assert (pre["phase"], pre["stop"]) == (("finalize", "token-holdback") if stop else ("baseline", None))
-    scene.lock(inv, scene.job(inv, metrics={"accuracy": 0.70}, purpose="reproduction"), selection=RULE)
+    candidate = scene.job(inv, metrics={"accuracy": 0.70}, purpose="reproduction")
+    if stop:
+        with pytest.raises(Invalid, match="no new or replacement lock"):
+            scene.lock(inv, candidate, selection=RULE)
+    else:
+        scene.lock(inv, candidate, selection=RULE)
     state = scene.begin(inv)["spec"]["exploration"]
     assert state["allowance"]["holdback_tokens"] == 1500 and state["allowance"]["tokens_left"] == 8500
     assert (state["phase"], state["stop"]) == (phase, stop)
+    assert scene.locked_job(inv) == (None if stop else candidate)
 
 
 def _reserve(scene: Scene, turn_id: str, slot: int, tokens: float) -> dict:
@@ -629,7 +636,8 @@ def test_in_a_finalize_turn_scoring_a_pending_challenger_is_accepted_and_a_new_c
         refused = scene.propose(tid, slot, {"rationale": "r", "purpose": "open-search", "calls": calls})
         assert refused["accepted"] is False and refused["reason"] == "invalid", (slot, refused)
         assert "exploration has stopped" in refused["error"]["message"]
-    assert scene.propose(tid, 5, {"rationale": "r", "purpose": "reproduction", "calls": _calls(scene.trial)})["accepted"]
+    assert scene.propose(tid, 5, {"rationale": "r", "purpose": "reproduction",
+                                  "calls": _calls(scene.trial, purpose="reproduction")})["accepted"]
 
     scene.finish_turn(tid)
     scene.scored(inv, pending, {"accuracy": 0.50})  # scoring it finishes its round

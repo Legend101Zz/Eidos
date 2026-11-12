@@ -1,11 +1,14 @@
+import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from study.common import DEVELOPMENT, read_json, write_json
+from study import launcher
+from study.common import DEVELOPMENT, MODEL, PROMPT_OVERRIDES, read_json, write_json
 from study.grade_block import check_bundle_paths, digest, grade_block, grade_run, reproduction_command, success_rule
-from study.launcher import plan, version_guard
+from study.launcher import plan
 
 
 class GradingRules(unittest.TestCase):
@@ -70,10 +73,88 @@ class DesignTests(unittest.TestCase):
         for block in {r["block_id"] for r in design}:
             self.assertEqual([r["arm"] for r in design if r["block_id"] == block], [1, 2, 3, 4])
 
-    def test_model_change_or_missing_model_is_incident(self):
-        self.assertIsNone(version_guard([{"model_ids_seen": ["one"]}] * 4))
-        self.assertIsNotNone(version_guard([{"model_ids_seen": ["one"]}, {"model_ids_seen": ["two"]}]))
-        self.assertIsNotNone(version_guard([{"model_ids_seen": ["one"]}, {"model_ids_seen": []}]))
+
+class BlockModelIdentityTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.runs = self.root / "runs"
+        self.rows = plan(71, cards=["D01"], runs=1)
+        (self.root / "run_arm.py").write_text(
+            "import json, sys\n"
+            "from pathlib import Path\n"
+            "run_dir = Path(sys.argv[sys.argv.index('--run-dir') + 1])\n"
+            "record = json.loads((run_dir / 'fixture-record.json').read_bytes())\n"
+            "if record is not None:\n"
+            "    (run_dir / 'run_record.json').write_text(json.dumps(record))\n"
+        )
+
+    def run_block(self, records):
+        def prepare(row, target):
+            target.mkdir()
+            record = records[row["arm"] - 1]
+            write_json(target / "fixture-record.json", record)
+
+        env = {name: value for name, value in os.environ.items() if name not in PROMPT_OVERRIDES}
+        with patch.dict(os.environ, env, clear=True), patch.object(launcher, "STUDY", self.root), \
+                patch.object(launcher, "prepare", side_effect=prepare), \
+                patch.object(launcher, "research_python", return_value=sys.executable):
+            return launcher.run_block(self.rows, self.runs)
+
+    def run_records(self, block):
+        return [read_json(Path(path) / "run_record.json") for path in block["run_dirs"].values()]
+
+    @staticmethod
+    def record(status="ok", models=(MODEL,), **fields):
+        return dict(status=status, model_ids_seen=list(models), **fields)
+
+    def test_one_missing_identity_ordinary_failure_is_retained_without_reroll(self):
+        records = [self.record("crash", ()), *[self.record() for _ in range(3)]]
+        block = self.run_block(records)
+        self.assertEqual(block["status"], "ok")
+        self.assertEqual(self.run_records(block), records)
+        with patch.object(launcher.subprocess, "Popen", side_effect=AssertionError("unexpected reroll")):
+            with patch.dict(os.environ, {}, clear=True):
+                self.assertEqual(launcher.run_block(self.rows, self.runs, replace_incident=True), block)
+        self.assertFalse((self.runs / "incidents").exists())
+
+    def test_all_ordinary_failures_can_have_unknown_identity(self):
+        records = [self.record("crash", ()), self.record("timeout", ("<synthetic>",)),
+                   self.record("token_budget", ()), self.record("invalid_output", ())]
+        block = self.run_block(records)
+        self.assertEqual(block["status"], "ok")
+        self.assertEqual(self.run_records(block), records)
+
+    def test_missing_identity_success_remains_incident(self):
+        block = self.run_block([self.record(models=("<synthetic>",)), *[self.record() for _ in range(3)]])
+        self.assertEqual(block["status"], "incident")
+        self.assertIn("did not record a returned model id", block["incident_reason"])
+
+    def test_unanimous_wrong_identity_remains_incident(self):
+        block = self.run_block([self.record(models=("wrong-model",)) for _ in range(4)])
+        self.assertEqual(block["status"], "incident")
+        self.assertIn("wrong-model", block["incident_reason"])
+
+    def test_mixed_returned_models_on_an_ordinary_failure_remain_incident(self):
+        records = [self.record(models=()), self.record("crash", (MODEL, "wrong-model")),
+                   self.record(), self.record()]
+        block = self.run_block(records)
+        self.assertEqual(block["status"], "incident")
+        self.assertIn("wrong-model", block["incident_reason"])
+
+    def test_missing_record_remains_infrastructure_incident(self):
+        block = self.run_block([None, *[self.record() for _ in range(3)]])
+        self.assertEqual(block["status"], "incident")
+        self.assertEqual(block["incident_reason"], "arm infrastructure exited without a record")
+        self.assertEqual(self.run_records(block)[0]["pre_block_status"], "incident")
+
+    def test_existing_provider_incident_keeps_its_cause_without_returned_id(self):
+        records = [self.record("incident", (), incident_reason="provider rate limit"),
+                   *[self.record() for _ in range(3)]]
+        block = self.run_block(records)
+        self.assertEqual(block["status"], "incident")
+        self.assertEqual(block["incident_reason"], "provider rate limit")
 
 
 class GradingBoundaryTests(unittest.TestCase):

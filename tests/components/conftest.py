@@ -70,6 +70,7 @@ def run_component(
     cwd: Path | None = None,
     ports: dict[str, Any] | None = None,
     label: str = "run",
+    source_dir: Path | None = None,
 ) -> Result:
     root = tmp_path / label
     inv = make_invocation(
@@ -77,7 +78,7 @@ def run_component(
         entry,
         inputs=inputs,
         config=config,
-        source_dir=COMPONENTS / name,
+        source_dir=source_dir if source_dir is not None else COMPONENTS / name,
         ports=ports,
         component_id=name,
     )

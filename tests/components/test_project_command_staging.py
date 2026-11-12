@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from conftest import COMPONENTS, run_component
 from eidos.application.handlers.queries import catalog_row
 from eidos.investigator.context import pack
@@ -66,21 +68,43 @@ def test_failure_message_names_what_the_work_dir_held(tmp_path):
     assert "missing inputs" in msg and "train.npz" in msg  # the job error the investigator sees says why
 
 
-def test_shared_producer_binds_original_checkpoint_name_to_staged_bytes(tmp_path):
+@pytest.mark.parametrize("basename, slot", [
+    ("Learned-Model.pth", "learned-model"),
+    ("unsafe name.pt", "unsafe_name"),
+    ("_checkpoint.pt", None),
+    ("é.pt", None),
+    ("A" * 130 + ".pt", None),
+])
+def test_shared_producer_binds_original_checkpoint_name_to_staged_bytes(tmp_path, basename, slot):
     import hashlib
+
+    from study.eidos_arms.common import (
+        PROJECT_COMMAND_BUNDLE_SHA256,
+        PROJECT_COMMAND_REF,
+        PROJECT_COMMAND_SOURCE,
+    )
+
+    from eidos.cli.main import builtin_component_dirs, bundle_dir
 
     project = tmp_path / "project"
     project.mkdir()
     (project / "project.py").write_text(
         "import sys\nfrom pathlib import Path\n"
-        "Path(sys.argv[1], 'Learned-Model.pth').write_bytes(b'fixture-checkpoint')\n"
+        f"Path(sys.argv[1], {basename!r}).write_bytes(b'fixture-checkpoint')\n"
     )
-    component = "eidos.project.command@1.0.8"
-    result = run_component(tmp_path, component, "project_command:run", cwd=project, inputs={},
+    component = PROJECT_COMMAND_SOURCE
+    assert hashlib.sha256(bundle_dir(component)).hexdigest() == PROJECT_COMMAND_BUNDLE_SHA256
+    assert [path.name for path in builtin_component_dirs() if path.name.startswith("eidos.project.command")] == [
+        "eidos.project.command"
+    ]
+    result = run_component(tmp_path, PROJECT_COMMAND_REF, "project_command:run", cwd=project, inputs={},
+                           source_dir=component,
                            config={"argv": ["python", "project.py", "{out}"]})
     assert result.manifest.status == "succeeded", result.manifest.error
     receipt = json.loads(result.text("receipt"))
     expected = hashlib.sha256(b"fixture-checkpoint").hexdigest()
+    if slot is None:
+        slot = "model-" + hashlib.sha256(basename.encode()).hexdigest()
     assert receipt["model_exports"] == [
-        {"slot": "learned-model", "basename": "Learned-Model.pth", "digest": expected, "size": 18}
+        {"slot": slot, "basename": basename, "digest": expected, "size": 18}
     ]

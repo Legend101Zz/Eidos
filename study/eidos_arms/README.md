@@ -95,10 +95,13 @@ for rejected/failed responses without a persisted raw response remains unavailab
 so their cached input stays in `input`; `total` still comes from ledger receipts.
 Costs remain null unless recorded. Provider 429/5xx/quota failures, infrastructure
 failures and multiple served model IDs are incidents; an expired wall is a timeout,
-model budget exhaustion is `token_budget`, malformed investigator proposals are
-`crash` when no conclusion follows, and an invalid concluded submission is
-`invalid_output`. Recovered request/turn errors do not override a concluded,
-valid answer. Arms 1–3 likewise use their final result event and answer validation.
+model budget exhaustion is `token_budget`, and an invalid concluded submission is
+`invalid_output`. Arm 4 also reports `invalid_output` when an autonomous turn
+ends on a source-bound authored scope, claim, control, missing-lock positive claim,
+or output-shape refusal. No-response and runaway outcomes without an authored
+terminal refusal, ordinary failed turns, and unknown failures remain `crash`
+unless the wall, budget or provider evidence assigns another existing status.
+Recovered request/turn errors do not override a concluded, valid answer. Arms 1–3 likewise use their final result event and answer validation.
 
 For pilot 2, every selectable environment (including `lab`, used for protocol
 controls) uses the research interpreter and its inspected package lock. The lab

@@ -1,10 +1,9 @@
 """No-model verification of common and adapter-delivered prompt provenance."""
 
-from hashlib import sha256
 import json
+from hashlib import sha256
 
 import pytest
-
 from study import launcher
 from study.common import record_live_delivery, record_prompt, render_prompt
 

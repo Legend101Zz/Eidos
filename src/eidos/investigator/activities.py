@@ -445,6 +445,12 @@ class InvestigatorActivities:
                 if (exc.error.get("details") or {}).get("reason") == "exploration-holdback":
                     return {"accepted": False, "reason": "runtime-bounded", "n_calls": 0,
                             "runtime_outcome": "exploration-exhausted"}
+                details = exc.error.get("details") or {}
+                if (turn["spec"].get("finalization_phase") and not turn["spec"].get("finalization")
+                        and details.get("dimension") in ("model_tokens", "model_usd")
+                        and details["limit"] > details["used"] + details["reserved"]):
+                    return {"accepted": False, "reason": "runtime-bounded", "n_calls": 0,
+                            "runtime_outcome": "ordinary-finalization-envelope-unavailable"}
                 return {"accepted": False, "reason": "budget-exhausted", "n_calls": 0}
             raise
         limits = dict(turn["spec"]["limits"])
@@ -534,6 +540,7 @@ class InvestigatorActivities:
                 recorded = self.wf.command("record_runtime_outcome", {
                     "turn_id": a["turn_id"], "slot": a["slot"], "runtime_outcome": res.runtime_outcome,
                     "response_artifact_id": resp["result"]["artifact_id"], "usage": res.usage,
+                    "prompt_revision": res.prompt_revision,
                     **({"phase_deadline": True} if res.runtime_outcome == "deadline-exhausted" and phase_deadline else {})},
                     project=p, key=f"runtime:{a['turn_id']}:{a['slot']}:{attempt}:{epoch}")["result"]
                 return recorded

@@ -125,7 +125,7 @@ class FinalOutcomes(unittest.TestCase):
         for error in ('HTTP 429', 'HTTP 503', 'quota exhausted'):
             for arm in (1, 2, 3):
                 with self.subTest(arm=arm, error=error), tempfile.TemporaryDirectory() as d:
-                    final = {'type': 'result', 'is_error': True, 'result': error}
+                    final = {'type': 'result', 'is_error': True, 'errors': [error]}
                     rec = self.coding_run(Path(d), arm, [{'type': 'error', 'error': error}, final])
                     self.assertEqual(rec['status'], 'incident')
             self.assertEqual(classify(stopped, [{'calls': 1}, {'error': error}], [])[0], 'incident')

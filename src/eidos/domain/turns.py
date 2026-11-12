@@ -60,6 +60,11 @@ CONCLUDING_ACTIONS = ("conclude", "stop")
 LOCAL_DECISION_BOUNDS = frozenset({"deadline-exhausted", "request-budget-exhausted",
                                    "structured-output-invalid", "reasoning-runaway"})
 
+AUTHORED_FINALIZATION_FAILURES = frozenset({
+    "conclusion-scope-contract", "finalization-claim-contract", "finalization-control",
+    "finalization-no-lock", "finalization-output-shape",
+})
+
 
 # ADR 0020: the wall reserved for the conclusion, unless the investigation configures its own threshold.
 CONCLUDE_FRACTION = 0.10

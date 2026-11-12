@@ -41,11 +41,10 @@ Effect tools (executed in order only after the lab accepts your decision):
     "change-weights"|"change-learning"|"change-structure", "component_ref"?, "config"?}. A refusal lists the parent's
     state entries. -> trial_id; launch_branch {trial_id}. A returned trial_id is listed under "Results of your recent calls" in
     the NEXT turn; launch it there.
-  For a direct reproduction or confirmation job, set the decision purpose and run_component args.purpose explicitly
-    to the intended purpose. A direct job with omitted args.purpose defaults to "open-search"; the decision label
-    does not relabel it. For a trial or branch launch, set the intended purpose when creating the plan; launch args
-    cannot override the frozen purpose. After exploration stops, a challenger-purpose decision and effect can only
-    finish an already-admitted pending round using inputs bound to its pending output. Do not add unrelated jobs.
+  For direct reproduction or confirmation, set decision and run_component args.purpose explicitly.
+    Direct job purpose defaults to "open-search".
+    Launches use the frozen plan purpose. After exploration stops, challenger decisions/effects may only finish
+    admitted pending work with inputs bound to its pending output.
   author_source {files:{path: text}}  -> a source-bundle artifact id: candidate project files (e.g. a changed project.py)
     for run_component inputs.source of eidos.project.command (the whole-trainer path). No build, no new component.
     Use it in the same decision with a reference (below), or from "Artifacts you created" in a later turn.
@@ -89,9 +88,8 @@ Effect tools (executed in order only after the lab accepts your decision):
     expect its refusal, and conclude with disposition "candidate" and your validation point estimate. The outcome is
     "candidate submitted for confirmation" and the independent evaluator decides. That is a normal, complete result.
   export_model {checkpoint_artifact_id, behavior_check_job_id}; record_note {kind, text, evidence_refs}
-  Before the first candidate lock and every replacement lock, run the visible readiness check on the exact
-    intended source and checkpoint, and verify fresh inference before recording the lock. Repair and recheck
-    within ordinary search authority before locking. This does not permit a tie re-lock or changes after freeze.
+  Before each candidate lock, verify fresh inference via the visible readiness check on its exact source and checkpoint.
+    Repair before locking within search authority. No tie re-lock or changes after freeze.
   To lock a candidate: record_note {kind: "candidate_lock", text: "{\\"job_id\\": \\"<job>\\"}"}, the text being exactly
     that JSON naming the selected training job, or any text with exactly one job in evidence_refs. A lock that names no
     job cannot be assessed. A lock needs the selection rule first: a "selection_rule" note, or "selection" in the lock's
@@ -105,8 +103,7 @@ Effect tools (executed in order only after the lab accepts your decision):
     {"reference": "art_selection_labels"}}}. "validation" is the scientific split; the scorer's label port is
     "reference", not "validation". Inspect describe_component before recording: invalid ports are refused prospectively.
   Reproduction-seed example: select with data.config {"split": "validation"}, run the locked recipe with seed 11,
-    then reproduce it with seed 23, setting decision purpose and run_component args.purpose to "reproduction",
-    and score it on the same reference artifact. Do not fix
+    then reproduce with seed 23 and both purposes "reproduction", scoring on the same reference artifact. Do not fix
     data.config.seed=11 when fresh-seed reproduction must match: fixed config values match exactly and seed 23 would
     be unscored. A previously recorded rule is immutable; report its limitations rather than rewriting it.
 Batches: calls run in order, and any argument of a later call can be {"$ref": "call[<i>].<field>"}, an earlier call of

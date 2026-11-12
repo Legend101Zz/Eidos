@@ -12,8 +12,9 @@ from pathlib import Path
 from . import lab
 
 ROOT = Path(__file__).resolve().parents[2]
-PROJECT_COMMAND_REF = "eidos.project.command@1.0.8"
-PROJECT_COMMAND_BUNDLE_SHA256 = "f6c7f24bce71ae633970b850834cbb36f208293c1080273427d2d5bf549e29b1"
+PROJECT_COMMAND_REF = "eidos.project.command@1.0.9"
+PROJECT_COMMAND_SOURCE = Path(__file__).resolve().parent / "components" / PROJECT_COMMAND_REF
+PROJECT_COMMAND_BUNDLE_SHA256 = "d6ea9fdd53b1936f17ef8c65f21be2d7928e219dfa2707822118d09ff15fa6a7"
 
 
 
@@ -66,7 +67,7 @@ def install_shared_project_command(client, project, run_dir):
     """Install the same controller-owned producer in every study runtime."""
     from eidos.cli.main import bundle_dir, install_component
 
-    directory = ROOT / "components" / PROJECT_COMMAND_REF
+    directory = PROJECT_COMMAND_SOURCE
     bundle = bundle_dir(directory)
     if hashlib.sha256(bundle).hexdigest() != PROJECT_COMMAND_BUNDLE_SHA256:
         raise RuntimeError("controller project-command bundle differs from its pin")
@@ -283,6 +284,8 @@ def classify(shown, receipts, models, timed_out=False, answer_valid=True):
         return ('ok' if answer_valid else 'invalid_output'), None
     if provider_failure:
         return 'incident', 'provider/infrastructure failure: ' + text[:1800]
-    if terminal_cause == 'conclusion-scope-contract':
+    if (terminal.get('kind') == 'investigator-output-invalid' and terminal.get('runtime_record_id')
+            and terminal_cause in {'conclusion-scope-contract', 'finalization-claim-contract', 'finalization-control',
+                                   'finalization-no-lock', 'finalization-output-shape'}):
         return 'invalid_output', None
     return 'crash', 'investigator ended without a conclusion or requires operator input: ' + text[:1800]

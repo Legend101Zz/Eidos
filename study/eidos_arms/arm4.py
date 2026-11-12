@@ -109,6 +109,37 @@ def stop_investigation(c, project, inv):
                      project=project, key='study-outer-stop:' + inv)
 
 
+def finalization_read_coverage(receipts):
+    reports = [receipt.get("structured_output") or {} for receipt in receipts if receipt.get("phase") == "finalization"]
+    if any(report.get("read_rounds_forfeited") is True for report in reports):
+        return "forfeited"
+    if not reports or any(report.get("read_rounds_forfeited") is not False for report in reports):
+        return None
+    if all(report.get("finalization_read_round_limit") == 0 for report in reports):
+        return "no_read_rounds_available"
+    return "not_forfeited"
+
+
+def investigator_abstention_reason(shown, status):
+    conclusion = (shown.get("body") or {}).get("conclusion") or {}
+    if status != "ok" or (conclusion.get("claim_state") or {}).get("state") != "abstained":
+        return None
+    recovery = shown.get("finalization_export_receipt")
+    ordinary = shown.get("finalization_phase") or {}
+    if recovery:
+        if recovery.get("investigator_concluded") is not True or "locked_candidate" not in recovery:
+            return None
+        locked = recovery["locked_candidate"]
+        if locked is not None and (not isinstance(locked, dict)
+                or locked.get("status") not in {"admitted", "running", "failed", "cancelled", "pruned"}):
+            return None
+    elif not ordinary or "incumbent" not in conclusion or conclusion["incumbent"] is not None:
+        return None
+    triggers = {ordinary.get("trigger"), (shown.get("finalization") or {}).get("trigger")}
+    boundary = {"exploration-boundary", "exploration-token-holdback", "ordinary-finalization-time-exhausted"}
+    return "no-eligible-lock-at-boundary" if triggers & boundary else "no-eligible-lock-at-finalization"
+
+
 def run(run_dir, meta, *, eval_audit_config=None):
     setup_started_at, setup_begin = utc(), time.monotonic()
     lab.start()
@@ -256,7 +287,9 @@ def run(run_dir, meta, *, eval_audit_config=None):
             write_json(run_dir / 'validation_error.json', {'error': str(exc)})
         status, incident = classify(observed or shown, receipts, models, expired.is_set(), valid)
         controller_abstention = (shown.get('body') or {}).get('controller_abstention')
-        return {'status': status, **({'controller_abstention': controller_abstention} if controller_abstention else {}), 'incident_reason': incident, 'tokens': tokens, 'billed_usd': billed,
+        return {'status': status, 'finalization_read_coverage': finalization_read_coverage(receipts),
+                'investigator_abstention_reason': investigator_abstention_reason(shown, status),
+                **({'controller_abstention': controller_abstention} if controller_abstention else {}), 'incident_reason': incident, 'tokens': tokens, 'billed_usd': billed,
                 'started_at': began_at,
                 'model_ids_seen': models, 'agent_claim': agent_claim, 'transcript': 'transcript.jsonl',
                 'project': project, 'investigation_id': inv, 'selected_job': selected,

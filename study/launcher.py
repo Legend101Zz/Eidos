@@ -60,13 +60,16 @@ def plan(seed, cards=None, runs=3):
 CLIENT_PLACEHOLDER_MODELS = frozenset({"<synthetic>"})
 
 
+ORDINARY_FAILURES = frozenset({"crash", "timeout", "token_budget", "invalid_output"})
+
+
 def version_guard(records):
-    def served(record):
-        return [m for m in record.get("model_ids_seen", []) if m not in CLIENT_PLACEHOLDER_MODELS]
-    models = set(model for record in records for model in served(record))
-    if len(models) != 1:
-        return "block must contain exactly one returned model id; saw " + repr(sorted(models))
-    if any(not served(record) for record in records):
+    served = [set(record.get("model_ids_seen", [])) - CLIENT_PLACEHOLDER_MODELS for record in records]
+    unexpected = set().union(*served) - {MODEL}
+    if unexpected:
+        return "block recorded an unexpected returned model id; saw " + repr(sorted(unexpected))
+    if any(not models and record.get("status") not in ORDINARY_FAILURES | {"incident"}
+           for record, models in zip(records, served, strict=True)):
         return "one or more runs did not record a returned model id"
     return None
 

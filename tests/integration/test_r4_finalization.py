@@ -91,7 +91,7 @@ def test_refusals_finalize_the_locked_incumbent_with_provenance_and_separate_usa
         else:
             content = {'rationale': 'report fixed incumbent', 'calls': [], 'control': {'action': 'conclude',
                 'summary': f'Locked incumbent {job}: validation accuracy 0.91; unreproduced, no held-out confirmation.',
-                'claim': {'disposition': 'candidate', 'point_estimate': 0.91}}}
+                'claim': {'disposition': 'candidate', 'point_estimate': {'metric': 'accuracy', 'value': 0.91}}}}
         return ModelResponse(parts=[TextPart(json.dumps(content))], usage=RequestUsage(input_tokens=200, output_tokens=30))
 
     investigator = scene.lab.principal(f'investigator-{inv}', ['investigator'], [scene.pid])
@@ -270,7 +270,7 @@ def test_real_boundary_preserves_ordinary_finalization_across_turns(scene, monke
     assert turn['spec']['limits']['max_calls'] > 0
     assert 'exploration_deadline_unix' not in turn['spec']['completion']
     accepted = scene.propose(turn['turn_id'], 0, {'rationale': 'reproduce incumbent', 'purpose': 'reproduction',
-        'calls': [{'tool': 'run_component', 'args': {'component_ref': scene.trial,
+         'calls': [{'tool': 'run_component', 'args': {'component_ref': scene.trial, 'purpose': 'reproduction',
             'config': {'split': 'validation', 'seed': 23}}}]})
     assert accepted['accepted'], accepted
     fresh = scene.job(inv, purpose='reproduction', config={'seed': 23})

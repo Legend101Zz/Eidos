@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from typing import Any
@@ -367,9 +368,17 @@ def check_note(ctx: Ctx, inv_id: str, body: dict[str, Any]) -> dict[str, Any] | 
         return None
     if kind != "candidate_lock":
         return None
+    wall = inv.body.get("wall")
+    completion = turn_rules.completion_state(wall["deadline_unix"], time.time(), wall["conclude_threshold_seconds"]) \
+        if wall else None
+    phase = exploration_state(ctx, inv, completion=completion, budgets=ctx.tx.budgets(f"inv:{inv_id}"))
     job_id = candidate_lock_job_id(body)
-    if job_id is None:  # identifies no job: recorded as before, and assessment refuses it (R13)
-        return None
+    if job_id is None:
+        if phase["phase"] == "finalize":
+            raise Invalid("ordinary finalization fixes candidate identity; a candidate lock must identify the existing job",
+                          details={"stop": phase.get("stop")},
+                          next_action="Keep the existing candidate lock or report its absence.")
+        return None  # Legacy exploration notes without a job are recorded; assessment refuses them (R13).
     text = rules.note_json(body) or {}
     selection = text.get("selection")
     rule: dict[str, Any] | None = existing[0] if existing else None
@@ -391,6 +400,28 @@ def check_note(ctx: Ctx, inv_id: str, body: dict[str, Any]) -> dict[str, Any] | 
         raise Invalid("the selection is frozen: an evidence plan was frozen or an assessment requested for this "
                       "investigation, so the incumbent cannot change (assessor feedback never selects)",
                       details={"job_id": job_id}, next_action="Assess or conclude with the locked candidate.")
+    if phase["phase"] == "finalize":
+        if previous is None or previous["job_id"] != job_id:
+            raise Invalid("ordinary finalization fixes candidate identity; no new or replacement lock",
+                          details={"job_id": job_id, "incumbent": previous["job_id"] if previous else None,
+                                   "stop": phase.get("stop")},
+                          next_action="Finish already-admitted work and conclude with the existing lock or report its absence.")
+        prior_note = ctx.tx.require("note", previous["note_id"])
+        prior_text = rules.note_json(prior_note.body)
+        omits_only_selection = (prior_text is not None and "selection" in prior_text and "selection" not in text
+                                and json.dumps({key: value for key, value in prior_text.items() if key != "selection"},
+                                               sort_keys=True) == json.dumps(text, sort_keys=True))
+        same_text = prior_note.body.get("text") == body["text"] or omits_only_selection
+        other_fields = {key: value for key, value in body.items() if key != "text"}
+        original_fields = {key: prior_note.body.get(key) for key in other_fields}
+        if not same_text or json.dumps(original_fields, sort_keys=True) != json.dumps(other_fields, sort_keys=True):
+            raise Invalid("ordinary finalization fixes candidate lock metadata",
+                          details={"job_id": job_id, "note_id": prior_note.id, "note_digest": prior_note.digest},
+                          next_action="Keep the existing candidate lock. Record separate observations as ordinary notes.")
+        return {"reaffirmed_lock": {"note_id": prior_note.id, "note_digest": prior_note.digest,
+                                    "job_id": job_id, "version": previous["version"],
+                                    "incumbent": {"version": previous["version"], "basis": "same-incumbent",
+                                                  "evidence": previous.get("evidence")}}}
     if existing is None and previous is not None and previous["job_id"] != job_id:
         raise Invalid("the selection rule must be recorded before the challenger round: a rule first given with a "
                       "re-lock was chosen after its results were visible",

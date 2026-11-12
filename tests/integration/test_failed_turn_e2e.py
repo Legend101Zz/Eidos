@@ -479,7 +479,7 @@ async def test_failed_default_recovery_finishes_with_an_attributed_controller_ab
 ])
 async def test_default_terminal_non_retryable_provider_before_any_lock_abstains(env, lab, provider, reply, code, kind):
     fake = provider([reply], reply)
-    async with running(env, lab, fake, investigator_options={"finalization": "autonomous"}) as run:
+    async with running(env, lab, fake, investigator_options={"finalization": "autonomous", "wall_seconds": 600}) as run:
         result = await asyncio.wait_for(run.handle.result(), 20)
         assert result["status"] == "abstained" and result["reason"] == "controller-abstained"
         shown = run.view()
@@ -665,8 +665,8 @@ async def test_inflight_exploration_deadline_preserves_ordinary_reproduction_and
     reproduction = decision_reply({
         "rationale": "Synthetic ordinary reproduction of the locked fixture recipe.",
         "purpose": "reproduction",
-        "calls": [{"tool": "run_component", "args": {"component_ref": scene.trial, "environment": "lab", "purpose": "reproduction",
-                  "config": {"split": "validation"}, "wall_seconds": 4}}],
+        "calls": [{"tool": "run_component", "args": {"component_ref": scene.trial, "inputs": {}, "environment": "lab",
+                  "config": {"split": "validation"}, "purpose": "reproduction", "wall_seconds": 4}}],
     }, "ordinary-reproduction")
     conclusion = decision_reply({
         "rationale": "Synthetic conclusion that reproduction was admitted, with no verification asserted.",
@@ -685,10 +685,17 @@ async def test_inflight_exploration_deadline_preserves_ordinary_reproduction_and
         boundary = early_turn["spec"]["completion"]["exploration_deadline_unix"]
         assert 11 <= boundary - fake.requests[0]["received_at"] <= 17
         assert fake.requests[1]["received_at"] >= boundary
+        ordinary_prompt = str(fake.requests[1]["body"]["messages"])
+        assert 'set decision and run_component args.purpose explicitly' in ordinary_prompt
+        assert "run_component {component_ref, inputs:{port: artifact_id}, config, purpose?" in ordinary_prompt
         [bounded] = run.events("decision.runtime_bounded")
         assert bounded["body"]["phase_deadline"] is True and bounded["body"]["usage"]["uncertain"]
         accepted = run.events("decision.accepted")
-        attempted = scene.q("get_record", {"kind": "decision_receipts", "id": accepted[0]["subject"]})["body"]
+        ordinary_turn = scene.q("get_turn", {"turn_id": accepted[0]["body"]["turn_id"]})
+        first_decision = ordinary_turn["decisions"][0]
+        assert first_decision["accepted"] and first_decision["slot"] == 0
+        attempted = first_decision["body"]
+        assert attempted["purpose"] == attempted["calls"][0]["args"]["purpose"] == "reproduction"
         admitted = [event for event in run.events("job.admitted") if event["body"]["purpose"] == "reproduction"]
         assert len(admitted) == 1, attempted
         [reproduced] = admitted
@@ -711,8 +718,10 @@ async def test_conclusion_reserve_uses_only_recorded_metrics_when_ordinary_time_
         scene.lock(inv, locked["job_id"])
         fake.script = [decision_reply({"rationale": "Read the recorded locked job.",
                                       "read": [{"tool": "get_job", "args": {"job_id": locked["job_id"]}}]})]
+        time.sleep(3)  # lock exists before the distinct conclusion reserve begins
 
-    options = {"finalization": "autonomous", "wall_seconds": 20, "conclude_threshold_seconds": 30}
+    options = {"finalization": "autonomous", "wall_seconds": 22, "conclude_threshold_seconds": 20,
+               "exploration": {"min_holdback_seconds": 0, "max_holdback_seconds": 0}}
     async with running(env, lab, fake, investigator_options=options, scene=scene, seed_investigation=seed) as run:
         assert (await asyncio.wait_for(run.handle.result(), 15))["reason"] == "concluded"
         [entered] = run.events("investigation.finalization_started")
@@ -814,3 +823,117 @@ async def test_ordinary_finalization_pending_exception_is_bound_to_the_effect(en
             assert scorer["body"]["component"] == scene.scorer
             job = scene.q("get_job", {"job_id": scorer["subject"]})
             assert job["lock"]["inputs"]["predictions"]["artifact_id"] == pending["artifact"]
+
+
+async def test_autonomous_claim_shape_correction_reaches_durable_acceptance(env, lab, provider):
+    first = decision_reply({"rationale": "Synthetic invalid claim.", "calls": [],
+                            "control": {"action": "conclude", "claim": {"disposition": "abstain", "point_estimate": .91}}})
+    claim = {"disposition": "abstain", "obligations": ["Synthetic evidence is limited."]}
+    second = decision_reply({"rationale": "Synthetic authored correction.", "calls": [],
+                             "control": {"action": "conclude", "summary": "No verified claim.", "claim": claim}})
+    fake = provider([first, second], second)
+    async with running(env, lab, fake, investigator_options={"finalization": "autonomous"},
+                       start_in_finalization=True) as run:
+        assert (await asyncio.wait_for(run.handle.result(), 25))["reason"] == "concluded"
+        assert fake.count == 2
+        assert "control.claim.point_estimate must be an object" in str(fake.requests[1]["body"]["messages"])
+        [ended] = run.view()["turns"]
+        turn = lab.q(lab.admin, "get_turn", {"turn_id": ended["id"]}, project=run.pid)
+        [accepted] = turn["decisions"]
+        assert accepted["accepted"] and accepted["slot"] == 0 and accepted["body"]["control"]["claim"] == claim
+        [usage] = [event["body"]["usage"] for event in run.events("model.usage")]
+        report = usage["structured_output"]
+        assert report["read_rounds_forfeited"] is True and "last_error_code" not in report
+
+
+@pytest.mark.parametrize("late", [False, True])
+async def test_short_positive_ordinary_reserve_admits_only_an_affordable_conclusion(env, lab, provider, late):
+    scene = Scene(lab)
+    stop = decision_reply({"rationale": "Synthetic scoped closure.", "calls": [],
+                           "control": {"action": "stop", "summary": "No confirmation."}}, "short-reserve-stop")
+    status, spend = decision_reply({"rationale": "Ordinary progress note.", "calls": [
+        {"tool": "record_note", "args": {"kind": "hypothesis", "text": "synthetic"}}]}, "ordinary-spend")
+    spend["usage"].update(prompt_tokens=110_000, total_tokens=110_020)
+    fake = provider([(status, spend), stop] if late else [stop], stop)
+
+    def seed(inv):
+        scene.rule(inv)
+        scene.lock(inv, scene.accuracy_job(inv, .91))
+
+    async with running(env, lab, fake, investigator_options={"finalization": "autonomous", "exploration": {"max_rounds": 0}},
+                       investigation_limits={"model_tokens": 185_000 if late else 95_000}, scene=scene,
+                       seed_investigation=seed if late else None) as run:
+        assert (await asyncio.wait_for(run.handle.result(), 25))["reason"] == "concluded"
+        assert fake.count == (2 if late else 1)
+        assert run.stop_reasons() == (["runtime-bounded", "concluded"] if late else ["concluded"])
+        [entered] = run.events("investigation.finalization_started")
+        assert (entered["body"]["runtime_outcome"] if late else entered["body"]["trigger"]) == (
+            "ordinary-finalization-envelope-unavailable")
+        usages = [event["body"]["usage"] for event in run.events("model.usage")]
+        assert [u["calls"] for u in usages] == ([1, 1] if late else [1])
+        assert run.model_tokens()["reserved"] == 0
+        assert run.model_tokens()["used"] == (110_140 if late else 120)
+
+
+async def test_ordinary_finalization_cannot_relock_a_scored_new_recipe(env, lab, provider):
+    scene = Scene(lab)
+    incumbent = {}
+    stop = decision_reply({"rationale": "Synthetic closure with unchanged incumbent.", "calls": [],
+                           "control": {"action": "stop", "summary": "Keep the original lock."}})
+    reproduction = decision_reply({"rationale": "Synthetic different recipe with reproduction label.",
+        "purpose": "reproduction", "control": {"action": "wait_for_jobs"}, "calls": [
+            {"tool": "run_component", "args": {"component_ref": scene.trial, "environment": "lab",
+             "purpose": "reproduction", "config": {"split": "validation", "recipe": "different"}}}]})
+    fake = provider([reproduction], stop)
+
+    def seed(inv):
+        scene.rule(inv, scorer="proj.scorer")
+        incumbent["job"] = scene.job(inv, config={"recipe": "incumbent"})
+        scene.scored(inv, incumbent["job"], {"accuracy": .71})
+        incumbent["note"] = scene.lock(inv, incumbent["job"])["note_id"]
+        incumbent["digest"] = scene.q("get_record", {"kind": "note", "id": incumbent["note"]})["digest"]
+
+    def admitted(run, component, purpose):
+        return next((event["subject"] for event in run.events("job.admitted")
+                     if event["body"]["purpose"] == purpose and event["body"]["component"] == component), None)
+
+    async with running(env, lab, fake, investigator_options={"exploration": {"max_rounds": 0}},
+                       scene=scene, seed_investigation=seed, idle_poll_seconds=1) as run:
+        recipe = await until("ordinary new labelled recipe", lambda: admitted(run, scene.trial, "reproduction"))
+        # Publication assigns this fixture slot's deterministic artifact ID.
+        predictions = f"art_{recipe[4:]}_predictions"
+        fake.answer_from_now_on(decision_reply({"rationale": "Score the published recipe predictions.",
+            "purpose": "reproduction", "control": {"action": "wait_for_jobs"}, "calls": [
+                {"tool": "run_component", "args": {"component_ref": scene.scorer, "environment": "lab",
+                 "purpose": "reproduction", "inputs": {"predictions": predictions}, "config": {"split": "validation"}}}]}))
+        await asyncio.to_thread(scene.finish_job, recipe)
+        assert scene.output(recipe) == predictions
+        score = await until("ordinary visible scorer", lambda: admitted(run, scene.scorer, "reproduction"))
+        relock = decision_reply({"rationale": "Attempt a different lock after scoring.", "calls": [
+            {"tool": "record_note", "args": {"kind": "candidate_lock", "text": json.dumps({"job_id": recipe})}},
+            {"tool": "record_note", "args": {"kind": "candidate_lock",
+                "text": json.dumps({"job_id": incumbent["job"], "scope": "changed", "claim": "changed"}),
+                "evidence_refs": [predictions]}},
+            {"tool": "record_note", "args": {"kind": "candidate_lock", "text": json.dumps({"job_id": incumbent["job"]})}},
+        ], "control": {"action": "stop", "summary": "Close after the lock check."}})
+        fake.answer_from_now_on(relock)
+        await asyncio.to_thread(scene.finish_job, score, ref=scene.scorer, metrics={"accuracy": .97})
+        assert (await asyncio.wait_for(run.handle.result(), 25))["reason"] == "concluded"
+        notes = scene.notes(run.inv, "candidate_lock")
+        [note] = notes
+        assert note["id"] == incumbent["note"] and note["digest"] == incumbent["digest"]
+        assert json.loads(note["body"]["text"])["job_id"] == incumbent["job"]
+        assert [event["subject"] for event in run.events("note.recorded")
+                if event["body"].get("kind") == "candidate_lock"] == [incumbent["note"]]
+        decision = next(event for event in reversed(run.events("decision.accepted")) if event["body"]["calls"])
+        attempts = scene.q("get_record", {"kind": "decision_receipts", "id": decision["subject"]})["body"]["receipts"]
+        assert attempts[0]["ok"] is False and "ordinary finalization fixes candidate identity" in attempts[0]["error"]["message"]
+        assert attempts[1]["ok"] is False and "fixes candidate lock metadata" in attempts[1]["error"]["message"]
+        assert attempts[2]["ok"] is True
+        reaffirmed = attempts[2]["result"]
+        assert {key: reaffirmed[key] for key in ("note_id", "note_digest", "job_id", "version", "reaffirmed")} == {
+            "note_id": incumbent["note"], "note_digest": incumbent["digest"], "job_id": incumbent["job"],
+            "version": 1, "reaffirmed": True,
+        }
+        assert reaffirmed["incumbent"]["evidence"] == note["body"]["incumbent"]["evidence"]
+        assert scene.q("get_job", {"job_id": score})["terminal"]["receipt"]["metrics"]["accuracy"] == .97

@@ -24,6 +24,10 @@ from temporalio.exceptions import (
     CancelledError,
     ChildWorkflowError,
     RetryState,
+    TimeoutType,
+)
+from temporalio.exceptions import (
+    TimeoutError as TemporalTimeoutError,
 )
 
 from eidos.domain.turns import LOCAL_DECISION_BOUNDS, WALL_REACHED, turn_boundary
@@ -658,7 +662,11 @@ class TurnWorkflow:
             stop = "budget-exhausted" if isinstance(cause, ApplicationError) and cause.type == "BUDGET_EXHAUSTED" else "error"
             if stop == "error" and boundary is not None and (
                     workflow.now().timestamp() >= boundary or (
-                        exc.retry_state == RetryState.TIMEOUT and not workflow.patched("true-phase-activity-timeout-v1"))):
+                        exc.retry_state == RetryState.TIMEOUT and (
+                            not workflow.patched("true-phase-activity-timeout-v1")
+                            or workflow.patched("phase-schedule-to-close-v1") and (
+                                not isinstance(cause, TemporalTimeoutError)
+                                or cause.type == TimeoutType.SCHEDULE_TO_CLOSE)))):
                 # ADR 0020 addendum R10: the boundary ended this activity (a retry that would cross it counts). That is
                 # not a failed turn: the coordinator starts a fresh one, which sees the wall time then left.
                 stop = "deadline"

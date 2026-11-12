@@ -46,7 +46,6 @@ jobs:
           export EIDOS_RESEARCH_PYTHON="$PWD/.venv/bin/python"
           export EIDOS_STUDY_PYTHON="$PWD/.venv/bin/python"
           uv run python -m unittest study.eidos_arms.test_contract study.eidos_arms.test_parity study.tests.test_grading
-          uv run pytest -q study/tests/test_live_prompt_receipts.py
       - run: uv run pytest tests/mcp tests/reporting -q   # the live-lab MCP test is covered by the e2e-journey job
 
   integration:

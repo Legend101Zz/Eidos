@@ -418,6 +418,12 @@ def _ordinary_finalization(ctx: Ctx, inv, trigger: str) -> dict:
     return body
 
 
+def _ordinary_token_envelope_fits(inv, budgets: dict) -> bool:
+    budget = budgets.get("model_tokens")
+    return budget is None or budget["limit_amount"] - budget["used"] - budget["reserved"] >= (
+        exploration.decision_tokens(inv) or 0)
+
+
 @command("enter_finalization", "turn")
 def enter_finalization(ctx: Ctx, p: dict) -> dict:
     """Durably admit at most one conclude-only recovery in the original envelope (ADR 0027)."""
@@ -432,7 +438,7 @@ def enter_finalization(ctx: Ctx, p: dict) -> dict:
         budgets = ctx.tx.budgets(inv_scope(inv.id))
         has_reserve = all(budget["used"] + budget["reserved"] < budget["limit_amount"]
                           for key, budget in budgets.items() if key in ("model_tokens", "model_usd", "turns"))
-        if has_reserve and not (completion or {}).get("conclude_now"):
+        if has_reserve and _ordinary_token_envelope_fits(inv, budgets) and not (completion or {}).get("conclude_now"):
             return _ordinary_finalization(ctx, inv, trigger)
     return _enter_finalization(ctx, inv, trigger, p.get("runtime_outcome"))
 
@@ -567,7 +573,10 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
     # ADR 0023: the incumbent, challenger rounds and the exploration allowance, as of the turn's start (immutable)
     state = exploration.exploration_state(ctx, inv, completion=completion, budgets=budgets)
     if state.get("phase") == "finalize":
-        spec["finalization_phase"] = _ordinary_finalization(ctx, inv, str(state.get("stop") or "exploration-ended"))
+        short_envelope = not _ordinary_token_envelope_fits(inv, budgets)
+        recovery = _enter_finalization(ctx, inv, "ordinary-finalization-envelope-unavailable") if short_envelope else {}
+        if not recovery.get("enabled"):
+            spec["finalization_phase"] = _ordinary_finalization(ctx, inv, str(state.get("stop") or "exploration-ended"))
     if (completion or {}).get("conclude_now"):
         _enter_finalization(ctx, inv, "ordinary-finalization-time-exhausted")
     finalization = ctx.tx.get_record(FINALIZATION_KIND, inv.id)
@@ -858,10 +867,15 @@ def record_runtime_outcome(ctx: Ctx, p: dict) -> dict:
     body = {k: p.get(k) for k in ("turn_id", "slot", "runtime_outcome", "response_artifact_id", "usage")}
     if p.get("phase_deadline") is True:
         body["phase_deadline"] = True
+    if p.get("prompt_revision"):
+        body["prompt_revision"] = p["prompt_revision"]
     report = (p.get("usage") or {}).get("structured_output") or {}
-    if (p["runtime_outcome"] == "structured-output-invalid"
-            and report.get("last_error_code") == "conclusion-scope-contract"):
-        body["terminal_cause"] = "conclusion-scope-contract"
+    cause = report.get("last_error_code")
+    if (turn["spec"].get("finalization") and p["runtime_outcome"] == "structured-output-invalid"
+            and p.get("response_artifact_id") and cause in turn_rules.AUTHORED_FINALIZATION_FAILURES):
+        body["terminal_cause"] = cause
+        body["problems"] = [redact_value(problem)[:300] for problem in (report.get("errors") or [])[-4:]
+                            if isinstance(problem, str)]
     rid = f"{turn['id']}:{p['slot']}:{ctx.command_key}"
     ctx.tx.put_record("runtime_outcome", rid, ctx.project_id, body, created_by=ctx.principal.id,
                       status="recorded", parent_id=turn["id"])
@@ -1481,9 +1495,11 @@ def _close_turn(ctx: Ctx, turn: dict, p: dict) -> dict:
         inv = ctx.tx.require("investigation", inv_id, lock=True)
         final = ctx.tx.require(FINALIZATION_KIND, inv_id)
         runtime_record = ctx.tx.get_record("runtime_outcome", p["runtime_record_id"]) if p.get("runtime_record_id") else None
-        scope_refusal = (runtime_record and runtime_record.body.get("turn_id") == turn["id"]
-                         and runtime_record.body.get("terminal_cause") == "conclusion-scope-contract"
-                         and reason == "runtime-bounded" and not late_wall)
+        if (runtime_record and runtime_record.body.get("turn_id") == turn["id"]
+                and runtime_record.body.get("terminal_cause") in turn_rules.AUTHORED_FINALIZATION_FAILURES
+                and reason == "runtime-bounded" and not late_wall):
+            failure = {"kind": "investigator-output-invalid", "reason": runtime_record.body["terminal_cause"],
+                       "runtime_record_id": runtime_record.id, "problems": runtime_record.body["problems"]}
         receipt = {"schema": "finalization-export-receipt/1", "investigation_id": inv_id,
                    "turn_id": turn["id"], "locked_candidate": turn["spec"]["finalization"].get("locked_candidate"),
                    **{k: turn["spec"]["finalization"].get(k) for k in (
@@ -1497,8 +1513,7 @@ def _close_turn(ctx: Ctx, turn: dict, p: dict) -> dict:
                    "provenance_limits": turn["spec"]["finalization"]["provenance_limits"],
                    "investigator_concluded": reason == "concluded" and not control_refused,
                    "stop_reason": reason, "failure": failure or ({"kind": "finalization-incomplete",
-                                                                   "reason": turn_rules.WALL_REACHED if late_wall else
-                                                                   "conclusion-scope-contract" if scope_refusal else reason}
+                                                                   "reason": turn_rules.WALL_REACHED if late_wall else reason}
                                                                  if reason != "concluded" else None)}
         abstention = _finish_finalization(ctx, inv, final, receipt, turn_rules.WALL_REACHED if late_wall else reason)
     elif late_wall:
@@ -1581,6 +1596,8 @@ def record_note(ctx: Ctx, p: dict) -> dict:
     if inv_id and body.get("kind") in exploration.NOTE_KINDS:  # ADR 0023: rule fixed, re-lock only on better evidence
         incumbent = exploration.check_note(ctx, inv_id, body)
         if incumbent is not None:
+            if prior := incumbent.get("reaffirmed_lock"):
+                return {**prior, "reaffirmed": True}
             body["incumbent"] = incumbent
     ctx.tx.put_record("note", nid, ctx.project_id, body, created_by=ctx.principal.id, status=p.get("status") or "open",
                       parent_id=inv_id)

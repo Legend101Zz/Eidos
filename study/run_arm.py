@@ -111,15 +111,71 @@ def incident_text(text):
     )
 
 
+ERROR_FIELDS = ("error", "errors")
+ERROR_CODE_FIELDS = ("status", "status_code", "statusCode", "code")
+
+
 def event_error(event):
-    """Inspect error fields, never arbitrary scientific text or tool outputs."""
-    if event.get("type") == "error" or event.get("is_error"):
-        return json.dumps(event)
-    if event.get("error"):
-        return json.dumps(event["error"])
-    if event.get("type") == "result" and event.get("subtype", "").startswith("error"):
-        return json.dumps(event.get("errors", event))
-    return ""
+    """Inspect declared error fields from result, provider error and assistant events."""
+    event_type = event.get("type")
+    if event_type not in ("result", "error", "assistant"):
+        return ""
+    if (event_type != "error" and not event.get("is_error") and not event.get("error")
+            and not (event_type == "result" and event.get("subtype", "").startswith("error"))):
+        return ""
+    details = {field: event[field] for field in ERROR_FIELDS if field in event}
+    if event_type == "error" and isinstance(event.get("message"), str):
+        details["message"] = event["message"]
+    for field in ERROR_CODE_FIELDS:
+        code = event.get(field)
+        if isinstance(code, (int, str)) and re.fullmatch(r"[45]\d{2}", str(code)):
+            details[field] = code
+    return json.dumps(details)
+
+
+def _legacy_rate_limit_text(event):
+    """Return the typed Claude rate-limit text that a legacy final result may echo."""
+    if event.get("type") != "assistant" or event.get("error") != "rate_limit":
+        return None
+    message = event.get("message")
+    if not isinstance(message, dict) or message.get("model") != "<synthetic>":
+        return None
+    content = message.get("content")
+    if not isinstance(content, list) or len(content) != 1:
+        return None
+    block = content[0]
+    if isinstance(block, dict) and block.get("type") == "text":
+        text = block.get("text")
+        if isinstance(text, str) and text.startswith("API Error:"):
+            return text
+    return None
+
+
+def _is_legacy_rate_limit_echo(event, prior_text):
+    return (
+        prior_text is not None
+        and event.get("type") == "result" and event.get("subtype") == "success"
+        and event.get("is_error") is True
+        and not any(field in event for field in (*ERROR_FIELDS, *ERROR_CODE_FIELDS))
+        and event.get("result") == prior_text
+    )
+
+
+def completed_provider_response_id(event):
+    """Identify a complete assistant event with usage as positive recovery evidence."""
+    if event.get("type") != "assistant":
+        return None
+    message = event.get("message")
+    if not isinstance(message, dict):
+        return None
+    model = message.get("model")
+    message_id = message.get("id")
+    usage = message.get("usage")
+    if (isinstance(model, str) and model not in ("", "<synthetic>")
+            and isinstance(message_id, str) and message_id and not message.get("error")
+            and isinstance(usage, dict) and any(UsageTracker.counters(usage).values())):
+        return message_id
+    return None
 
 
 def utc_now():
@@ -158,7 +214,10 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
     started, clock = utc_now(), time.monotonic()
     usage = UsageTracker()
     status, reason = "ok", None
-    last_incident = None  # pilot-2 addendum 1: provider failure seen; decided at the end
+    last_incident = None  # unresolved provider failure; decided at the end
+    completed_responses = set()
+    pending_rate_limit_text = None
+    final_error = ""
     transcript = root / "transcript.jsonl"
     process = None
     with transcript.open("w") as log:
@@ -179,7 +238,7 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
                 buffers[name] = b""
 
             def consume(line, name):
-                nonlocal status, reason, last_incident
+                nonlocal status, reason, last_incident, final_error, pending_rate_limit_text
                 text = line.decode("utf-8", errors="replace")
                 for name_of_secret in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
                     secret = env.get(name_of_secret)
@@ -203,13 +262,19 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
                     status = "timeout"
                 if status == "ok" and usage.tokens["total"] > token_limit:
                     status = "token_budget"
-                error = text if name == "stderr" else event_error(event)
-                # Pilot-2 addendum 1: a provider 429/5xx text never stops a run while it is in progress, and the
-                # client's own retry notices (system/api_retry) are ignored. The run is an incident only if it
-                # then ends without a valid final result (decided after the stream ends).
-                retry_notice = event.get("type") == "system" and event.get("subtype") == "api_retry"
-                if error and not retry_notice and incident_text(error):
+                error = event_error(event)
+                if event.get("type") == "result":
+                    final_error = last_incident if _is_legacy_rate_limit_echo(event, pending_rate_limit_text) else error
+                # Retry notices, partial stream events and tool output do not show provider recovery.
+                if error and incident_text(error):
                     last_incident = error[:2000]
+                    pending_rate_limit_text = _legacy_rate_limit_text(event)
+                if not error:
+                    response_id = completed_provider_response_id(event)
+                    if response_id and response_id not in completed_responses:
+                        completed_responses.add(response_id)
+                        last_incident = None
+                        pending_rate_limit_text = None
 
             while selector.get_map():
                 if time.monotonic() - clock >= wall_s and status == "ok":
@@ -245,8 +310,11 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
             # A successful final result survives recovered tool/request errors and a
             # later process-exit error. The caller still validates out/answer.json.
             if status == "ok" and (not usage.final_seen or usage.final_is_error):
-                if last_incident:
-                    status, reason = "incident", last_incident
+                provider_error = last_incident
+                if usage.final_seen:
+                    provider_error = final_error if incident_text(final_error) else None
+                if provider_error:
+                    status, reason = "incident", provider_error[:2000]
                 else:
                     status = "crash"
         except Exception as exc:

@@ -49,7 +49,7 @@ def reply_and_results():
     return user_prompt(0).split("\n\n## This turn so far", 1)[0], replies, results
 
 
-def run_text(mode, replies, results, *, conclude_only=True, context="fixture", tokens=262_144, scope_schema=None):
+def run_text(mode, replies, results, *, conclude_only=True, context="fixture", tokens=262_144, scope_schema=None, eligible_lock=None):
     seen, executed, schemas = [], [], []
     expected = iter(entry for batch in results for entry in batch)
 
@@ -69,7 +69,7 @@ def run_text(mode, replies, results, *, conclude_only=True, context="fixture", t
         "output_mode": mode, "max_tokens_per_decision": tokens, "max_output_tokens": 16_384})
     req = DecisionRequest(turn_id="t", slot=0, context=context, turn_so_far=[],
         limits={"max_calls": 0, "deadline_seconds": 90}, conclude_only=conclude_only,
-        conclusion_scope_schema=scope_schema,
+        conclusion_scope_schema=scope_schema, finalization_has_eligible_lock=eligible_lock,
         read_tools={name: lambda *args: None for name in ("get_job", "inspect_evidence", "describe_component")})
     with patch("eidos.investigator.pydantic_ai_runtime._read", side_effect=read):
         out = rt.decide(req)
@@ -347,3 +347,61 @@ def test_prior_shape_correction_does_not_grant_another_scope_repair(mode):
     report = out.usage["structured_output"]
     assert report["last_error_code"] == "conclusion-scope-contract"
     assert len(report["errors"]) == 2
+
+
+def test_native_runaway_followed_by_an_authored_nonconclusion_stays_bounded():
+    offered = []
+
+    def model(messages, info):
+        offered.append(bool(info.function_tools))
+        if len(offered) == 1:
+            return ModelResponse(parts=[TextPart("")], finish_reason="length",
+                                 usage=RequestUsage(input_tokens=100, output_tokens=16_384))
+        value = {**CONCLUSION, "control": {"action": "request_input"}}
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, value)])
+
+    rt = PydanticAIRuntime({"model": "function:fixture", "_model_object": FunctionModel(model), "output_mode": "tool"})
+    req = DecisionRequest(turn_id="t", slot=0, context="Synthetic recovery.", turn_so_far=[], limits={"max_calls": 0},
+                          conclude_only=True, read_tools={"get_job": lambda _: pytest.fail("runaway must not read")})
+    out = rt.decide(req)
+    assert offered == [True, False] and out.usage["calls"] == 2
+    assert out.runtime_outcome == "structured-output-invalid" and not out.proposal
+    report = out.usage["structured_output"]
+    assert report["last_error_code"] == "finalization-output-shape" and report["read_rounds_forfeited"] is True
+
+
+@pytest.mark.parametrize("mode", ["tool", "repair", "json"])
+def test_same_claim_validator_repairs_actual_authored_claim_before_acceptance(mode):
+    requests = []
+    good = {"disposition": "abstain", "obligations": ["Synthetic limitation."]}
+
+    def model(messages, info):
+        requests.append(messages)
+        claim = {"disposition": "abstain", "point_estimate": .91} if len(requests) == 1 else good
+        key = "claim_json" if mode == "tool" else "claim"
+        control = {**CONCLUSION["control"], key: json.dumps(claim) if mode == "tool" else claim}
+        value = {**CONCLUSION, "control": control}
+        if mode == "tool":
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, value)])
+        return synthetic(value)
+
+    rt = PydanticAIRuntime({"model": "function:fixture", "_model_object": FunctionModel(model), "output_mode": mode})
+    req = DecisionRequest(turn_id="t", slot=0, context="Synthetic recovery.", turn_so_far=[], limits={"max_calls": 0},
+                          conclude_only=True, read_tools={"get_job": lambda _: pytest.fail("correction must not read")})
+    out = rt.decide(req)
+    assert len(requests) == out.usage["calls"] == 2 and out.proposal["control"]["claim"] == good
+    assert "control.claim.point_estimate must be an object" in str(requests[-1])
+    assert out.usage["structured_output"]["read_rounds_forfeited"] is True
+    assert "last_error_code" not in out.usage["structured_output"]
+
+
+@pytest.mark.parametrize("mode", ["repair", "json"])
+@pytest.mark.parametrize("alias", [False, True])
+def test_advertised_claim_reaches_no_lock_guard_and_alias_conflict_is_refused(mode, alias):
+    control = {**CONCLUSION["control"], "claim": {"disposition": "candidate"}}
+    if alias:
+        control["claim_json"] = '{"disposition":"abstain"}'
+    out, seen, _, _, _ = run_text(mode, [synthetic({**CONCLUSION, "control": control}), synthetic(CONCLUSION)], [],
+                                  eligible_lock=False)
+    assert len(seen) == 2 and out.proposal["control"]["action"] == "stop"
+    assert ("cannot both be supplied" if alias else "No eligible locked candidate") in str(seen[-1])

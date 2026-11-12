@@ -517,10 +517,11 @@ def test_a_scripted_fake_provider_drives_the_arm4_workflow_through_the_real_acti
     assert scene.cmd("enter_finalization", {
         "investigation_id": inv, "trigger": "exploration-boundary",
     })["mode"] == "ordinary"
-    provider.script.append({
-        **decision(trial("challenger", 9, seed=12), scorer("reproduction", 0), action="wait_for_jobs"),
-        "purpose": "reproduction",
-    })
+    reproduction = decision(trial("challenger", 9, seed=12), scorer("reproduction", 0), action="wait_for_jobs")
+    reproduction["purpose"] = "reproduction"
+    for effect in reproduction["calls"]:
+        effect["args"]["purpose"] = "reproduction"
+    provider.script.append(reproduction)
     assert journey.turn()["stop_reason"] == "waiting"
     reproduction = journey.receipts(7)
     assert all(r["ok"] for r in reproduction), reproduction
