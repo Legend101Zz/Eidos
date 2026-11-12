@@ -76,7 +76,8 @@ def evaluate_turn(client: Any, project: str, turn_id: str, runtime: Investigator
         source, catalog = model_projection(source, catalog, set(blocked))
     packed = CONTEXT_POLICIES[context_policy](source, catalog)
     req = DecisionRequest(turn_id=f"eval:{turn_id}", slot=0, context=packed["text"], turn_so_far=[],
-                          limits=rec["turn"]["spec"]["limits"], settings={}, read_tools={}, view=source)
+                          limits=rec["turn"]["spec"]["limits"], settings={}, read_tools={}, view=source,
+                          conclude_only=bool(rec["turn"]["spec"].get("finalization")))
     result = runtime.decide(req)
     try:
         proposal = validate_decision(result.proposal, max_calls=rec["turn"]["spec"]["limits"]["max_calls"])

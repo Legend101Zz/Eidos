@@ -469,7 +469,7 @@ class InvestigatorActivities:
                               read_tools=self._read_tools(p, finalization=finalization,
                                                           evidence_turn_id=turn["id"] if blocked and not finalization else None,
                                                           blocked=blocked, conclude_only=bool(turn["spec"].get("finalization"))),
-                              view=view, abort=abort)
+                              view=view, abort=abort, conclude_only=bool(turn["spec"].get("finalization")))
 
         def aborted() -> dict:
             if abort.reason == "activity-cancelled" or _activity_cancelled():

@@ -82,6 +82,7 @@ class DecisionRequest:
     read_tools: dict[str, Callable[..., Any]] = field(default_factory=dict)
     view: dict[str, Any] | None = None  # structured authorized view (same horizon as context)
     abort: DecisionAbort | None = None  # set by the decide activity: stop, pause, cancellation, deadline
+    conclude_only: bool = False  # autonomous recovery turn, from the immutable turn spec
 
 
 @dataclass

@@ -15,7 +15,7 @@ from typing import Any
 
 from eidos.domain.assessment import candidate_lock_job_id
 from eidos.domain.redaction import redact_text as _redact
-from eidos.domain.turns import CONTROL_TOOLS, EFFECT_TOOLS, MODEL_CONTEXT_CHAR_LIMIT
+from eidos.domain.turns import CONTROL_TOOLS, EFFECT_TOOLS, FINALIZATION_READ_ROUNDS, MODEL_CONTEXT_CHAR_LIMIT
 from eidos_wire import canonical_json, sha256_bytes
 
 POLICY_ID = "context-policy/3"  # ADR 0023
@@ -137,7 +137,8 @@ Success rules come only from the committed charter; you cannot set thresholds. C
 
 
 FINALIZATION_GUIDE = """You are in the single bounded autonomous finalization turn.
-Read existing evidence only: get_job {job_id}, inspect_evidence {artifact_id, max_bytes?},
+Use at most FINALIZATION_ROUNDS rounds of reads, with at most four reads in each round. The next request then
+accepts a decision only. Read existing evidence only: get_job {job_id}, inspect_evidence {artifact_id, max_bytes?},
 describe_component {component_ref}. Then return ONE JSON decision with your own short rationale, calls: [], and
 control.action set to conclude or stop. Shape example:
 {"rationale": "<why the recorded evidence supports this scoped outcome>", "calls": [],
@@ -146,7 +147,8 @@ No search, compute, authoring, rule changes, candidate changes, re-lock or new e
 Report the locked candidate with its source/job/receipt identifiers, visible metrics, provenance limits and recorded
 reproduction status. With no eligible locked candidate, honestly abstain. Missing held-out evidence never passes
 assessment. A candidate may be submitted pending independent confirmation, with limitations stated explicitly.
-Use only the remaining original wall/token budget; do not request operator input or wait for jobs in this turn."""
+Use only the remaining original wall/token budget; do not request operator input or wait for jobs in this turn.""".replace(
+    "FINALIZATION_ROUNDS", str(FINALIZATION_READ_ROUNDS))
 
 
 def _tool_guide(view: dict[str, Any]) -> str:

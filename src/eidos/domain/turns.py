@@ -16,6 +16,7 @@ from eidos_wire import canonical_json, command_key
 # limit is 2 MiB (warning at 512 KiB); we stay far below and stage larger content as artifacts.
 WORKFLOW_PAYLOAD_LIMIT = 128 * 1024
 MODEL_CONTEXT_CHAR_LIMIT = 60_000
+FINALIZATION_READ_ROUNDS = 2
 
 # Stable effectful tool vocabulary. Installed components are catalog data, never new tools.
 EFFECT_TOOLS = {
