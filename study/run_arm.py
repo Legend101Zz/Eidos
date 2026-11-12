@@ -161,21 +161,80 @@ def _is_legacy_rate_limit_echo(event, prior_text):
     )
 
 
-def completed_provider_response_id(event):
-    """Identify a complete assistant event with usage as positive recovery evidence."""
-    if event.get("type") != "assistant":
+TERMINAL_STOP_REASONS = (
+    "end_turn", "tool_use", "max_tokens", "stop_sequence", "pause_turn", "compaction",
+    "refusal", "model_context_window_exceeded",
+)
+
+
+def _provider_message_id(message):
+    if not isinstance(message, dict) or message.get("error"):
         return None
-    message = event.get("message")
-    if not isinstance(message, dict):
-        return None
-    model = message.get("model")
-    message_id = message.get("id")
-    usage = message.get("usage")
-    if (isinstance(model, str) and model not in ("", "<synthetic>")
-            and isinstance(message_id, str) and message_id and not message.get("error")
-            and isinstance(usage, dict) and any(UsageTracker.counters(usage).values())):
+    model, message_id = message.get("model"), message.get("id")
+    if isinstance(model, str) and model not in ("", "<synthetic>") and isinstance(message_id, str) and message_id:
         return message_id
     return None
+
+
+class ProviderCompletion:
+    """Recognize terminal provider frames without changing stream usage accounting."""
+
+    def __init__(self):
+        self.active = None
+        self.terminal_delta = False
+        self.streamed = set()
+        self.completed = set()
+
+    def observe(self, event, usage, error):
+        if error:
+            self.active = None
+            return False
+        kind = event.get("type")
+        if kind == "stream_event":
+            message_id = self.observe_stream(event, usage)
+        elif kind == "assistant":
+            message = event.get("message")
+            message_id = _provider_message_id(message)
+            if (not message_id or message_id in self.streamed
+                    or message.get("stop_reason") not in TERMINAL_STOP_REASONS
+                    or not isinstance(message.get("usage"), dict)
+                    or not any(UsageTracker.counters(message["usage"]).values())):
+                return False
+        else:
+            return False
+        if not message_id or message_id in self.completed:
+            return False
+        self.completed.add(message_id)
+        return True
+
+    def observe_stream(self, event, usage):
+        part = event.get("event", {})
+        kind = part.get("type")
+        if any(key in envelope for envelope in (event, part) for key in ("abandonedBlocks", "abandoned_blocks")):
+            self.active = None
+            return None
+        if kind == "message_start":
+            message_id = _provider_message_id(part.get("message"))
+            fresh = (message_id not in self.streamed and message_id not in usage.messages
+                     and event.get("apiMessageId", message_id) == message_id)
+            self.active = message_id if fresh else None
+            if message_id:
+                self.streamed.add(message_id)
+            self.terminal_delta = False
+            return None
+        if not self.active:
+            return None
+        frame_id = event.get("apiMessageId", self.active)
+        if frame_id != self.active or kind == "error":
+            self.active = None
+            return None
+        if kind == "message_delta" and part.get("delta", {}).get("stop_reason") in TERMINAL_STOP_REASONS:
+            self.terminal_delta = True
+        if kind == "message_stop":
+            message_id, self.active = self.active, None
+            if self.terminal_delta and any(usage.messages.get(message_id, {}).values()):
+                return message_id
+        return None
 
 
 def utc_now():
@@ -215,7 +274,7 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
     usage = UsageTracker()
     status, reason = "ok", None
     last_incident = None  # unresolved provider failure; decided at the end
-    completed_responses = set()
+    completion = ProviderCompletion()
     pending_rate_limit_text = None
     final_error = ""
     transcript = root / "transcript.jsonl"
@@ -257,24 +316,22 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
                     event = {"type": "runner_stderr", "text": text}
                 log.write(json.dumps(event, ensure_ascii=False) + "\n")
                 log.flush()
+                error = event_error(event)
+                recovered = completion.observe(event, usage, error)
                 usage.observe(event)
                 if status == "ok" and time.monotonic() - clock >= wall_s:
                     status = "timeout"
                 if status == "ok" and usage.tokens["total"] > token_limit:
                     status = "token_budget"
-                error = event_error(event)
                 if event.get("type") == "result":
                     final_error = last_incident if _is_legacy_rate_limit_echo(event, pending_rate_limit_text) else error
                 # Retry notices, partial stream events and tool output do not show provider recovery.
                 if error and incident_text(error):
                     last_incident = error[:2000]
                     pending_rate_limit_text = _legacy_rate_limit_text(event)
-                if not error:
-                    response_id = completed_provider_response_id(event)
-                    if response_id and response_id not in completed_responses:
-                        completed_responses.add(response_id)
-                        last_incident = None
-                        pending_rate_limit_text = None
+                if recovered:
+                    last_incident = None
+                    pending_rate_limit_text = None
 
             while selector.get_map():
                 if time.monotonic() - clock >= wall_s and status == "ok":

@@ -179,18 +179,23 @@ def _stop_ceiling(scene: Scene, inv: str) -> None:
     pytest.param("selection-frozen", {}, id="selection-frozen"),
     pytest.param("ceiling-perfect-score", {}, id="perfect-score"),
     pytest.param("search-limit", {"exploration": {"patience_rounds": 0, "max_rounds": 0}}, id="search-limit"),
-    pytest.param("token-holdback", {"limits": TOKEN_LIMITS, "settings": {"max_tokens_per_decision": 9_000}},
+    pytest.param("token-holdback", {"limits": TOKEN_LIMITS, "settings": {"max_tokens_per_decision": 8_000}},
                  id="token-holdback")])
 def test_a_direct_run_component_outside_a_decision_is_refused_in_every_finalize_stop(scene, stop, settings):
     inv = scene.investigation(**settings)
     if stop == "ceiling-perfect-score":
         _stop_ceiling(scene, inv)
     else:
-        # H2 (R17 #3): the token hold-back holds before the first lock too, so that candidate runs as reproduction
-        purpose = "reproduction" if stop == "token-holdback" else "open-search"
-        scene.lock(inv, scene.job(inv, metrics={"accuracy": 0.70}, purpose=purpose), selection=RULE)
+        if stop == "token-holdback":
+            assert _exploration(scene, inv)["phase"] == "baseline"
+        scene.lock(inv, scene.job(inv, metrics={"accuracy": 0.70}), selection=RULE)
         if stop == "selection-frozen":
             _stop_frozen(scene, inv)
+        elif stop == "token-holdback":
+            # Establish the incumbent before a real ledger reservation clips the next exploratory decision.
+            with scene.lab.ledger.transaction() as tx:
+                tx.project_id = scene.pid
+                tx.reserve(f"inv:{inv}", "model_tokens", 1_000, "fixture:reserve")
     assert _exploration(scene, inv)["stop"] == stop
     for purpose in ("open-search", "hypothesis-test"):
         with pytest.raises(Invalid) as caught:

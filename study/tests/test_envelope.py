@@ -151,7 +151,8 @@ class SupervisorTests(unittest.TestCase):
 
     provider_failure = {"type": "error", "error": "HTTP 429 rate limit"}
     response = {"type": "assistant", "message": {
-        "id": "recovered", "model": "fixture", "usage": {"input_tokens": 10, "output_tokens": 2},
+        "id": "recovered", "model": "fixture", "stop_reason": "end_turn",
+        "usage": {"input_tokens": 10, "output_tokens": 2},
     }}
     local_failure = {"type": "result", "subtype": "error_during_execution", "is_error": True,
                      "errors": ["local execution failed"]}
@@ -162,6 +163,70 @@ class SupervisorTests(unittest.TestCase):
                 record = self.run_events(self.provider_failure, self.response, *ending)
                 self.assertEqual(record["status"], "crash")
                 self.assertIsNone(record["incident_reason"])
+
+    @staticmethod
+    def stream(part_type, **part):
+        return {"type": "stream_event", "event": {"type": part_type, **part}}
+
+    def stream_completion_frames(self):
+        message = {"id": "stream-1", "model": "fixture", "stop_reason": None, "usage": {"input_tokens": 0}}
+        start = self.stream("message_start", message=message)
+        block = {"type": "assistant", "message": message}
+        delta = self.stream("message_delta", delta={"stop_reason": "tool_use"}, usage={"output_tokens": 4})
+        return start, block, delta, self.stream("message_stop")
+
+    def test_recorded_stream_shape_recovers_only_after_terminal_delta_and_stop(self):
+        start, block, delta, stop = self.stream_completion_frames()
+        for events, expected in (
+            ((start, block, block), "incident"),
+            ((start, block, stop), "incident"),
+            ((start, block, delta), "incident"),
+            ((start, block, block, delta, stop), "crash"),
+        ):
+            with self.subTest(events=events):
+                record = self.run_events(self.provider_failure, *events)
+                self.assertEqual(record["status"], expected)
+        self.assertEqual(record["tokens"]["total"], 4)
+
+    def test_partial_positive_usage_is_not_a_completed_response(self):
+        start, block, _, _ = self.stream_completion_frames()
+        block = {**block, "message": {**block["message"], "usage": {"output_tokens": 4}}}
+        for frames in ((block,), (start, block, block)):
+            with self.subTest(frames=frames):
+                record = self.run_events(self.provider_failure, *frames)
+                self.assertEqual(record["status"], "incident")
+                self.assertEqual(record["tokens"]["total"], 4)
+
+    def test_error_abandonment_or_mismatched_stop_prevents_stream_recovery(self):
+        start, block, delta, stop = self.stream_completion_frames()
+        replacement = self.stream("message_start", message={**start["event"]["message"], "id": "stream-2"})
+        synthetic = self.stream("message_start", message={**start["event"]["message"], "model": "<synthetic>"})
+        for events in (
+            (start, block, delta, {"type": "error", "error": "HTTP 503"}, stop),
+            (start, block, delta, {**stop, "abandonedBlocks": {"apiMessageId": "stream-1"}}),
+            (start, block, delta, {**stop, "apiMessageId": "other"}),
+            (start, block, delta, replacement, {**stop, "apiMessageId": "stream-1"}),
+            (synthetic, delta, stop),
+        ):
+            with self.subTest(events=events):
+                record = self.run_events(self.provider_failure, *events)
+                self.assertEqual(record["status"], "incident")
+
+    def test_prior_usage_and_duplicate_stream_ids_do_not_grant_recovery(self):
+        start, block, delta, stop = self.stream_completion_frames()
+        no_usage_delta = self.stream("message_delta", delta={"stop_reason": "end_turn"})
+        record = self.run_events(self.response, self.provider_failure, start, block, no_usage_delta, stop)
+        self.assertEqual(record["status"], "incident")
+        old_block = {**block, "message": {**block["message"], "usage": {"output_tokens": 4}}}
+        record = self.run_events(old_block, self.provider_failure, start, no_usage_delta, stop)
+        self.assertEqual(record["status"], "incident")
+        record = self.run_events(start, block, delta, stop, self.provider_failure, start, block, delta, stop)
+        self.assertEqual(record["status"], "incident")
+
+    def test_full_stream_recovery_still_yields_outer_wall_timeout(self):
+        record = self.run_events(self.provider_failure, *self.stream_completion_frames(), stall=True, wall_s=0.5)
+        self.assertEqual(record["status"], "timeout")
+        self.assertEqual(record["tokens"]["total"], 4)
 
     def test_terminal_provider_failure_after_recovery_is_incident(self):
         for message in ("HTTP 503 service unavailable", "HTTP 429 rate limit", "quota exhausted"):
