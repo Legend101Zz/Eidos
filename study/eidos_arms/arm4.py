@@ -12,6 +12,27 @@ from pathlib import Path
 from . import lab
 from .common import ROOT, classify, digest, envelope, ledger, prepare, prompt, usage, utc, write_json
 
+# The study owns the optional answer shape. The coordinator only understands the generic scope contract.
+_ANSWER_TEXT = {'type': 'string', 'minLength': 1}
+_NULLABLE_ANSWER_TEXT = {'anyOf': [_ANSWER_TEXT, {'enum': [None]}]}
+CONCLUSION_SCOPE_SCHEMA = {
+    'type': 'object',
+    'properties': {'answer': {
+        'type': 'object',
+        'properties': {'abstention': {
+            'type': 'object',
+            'required': ['abstained', 'reason', 'unresolved', 'next_discriminating_test'],
+            'properties': {
+                'abstained': {'type': 'boolean'},
+                'reason': _NULLABLE_ANSWER_TEXT,
+                'unresolved': {'type': 'array', 'items': _ANSWER_TEXT},
+                'next_discriminating_test': _NULLABLE_ANSWER_TEXT,
+            },
+        }},
+    }},
+}
+
+
 REPRODUCE = '''"""Replay the selected job's exact source, staged inputs and training argv."""
 import argparse, json, os, shutil, subprocess, sys
 from pathlib import Path
@@ -85,6 +106,7 @@ def run(run_dir, meta):
     try:
         project, imported = prepare(c, run_dir, 4)
         investigator = json.loads((Path(__file__).parent / 'investigator.json').read_text())
+        investigator['conclusion_scope_schema'] = CONCLUSION_SCOPE_SCHEMA
         wall, token_cap = envelope(meta)
         investigator['turn_deadline_seconds'] = wall
         # Everything in this context comes from the packaged task and common task prompt.

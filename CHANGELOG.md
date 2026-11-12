@@ -4,6 +4,8 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.4.0
 
+- [ADR 0032](docs/decisions/0032-investigator-conclusion-scope-contract.md) adds an operator-declared conclusion shape contract. Malformed supplied metadata is refused before effects with the existing bounded feedback path. The study adapter applies it to the investigator's optional abstention metadata.
+
 - [ADR 0030](docs/decisions/0030-typed-runtime-bounds-without-proposals.md) records bounded Pydantic AI exits as runtime outcomes. Token and request limits, runaway reasoning and unusable structured replies no longer generate fabricated waits. Provider failures during the reserved tool-free request retain their provider classification.
 
 - [ADR 0029](docs/decisions/0029-study-fresh-checkpoint-contract.md) gives all four study arms the existing fresh-checkpoint naming contract in their shared prompt and tool-facing charter before Pilot 4.

@@ -10,10 +10,12 @@ import uuid
 from typing import Any
 
 from eidos.application.handlers import exploration
+from eidos.application.ports import Record
 from eidos.application.service import EFFECT_ADMISSION, Ctx, command
 from eidos.domain import charter as charter_rules
 from eidos.domain import exploration as exploration_rules
 from eidos.domain import turns as turn_rules
+from eidos.domain.contracts import validate_config, validate_shape_schema
 from eidos.domain.errors import BudgetExhausted, EffectNotAdmitted, Invalid, QuestionRevised, StaleRevision
 from eidos.domain.redaction import redact_value
 
@@ -50,6 +52,10 @@ def start_investigation(ctx: Ctx, p: dict) -> dict:
     investigator = {"runtime": "fixture", "model": None, "context_policy": "context-policy/3",
                     "max_calls_per_turn": 6, "max_model_calls_per_turn": 4, "max_turns": 40,
                     "finalization": "autonomous", **(p.get("investigator") or {})}
+    if "conclusion_scope_schema" in investigator:
+        problems = validate_shape_schema(investigator["conclusion_scope_schema"], "investigator.conclusion_scope_schema")
+        if problems:
+            raise Invalid("invalid conclusion scope schema", details={"problems": problems})
     if investigator["finalization"] not in ("autonomous", "operator"):
         raise Invalid("investigator.finalization must be autonomous or operator")
     if "model_usd" in limits and investigator.get("runtime") != "fixture" \
@@ -896,6 +902,7 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
                 ctl["bounded_outcome"] = str(p["bounded_outcome"])[:64]
             proposal["control"] = ctl
         decision = turn_rules.validate_decision(proposal, max_calls=turn["spec"]["limits"]["max_calls"])
+        _check_conclusion_scope(inv, decision["control"])
         if turn["spec"].get("finalization") and (decision["calls"] or
                 decision["control"].get("action") not in turn_rules.CONCLUDING_ACTIONS):
             raise Invalid("autonomous finalization permits read-only evidence and conclude/stop only")
@@ -923,6 +930,16 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
     ctx.event("decision.accepted", did, {"turn_id": turn["id"], "slot": slot, "calls": [c["tool"] for c in calls],
                                          "control": decision["control"]}, investigation_id=inv.id)
     return {"accepted": True, "decision_id": did, "calls": calls, "control": decision["control"]}
+
+
+def _check_conclusion_scope(inv: Record, control: dict) -> None:
+    schema = inv.body["investigator"].get("conclusion_scope_schema")
+    if schema is None or control.get("action") not in turn_rules.CONCLUDING_ACTIONS or "scope" not in control:
+        return
+    problems = validate_config(control["scope"], schema, "control.scope")
+    if problems:
+        raise Invalid("conclusion scope does not match the operator contract: " + "; ".join(problems),
+                      details={"problems": problems})
 
 
 def _check_conclusion_due(turn: dict, decision: dict) -> None:
@@ -1084,7 +1101,6 @@ def _check_resource_policy(ctx: Ctx, decision: dict) -> None:
 def _check_component_contracts(ctx: Ctx, calls: list[dict]) -> None:
     """A decision is accepted only if each component invocation satisfies that release's declared
     configuration contract (so accepted means runnable, not merely well-formed)."""
-    from eidos.domain.contracts import validate_config
     for i, c in enumerate(calls):
         if c["tool"] in ("author_component", "run_component", "plan_trial", "plan_branch") \
                 and c["args"].get("environment") is not None or c["tool"] == "author_component":
@@ -1377,6 +1393,8 @@ def _close_turn(ctx: Ctx, turn: dict, p: dict) -> dict:
             control_refused = f"investigation-{inv.status}"
             if reason == "concluded":
                 reason = "cancelled"
+        elif reason == "concluded":
+            _check_conclusion_scope(inv, control)
     uncertain = release_turn_model_reservations(ctx, turn)
     budgets = ctx.tx.budgets(inv_scope(inv_id))
     if "turns" in budgets:

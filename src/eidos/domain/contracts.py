@@ -65,3 +65,42 @@ def validate_config(value: Any, schema: dict[str, Any], path: str = "config") ->
             elif schema.get("additionalProperties") is False:
                 problems.append(f"{path}.{k}: not allowed")
     return problems
+
+
+def validate_shape_schema(schema: Any, path: str, depth: int = 0) -> list[str]:
+    """Validate the bounded subset used by operator-declared conclusion scope contracts."""
+    if not isinstance(schema, dict) or not schema or depth > 8:
+        return [f"{path}: expected a nonempty schema object within depth 8"]
+    supported = {"type", "required", "properties", "items", "enum", "anyOf", "minLength"}
+    problems = [f"{path}.{key}: unsupported keyword" for key in schema if key not in supported]
+    kind = schema.get("type")
+    if "type" in schema and (not isinstance(kind, str) or kind not in _TYPES):
+        problems.append(f"{path}.type: unsupported type")
+    if "required" in schema and (kind != "object" or not isinstance(schema["required"], list)
+            or not all(isinstance(key, str) and key for key in schema["required"])):
+        problems.append(f"{path}.required: expected property names for an object")
+    if "properties" in schema:
+        properties = schema["properties"]
+        if kind != "object" or not isinstance(properties, dict):
+            problems.append(f"{path}.properties: expected a schema map for an object")
+        else:
+            for key, child in properties.items():
+                problems.extend(validate_shape_schema(child, f"{path}.properties.{key}", depth + 1))
+    if "items" in schema:
+        if kind != "array":
+            problems.append(f"{path}.items: requires array type")
+        else:
+            problems.extend(validate_shape_schema(schema["items"], f"{path}.items", depth + 1))
+    if "enum" in schema and (not isinstance(schema["enum"], list) or not schema["enum"]):
+        problems.append(f"{path}.enum: expected a nonempty list")
+    if "anyOf" in schema:
+        alternatives = schema["anyOf"]
+        if not isinstance(alternatives, list) or not alternatives:
+            problems.append(f"{path}.anyOf: expected a nonempty schema list")
+        else:
+            for index, child in enumerate(alternatives):
+                problems.extend(validate_shape_schema(child, f"{path}.anyOf[{index}]", depth + 1))
+    if "minLength" in schema and (kind != "string" or type(schema["minLength"]) is not int
+            or schema["minLength"] < 0):
+        problems.append(f"{path}.minLength: expected a nonnegative integer for a string")
+    return problems
