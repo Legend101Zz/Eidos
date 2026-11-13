@@ -668,3 +668,25 @@ def test_a_lock_that_names_no_job_is_pinned_with_how_to_make_it_usable():
 def test_a_lock_naming_one_job_is_pinned_without_a_warning(note):
     line = line_starting(pack(make_view(pinned_notes=[{"id": "n1", "kind": "candidate_lock", **note}]), [])["text"], "- Current lock")
     assert "names no job" not in line
+
+
+@pytest.mark.parametrize('limit', [60000, 24000, 12000, 6000])
+def test_v4_portfolio_pin_is_bounded_complete_json_with_chosen_metrics(limit):
+    job = make_job(1, component='eidos.search.recipe-portfolio@1.0.0',
+                   receipt=dict(metrics=dict(validation_chosen=.82, se_chosen=.02, fit_seconds_chosen=.12,
+                                             round_evaluated=1, coverage_complete=1),
+                                stop_reason='budget', irrelevant='x' * 3000),
+                   outputs=[dict(slot=k, artifact_id='art_' + str(i) * 40, role='evidence', schema='table/1')
+                            for i, k in enumerate(('portfolio_table', 'promotion_source', 'oof'))])
+    packed = pack(make_view([job]), [], policy=context.POLICY_V4, char_limit=limit)
+    assert packed['chars'] <= limit
+    lines = [line for line in packed['text'].splitlines() if line.startswith('- Portfolio: ')]
+    assert lines
+    for line in lines:
+        fact = json.loads(line.removeprefix('- Portfolio: '))
+        assert len(line) <= 600
+        if limit == 60000:
+            assert fact['metrics']['validation_chosen'] == .82
+            assert fact['metrics']['se_chosen'] == .02
+            assert fact['metrics']['fit_seconds_chosen'] == .12
+    assert 'x' * 100 not in lines[0]

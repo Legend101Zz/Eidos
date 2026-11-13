@@ -74,7 +74,7 @@ def policy(config: dict[str, Any] | None) -> dict[str, Any]:
     return out
 
 
-def parse_rule(raw: Any) -> dict[str, Any]:
+def parse_rule(raw: Any, *, policy_id: str = POLICY_ID) -> dict[str, Any]:
     """A selection rule from a ``selection_rule`` note's text (JSON) or a lock's ``selection`` object.
 
     ``{"metric": "<receipt metric>", "split": "validation"|"training-cv", "direction": "higher_is_better"|
@@ -126,7 +126,7 @@ def parse_rule(raw: Any) -> dict[str, Any]:
         if not _number(raw["reproduce_within"]) or float(raw["reproduce_within"]) < 0:
             raise RuleError("a selection rule's reproduce_within is a non-negative number")
         rule["reproduce_within"] = float(raw["reproduce_within"])
-    if raw.get("margin") is not None:
+    if policy_id == "exploration-policy/3" and raw.get("margin") is not None:
         margin = raw["margin"]
         if not isinstance(margin, dict) or set(margin) != {"metric", "multiple"} or not isinstance(margin["metric"], str) or not margin["metric"].strip() or not _number(margin["multiple"]) or margin["multiple"] < 0:
             raise RuleError("a selection margin needs metric and a finite non-negative multiple")
@@ -146,20 +146,20 @@ def note_json(note: dict[str, Any]) -> dict[str, Any] | None:
     return obj if isinstance(obj, dict) else None
 
 
-def rule_from_notes(notes: list[dict[str, Any]]) -> tuple[dict[str, Any], str] | None:
+def rule_from_notes(notes: list[dict[str, Any]], *, policy_id: str = POLICY_ID) -> tuple[dict[str, Any], str] | None:
     """The investigation's selection rule and the note that recorded it: the first ``selection_rule`` note, or the
     ``selection`` of the first lock that carried one, whichever came first. It is fixed once recorded."""
     for n in notes:
         if n.get("kind") == "selection_rule":
             try:
-                return parse_rule(n.get("text")), str(n.get("id"))
+                return parse_rule(n.get("text"), policy_id=policy_id), str(n.get("id"))
             except RuleError:
                 continue
         if n.get("kind") == "candidate_lock":
             sel = (note_json(n) or {}).get("selection")
             if sel is not None:
                 try:
-                    return parse_rule(sel), str(n.get("id"))
+                    return parse_rule(sel, policy_id=policy_id), str(n.get("id"))
                 except RuleError:
                     continue
     return None
@@ -382,7 +382,8 @@ def reproduction_jobs(jobs: list[dict[str, Any]], recipes_of: list[str]) -> set[
 
 def rounds(round_log: list[dict[str, Any]], jobs: list[dict[str, Any]], first_lock_turn: int | None,
            last_change_turn: int | None, excluded: set[str] | None = None, rule: dict[str, Any] | None = None,
-           held_out: set[str] | None = None, *, v3: bool = False) -> tuple[list[int], int, list[str]]:
+           held_out: set[str] | None = None, *, v3: bool = False,
+           incumbent_evidence: dict[str, Any] | None = None) -> tuple[list[int], int, list[str]]:
     """(the challenger rounds: turns after the first lock that admitted at least one experiment with a challenger
     purpose that is not reproduction work (``excluded``); the number of those after the incumbent last changed that
     are **evaluated**; the challenger jobs of rounds still pending). R14 #6: a round counts as unsuccessful only once
@@ -405,19 +406,36 @@ def rounds(round_log: list[dict[str, Any]], jobs: list[dict[str, Any]], first_lo
         if ids:
             per_turn.setdefault(int(r["turn"]), []).extend(ids)
     turns = sorted(per_turn)
+    # Cache only within this ledger snapshot: later job completions must be recomputed.
+    evidence = {str(j['id']): selection_evidence(jobs, str(j['id']), rule, held_out)
+                for j in jobs} if v3 and rule is not None else {}
+    supported = {str(child['id']) for parent in jobs if evidence.get(str(parent['id'])) is not None
+                 for child in lineage(jobs, str(parent['id']))} if v3 else set()
+    awaiting_lock = {jid for t in turns if last_change_turn is None or t > last_change_turn
+                     for jid in per_turn[t] if incumbent_evidence and rule and (ev := evidence.get(jid))
+                     and (by_id[jid].get('macro') or {}).get('tool') == 'prepare_candidate'
+                     and by_id[jid].get('purpose') == 'open-search'
+                     and clears_margin(ev, incumbent_evidence, rule)}
+    evaluated_cache: dict[str, bool] = {}
 
     def evaluated(jid: str) -> bool:
+        if jid not in evaluated_cache:
+            evaluated_cache[jid] = is_evaluated(jid)
+        return evaluated_cache[jid]
+
+    def is_evaluated(jid: str) -> bool:
         j = by_id.get(jid) or {}
+        if jid in awaiting_lock:
+            return False  # the investigator still needs a decision to accept or decline this improvement
         if j.get("status") not in TERMINAL_STATUSES:
             return False
         if v3 and j.get("status") == "succeeded":
             if str(j.get("component", "")).split("@")[0] == "eidos.search.recipe-portfolio" and metric_value(_metrics(j), "round_evaluated") == 1.0:
                 return True
             # A support job consumes an evidence-bearing ancestor's outputs. lineage() walks descendants.
-            if rule is not None and any(selection_evidence(jobs, str(parent["id"]), rule, held_out) is not None
-                                        and any(child.get("id") == jid for child in lineage(jobs, str(parent["id"])))
-                                        for parent in jobs):
+            if jid in supported:
                 return True
+            return evidence.get(jid) is not None
         return j.get("status") != "succeeded" or (rule is not None and selection_evidence(jobs, jid, rule, held_out)
                                                   is not None)
     pending = [jid for t in turns for jid in per_turn[t] if not evaluated(jid)]
@@ -470,15 +488,18 @@ def state(*, notes: list[dict[str, Any]], jobs: list[dict[str, Any]], round_log:
     selection evidence); ``decision_tokens`` is one decision's model-token envelope: an exploratory decision must fit
     in what is left before the hold-back (R14 #4)."""
     pol = policy(config)
-    found = rule_from_notes(notes)
+    found = rule_from_notes(notes, policy_id=pol['policy'])
     rule = found[0] if found else None
     versions = lock_versions(notes, lock_job)
     incumbent = versions[-1] if versions else None
     first_turn = note_turns.get(str(versions[0]["note_id"])) if versions else None
     change_turn = note_turns.get(str(incumbent["note_id"])) if incumbent else None
     reproductions = reproduction_jobs(jobs, [v["job_id"] for v in versions] + ([baseline_job] if baseline_job else []))
+    if incumbent is not None and rule is not None and incumbent.get('evidence') is None:
+        incumbent['evidence'] = selection_evidence(jobs, incumbent['job_id'], rule, held_out)
     done, since, pending = rounds(round_log, jobs, first_turn, change_turn, reproductions, rule, held_out,
-                                  v3=pol.get("policy") == "exploration-policy/3")
+                                  v3=pol.get("policy") == "exploration-policy/3",
+                                  incumbent_evidence=(incumbent or {}).get('evidence'))
     left = allowance(pol, completion, wall_seconds, budgets)
     out: dict[str, Any] = {"policy": pol["policy"], "rule": rule, "rule_note": found[1] if found else None,
                            "versions": versions, "incumbent": incumbent, "rounds": len(done),

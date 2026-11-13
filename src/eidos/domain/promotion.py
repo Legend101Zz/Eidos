@@ -58,7 +58,10 @@ def expand(calls: list[dict[str, Any]], view: dict[str, Any], limits: dict[str, 
         producer = calls[parsed[0]]
         if producer['tool'] != 'run_component' or producer['args'].get('component_ref') != PORTFOLIO_REF:
             refuse('source reference must name the pinned portfolio release')
-        basis = 'explicit-export' if producer['args'].get('config', {}).get('mode') == 'export' else 'one-se-choice'
+        config = producer['args'].get('config', {})
+        if not isinstance(config, dict):
+            refuse('portfolio config must be an object')
+        basis = 'explicit-export' if config.get('mode') == 'export' else 'one-se-choice'
     elif isinstance(source, str):
         basis = str((view.get('source') or {}).get('basis') or '')
         if basis not in ('one-se-choice', 'explicit-export'):
@@ -115,7 +118,7 @@ def suggested_lock(view: dict[str, Any]) -> dict[str, Any] | None:
         direction='higher_is_better' if metric.endswith('accuracy') else 'lower_is_better', scorer=job['component'],
         data=dict(inputs={k: job['inputs'][k] for k in ('train', 'validation')}),
         margin=dict(metric=metric + '_se', multiple=(view.get('policy') or {}).get('selection_margin_multiple', 1.)),
-        reproduce_within=max(2 * se, .005)))
+        reproduce_within=max(2 * se, .005)), policy_id='exploration-policy/3')
     def command_metrics(command: str) -> dict[str, Any]:
         found: dict[str, Any] = next((j for j in group if command in (j.get('config') or {}).get('argv', [])), {})
         metrics = dict((found.get('receipt') or {}).get('metrics') or {})

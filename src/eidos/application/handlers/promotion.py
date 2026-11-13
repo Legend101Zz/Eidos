@@ -8,7 +8,7 @@ from eidos.application.handlers import exploration
 from eidos.application.handlers.components import read_bundle
 from eidos.application.service import Ctx
 from eidos.domain import exploration as rules
-from eidos.domain.errors import Invalid
+from eidos.domain.errors import Invalid, NotFound
 from eidos.domain.promotion import PORTFOLIO_REF
 
 
@@ -30,6 +30,8 @@ def stamps(ctx: Ctx, inv_id: str) -> dict[str, Any]:
 
 
 def expansion_view(ctx: Ctx, inv: Any, calls: list[dict]) -> dict:
+    if [i for i, c in enumerate(calls) if c['tool'] == 'prepare_candidate'] != [len(calls) - 1]:
+        raise Invalid('prepare_candidate: must be the last call, once per decision')
     jobs = exploration._jobs(ctx, inv.id)
     baseline = ctx.tx.get_record(exploration.BASELINE_KIND, inv.id)
     baseline_job = (baseline.body if baseline else {}).get('job_id')
@@ -40,7 +42,10 @@ def expansion_view(ctx: Ctx, inv: Any, calls: list[dict]) -> dict:
                 releases=releases, baseline_predictions=predictions, exploration=exploration.exploration_state(ctx, inv))
     source = calls[-1]['args'].get('source')
     if isinstance(source, str):
-        art, bundle = read_bundle(ctx, source)
+        try:
+            art, bundle = read_bundle(ctx, source)
+        except NotFound:
+            raise Invalid('prepare_candidate: source artifact not found in this project') from None
         producer = next((j for j in jobs if j['id'] == art.get('producer_job') and j['status'] == 'succeeded'), None)
         if producer is None or producer['component'] != PORTFOLIO_REF or not any(
                 o['slot'] == 'promotion_source' and o['artifact_id'] == source for o in producer['outputs']):

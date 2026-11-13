@@ -243,6 +243,12 @@ def exploration_state(ctx: Ctx, inv: Any, *, completion: dict[str, Any] | None =
     began, its own jobs not yet counted, as a decision is checked when it is accepted (H2, R17 #1)."""
     base = ctx.tx.get_record(BASELINE_KIND, inv.id)
     jobs = _jobs(ctx, inv.id)
+    if rules.policy(inv.body.get('investigator'))['policy'] == 'exploration-policy/3':
+        from eidos.application.handlers.promotion import stamps
+        provenance = stamps(ctx, inv.id)
+        for job in jobs:
+            if job['id'] in provenance:
+                job['macro'] = provenance[job['id']]
     log, note_turns = turn_log(ctx, inv.id, jobs)
     if at_start_of_batch is not None:
         log = [r for r in log if r.get("batch") != at_start_of_batch]
@@ -354,10 +360,11 @@ def check_note(ctx: Ctx, inv_id: str, body: dict[str, Any]) -> dict[str, Any] | 
     if kind in ("candidate_lock", "selection_rule") and ctx.tx.get_record("investigation_finalization", inv_id):
         raise Invalid("autonomous finalization fixes the incumbent and selection rule; no lock or rule changes")
     notes = _notes(ctx, inv_id)
-    existing = rules.rule_from_notes(notes)
+    policy_id = rules.policy(inv.body.get('investigator'))['policy']
+    existing = rules.rule_from_notes(notes, policy_id=policy_id)
     if kind == "selection_rule":
         try:
-            new_rule = rules.parse_rule(body.get("text"))
+            new_rule = rules.parse_rule(body.get("text"), policy_id=policy_id)
         except rules.RuleError as exc:
             raise Invalid(str(exc), details={"kind": kind}) from None
         if existing is not None:
@@ -384,7 +391,7 @@ def check_note(ctx: Ctx, inv_id: str, body: dict[str, Any]) -> dict[str, Any] | 
     rule: dict[str, Any] | None = existing[0] if existing else None
     if selection is not None:
         try:
-            proposed = rules.parse_rule(selection)
+            proposed = rules.parse_rule(selection, policy_id=policy_id)
         except rules.RuleError as exc:
             raise Invalid(str(exc), details={"kind": kind}) from None
         if rule is not None and proposed != rule:

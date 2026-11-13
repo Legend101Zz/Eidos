@@ -37,3 +37,22 @@ def test_runtime_selects_revision_set_without_any_model_call():
     with pytest.raises(ModelCallFailed, match='unknown output_mode'):
         runtime.decide(request)
     assert runtime.prompt_revision == PROMPT_REVISION and runtime.system == SYSTEM
+
+
+def test_candidate_lock_offer_is_suppressed_after_lock_or_finalization(monkeypatch):
+    import copy
+
+    from eidos.domain import promotion
+    monkeypatch.setattr(promotion, 'suggested_lock', lambda view: dict(lock=dict(job_id='prepared', selection={})))
+    view = dict(horizon=1, investigation=dict(id='i', status='active', body=dict(question='q')),
+                exploration=dict(phase='explore', incumbent=None))
+    assert 'investigator decides the separate lock' in pack(view, [], policy=POLICY_V4)['text']
+    for stopped in ('locked', 'ordinary', 'autonomous'):
+        current = copy.deepcopy(view)
+        if stopped == 'locked':
+            current['exploration']['incumbent'] = dict(job_id='prepared')
+        elif stopped == 'ordinary':
+            current['exploration']['phase'] = 'finalize'
+        else:
+            current['finalization'] = dict(enabled=True)
+        assert 'investigator decides the separate lock' not in pack(current, [], policy=POLICY_V4)['text']

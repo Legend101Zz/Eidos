@@ -48,7 +48,7 @@ def fixture(req):
                 control=dict(action='wait_for_jobs'))
 
 
-def setup_scene(scene, kind):
+def setup_scene(scene, kind, *, patience_rounds=1):
     lab, pid = scene['lab'], scene['pid']
     name = 'eidos.search.recipe-portfolio'
     _publish(lab, pid, *_bundle(name), bundle_bytes=bundle_dir(ROOT / 'components' / name))
@@ -60,7 +60,7 @@ def setup_scene(scene, kind):
     inv = lab.cmd(lab.admin, 'start_investigation', dict(charter_id=charter, limits=dict(model_tokens=1e6, compute_seconds=100000, trials=1000), question='prepare a practice candidate', environment='numpy',
         inputs=scene['arts'], task=dict(task_type=kind), investigator=dict(runtime='fixture', context_policy='context-policy/4',
             wall_seconds=1800, max_calls_per_turn=6, max_model_calls_per_turn=2, settings=dict(policy='prepare-candidate-step3'),
-            exploration=dict(policy='exploration-policy/3', project_command_ref=COMMAND, patience_rounds=1))), project=pid)['result']['investigation_id']
+            exploration=dict(policy='exploration-policy/3', project_command_ref=COMMAND, patience_rounds=patience_rounds))), project=pid)['result']['investigation_id']
     client = ShimClient(lab, lab.admin)
     acts = InvestigatorActivities(client, client)
     acts.batch_wait_slice, acts.batch_poll = .01, .001

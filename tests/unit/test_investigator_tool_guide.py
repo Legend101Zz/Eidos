@@ -69,3 +69,47 @@ def test_finalization_context_exposes_evidence_and_conclude_only():
     assert '"rationale": "<why the recorded evidence supports this scoped outcome>"' in guide
     assert '"calls": []' in guide and '"action": "conclude"' in guide
     assert "Missing held-out evidence never passes" in guide
+
+
+def test_v4_claim_and_manual_lock_examples_agree_with_live_validators():
+    import json
+    from pathlib import Path
+
+    from eidos.domain.assessment import DISPOSITIONS, derive_claim_state
+    from eidos.domain.exploration import parse_rule
+    from eidos.domain.turns import validate_decision
+    from eidos.investigator.context import TOOL_GUIDE_V4
+    from eidos.investigator.playbook import PLAYBOOK_V3
+
+    prompt = (Path(__file__).resolve().parents[2] / 'study/prompts/tools_arm4.md').read_text()
+    assert 'copied from the pinned prepared lock JSON' in prompt and 'both job_id and selection' in prompt
+    assert 'text containing exactly a JSON object {"job_id"' not in prompt
+    assert 'needs no separate scorer' in prompt
+    examples = []
+    for guide in (TOOL_GUIDE_V4, PLAYBOOK_V3):
+        start = guide.index('{"job_id":"<job>"')
+        example, _ = json.JSONDecoder().raw_decode(guide[start:])
+        examples.append(example)
+        rule = parse_rule(example['selection'], policy_id='exploration-policy/3')
+        assert rule['margin']['metric'] == rule['metric'] + '_se'
+        assert 'prepared lock JSON' in guide and 'job_id-only lock needs a previously recorded rule' in guide
+        assert 'without a held-out verdict' in guide and 'disposition "candidate"' in guide
+        assert 'omitted args.purpose default to open-search' in guide
+        assert 'already-admitted pending round' in guide
+        assert 'assess_candidate {success_rule_id, claim_id or claim:' in guide
+        assert 'request_input' in guide and 'steering' in guide
+        dispositions = re.search(r'disposition: ([^,]+),', guide).group(1)
+        assert set(re.findall(r'"([a-z]+)"', dispositions)) == set(DISPOSITIONS)
+        for disposition in DISPOSITIONS:
+            claim = dict(disposition=disposition, point_estimate=dict(metric='validation_accuracy', value=.05),
+                         evidence_refs=['job-evidence'], obligations=['independent confirmation'])
+            decision = validate_decision(dict(calls=[], control=dict(action='conclude', summary='visible evidence', claim=claim)), max_calls=6)
+            state = derive_claim_state(control=decision['control'], claims=[], assessments=[], plans=[], charter=None)
+            if disposition == 'candidate':
+                assert state['state'] == 'candidate-submitted' and not state['confirmed']
+    assert examples[0] == examples[1]
+
+
+def test_v4_guide_is_smaller_than_the_previous_guide():
+    from eidos.investigator.context import TOOL_GUIDE_V4
+    assert len(TOOL_GUIDE_V4) < len(TOOL_GUIDE)

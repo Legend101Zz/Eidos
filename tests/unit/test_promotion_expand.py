@@ -20,7 +20,7 @@ def proposal(source='source'):
 
 def test_four_checked_calls_keep_indices_stamp_and_never_lock():
     v = view()
-    calls = [dict(tool='run_component', args=dict(component_ref=PORTFOLIO_REF)), proposal({'$ref': 'call[0].outputs.promotion_source'})]
+    calls = [dict(tool='run_component', args=dict(component_ref=PORTFOLIO_REF, config={})), proposal({'$ref': 'call[0].outputs.promotion_source'})]
     result = expand(calls, v, dict(max_calls=5), proposed_by='dec')
     assert len(result) == 5
     assert [c['args']['purpose'] for c in result[1:]] == ['open-search', 'reproduction', 'measurement-development', 'reproduction']
@@ -93,7 +93,7 @@ def test_margin_arithmetic_both_directions_and_legacy_property():
     for direction in ('higher_is_better', 'lower_is_better'):
         raw['direction'] = direction
         legacy = parse_rule(raw)
-        rule = parse_rule(dict(raw, margin=dict(metric='se', multiple=1)))
+        rule = parse_rule(dict(raw, margin=dict(metric='se', multiple=1)), policy_id='exploration-policy/3')
         for a in (-1., 0., .1, .11, 1.):
             for b in (-1., 0., .1, .11, 1.):
                 assert clears_margin(dict(value=a), dict(value=b), legacy) == better(a, b, direction)
@@ -101,7 +101,7 @@ def test_margin_arithmetic_both_directions_and_legacy_property():
                 assert clears_margin(dict(value=a, se=.1), dict(value=b, se=.02), rule) == (signed > .1)
     for invalid in (dict(metric='se', multiple=-1), dict(metric='se', multiple=float('nan')), dict(metric='', multiple=1)):
         with pytest.raises(ValueError):
-            parse_rule(dict(raw, margin=invalid))
+            parse_rule(dict(raw, margin=invalid), policy_id='exploration-policy/3')
 
 
 def test_ledger_shaped_refine_only_and_macro_support_rounds():
@@ -144,3 +144,52 @@ def test_library_inclusion_refuses_filesystem_collisions(path):
     from eidos.application.handlers.promotion import collisions
     assert collisions({'eidos_recipes/cv.py': 'library'}, {path: 'authored'})
     assert not collisions({'eidos_recipes/cv.py': 'library'}, {'project.py': 'authored'})
+
+
+@pytest.mark.parametrize('stray', [.01, 'one-se', {'metric': 'se'}, True, [],
+                                  {'metric': 'se', 'multiple': float('inf')},
+                                  {'metric': 'se', 'multiple': 1, 'extra': 0}])
+def test_legacy_policy_ignores_stray_margin_but_v3_refuses_it(stray):
+    from eidos.domain.exploration import parse_rule
+    raw = dict(metric='accuracy', scorer='scorer', data=dict(inputs=dict(validation='v')))
+    assert parse_rule(dict(raw, margin=stray)) == parse_rule(raw)
+    with pytest.raises(ValueError, match='margin'):
+        parse_rule(dict(raw, margin=stray), policy_id='exploration-policy/3')
+
+
+@pytest.mark.parametrize('failure', ['paired-empty', 'readiness-failed', 'reproduction-unscored'])
+def test_suggested_lock_withholds_incomplete_preparations(failure):
+    # Reuse a real-shaped train/check/compare/reproduction group with no synthetic readiness_ok.
+    v = view()
+    base = dict(component=v['policy']['project_command_ref'], status='succeeded', purpose='open-search',
+                inputs=dict(source='s', train='t', validation='v'), config=dict(argv=['python', 'project.py', 'train'], seed=11),
+                receipt=dict(metrics=dict(validation_accuracy=.8, validation_accuracy_se=.02)), outputs=[],
+                macro=dict(tool='prepare_candidate', proposed_by='d', basis='one-se-choice'))
+    v['jobs'] = [dict(base, id='train'),
+                 dict(base, id='check', inputs=dict(model='m'), config=dict(argv=['python', 'project.py', 'check']),
+                      receipt=dict(metrics=dict(readiness_max_abs_diff=0))),
+                 dict(base, id='compare', config=dict(argv=['python', 'project.py', 'compare']),
+                      receipt=dict(metrics=dict(paired_delta=.1, paired_delta_lo=.05, paired_delta_hi=.15, paired_n=100))),
+                 dict(base, id='reproduce', purpose='reproduction', config=dict(argv=['python', 'project.py', 'train'], seed=23))]
+    assert suggested_lock(v)['readiness']['readiness_ok'] == 1
+    if failure == 'paired-empty':
+        v['jobs'][2]['receipt']['metrics']['paired_n'] = 0
+    elif failure == 'readiness-failed':
+        v['jobs'][1]['status'] = 'failed'
+    else:
+        v['jobs'][3]['receipt'] = {}
+    assert suggested_lock(v) is None
+
+
+def test_a_valid_margin_is_active_only_for_policy_three_in_recorded_notes():
+    import json
+
+    from eidos.domain.exploration import clears_margin, rule_from_notes
+    raw = dict(metric='accuracy', scorer='scorer', data=dict(inputs=dict(validation='v')),
+               margin=dict(metric='se', multiple=1))
+    notes = [dict(id='lock', kind='candidate_lock', text=json.dumps(dict(job_id='j', selection=raw)))]
+    legacy = rule_from_notes(notes)[0]
+    opted_in = rule_from_notes(notes, policy_id='exploration-policy/3')[0]
+    assert 'margin' not in legacy and opted_in['margin'] == raw['margin']
+    assert clears_margin(dict(value=.81), dict(value=.8), legacy)
+    assert not clears_margin(dict(value=.81, se=.02), dict(value=.8, se=.02), opted_in)

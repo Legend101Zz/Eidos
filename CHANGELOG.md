@@ -4,6 +4,8 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.4.0
 
+- Refuse malformed candidate preparations as correctable proposals, reconcile arm-4 lock instructions and restore claim/rule/purpose guidance. Policy-3 round accounting caches ledger evidence and keeps an unlocked margin-clearing preparation pending for its lock decision; legacy policies ignore margin fields. Context-policy/4 supports offline replay and bounded complete portfolio JSON.
+
 - [ADR 0047](docs/decisions/0047-auto-promotion-of-the-selected-recipe.md) adds opt-in candidate preparation as four checked jobs with persisted proposals and provenance; investigators retain the separate lock decision. SE margins and ledger-shaped round accounting make patience noise-aware. [ADR 0049](docs/decisions/0049-playbook-3-context-policy-4-and-prompt-6.md) selects playbook 3, context policy 4 and prompt 6, carrying readiness, paired baseline evidence, reproduction and prepared lock text. Authored source can include the pinned recipe library; study exports accept verified portfolio tables. Baseline diagnosis `next` now survives context truncation.
 
 - Calibrate portfolio selection on design generators, freeze the predeclared seeded one-SE ordering, protect large-n kernel coverage with a linear SVM scout, and bind pipeline C scoring and cached evidence to accepted epoch-2 ledger receipts (ADR 0046).
