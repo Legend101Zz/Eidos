@@ -6,6 +6,9 @@ from pathlib import Path
 
 # Pre-observed r2 finite-source SDs rounded up; resplits cannot measure new-source precision.
 FINITE_SOURCE_SD_FLOORS = {'gen-008': 1.04, 'gen-009': 4.1, 'gen-015': 32.}
+LOSS_RISK_ALPHA = .25
+CATASTROPHIC_MARGIN = 3.
+CATASTROPHIC_ALPHA = .025
 
 
 def normalized_gain(candidate, baseline, reference, reference_se):
@@ -135,7 +138,11 @@ def check_in_fold(factory, x, y, train, held, *, fitted=None):
 def evaluate(effects, roles, *, registration=None, **options):
     """Validate registration before inference; every returned verdict is recorded."""
     from study.practice.ledger import record_verdict, require_registration
-    require_registration(registration, classes=roles, exact=True)
+    require_registration(registration, classes=roles, exact=True, candidate=True)
+    from study.practice.generators import registry
+    trusted = {g['id']: g['role'] for g in registry()}
+    if any(g in trusted and role != trusted[g] for g, role in roles.items()):
+        raise ValueError('inference roles differ from trusted registry')
 
     def _assess(effects, roles, *, epsilon=.5, in_fold_ok=None, primary_pvalues=None, null_delta=None,
                  null_tolerance=None, limits_ok=None, declared_class_generators=(), effective_instances=None):
@@ -168,11 +175,16 @@ def evaluate(effects, roles, *, registration=None, **options):
                 fit = random_effects([summaries[g]['mean'] for g in members], [summaries[g]['variance'] for g in members])
                 # A deliberately sensitive loss-risk screen is calibrated jointly with
                 # transfer power by the full Monte Carlo table. Retain the conventional
-                # 5% test separately, so an 85% bound is never presented as 95% evidence.
-                risk_upper = fit['mean'] + float(t.ppf(.85, len(members) - 1)) * fit['se']
+                # 5% test separately; the sensitive risk bound is not 95% evidence.
+                risk_upper = fit['mean'] + float(t.ppf(1 - LOSS_RISK_ALPHA, len(members) - 1)) * fit['se']
                 pooled_harm[group] = dict(fit, members=members, harm_margin=0.,
-                    credible_loss=bool(fit['upper90'] < 0.), risk_upper70=risk_upper,
-                    risk_alpha=.15, risk_reject=bool(risk_upper < 0.))
+                    credible_loss=bool(fit['upper90'] < 0.), risk_upper=risk_upper,
+                    risk_alpha=LOSS_RISK_ALPHA, risk_reject=bool(risk_upper < 0.))
+        catastrophic = {}
+        for g in named:
+            upper = summaries[g]['mean'] + float(t.ppf(1 - CATASTROPHIC_ALPHA, summaries[g]['df'])) * math.sqrt(summaries[g]['variance'])
+            catastrophic[g] = dict(margin_se=-CATASTROPHIC_MARGIN, upper=upper, one_sided_alpha=CATASTROPHIC_ALPHA,
+                                   reject=bool(upper < -CATASTROPHIC_MARGIN))
         declared = set(declared_class_generators)
         if declared and (not declared <= set(named) or any(roles[g] != 'holdout-class' for g in declared)):
             raise ValueError('class inference may contain only explicitly declared holdout-class generators')
@@ -188,7 +200,7 @@ def evaluate(effects, roles, *, registration=None, **options):
         adjusted = holm([p, *(primary_pvalues or [])])
         if null_delta > null_tolerance:
             verdict = 'reject-false-positive-claims'
-        elif any(value <= .05 for value in harm) or any(v['risk_reject'] for v in pooled_harm.values()):
+        elif any(value <= .05 for value in harm) or any(v['risk_reject'] for v in pooled_harm.values()) or any(v['reject'] for v in catastrophic.values()):
             verdict = 'reject-no-harm'
         elif not inference or len(holdouts) < 5 or adjusted[0] > .05 or inference['lower90'] <= 0 or inference['mean'] < epsilon:
             verdict = 'reject-insufficient-transfer'
@@ -197,6 +209,7 @@ def evaluate(effects, roles, *, registration=None, **options):
         return dict(verdict=verdict, class_claim=verdict == 'accept-class', generators=summaries,
                     inference=inference, primary_holm_p=adjusted, harm_holm_p=dict(zip(named, harm, strict=True)),
                     inference_generators=holdouts, minimum_pooled_gain=epsilon, pooled_harm=pooled_harm,
+                    catastrophic_loss=catastrophic,
                     limitation='Named acceptance is positive transfer plus no detected material harm; not per-generator equivalence.',
                     secondary_results='descriptive; generators are the unit of inference')
 
@@ -252,7 +265,9 @@ def guard_selftest(*, registration):
     """Noisy effect controls; the end-to-end screen control is in controls.py."""
     import numpy as np
     rng = np.random.default_rng(91873)
-    roles = {g: 'holdout' if i < 12 else 'control' for i, g in enumerate(registration['classes'])}
+    from study.practice.generators import registry
+    trusted = {g['id']: g['role'] for g in registry()}
+    roles = {g: trusted.get(g, 'holdout' if i < 12 else 'control') for i, g in enumerate(registration['classes'])}
     noise = {g: rng.normal(0, .8, 4).tolist() for g in roles}
     options = dict(in_fold_ok=True, null_delta=0., null_tolerance=0., limits_ok=True)
     scenarios = {name: {g: [v + shift for v in values] for g, values in noise.items()}

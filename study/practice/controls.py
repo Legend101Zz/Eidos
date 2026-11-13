@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 from sklearn.feature_selection import SelectKBest, f_classif
 
-from study.practice.build_cards import write_json, write_npz
+from study.practice.build_cards import tree_digest, write_json, write_npz
 from study.practice.generators import registry
 from study.practice.guard import evaluate
 from study.practice.oracle import paired_interval
@@ -14,7 +14,7 @@ from study.practice.pipelines import compute_table
 
 
 def produce(data_root, reference_root, out, *, registration):
-    from study.practice.ledger import require_registration
+    from study.practice.ledger import register, require_bundle_registration, require_registration
     require_registration(registration, classes=[g["id"] for g in registry()])
     out = Path(out)
     index = json.loads((Path(data_root) / 'index.json').read_text())['cards']
@@ -23,6 +23,7 @@ def produce(data_root, reference_root, out, *, registration):
     effects = {name: {} for name in ('helpful', 'neutral', 'harmful', 'card-specific')}
     raw = {name: {} for name in effects}
     for card in index:
+        require_bundle_registration(registration, Path(data_root) / 'bundles' / card['card'])
         g = card['generator']
         entry = entries[g]
         rng = np.random.default_rng(entry['seed_stream'] + card['instance'] + 49183)
@@ -49,15 +50,25 @@ def produce(data_root, reference_root, out, *, registration):
     controls = {name: evaluate(values, roles, **options) for name, values in effects.items()}
     # Real pre-CV supervised screen on the compute_table data path, noise labels.
     rng = np.random.default_rng(991)
-    bundle = out / 'leak-data'
+    leak_root = out / 'leak-data'
+    bundle = leak_root / 'bundles' / 'P0001'
+    controller = leak_root / 'controller' / 'P0001'
     write_json(bundle / 'task.json', dict(task_type='classification'))
     for i, split in enumerate(('train', 'validation', 'test')):
         write_npz(bundle / f'{split}.npz', x=rng.normal(size=(200, 400)),
                   y=rng.integers(0, 2, 200), ids=np.arange(200) + i * 200)
+    with np.load(bundle / 'test.npz') as data:
+        write_npz(controller / 'test_inputs.npz', x=data['x'], ids=data['ids'])
+        write_npz(controller / 'test_labels.npz', y=data['y'], ids=data['ids'])
+    (bundle / 'test.npz').unlink()
+    write_json(leak_root / 'index.json', dict(cards=[dict(card='P0001', generator='gen-001', role='design',
+               bundle_digest=tree_digest(bundle), controller_digest=tree_digest(controller))]))
+    leak_receipt = register(evaluation_id=registration['evaluation_id'] + '-leak', candidate_digest=registration['candidate_digest'],
+                            classes=['gen-001'], primary_verdict='design-only behavioural leakage control', kind='construction', data_root=leak_root)
     specs = [dict(id='linear', family='linear', complexity=0, pipelines=['A0', 'A1', 'A2', 'A3'])]
-    args = bundle, bundle / 'test.npz', bundle / 'test.npz'
-    clean = compute_table(*args, specs=specs, registration=registration)
-    leaky = compute_table(*args, specs=specs, pre_cv_transform=SelectKBest(f_classif, k=5), registration=registration)
+    args = bundle, controller / 'test_inputs.npz', controller / 'test_labels.npz'
+    clean = compute_table(*args, specs=specs, registration=leak_receipt)
+    leaky = compute_table(*args, specs=specs, pre_cv_transform=SelectKBest(f_classif, k=5), registration=leak_receipt)
     leak = dict(clean_cv=clean['rows'][0]['cv_score'], leaky_cv=leaky['rows'][0]['cv_score'],
                 clean_in_fold=clean['in_fold_ok'], leaky_in_fold=leaky['in_fold_ok'],
                 actual_leaky_audits=leaky['in_fold_audits'],
@@ -83,7 +94,8 @@ def main():
     args = parser.parse_args()
     from study.practice.ledger import register
     registration = register(evaluation_id=args.evaluation_id, candidate_digest=args.candidate_digest,
-                            classes=[g['id'] for g in registry()], primary_verdict='measured construction controls', kind='construction')
+                            classes=[g['id'] for g in registry()], primary_verdict='candidate versus A2: named transfer',
+                            kind='candidate', data_root=args.data)
     produce(args.data, args.references, args.out, registration=registration)
 
 

@@ -93,3 +93,79 @@ The frozen **+.8-SE helpful-power target is NOT MET**: observed power 77.145% (W
 A disclosed unchanged-rule/family **+.9-SE sensitivity** meets every one-primary statistical target: observed helper power 85.470% (84.975–85.952%); correlated-source 84.925% (84.422–85.414%). It was measured after the frozen +.8 miss and is not a retrospective pass. The pre-existing +1.0 alternative increases power but its stronger no-nuisance-template patch misses 10% (10.325%, Wilson upper 10.754%). All full tables, including eight-primary limitations, are retained.
 
 The timing criterion is also **NOT MET**: maximum 1,223.33 s against 840 s. The limit is unchanged. Overall step-1 acceptance remains NOT MET; this commit does not claim an all-green acceptance or pipeline C readiness. A final authentication-only bundle-binding correction leaves every Monte Carlo count/bound unchanged under exact rerun. See `step1-r3/SUMMARY.md`, `ALTERNATIVES.md`, JSON receipts and the report's r3 section.
+
+
+### r4 prospective controller decisions (before evaluating any v2 candidate)
+
+The orchestrator fixes the minimum detectable effect at **+0.9 paired-test SE**,
+with at least 80% power for one primary at the observed variance profile. +0.8
+is sensitivity only. Report variance multipliers 0.5, 1.0 and 1.5, including the
+higher-variance power limitation. These are exposed harness calibrations, not
+independent confirmation and not an evaluation of pipeline C.
+
+The frozen per-instance wall limit remains **840 seconds** (estimate 420).
+Reduce gen-011 from 20,000/2,000/2,000 to 6,000/1,000/1,000 rows, retaining its
+Hastie mechanism and structured nuisance. Rebuild deterministically and measure
+every family instance cold; cached historical walls cannot establish this limit.
+
+Construction registrations cover only trusted design, control and calibration
+roles and cannot emit accept/reject decisions. Any holdout-label scoring and all
+accept/reject inference require candidate registration with normal burn accounting.
+Registrations bind the absolute data root and the index digest; scoring verifies
+that binding and the indexed bundle/controller content. Copies outside that root,
+missing indices, role relabelling and changed index bytes fail closed. Exposed
+harness evaluation uses the same frozen candidate receipt across its diagnostics;
+independent cold scoring uses a second receipt. These consume the two holdout
+burns; subsequent candidate work requires independent replacement/review.
+
+The ledger has a documented same-account limit: rolling back both the tail and
+local head, or resetting all local state, is not detectable from that state alone.
+Every successful append also appends its sequence and head hash to the fixed
+`claude-orch/practice-ledger/HEADS.log`, fsynced before returning. The orchestrator
+additionally records heads in its own log. HEADS.log is never rewritten by ledger
+code; an account able to replace both histories can still erase the local evidence.
+
+
+The first r4 design reduction to 6,000 training rows failed: the first two
+instances took about 959 s. Before further measurement, reduce gen-011 again to
+**1,500/500/1,000**. Its mechanism and nuisance structure remain unchanged. The
+failed attempt is retained in `step1-r4/attempt-6000/`. No holdout in that attempt
+was scored. Authorize a ledger index-revision event for design/control/calibration
+entries only: authenticate the previous index digest against the registration,
+require exactly identical holdout entries and class sets, validate all roles
+against the trusted registry, and append the new digest. Candidate identity,
+primary and burn counts cannot be revised. Scoring accepts only the active
+ledger-pinned digest. This supports design resizing without reopening holdout
+exposure or treating a new candidate as construction. Both full-family roots
+retain their original burn-counted receipts; no burn is reset or exempted.
+
+Before final r4 Monte Carlo, exposed-r3 neutral calibration (seed 14454,
+20,000 trials per cell) found that per-generator one-sided alpha .05 at margin
+-3 had familywise false rejection 4.990% at x1.5 (Wilson upper 5.301%), missing
+the 5% bound. Freeze **alpha .025**, a one-sided 97.5% upper t bound below -3.
+The calibration rate becomes 2.460% (Wilson upper 2.684%). This is an exposed
+calibration choice, not final r4 validation. Evaluate the full rule and every
+single -4-SE loss cell again on the final measured r4 profile. Fingerprint lint
+uses only visible train/validation rows, never held labels.
+
+### r4 measured statistical outcome
+
+The final 720-cell table (20,000 trials per cell, seed 20261114) meets the core
+one-primary targets. At observed SD, +0.9-SE helpful acceptance is **83.905%**
+(Wilson 95% 83.389–84.408%), neutrality .910% (upper 1.051%), and mixed -1 SE
+elsewhere .880% (upper 1.019%). At SD x1.5, mixed -1 acceptance is 4.335%
+(upper 4.626%), neutrality 1.620% (upper 1.804%), and helpful power is 59.365%
+(descriptive). The catastrophic screen's neutral familywise false rejection is
+2.190% at x1.5 (upper 2.402%), meeting its 5% target.
+
+The **single-generator -4-SE acceptance target is NOT MET**: 105 one-primary
+cells miss their bound. At observed SD, losing -4 on finite-source gen-009 while
+helping the other named generators is accepted 83.905%. Its effective n=1 and
+prior source-SD floor 4.1 leave too little precision for a credible per-generator
+loss claim. The new check rejects precise catastrophic losses but cannot supply
+missing source information. All failed cells remain in `step1-r4/operating.json`
+and the full report; no per-generator equivalence or universal catastrophic-loss
+detection is claimed. Overall acceptance therefore remains NOT MET, regardless
+of the mechanical/timing checks. More independent per-generator information and
+independently reviewed replacement holdouts are required before further candidate
+work; both existing holdout burns remain spent.

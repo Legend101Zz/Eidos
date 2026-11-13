@@ -146,7 +146,7 @@ def test_gate_refuses_an_interpreter_that_disagrees_with_the_bundle_lock(tmp_pat
 def test_fresh_supplied_baseline_need_not_emit_a_recipe_receipt(tmp_path, monkeypatch):
     from study.practice.build_cards import write_npz
     from study.practice.run_gate import fresh_recipe
-    from study.tests.practice_support import registration
+    from study.tests.practice_support import indexed_fixture
 
     bundle, controller = tmp_path / 'bundle', tmp_path / 'controller'
     for split in ('train', 'validation'):
@@ -168,9 +168,10 @@ def test_fresh_supplied_baseline_need_not_emit_a_recipe_receipt(tmp_path, monkey
 
     monkeypatch.setattr('study.common.research_python', lambda: 'fixture-python')
     monkeypatch.setattr('study.fresh_check.candidate_command', candidate_command)
+    bundle, controller, receipt = indexed_fixture(bundle, controller)
     result = fresh_recipe(tmp_path / 'workspace', bundle, controller,
                           dict(spec={'supplied': True}, validation_predictions=[0, 1]), 'classification', 0.5, 0.02,
-                          registration=registration(['test']))
+                          registration=receipt)
     assert result['fresh_process_equal'] and result['export_eligible']
     assert len(result['receipts']) == 3
     assert all(receipt['fit_seconds'] is None for receipt in result['receipts'])

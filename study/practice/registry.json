@@ -138,9 +138,9 @@
     "role": "design",
     "task_type": "classification",
     "sizes": {
-      "train": 20000,
-      "validation": 2000,
-      "test": 2000
+      "train": 1500,
+      "validation": 500,
+      "test": 1000
     },
     "instances": 4,
     "seed_stream": 2026221300

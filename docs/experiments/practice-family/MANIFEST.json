@@ -1,6 +1,6 @@
 {
   "schema": "practice-manifest/1",
-  "frozen_before": "pipeline C; r3 nuisance diversification and harm pooling use exposed comparator variance only",
+  "frozen_before": "pipeline C; r4 prospective orchestrator effect/wall decisions; exposed comparator calibration",
   "generators": [
     {
       "id": "gen-001",
@@ -141,9 +141,9 @@
       "role": "design",
       "task_type": "classification",
       "sizes": {
-        "train": 20000,
-        "validation": 2000,
-        "test": 2000
+        "train": 1500,
+        "validation": 500,
+        "test": 1000
       },
       "instances": 4,
       "seed_stream": 2026221300
@@ -358,7 +358,7 @@
         "units": "test examples A3 minus A1"
       }
     },
-    "positive_effect_se": 0.8,
+    "positive_effect_se": 0.9,
     "primary_alpha": 0.05,
     "minimum_holdout_generators": 12,
     "pooled_harm_margin_se": 0.0,
@@ -372,5 +372,5 @@
     "many-class beyond digits",
     "d >> n above 80"
   ],
-  "revision": "r3"
+  "revision": "r4"
 }

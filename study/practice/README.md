@@ -6,8 +6,8 @@ Use a Python environment with the bundle's pinned numpy, scikit-learn and joblib
 
 ```sh
 python -m study.practice.build_cards --out /external/practice/data
-python -m study.practice.run_gate --data /external/practice/data --out /external/practice/gate --evaluation-id comparator-v1 --candidate-digest FROZEN_DIGEST --kind construction
-python -m study.practice.run_gate --data /external/practice/data --out /external/practice/gate --fresh --evaluation-id comparator-v1 --candidate-digest FROZEN_DIGEST --kind construction
+python -m study.practice.run_gate --data /external/practice/data --out /external/practice/gate --evaluation-id comparator-v1 --candidate-digest FROZEN_DIGEST --kind candidate
+python -m study.practice.run_gate --data /external/practice/data --out /external/practice/gate --fresh --evaluation-id comparator-v1 --candidate-digest FROZEN_DIGEST --kind candidate
 python -m study.practice.run_gate --package-development --data /external/practice/development --out /external/practice/calibration --evaluation-id calibration-v1 --candidate-digest FROZEN_DIGEST --kind construction
 ```
 
@@ -20,9 +20,9 @@ The guard uses t intervals within generators and an exact conditional sign-flip 
 `compute_table` poisons held-fold rows and reruns the actual fit workflow once per recipe, comparing fitted state. `controls` executes a supervised pre-CV screen through that path and measures generic helpful/neutral/harmful/card-specific prediction-fault controls. `operating` records Monte Carlo error rates and power at the observed instance SDs and at lower noise. `references` fits independent large-sample attainable references (finite sources use their available train+validation data); `recompute` requires a new cache and recomputes one card per generator. Those receipts are required by the strengthened acceptance report.
 
 ```sh
-python -m study.practice.references --data /external/practice/data --out /external/practice/evidence --evaluation-id references-v1 --candidate-digest FROZEN_DIGEST
-python -m study.practice.controls --data /external/practice/data --references /external/practice/evidence --out /external/practice/evidence --evaluation-id controls-v1 --candidate-digest FROZEN_DIGEST
-python -m study.practice.operating --family /external/practice/gate/gate.json --out /external/practice/evidence/operating.json --evaluation-id operating-v1 --candidate-digest FROZEN_DIGEST
+python -m study.practice.references --family /external/practice/gate/gate.json --data /external/practice/data --out /external/practice/evidence --evaluation-id comparator-v1 --candidate-digest FROZEN_DIGEST
+python -m study.practice.controls --data /external/practice/data --references /external/practice/evidence --out /external/practice/evidence --evaluation-id comparator-v1 --candidate-digest FROZEN_DIGEST
+python -m study.practice.operating --family /external/practice/gate/gate.json --out /external/practice/evidence/operating.json --evaluation-id comparator-v1 --candidate-digest FROZEN_DIGEST
 python -m study.practice.recompute --family /external/practice/gate/gate.json --first-gate /external/practice/gate --out /external/practice/cold --evaluation-id cold-v1 --candidate-digest FROZEN_DIGEST
 ```
 
@@ -36,3 +36,53 @@ The nine newer machinery holdouts now use nine nuisance structures (none, correl
 
 
 `python -m study.practice.acceptance --help` describes the five-criterion acceptance report. `claim_audit.py` audits structured visible claims and their evidence references without generating claim text.
+
+
+The r4 authorization rules supersede construction examples and ledger descriptions above.
+Full-family scoring requires `--kind candidate`; the same frozen evaluation ID,
+digest and data root may be replayed without an extra burn. `references` and
+`controls` must use that family evaluation identity and root. `operating` must
+use the identity in its `--family` report. Independent `recompute` uses a new
+candidate receipt and spends the second holdout burn. Public development-only
+calibration can still use `--kind construction`; construction never emits an
+accept/reject verdict. Unknown generators cannot be called construction.
+
+API changes: `register(..., data_root=...)` binds the absolute root and SHA256 of
+`index.json`; scoring refuses an absent binding. Index entries include bundle
+and controller tree digests. A copied bundle, changed/missing index, changed
+bundle/controller or different test-label path fails before data loads. Index
+roles must match the trusted registry. Statistical-only candidate registrations
+need no data root but cannot score bundles. `run` accepts optional `registration`
+and `card_ids` for bounded workers; partial workers emit measurements without a
+verdict. Existing function names and CLI flags are retained.
+
+The r4 minimum detectable effect is +0.9 paired-test SE at the observed profile
+for one primary; +0.8 and x1.5 power are sensitivity. The zero-margin pooled loss
+screen now uses one-sided alpha .25 (an upper 50% interval), calibrated on exposed
+r3 variance including x1.5. Its sensitivity is distinguished from 95% evidence.
+An additional per-generator check rejects any one-sided 97.5% upper t bound below
+-3 SE. Operating evidence includes every named generator with a planted -4-SE
+loss, a separate neutral familywise false-rejection table for this new screen,
+and all failures. Four instances can have low power on high-variance generators;
+the complete acceptance report determines whether the targets were achieved.
+
+`HEADS.log` receives every appended ledger head with fsync before return. It is
+append-only in this implementation; the orchestrator additionally records heads
+in its own log. Tail-plus-head rollback or total reset remains undetectable from
+a single replaced local history under the same account. The N04 lint now uses
+Gaussian ranks, noise-column dependence and class-specific mixture improvement
+relative to the unconditional density, with both sparse and dense projections.
+It catches the tested rotations, jitter, monotone/quantile transforms and 0–4
+redundant columns; it remains a similarity lint, not an independence proof.
+
+When a design card alone must be resized, the controller can call
+`revise_design_index(receipt, previous_index=...)`. The previous index bytes must
+match the active registered digest, the generator set and trusted roles must
+stay fixed, and every holdout entry must remain exactly equal. The revision is
+an authenticated ledger event; the original candidate digest, primary and burn
+counts stay fixed. Scoring follows only that registration's active digest. An
+unregistered index edit still fails. This cannot authorize a new candidate or
+change a holdout. r4's failed 6,000-row design attempt is retained; its final
+large-instance sizes are 1,500/500/1,000, measured again cold.
+
+The per-generator catastrophic screen freezes alpha .025 after exposed-r3 neutral calibration; alpha .05 missed the x1.5 Wilson false-rejection bound. Lint reads visible rows only. See the final full r4 table for validation.

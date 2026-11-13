@@ -70,16 +70,20 @@ def produce(family, rerun, development, out, *, rebuilt_data_digest, references,
     result = dict(schema='v2-step1-acceptance/2', criteria=criteria, all_met=all(v['passed'] for v in criteria.values()),
                   family_instances=len(family['cards']), development_instances=len(development['cards']),
                   scoring_source_digest=family['source_digest'], model_calls=0, provider_calls=0,
-                  limitation='Offline harness evidence. A3 is an EDA proxy, not a coding-agent ceiling. Pipeline C and the investigator remain unevaluated. Positive fault-repair controls are distinct from the +0.8-SE Monte Carlo power target.')
+                  limitation='Offline harness evidence. A3 is an EDA proxy, not a coding-agent ceiling. Pipeline C and the investigator remain unevaluated. Positive fault-repair controls are distinct from the +0.9-SE Monte Carlo power target (+0.8 sensitivity only).')
     out = Path(out)
     write_json(out / 'acceptance.json', result)
-    lines = ['# V2 step 1 r3 acceptance', '', f"Family: {len(family['cards'])} cards; development: {len(development['cards'])}.", '']
+    lines = ['# V2 step 1 r4 acceptance', '', f"Family: {len(family['cards'])} cards; development: {len(development['cards'])}.", '']
     lines += [f"- {'PASS' if v['passed'] else 'NOT MET'} — {k}" for k, v in criteria.items()]
     lines += ['', '| Variance profile | Scenario | Primaries | Accepted / trials | Acceptance (Wilson 95%) | Target met |',
               '|---|---|---:|---:|---:|---|']
     for row in operating['rows']:
         status = 'descriptive' if row['target_met'] is None else 'YES' if row['target_met'] else 'NO'
         lines.append(f"| {row['profile']} | {row['scenario']} | {row['primaries']} | {row['accepted']} / {row['trials']} | {row['acceptance_rate']:.2%} ({row['mc_lower95']:.2%}–{row['mc_upper95']:.2%}) | {status} |")
+    lines += ['', '| Variance profile | Single-generator screen: neutral familywise false rejection (Wilson 95%) | Target met |',
+              '|---|---:|---|']
+    for row in operating.get('catastrophic_neutral', []):
+        lines.append(f"| {row['profile']} | {row['false_rejection_rate']:.2%} ({row['mc_lower95']:.2%}–{row['mc_upper95']:.2%}) | {'YES' if row['target_met'] else 'NO'} |")
     lines += ['', operating['effect_justification'], '', operating['scope'], '', result['limitation']]
     (out / 'SUMMARY.md').write_text('\n'.join(lines) + '\n')
     return result

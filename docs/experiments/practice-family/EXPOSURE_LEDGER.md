@@ -43,3 +43,31 @@ The r3 instruction-file discovery again used an overly broad programme-parent se
 
 
 R3 source-uncertainty calibration: a later r2-only correlated-source probe exposed mixed −1 acceptance of 15.3% with the generic 1.04 SD floor; this failed the requested target. The final rule keeps risk alpha .15 and sets finite-source SD floors from prior observed r2 SDs, rounded up to wine 1.04 / rotated digits 4.1 / offset digits 32. An additional r2 calibration probe measured mixed −1 acceptance 5.55% independently / 6.30% correlated, helper power 89.48% / 88.40%. No final r3 Monte Carlo output was used to select this correction. The full final table and all preceding probe receipts remain in r3 evidence. The owned waiting finalizer was restarted to load each corrected policy; no scored table was altered or rebound.
+
+
+## r4 authorization and exposed calibration
+
+The orchestrator prospectively fixes +0.9 paired-test-SE for one-primary power;
++0.8 remains sensitivity. The .25 pooled loss-risk alpha is calibrated against
+the exposed r3 SD profile and its x0.5/x1.5 variants, then checked on r4 variance.
+This is calibration, not independent validation. The single-generator -3-SE
+credible-loss check is also assessed on neutral and every -4-SE single-loss cell.
+No failed target may be omitted. gen-011 is reduced to 6,000/1,000/1,000 rows;
+all 96 instance walls are measured again under the unchanged 840-second limit.
+
+The construction escape hatch is closed: only trusted design/control/calibration
+registrations can be construction and they emit no verdict. Two real candidate
+receipts bind the full family and independent-cold roots, spend the two holdout
+burns, and share each identity across their diagnostics. They evaluate exposed
+harness/comparator controls only; pipeline C does not exist here. No burn is
+reset, erased or exempted. Step 2 needs independent replacements and review
+before further candidate evaluation. HEADS.log witnesses each appended head;
+the orchestrator separately records heads. Same-account replacement of both
+local histories cannot be detected solely from those replaced histories.
+
+The first 6,000-row r4 design attempt measured 959.53/959.18 seconds and failed.
+Its scorer was stopped before scoring any holdout. The final gen-011 reduction
+is 1,500/500/1,000. Authenticated design-only index revisions preserve every
+protected holdout entry and both original candidate receipts/burns. Every final
+family score/wall and independent-cold table is recomputed after this revision;
+the failed attempt is archived. No historical wall is used as a final pass.

@@ -87,7 +87,8 @@ def test_new_output_directory_cannot_reset_burns():
     with pytest.raises(ValueError, match='two-burn'):
         ledger.register(evaluation_id='different-out', candidate_digest='new', classes=(g for g in ['g']), primary_verdict='transfer')
     # Construction is still logged, but cannot erase or change candidate burns.
-    registration(['g'])
+    ledger.register(evaluation_id='design-only', candidate_digest='test', classes=['gen-001'],
+                    primary_verdict='construction', kind='construction')
     assert len(ledger.verify_chain()) == 3
 
 
@@ -160,9 +161,9 @@ def test_alternative_scoring_entries_also_require_registration(tmp_path):
     indexed = tmp_path / 'data/bundles/P0001'
     write_json(tmp_path / 'data/index.json', {'cards': [{'card': 'P0001', 'generator': 'gen-011'}]})
     wrong = registration(['unrelated'])
-    with pytest.raises(ValueError, match='generator set'):
+    with pytest.raises(ValueError, match='index binding'):
         supplied_baseline(tmp_path / 'work', indexed, tmp_path, registration=wrong)
-    with pytest.raises(ValueError, match='generator set'):
+    with pytest.raises(ValueError, match='index binding'):
         fresh_recipe(tmp_path / 'work', indexed, tmp_path, {}, 'classification', .5, .02, registration=wrong)
 
 

@@ -31,31 +31,72 @@ def observed(name, original, calls):
 
 
 def n04_fingerprint(data):
-    """Statistical screen for a redundant per-class mixture with Gaussian noise.
+    """Conservative rank-mixture lint, including jittered/rotated dev copies.
 
-    Feature order, shifts, scaling, sample count and small changes in separation /
-    label flips do not change this signature. This is a conservative dev-similarity
-    lint, not a proof that arbitrary transformed data have an independent origin.
+    Gaussian ranks remove strictly monotone marginal transforms. Independent
+    rank shadows identify nuisance columns without requiring exact redundancy.
+    A second all-feature projection detects mixtures hidden by rotations. Neither
+    path assumes a particular number of redundant columns or exact matrix rank.
     """
-    from scipy.stats import kurtosis, skew
-    x = np.concatenate([s['x'] for s in data.splits.values()]).astype(float)
-    y = np.concatenate([s['y'] for s in data.splits.values()])
+    from scipy.stats import kurtosis, norm, rankdata, skew
+    from sklearn.decomposition import PCA
+    from sklearn.mixture import GaussianMixture
+    from threadpoolctl import threadpool_limits
+
+    # Lint uses visible rows only; factory review must not expose held labels.
+    visible = [data.splits[name] for name in ('train', 'validation') if name in data.splits]
+    x = np.concatenate([s['x'] for s in visible]).astype(float)
+    y = np.concatenate([s['y'] for s in visible])
     if data.task_type != 'classification' or len(np.unique(y)) != 2 or x.shape[1] < 16 or len(x) < 200:
         return False
     x = x[:, x.std(axis=0) > 1e-8]
-    x = (x - x.mean(axis=0)) / x.std(axis=0)
-    correlation = np.corrcoef(x.T)
+    standardized = (x - x.mean(axis=0)) / x.std(axis=0)
+    correlation = np.corrcoef(standardized.T)
     rank_deficit = int(np.sum(np.linalg.eigvalsh(correlation) < 1e-7))
     np.fill_diagonal(correlation, 0.)
-    noise = (np.max(abs(correlation), axis=0) < .18) & (abs(skew(x)) < .35) & (abs(kurtosis(x)) < .7)
-    # Class-conditional mean/variance/kurtosis distinguish the dependent signal
-    # from the marginally Gaussian independent nuisance block.
-    moments = []
-    for label in np.unique(y):
-        rows = x[y == label]
-        moments.append(abs(rows.mean(axis=0)) + abs(rows.var(axis=0) - 1.) + abs(kurtosis(rows)))
-    signal_moment = np.median(np.mean(moments, axis=0)[~noise]) if np.any(~noise) else 0.
-    return bool(rank_deficit >= 3 and noise.sum() >= 4 and signal_moment > .25)
+    gaussian_shadow = ((np.max(abs(correlation), axis=0) < .18)
+                       & (abs(skew(standardized)) < .35) & (abs(kurtosis(standardized)) < .7))
+    moments = [abs(standardized[y == label].mean(axis=0)) + abs(standardized[y == label].var(axis=0) - 1.)
+               + abs(kurtosis(standardized[y == label])) for label in np.unique(y)]
+    signal_moment = np.median(np.mean(moments, axis=0)[~gaussian_shadow]) if np.any(~gaussian_shadow) else 0.
+    # Retain the earlier exact-redundancy signature too, including its one-cluster
+    # sensitivity. The transformed-copy paths below do not depend on redundancy.
+    if rank_deficit >= 3 and gaussian_shadow.sum() >= 4 and signal_moment > .25:
+        return True
+    # One-hot/grouped generators are not this continuous Gaussian-mixture recipe.
+    if np.mean([len(np.unique(c)) > .5 * len(x) for c in x.T]) < .9:
+        return False
+    # Bounded deterministic workload, stratified by observed class, no holdout score.
+    rng = np.random.default_rng(19834)
+    rows = np.concatenate([rng.choice(np.flatnonzero(y == label), min(2000, int(np.sum(y == label))), replace=False)
+                           for label in np.unique(y)])
+    x, y = x[rows], y[rows]
+    z = norm.ppf((rankdata(x, axis=0) - .5) / len(x))
+    correlation = np.corrcoef(z.T)
+    np.fill_diagonal(correlation, 0.)
+    shadow = np.max(abs(correlation), axis=0) < max(.15, 3.5 / np.sqrt(len(x)))
+
+    def mixture_gain(features):
+        if features.shape[1] < 2:
+            return -np.inf
+        projected = PCA(n_components=min(8, features.shape[1]), whiten=True).fit_transform(features)
+        gains = []
+        for label in np.unique(y):
+            values = projected[y == label]
+            bic = [GaussianMixture(k, random_state=34, n_init=2, reg_covar=1e-4).fit(values).bic(values) for k in (1, 3)]
+            gains.append((bic[0] - bic[1]) / len(values))
+        # Shared nonlinear nuisance can itself be multimodal (squares/sines).
+        # Require *class-conditional* extra structure beyond that shared density.
+        bic = [GaussianMixture(k, random_state=34, n_init=2, reg_covar=1e-4).fit(projected).bic(projected) for k in (1, 3)]
+        common_gain = (bic[0] - bic[1]) / len(projected)
+        return min(min(gains), min(gains) - common_gain + .3)
+
+    with threadpool_limits(limits=1):
+        # Noise-isolated signatures survive marginal quantiles and jitter; the
+        # dense projection branch survives orthogonal mixing of every column.
+        sparse_mixture = shadow.sum() >= 4 and mixture_gain(z[:, ~shadow]) > .65
+        dense_mixture = mixture_gain(z) > .65
+    return bool(sparse_mixture or dense_mixture)
 
 
 def recipe_violations():

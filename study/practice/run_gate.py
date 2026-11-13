@@ -15,7 +15,7 @@ import numpy as np
 
 from study.practice.build_cards import ROOT, tree_digest, write_json, write_npz
 from study.practice.guard import check_fit_trace, claim_metrics, evaluate, guard_selftest
-from study.practice.ledger import register, require_registration
+from study.practice.ledger import register, require_bundle_registration, require_registration
 from study.practice.oracle import score
 from study.practice.pipelines import compute_table, select, source_digest
 from study.practice.selection_replay import replay
@@ -52,7 +52,8 @@ def package_development(out, cards=('N01', 'N02', 'N03', 'N04', 'D02', 'D03', 'D
         write_json(bundle / 'task.json', dict(task_id=card, task_type=kind, nclasses=classes, project=project))
         baseline = ROOT / ('research/public/development/agent_project.py' if card == 'D02' else 'study/packaging/baseline_project.py')
         shutil.copyfile(baseline, bundle / 'project.py')
-        index.append(dict(card=card, generator=card, instance=0, role='calibration-only'))
+        index.append(dict(card=card, generator=card, instance=0, role='calibration-only',
+                          bundle_digest=tree_digest(bundle), controller_digest=tree_digest(controller)))
     write_json(Path(out) / 'index.json', dict(schema='practice-index/1', cards=index))
 
 
@@ -82,22 +83,11 @@ def policy_digest():
 
 def require_bundle_receipt(registration, bundle):
     """Bind every scoring entry to the actual indexed bundle, not just any ID."""
-    receipt = require_registration(registration)
-    bundle = Path(bundle)
-    index = bundle.parent.parent / 'index.json'
-    if index.exists():
-        cards = json.loads(index.read_text())['cards']
-        item = next((r for r in cards if r['card'] == bundle.name), None)
-        if item is None:
-            raise ValueError('bundle missing from registered scoring index')
-        require_registration(receipt, classes=[item['generator']])
-    elif receipt['kind'] != 'construction':
-        raise ValueError('candidate scoring requires a registered generator index')
-    return receipt
+    return require_bundle_registration(registration, bundle)
 
 
 def fresh_recipe(workspace, bundle, controller, row, task_type, baseline_score, practical_bar, *, registration=None):
-    require_bundle_receipt(registration, bundle)
+    require_bundle_registration(registration, bundle, test_labels=controller / 'test_labels.npz', test_inputs=controller / 'test_inputs.npz')
     from study.common import research_python
     from study.fresh_check import candidate_command, equal_predictions
     candidate = workspace / 'candidate'
@@ -161,7 +151,7 @@ def fresh_recipe(workspace, bundle, controller, row, task_type, baseline_score, 
 
 def supplied_baseline(workspace, bundle, controller, *, registration=None):
     """Execute the functioning supplied A0 through the same no-network evaluator command."""
-    require_bundle_receipt(registration, bundle)
+    require_bundle_registration(registration, bundle, test_labels=controller / 'test_labels.npz', test_inputs=controller / 'test_inputs.npz')
     from study.common import research_python
     from study.fresh_check import candidate_command
     if workspace.exists():
@@ -192,7 +182,8 @@ def effect_tables(results):
     return effects, raw, roles
 
 
-def run(data_root, out, *, fresh=False, specs=None, evaluation_id=None, candidate_digest=None, kind="candidate"):
+def run(data_root, out, *, fresh=False, specs=None, evaluation_id=None, candidate_digest=None, kind="candidate",
+        registration=None, card_ids=None):
     if not evaluation_id or not candidate_digest:
         raise ValueError("every scoring run requires an evaluation ID and frozen candidate digest")
     data_root, out = Path(data_root).resolve(), Path(out).resolve()
@@ -209,14 +200,25 @@ def run(data_root, out, *, fresh=False, specs=None, evaluation_id=None, candidat
                 if environment.get(name) != version:
                     raise ValueError(f'practice gate requires {requirement}; current interpreter has {environment.get(name)}')
     classes = sorted({item['generator'] for item in index})
-    registration = register(evaluation_id=evaluation_id, candidate_digest=candidate_digest, classes=classes,
-                            primary_verdict='A3 versus A1 comparator calibration' if kind == 'construction' else 'candidate versus A2: named transfer', kind=kind)
+    if registration is None:
+        registration = register(evaluation_id=evaluation_id, candidate_digest=candidate_digest, classes=classes,
+                                primary_verdict='A3 versus A1 comparator calibration' if kind == 'construction' else 'candidate versus A2: named transfer',
+                                kind=kind, data_root=data_root)
+    else:
+        require_registration(registration, classes=classes, exact=True)
+        if (registration['evaluation_id'], registration['candidate_digest'], registration['kind']) != (evaluation_id, candidate_digest, kind):
+            raise ValueError('run identity differs from registration')
+    if card_ids is not None:
+        if set(card_ids) - {r['card'] for r in index}:
+            raise ValueError('unknown card selection')
+        index = [r for r in index if r['card'] in card_ids]
     results = []
     for item in index:
         require_registration(registration, classes=[item["generator"]])
         started = time.perf_counter()
         card = item['card']
         bundle, controller = data_root / 'bundles' / card, data_root / 'controller' / card
+        require_bundle_receipt(registration, bundle)
         key = cache_key(bundle, controller, specs)
         cache = out / 'cache' / f'{key}.json'
         hit = cache.exists()
@@ -284,11 +286,15 @@ def run(data_root, out, *, fresh=False, specs=None, evaluation_id=None, candidat
                                                 **r['pipelines'][name]) for r in controls], practical_bar=0.02, null=True)
     effects, raw_effects, roles = effect_tables(results)
     # A3–A1 is descriptive comparator calibration, never acceptance of pipeline C.
-    report = dict(schema='practice-gate/1', cards=results, claim_metrics=metrics, guard_selftest=guard_selftest(registration=registration),
-                  comparator_guard_descriptive=evaluate(effects, roles, registration=registration, epsilon=.5,
+    complete_candidate = (kind == 'candidate' and set(roles) == set(registration['classes'])
+                          and all(len(values) >= 2 for values in effects.values()))
+    diagnostic = evaluate(effects, roles, registration=registration, epsilon=.5,
                       in_fold_ok=all(r['in_fold'] for r in results), null_delta=(metrics['A3']['false_positive_claim_rate'] - metrics['A2']['false_positive_claim_rate']) if metrics else None,
                       null_tolerance=0., limits_ok=all(r['measurement_seconds'] <= 840 for r in results),
-                      effective_instances={g: 1 for g in ('gen-008', 'gen-009', 'gen-015') if g in effects}),
+                      effective_instances={g: 1 for g in ('gen-008', 'gen-009', 'gen-015') if g in effects}) if complete_candidate else dict(status='construction-or-partial; no verdict')
+    report = dict(schema='practice-gate/1', cards=results, claim_metrics=metrics,
+                  guard_selftest=guard_selftest(registration=registration) if complete_candidate else {},
+                  comparator_guard_descriptive=diagnostic,
                   comparator_effects_raw=raw_effects, comparator_effects_test_se=effects,
                   pipeline_C='not implemented in step 1; no C acceptance verdict', fresh_checks_executed=fresh,
                   preregistration=registration,
