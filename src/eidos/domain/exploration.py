@@ -36,6 +36,10 @@ NON_EXPERIMENT_KINDS = ("evidence-arm", "qualification", "validation", "componen
 PROJECT_COMMAND = "eidos.project.command"
 
 DEFAULT_POLICY: dict[str, Any] = {
+    "policy": POLICY_ID,
+    "selection_margin_multiple": 1.0,
+    "project_command_ref": "eidos.project.command@1.0.7",
+    "planner": None,
     "patience_rounds": 3,  # stop after this many challenger rounds without a new incumbent
     "max_rounds": None,  # an optional prospective search limit (rounds after the first lock)
     "holdback_fraction": 0.15,  # of the wall limit, kept for reproduction and export ...
@@ -122,6 +126,11 @@ def parse_rule(raw: Any) -> dict[str, Any]:
         if not _number(raw["reproduce_within"]) or float(raw["reproduce_within"]) < 0:
             raise RuleError("a selection rule's reproduce_within is a non-negative number")
         rule["reproduce_within"] = float(raw["reproduce_within"])
+    if raw.get("margin") is not None:
+        margin = raw["margin"]
+        if not isinstance(margin, dict) or set(margin) != {"metric", "multiple"} or not isinstance(margin["metric"], str) or not margin["metric"].strip() or not _number(margin["multiple"]) or margin["multiple"] < 0:
+            raise RuleError("a selection margin needs metric and a finite non-negative multiple")
+        rule["margin"] = {"metric": margin["metric"], "multiple": float(margin["multiple"])}
     return rule
 
 
@@ -239,13 +248,31 @@ def selection_evidence(jobs: list[dict[str, Any]], job_id: str, rule: dict[str, 
             continue
         v = metric_value(_metrics(j), rule["metric"])
         if v is not None:
-            return {"metric": rule["metric"], "split": rule["split"], "value": v, "scored_by": j["id"]}
+            evidence = {"metric": rule["metric"], "split": rule["split"], "value": v, "scored_by": j["id"]}
+            if rule.get("margin"):
+                se = metric_value(_metrics(j), rule["margin"]["metric"])
+                if se is None or se < 0:
+                    continue
+                evidence["se"] = se
+            return evidence
     return None
 
 
 def better(challenger: float, incumbent: float, direction: str) -> bool:
     """Strictly better in the rule's direction (a tie keeps the incumbent)."""
     return challenger > incumbent if direction == "higher_is_better" else challenger < incumbent
+
+
+def clears_margin(challenger: dict[str, Any], incumbent: dict[str, Any], rule: dict[str, Any]) -> bool:
+    delta = float(challenger["value"]) - float(incumbent["value"])
+    if rule["direction"] == "lower_is_better":
+        delta = -delta
+    margin = rule.get("margin")
+    if not margin:
+        return delta > 0
+    if any(not _number(e.get("se")) or e["se"] < 0 for e in (challenger, incumbent)):
+        return False
+    return delta > float(margin["multiple"]) * max(challenger["se"], incumbent["se"])
 
 
 def ceiling_of(rule: dict[str, Any]) -> float | None:
@@ -355,7 +382,7 @@ def reproduction_jobs(jobs: list[dict[str, Any]], recipes_of: list[str]) -> set[
 
 def rounds(round_log: list[dict[str, Any]], jobs: list[dict[str, Any]], first_lock_turn: int | None,
            last_change_turn: int | None, excluded: set[str] | None = None, rule: dict[str, Any] | None = None,
-           held_out: set[str] | None = None) -> tuple[list[int], int, list[str]]:
+           held_out: set[str] | None = None, *, v3: bool = False) -> tuple[list[int], int, list[str]]:
     """(the challenger rounds: turns after the first lock that admitted at least one experiment with a challenger
     purpose that is not reproduction work (``excluded``); the number of those after the incumbent last changed that
     are **evaluated**; the challenger jobs of rounds still pending). R14 #6: a round counts as unsuccessful only once
@@ -370,8 +397,11 @@ def rounds(round_log: list[dict[str, Any]], jobs: list[dict[str, Any]], first_lo
     for r in round_log:
         if int(r["turn"]) <= first_lock_turn:
             continue
-        ids = [str(j) for j in r.get("jobs") or [] if (by_id.get(j) or {}).get("purpose") in CHALLENGER_PURPOSES
-               and j not in skip]
+        ids = [str(j) for j in r.get("jobs") or [] if ((by_id.get(j) or {}).get("purpose") in CHALLENGER_PURPOSES
+               or (v3 and str((by_id.get(j) or {}).get("component", "")).startswith("eidos.search.recipe-portfolio")
+                   and (by_id.get(j) or {}).get("purpose") == "reproduction"))
+               and j not in skip
+               and not (v3 and str((by_id.get(j) or {}).get("component", "")).startswith("eidos.diagnose."))]
         if ids:
             per_turn.setdefault(int(r["turn"]), []).extend(ids)
     turns = sorted(per_turn)
@@ -380,6 +410,14 @@ def rounds(round_log: list[dict[str, Any]], jobs: list[dict[str, Any]], first_lo
         j = by_id.get(jid) or {}
         if j.get("status") not in TERMINAL_STATUSES:
             return False
+        if v3 and j.get("status") == "succeeded":
+            if str(j.get("component", "")).split("@")[0] == "eidos.search.recipe-portfolio" and metric_value(_metrics(j), "round_evaluated") == 1.0:
+                return True
+            # A support job consumes an evidence-bearing ancestor's outputs. lineage() walks descendants.
+            if rule is not None and any(selection_evidence(jobs, str(parent["id"]), rule, held_out) is not None
+                                        and any(child.get("id") == jid for child in lineage(jobs, str(parent["id"])))
+                                        for parent in jobs):
+                return True
         return j.get("status") != "succeeded" or (rule is not None and selection_evidence(jobs, jid, rule, held_out)
                                                   is not None)
     pending = [jid for t in turns for jid in per_turn[t] if not evaluated(jid)]
@@ -439,9 +477,10 @@ def state(*, notes: list[dict[str, Any]], jobs: list[dict[str, Any]], round_log:
     first_turn = note_turns.get(str(versions[0]["note_id"])) if versions else None
     change_turn = note_turns.get(str(incumbent["note_id"])) if incumbent else None
     reproductions = reproduction_jobs(jobs, [v["job_id"] for v in versions] + ([baseline_job] if baseline_job else []))
-    done, since, pending = rounds(round_log, jobs, first_turn, change_turn, reproductions, rule, held_out)
+    done, since, pending = rounds(round_log, jobs, first_turn, change_turn, reproductions, rule, held_out,
+                                  v3=pol.get("policy") == "exploration-policy/3")
     left = allowance(pol, completion, wall_seconds, budgets)
-    out: dict[str, Any] = {"policy": POLICY_ID, "rule": rule, "rule_note": found[1] if found else None,
+    out: dict[str, Any] = {"policy": pol["policy"], "rule": rule, "rule_note": found[1] if found else None,
                            "versions": versions, "incumbent": incumbent, "rounds": len(done),
                            "rounds_without_improvement": since, "pending_challengers": pending,
                            "allowance": left, "frozen": frozen,

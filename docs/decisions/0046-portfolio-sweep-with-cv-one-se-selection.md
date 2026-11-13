@@ -1,6 +1,8 @@
 # ADR 0046 — Portfolio sweep v2: diverse round 1, train-matched estimators, a paired band, and a corrected round count
 
-Status: Accepted for implementation (step 2)
+Status: Accepted for implementation (step 3)
+
+Step 2 library and component acceptance remains recorded; step 3 implements the include and lab portions.
 Resolves review findings 8, 9, 10, 13, 17, 25, 29. Successive halving is deferred.
 
 ## Context

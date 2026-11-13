@@ -19,6 +19,7 @@ from eidos.domain.turns import CONTROL_TOOLS, EFFECT_TOOLS, FINALIZATION_READ_RO
 from eidos_wire import canonical_json, sha256_bytes
 
 POLICY_ID = "context-policy/3"  # ADR 0023
+POLICY_V4 = "context-policy/4"  # ADR 0049, opt-in
 POLICY_V2 = "context-policy/2"  # ADR 0020
 POLICY_V1 = "context-policy/1"
 FINALIZATION_PROJECTION = "finalization-context/1"
@@ -157,17 +158,32 @@ Use only the remaining original wall/token budget; do not request operator input
     "FINALIZATION_ROUNDS", str(FINALIZATION_READ_ROUNDS))
 
 
+TOOL_GUIDE_V4 = """Propose calls as {tool, args} and control as {action, summary, claim}.
+run_component {component_ref, environment, inputs:{port:artifact}, config, purpose} runs installed components.
+Use eidos.search.recipe-portfolio@1.0.0 on train and validation with config {mode:"portfolio", task_type:"classification"|"regression", include:"auto"}; refine adds typed recipes, rescore uses purpose reproduction, export takes an explicit recipe. Outputs: portfolio_table, promotion_source, oof. Inspect class_contrasts and validation_check in the table.
+prepare_candidate {source:<promotion_source artifact or {"$ref":"call[i].outputs.promotion_source"}>, seeds:[11,23]} must be last. Four expanded calls must fit the turn's limit. Requires baseline validation_predictions. It prepares train/check/compare/reproduction, and never locks. Read pinned candidate; in a later decision record_note {kind:"candidate_lock", text:<prepared lock JSON string>} to choose it. Re-preparation requires an existing source clearing the SE margin.
+author_source {files:{path:text}, include:["eidos_recipes"]} includes the installed pinned library; collisions are refused. Outputs artifact_id for run_component inputs.source.
+Dependent refs name earlier calls only: call[i].outputs.<slot>, call[i].job_id, author_source call[i].artifact_id. Jobs run sequentially; a failure blocks dependents.
+record_note {kind, text, evidence_refs}; assess_candidate {success_rule_id}; export_model {checkpoint_artifact_id, behavior_check_job_id}. describe_component and search_components describe other installed methods.
+Control: wait_for_jobs while jobs remain, conclude or stop with a scoped claim and limitations. An improvement claim needs the paired validation interval excluding zero in the right direction; otherwise null or abstain exports baseline. Rescore uses the same data, never independent confirmation; winners_curse_scale_indep is an approximation, never a bound. Only assessor evidence confirms. No new challengers after exploration stops.
+"""
+
 def _tool_guide(view: dict[str, Any]) -> str:
-    return FINALIZATION_GUIDE if view.get("finalization") else TOOL_GUIDE
+    if view.get("finalization"):
+        return FINALIZATION_GUIDE
+    if view.get("_v4"):
+        return TOOL_GUIDE_V4
+    return TOOL_GUIDE
 
 
 def _known_tools(view: dict[str, Any]) -> list[str]:
     return ["get_job", "inspect_evidence", "describe_component", "conclude", "stop"] if view.get("finalization") \
-        else sorted(EFFECT_TOOLS) + list(CONTROL_TOOLS)
+        else sorted(t for t in EFFECT_TOOLS if t != "prepare_candidate" or view.get("_v4")) + list(CONTROL_TOOLS)
 
 
 def pack(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int = MODEL_CONTEXT_CHAR_LIMIT,
          policy: str = POLICY_ID) -> dict[str, Any]:
+    view = {**view, "_v4": True} if policy == POLICY_V4 else view
     section, projection = "", None
     if view.get("finalization"):
         section, projection = _finalization_projection(view, min(FINALIZATION_CONTEXT_CHARS, char_limit // 3))
@@ -186,6 +202,8 @@ def pack(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int
         packed["text"] += section
         packed["chars"] = len(packed["text"])
         packed["truncations"]["finalization_projection"] = projection
+    if policy == POLICY_V4:
+        packed["policy"] = POLICY_V4
     return packed
 
 
@@ -308,6 +326,7 @@ def _pack_v1(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
         metrics = rec.get("metrics") if isinstance(rec, dict) else None
         lines.append(json.dumps({"id": j["id"], "component": j["component"], "status": j["status"], "purpose": j["purpose"],
                                  "inputs": j.get("inputs"), "config": _clip(j.get("config")), "metrics": metrics,
+                                 **({"next": rec["next"]} if isinstance(rec, dict) and rec.get("next") else {}),
                                  "error": _error_view_v1(j.get("error")),
                                  "outputs": [{"slot": o["slot"], "artifact_id": o["artifact_id"], "role": o["role"],
                                               "schema": o["schema"]} for o in j.get("outputs", [])]}, sort_keys=True))
@@ -395,7 +414,7 @@ PINNED_BUDGETS: dict[str, tuple[int, float, int]] = {
     "inputs": (3000, 0.05, 3000), "task": (2000, 0.04, 2000), "notes": (3000, 0.05, 3000), "budget": (1500, 0.03, 1500),
     "wall": (500, 0.06, 500), "baseline": (1200, 0.03, 1200), "lock": (1500, 0.03, 800), "success_rules": (1500, 0.03, 1500),
     "environments": (6000, 0.10, 900), "failures": (6000, 0.10, 400), "assessment": (2400, 0.04, 700), "search": (2400, 0.04, 600),
-    "batches": (1000, 0.02, 500), "exploration": (1600, 0.04, 600)}
+    "candidate": (4000, 0.08, 4000), "batches": (1000, 0.02, 500), "exploration": (1600, 0.04, 600)}
 HEAD_SECTIONS = ("revision", "model", "charter", "steering", "inputs", "task", "notes", "budget")
 FACT_SECTIONS = ("wall", "baseline", "lock", "exploration", "assessment", "success_rules", "environments", "search", "batches", "failures")
 # Dropped first when the sections together do not fit a small limit; the facts are not on this list.
@@ -629,7 +648,8 @@ def _sweep_facts(view: dict[str, Any]) -> list[str]:
             receipt = j.get("receipt") if isinstance(j.get("receipt"), dict) else {}
             report = [o["artifact_id"] for o in j.get("outputs", []) if o.get("slot") == "report"]
             diagnoses.append(f"- Diagnosis {j['id']} ({j.get('status')}): report {report[0] if report else None}, top hypothesis "
-                       f"{receipt.get('top_hypothesis')}, ranked {json.dumps(receipt.get('hypotheses'))}. Exploratory: test "
+                       f"{receipt.get('top_hypothesis')}" + (f", next {receipt['next']}" if receipt.get("next") else "")
+                       + f", ranked {json.dumps(receipt.get('hypotheses'))}. Exploratory: test "
                        "its prediction (and falsifier) with a sweep before changing architecture.")
             continue
         if not str(j.get("component") or "").startswith(SWEEP_COMPONENT):
@@ -732,6 +752,17 @@ def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
     raw["lock"] = _lock_fact(view)
     raw["assessment"] = _assessment_facts(view)
     raw["search"] = _sweep_facts(view)
+    if view.get("_v4"):
+        from eidos.domain.exploration import policy as exploration_policy
+        from eidos.domain.promotion import suggested_lock
+        prepared = suggested_lock({**view, "policy": exploration_policy(inv.get("investigator"))})
+        raw["candidate"] = ["- Prepared candidate (investigator decides the separate lock): " + json.dumps(prepared, sort_keys=True)] if prepared else ["- Prepared candidate: none yet."]
+        portfolio_facts = ["- Portfolio: " + json.dumps({k: job.get(k) for k in ("id", "status", "outputs", "receipt")}, sort_keys=True)
+                           for job in view.get("jobs") or [] if str(job.get("component", "")).startswith("eidos.search.recipe-portfolio")]
+        # The steering next fact must survive any number of later portfolios.
+        raw["search"] = ([line for line in raw["search"] if line.startswith("- Diagnosis")]
+                         + list(reversed(portfolio_facts[-2:]))
+                         + [line for line in raw["search"] if not line.startswith("- Diagnosis")])
     raw["batches"] = _batch_facts(view)
     raw["success_rules"] = (["- Charter success rule(s): " + json.dumps(ch.get("success_rules"), sort_keys=True)]
                             if ch and ch.get("success_rules") is not None else [])
@@ -759,7 +790,7 @@ def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
 
     def assemble_facts() -> list[str]:
         out = ["## Pinned facts (always present; they survive truncation and the job window)"]
-        for name in ("wall", "baseline", "lock", "exploration", "assessment", "success_rules", "environments", "search",
+        for name in ("wall", "baseline", "lock", "candidate", "exploration", "assessment", "success_rules", "environments", "search",
                      "batches"):
             out += pinned.get(name, [])
         if pinned.get("failures"):

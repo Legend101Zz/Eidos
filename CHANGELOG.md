@@ -4,6 +4,8 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.4.0
 
+- [ADR 0047](docs/decisions/0047-auto-promotion-of-the-selected-recipe.md) adds opt-in candidate preparation as four checked jobs with persisted proposals and provenance; investigators retain the separate lock decision. SE margins and ledger-shaped round accounting make patience noise-aware. [ADR 0049](docs/decisions/0049-playbook-3-context-policy-4-and-prompt-6.md) selects playbook 3, context policy 4 and prompt 6, carrying readiness, paired baseline evidence, reproduction and prepared lock text. Authored source can include the pinned recipe library; study exports accept verified portfolio tables. Baseline diagnosis `next` now survives context truncation.
+
 - Calibrate portfolio selection on design generators, freeze the predeclared seeded one-SE ordering, protect large-n kernel coverage with a linear SVM scout, and bind pipeline C scoring and cached evidence to accepted epoch-2 ledger receipts (ADR 0046).
 
 - Retire practice holdout epoch 1 without resetting burns, bind fresh epoch 2 data and separate frozen-comparator validation budgets, preserve step-2 candidate capacity, and document single-generator detection, large-n coverage and fingerprint-lint limits (ADR 0043, r5).

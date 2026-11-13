@@ -1,6 +1,8 @@
 # ADR 0045 — Typed recipe specs, one vetted operator library, and `include` for authored source
 
-Status: Accepted for implementation (step 2)
+Status: Accepted for implementation (step 3)
+
+Step 2 library and component acceptance remains recorded; step 3 implements the include and lab portions.
 Resolves review findings 15, 22, 25 (MLP speed), 30; orchestrator decision Q5 (sklearn MLP, no torch).
 
 ## Context

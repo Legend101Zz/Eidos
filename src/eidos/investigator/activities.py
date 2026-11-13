@@ -693,8 +693,38 @@ class InvestigatorActivities:
         adm: dict[str, Any] = {"admission": admission} if admission else {}
         args.setdefault("investigation_id", inv)
         try:
+            if call.get("macro") and tool == "run_component" and args.get("purpose") == "open-search":
+                # Same-decision portfolio results did not exist at acceptance. Repeat the measured
+                # guards after dependency resolution, before admitting either training job.
+                source_art = self.inv.query("get_artifact", {"artifact_id": args["inputs"]["source"]}, project=p)
+                producer = self.inv.query("get_job", {"job_id": source_art["producer_job"]}, project=p)
+                measured = ((producer.get("terminal") or {}).get("receipt") or {}).get("metrics") or {}
+                fit = float(measured.get("fit_seconds_chosen") or 0)
+                turn = self.wf.query("get_turn", {"turn_id": turn_id}, project=p)
+                hold = ((turn["spec"].get("exploration") or {}).get("allowance") or {}).get("holdback_seconds")
+                if (2 * fit > 120 or float(measured.get("checkpoint_bytes_chosen") or 0) > 64_000_000
+                        or measured.get("export_eligible") == 0 or (hold and 4 * (fit + 5) > .8 * float(hold))):
+                    return {"tool": tool, "index": idx, "ok": False, "code": "PREPARATION_GUARD",
+                            "error": {"message": "prepare_candidate: measured export or hold-back guard failed"}}
             if tool == "author_source":  # the whole-trainer path: candidate project files, no build
-                bundle = json.dumps({"files": args.get("files") or {}}, sort_keys=True).encode()
+                source: dict[str, Any] = {"files": dict(args.get("files") or {})}
+                if args.get("include"):
+                    from pathlib import Path
+
+                    from eidos.application.handlers.promotion import collisions, library_files
+                    pin = args.get("include_bundle") or {}
+                    with tempfile.TemporaryDirectory(prefix="eidos-include-") as scratch:
+                        path = Path(scratch) / "bundle.json"
+                        self.inv.download(p, pin["artifact_id"], path)
+                        if hashlib.sha256(path.read_bytes()).hexdigest() != pin["digest"]:
+                            raise ValueError("author_source: pinned library bytes differ")
+                        library, digest = library_files(json.loads(path.read_bytes()))
+                    if collisions(library, source["files"]) or digest != pin["library_digest"]:
+                        raise ValueError("author_source: library collision or digest mismatch")
+                    source["files"].update(library)
+                    source["library_digest"] = digest
+                    source["included_release"] = "eidos.search.recipe-portfolio@1.0.0"
+                bundle = json.dumps(source, sort_keys=True).encode()
                 up = self.inv.upload(p, data=bundle, media_type="application/vnd.eidos.source-bundle+json",
                                      schema="source-bundle/1", role="source", name="authored-source", key=key,
                                      **adm)

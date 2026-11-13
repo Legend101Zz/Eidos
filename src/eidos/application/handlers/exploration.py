@@ -446,6 +446,11 @@ def check_note(ctx: Ctx, inv_id: str, body: dict[str, Any]) -> dict[str, Any] | 
         raise Invalid("the candidate is not reproduced: no later run of its recipe under another seed was scored within "
                       "the rule's reproduction criterion", details={"job_id": job_id, "reproduction": rep})
     common = {"job_id": job_id, "rule": rule, "reproduction": rep}
+    if pol.get("policy") == "exploration-policy/3":
+        from eidos.application.handlers.promotion import stamps
+        provenance = stamps(ctx, inv_id).get(job_id)
+        if provenance:
+            common["preparation"] = provenance
     if previous is None:
         return {"version": 1, "evidence": evidence, "basis": "first-lock", **common}
     if previous["job_id"] == job_id:
@@ -472,9 +477,10 @@ def check_note(ctx: Ctx, inv_id: str, body: dict[str, Any]) -> dict[str, Any] | 
         raise Invalid(f"the challenger {job_id} was admitted before the selection rule was recorded: a challenger round "
                       "comes after its rule", details={"job_id": job_id, "rule_note": existing[1] if existing else None},
                       next_action="Run the challenger again in a round after the rule, then lock it if it is better.")
-    if not rules.better(float(evidence["value"]), float(prior["evidence"]["value"]), rule["direction"]):
+    if not rules.clears_margin(evidence, prior["evidence"], rule):
         raise Invalid(f"the challenger does not beat the incumbent on the selection rule: {rule['metric']} "
-                      f"{evidence['value']} vs {prior['evidence']['value']} ({rule['direction']}); the incumbent stays",
+                      f"{evidence['value']} vs {prior['evidence']['value']} ({rule['direction']})"
+                      + (f", margin {rule['margin']}" if rule.get("margin") else "") + "; the incumbent stays",
                       details={"challenger": evidence, "incumbent": prior, "rule": rule},
                       next_action="Keep the incumbent; try another challenger or finalize.")
     return {**out, "basis": "beats-incumbent"}

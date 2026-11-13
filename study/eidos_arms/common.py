@@ -112,7 +112,7 @@ def prepare(c, run_dir, arm):
     for directory in builtin_component_dirs():
         # <id>@<release>/ is an earlier release kept installable so pinned references resolve; it is published, not bound.
         name, pinned = directory.name.split('@')[0], '@' in directory.name
-        if name in ('eidos.task.score-classification',
+        if name in ('eidos.task.score-classification', 'eidos.task.score-regression', 'eidos.search.recipe-portfolio',
                     'eidos.search.recipe-sweep', 'eidos.diagnose.baseline-errors') or (
                 (card in ('D03', 'D06', 'N01', 'N04') or card in PRIVATE_CLASSIFICATION) and name == 'eidos.task.paired-classification-report'):
             r = install_component(c, project, directory, 'default', not pinned)

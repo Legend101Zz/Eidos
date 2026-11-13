@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 import re
@@ -930,6 +931,8 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
                 ctl["bounded_outcome"] = str(p["bounded_outcome"])[:64]
             proposal["control"] = ctl
         decision = turn_rules.validate_decision(proposal, max_calls=turn["spec"]["limits"]["max_calls"])
+        for call in decision["calls"]:
+            call.pop("macro", None)  # provenance stamps are lab-owned, never proposal arguments
         _check_conclusion_scope(inv, decision["control"])
         if turn["spec"].get("finalization") and (decision["calls"] or
                 decision["control"].get("action") not in turn_rules.CONCLUDING_ACTIONS):
@@ -939,6 +942,16 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
             if candidate.get("status") != "succeeded" and (decision["control"].get("claim") or {}).get(
                     "disposition") in ("candidate", "confirmed"):
                 raise Invalid("no eligible locked candidate: finalization must honestly abstain")
+        from eidos.application.handlers import promotion
+        from eidos.domain.promotion import expand
+        if any(c["tool"] == "prepare_candidate" for c in decision["calls"]):
+            decision["proposed_calls"] = copy.deepcopy(decision["calls"])
+            decision["calls"] = expand(decision["calls"], promotion.expansion_view(ctx, inv, decision["calls"]),
+                                       turn["spec"]["limits"], proposed_by=did)
+        for call in decision["calls"]:
+            if call["tool"] == "author_source":
+                call["args"].pop("include_bundle", None)  # caller cannot choose the pin
+                promotion.inclusion(ctx, call["args"])
         _check_component_contracts(ctx, decision["calls"])
         _check_conclusion_due(turn, decision)  # first: "nothing to wait for" would suggest running something
         _check_exploration_phase(turn, decision, live_stop=_live_exploration_stop(ctx, inv, turn), ctx=ctx)
