@@ -38,7 +38,9 @@ def estimators(kind, seed):
             make_pipeline(StandardScaler(), SVC(C=10) if classification else SVR(C=100))]
 
 
-def produce(family, data_root, out):
+def produce(family, data_root, out, *, registration):
+    from study.practice.ledger import require_registration
+    require_registration(registration, classes=[g["id"] for g in registry()])
     out = Path(out)
     by_generator = {}
     rows = []
@@ -128,9 +130,14 @@ def main():
     parser.add_argument('--family', help='optional completed gate; otherwise only reference scores are produced')
     parser.add_argument('--data', required=True)
     parser.add_argument('--out', required=True)
+    parser.add_argument('--evaluation-id', required=True)
+    parser.add_argument('--candidate-digest', required=True)
     args = parser.parse_args()
     family = json.loads(Path(args.family).read_text()) if args.family else json.loads((Path(args.data) / 'index.json').read_text())
-    produce(family, args.data, args.out)
+    from study.practice.ledger import register
+    registration = register(evaluation_id=args.evaluation_id, candidate_digest=args.candidate_digest,
+                            classes=[g['id'] for g in registry()], primary_verdict='attainable construction references', kind='construction')
+    produce(family, args.data, args.out, registration=registration)
 
 
 if __name__ == '__main__':

@@ -30,6 +30,34 @@ def observed(name, original, calls):
     return call
 
 
+def n04_fingerprint(data):
+    """Statistical screen for a redundant per-class mixture with Gaussian noise.
+
+    Feature order, shifts, scaling, sample count and small changes in separation /
+    label flips do not change this signature. This is a conservative dev-similarity
+    lint, not a proof that arbitrary transformed data have an independent origin.
+    """
+    from scipy.stats import kurtosis, skew
+    x = np.concatenate([s['x'] for s in data.splits.values()]).astype(float)
+    y = np.concatenate([s['y'] for s in data.splits.values()])
+    if data.task_type != 'classification' or len(np.unique(y)) != 2 or x.shape[1] < 16 or len(x) < 200:
+        return False
+    x = x[:, x.std(axis=0) > 1e-8]
+    x = (x - x.mean(axis=0)) / x.std(axis=0)
+    correlation = np.corrcoef(x.T)
+    rank_deficit = int(np.sum(np.linalg.eigvalsh(correlation) < 1e-7))
+    np.fill_diagonal(correlation, 0.)
+    noise = (np.max(abs(correlation), axis=0) < .18) & (abs(skew(x)) < .35) & (abs(kurtosis(x)) < .7)
+    # Class-conditional mean/variance/kurtosis distinguish the dependent signal
+    # from the marginally Gaussian independent nuisance block.
+    moments = []
+    for label in np.unique(y):
+        rows = x[y == label]
+        moments.append(abs(rows.mean(axis=0)) + abs(rows.var(axis=0) - 1.) + abs(kurtosis(rows)))
+    signal_moment = np.median(np.mean(moments, axis=0)[~noise]) if np.any(~noise) else 0.
+    return bool(rank_deficit >= 3 and noise.sum() >= 4 and signal_moment > .25)
+
+
 def recipe_violations():
     violations = []
     factories = [name for name in dir(datasets) if name.startswith(('make_', 'load_')) and callable(getattr(datasets, name))]
@@ -42,6 +70,8 @@ def recipe_violations():
             for name in factories:
                 stack.enter_context(patch.object(datasets, name, observed(name, getattr(datasets, name), calls)))
             data = generate(entry, 0)
+        if n04_fingerprint(data):
+            violations.append((entry['id'], 'N04-statistical-fingerprint'))
         for card, (factory, parameters) in DEV_RECIPES.items():
             for name, kwargs, result in calls:
                 if name != factory:

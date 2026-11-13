@@ -6,13 +6,12 @@ from scipy.stats import t
 
 from study.practice.guard import (
     claim_metrics,
-    evaluate,
-    guard_selftest,
     holm,
     normalized_gain,
     random_effects,
     sign_test,
 )
+from study.tests.practice_support import evaluate, guard_selftest
 
 
 def test_generator_level_arithmetic():
@@ -135,15 +134,15 @@ def test_zero_variance_ties_and_empty_inputs():
 
 
 def test_burn_limit_and_preregistered_verdict_cannot_be_rewritten(tmp_path):
-    from study.practice.guard import register_burn
-    path = tmp_path / 'burns.json'
+    from study.practice.ledger import register as register_burn
     for source in ('a', 'a', 'b'):
-        result = register_burn(path, evaluation_id=source, candidate_digest=source, classes=['holdout'], primary_verdict='frozen')
-    assert len(result['burns']) == 2
+        register_burn(evaluation_id=source, candidate_digest=source, classes=['holdout'], primary_verdict='frozen')
+    from study.practice.ledger import verify_chain
+    assert len(verify_chain()) == 2
     with pytest.raises(ValueError, match='two-burn'):
-        register_burn(path, evaluation_id='c', candidate_digest='c', classes=['holdout'], primary_verdict='frozen')
+        register_burn(evaluation_id='c', candidate_digest='c', classes=['holdout'], primary_verdict='frozen')
     with pytest.raises(ValueError, match='cannot be changed'):
-        register_burn(path, evaluation_id='a', candidate_digest='a', classes=['holdout'], primary_verdict='changed')
+        register_burn(evaluation_id='a', candidate_digest='a', classes=['holdout'], primary_verdict='changed')
 
 
 def test_exact_generator_sign_flip_matches_hand_enumeration():

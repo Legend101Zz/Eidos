@@ -1,4 +1,6 @@
 """Trusted generator registry; oracle information never enters task bundles."""
+import hashlib
+import hmac
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +20,21 @@ class Instance:
 
 def registry():
     return json.loads(Path(__file__).with_name('registry.json').read_text())
+
+
+# Trusted controller state is deliberately outside every checkout and bundle.
+ROW_SALT_PATH = Path('/Volumes/Mrigesh SSD/eidos-v1/claude-orch/practice-secrets/row-token-salt')
+
+
+def row_tokens(seed, n):
+    try:
+        salt = ROW_SALT_PATH.read_bytes()
+    except FileNotFoundError as exc:
+        raise ValueError('trusted row-token salt must be provisioned before generation') from exc
+    if len(salt) != 32:
+        raise ValueError('row-token salt must contain 32 secret bytes')
+    return np.array([int.from_bytes(hmac.new(salt, f'practice:{seed}:{i}'.encode(), hashlib.sha256).digest()[:8],
+                                    'big') & ((1 << 63) - 1) for i in range(n)], dtype=np.int64)
 
 
 def generate(entry, instance):
@@ -120,8 +137,31 @@ def generate(entry, instance):
             else:
                 mean = z[:, 0] * (z[:, 1] > 0) + z[:, 2] * (z[:, 3] > .5)
             y = mean + rng.normal(0, .15, n)
-        nuisance = rng.normal(size=(n, 3))
-        x = np.c_[z, nuisance, nuisance + rng.normal(0, .03, nuisance.shape), nuisance ** 2]
+        template = entry['nuisance_template']
+        if template == 'none':
+            nuisance = np.empty((n, 0))
+        elif template == 'correlated-gaussian':
+            latent = rng.normal(size=(n, 2))
+            nuisance = latent @ rng.normal(size=(2, 7)) + rng.normal(0, .2, (n, 7))
+        elif template == 'heavy-tailed':
+            nuisance = rng.standard_t(3, (n, 5))
+        elif template == 'near-duplicates':
+            base = rng.normal(size=(n, 3))
+            nuisance = np.c_[base, base + rng.normal(0, .03, base.shape)]
+        elif template == 'heteroskedastic':
+            nuisance = rng.normal(size=(n, 8)) * (1 + abs(z[:, :1]))
+        elif template == 'categorical':
+            nuisance = np.eye(6)[rng.integers(0, 6, n)]
+        elif template == 'periodic':
+            base = rng.uniform(-3, 3, (n, 2))
+            nuisance = np.c_[np.sin(base), np.cos(base)]
+        elif template == 'lowrank-uniform':
+            nuisance = rng.uniform(-2, 2, (n, 2)) @ rng.uniform(-1, 1, (2, 10))
+        elif template == 'independent-uniform':
+            nuisance = rng.uniform(-3, 3, (n, 11))
+        else:
+            raise ValueError('unregistered nuisance structure')
+        x = np.c_[z, nuisance]
         informative = list(range(4))
     else:
         raise ValueError('unregistered mechanism')
@@ -136,10 +176,8 @@ def generate(entry, instance):
         validation, test = train_test_split(rest, train_size=sizes['validation'], random_state=seed + 1,
                                              stratify=y[rest] if kind == 'classification' else None)
         partitions = [train, validation, test]
-    # An independent stream assigns random tokens, never a hash of the source index.
-    # In particular, enumerating the wine source indices cannot invert an ID to a class.
-    ids = np.random.default_rng(np.random.SeedSequence([seed, 718239])).integers(
-        0, np.iinfo(np.int64).max, size=n, dtype=np.int64)
+    # HMAC tokens cannot be regenerated from public seeds or source row order.
+    ids = row_tokens(seed, n)
     if len(np.unique(ids)) != n:
         raise ValueError('row token collision')
     splits = {}

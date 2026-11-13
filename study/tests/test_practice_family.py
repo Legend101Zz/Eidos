@@ -69,7 +69,8 @@ def test_score_table_fits_screens_in_fold_and_selection_cannot_read_test(tmp_pat
     from study.practice.build_cards import write_json, write_npz
     from study.practice.guard import check_fit_trace
     from study.practice.models import CorrelationScreen
-    from study.practice.pipelines import compute_table, replay
+    from study.practice.pipelines import replay
+    from study.tests.practice_support import compute_table
 
     rng = np.random.default_rng(61)
     bundle = tmp_path / 'bundle'
@@ -139,12 +140,13 @@ def test_gate_refuses_an_interpreter_that_disagrees_with_the_bundle_lock(tmp_pat
     build(tmp_path / 'cards', generator_ids=['gen-001'], instances=1)
     monkeypatch.setattr('importlib.metadata.version', lambda name: 'wrong-version')
     with pytest.raises(ValueError, match='practice gate requires numpy=='):
-        run(tmp_path / 'cards', tmp_path / 'evidence')
+        run(tmp_path / 'cards', tmp_path / 'evidence', evaluation_id='lock-test', candidate_digest='test', kind='construction')
 
 
 def test_fresh_supplied_baseline_need_not_emit_a_recipe_receipt(tmp_path, monkeypatch):
     from study.practice.build_cards import write_npz
     from study.practice.run_gate import fresh_recipe
+    from study.tests.practice_support import registration
 
     bundle, controller = tmp_path / 'bundle', tmp_path / 'controller'
     for split in ('train', 'validation'):
@@ -167,7 +169,8 @@ def test_fresh_supplied_baseline_need_not_emit_a_recipe_receipt(tmp_path, monkey
     monkeypatch.setattr('study.common.research_python', lambda: 'fixture-python')
     monkeypatch.setattr('study.fresh_check.candidate_command', candidate_command)
     result = fresh_recipe(tmp_path / 'workspace', bundle, controller,
-                          dict(spec={'supplied': True}, validation_predictions=[0, 1]), 'classification', 0.5, 0.02)
+                          dict(spec={'supplied': True}, validation_predictions=[0, 1]), 'classification', 0.5, 0.02,
+                          registration=registration(['test']))
     assert result['fresh_process_equal'] and result['export_eligible']
     assert len(result['receipts']) == 3
     assert all(receipt['fit_seconds'] is None for receipt in result['receipts'])

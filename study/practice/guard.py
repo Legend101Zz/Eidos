@@ -1,10 +1,11 @@
 """Generator-level inference and predeclared harm checks; research dependencies loaded lazily."""
-import json
 import math
-import os
 import re
 import statistics
 from pathlib import Path
+
+# Pre-observed r2 finite-source SDs rounded up; resplits cannot measure new-source precision.
+FINITE_SOURCE_SD_FLOORS = {'gen-008': 1.04, 'gen-009': 4.1, 'gen-015': 32.}
 
 
 def normalized_gain(candidate, baseline, reference, reference_se):
@@ -82,7 +83,7 @@ def holm(pvalues):
     return adjusted
 
 
-def summarize(values, *, effective_instances=None):
+def summarize(values, *, effective_instances=None, source_sd_floor=1.04):
     from scipy.stats import t
     if len(values) < 2 or any(not math.isfinite(x) for x in values):
         raise ValueError('at least two finite instance effects required')
@@ -92,13 +93,15 @@ def summarize(values, *, effective_instances=None):
         raise ValueError('effective instance count outside observed sample')
     variance = statistics.variance(values) / effective
     # Re-splits cannot estimate between-source precision from one fixed dataset.
-    # Retain at least the worst observed moderate instance SD, even if all
-    # correlated repeats happen to agree exactly.
+    # Use pre-observed source-specific uncertainty, even when correlated
+    # repeats agree. The moderate 1.04 floor alone understates digits' SD ~4.
     if effective == 1:
-        variance = max(variance, 1.04 ** 2)
+        if not math.isfinite(source_sd_floor) or source_sd_floor < 1.04:
+            raise ValueError('finite-source SD floor must be at least 1.04')
+        variance = max(variance, source_sd_floor ** 2)
     df = max(1, effective - 1)
     margin = float(t.ppf(.95, df)) * math.sqrt(variance)
-    mean = statistics.mean(values)
+    mean = float(statistics.mean(values))
     return dict(mean=mean, variance=variance, lower90=mean - margin, upper90=mean + margin, instances=n, effective_instances=effective, df=df)
 
 
@@ -129,52 +132,76 @@ def check_in_fold(factory, x, y, train, held, *, fitted=None):
     return pickle.dumps(clean, protocol=5) == pickle.dumps(poisoned, protocol=5)
 
 
-def evaluate(effects, roles, *, epsilon=.5, in_fold_ok=None, primary_pvalues=None, null_delta=None,
-             null_tolerance=None, limits_ok=None, declared_class_generators=(), effective_instances=None):
-    from scipy.stats import t
-    if not effects or set(effects) != set(roles):
-        raise ValueError('complete effects require declared generator roles')
-    if in_fold_ok is not True:
-        return dict(verdict='reject-in-fold', class_claim=False)
-    if null_delta is None or null_tolerance is None or limits_ok is not True:
-        return dict(verdict='reject-missing-or-failed-checks', class_claim=False)
-    if not all(math.isfinite(x) for x in (epsilon, null_delta, null_tolerance)) or epsilon < 0 or null_tolerance < 0:
-        raise ValueError('finite nonnegative margins required')
-    summaries = {key: summarize(values, effective_instances=(effective_instances or {}).get(key)) for key, values in sorted(effects.items())}
-    named = [g for g in summaries if roles[g] not in ('calibration-only', 'control')]
-    # Familywise harm detection (not an equivalence claim for each generator).
-    harm_p = []
-    for g in named:
-        summary = summaries[g]
-        se = math.sqrt(max(summary['variance'], .01))
-        harm_p.append(float(t.cdf((summary['mean'] + epsilon) / se, summary['df'])))
-    harm = holm_unlimited(harm_p)
-    declared = set(declared_class_generators)
-    if declared and (not declared <= set(named) or any(roles[g] != 'holdout-class' for g in declared)):
-        raise ValueError('class inference may contain only explicitly declared holdout-class generators')
-    holdouts = sorted(declared) if declared else [g for g in summaries if roles[g] == 'holdout']
-    inference = None
-    p = 1.
-    if len(holdouts) >= 2:
-        inference = random_effects([summaries[g]['mean'] for g in holdouts], [summaries[g]['variance'] for g in holdouts])
-        inference['sign_test_p'] = sign_test([summaries[g]['mean'] for g in holdouts])
-        p = inference['sign_flip_p'] = float(sign_flip_pvalues(
-            [summaries[g]['mean'] for g in holdouts], [summaries[g]['variance'] for g in holdouts])[0])
-    # Caller supplies the other preregistered programme primaries; current p cannot be overridden.
-    adjusted = holm([p, *(primary_pvalues or [])])
-    if null_delta > null_tolerance:
-        verdict = 'reject-false-positive-claims'
-    elif any(value <= .05 for value in harm):
-        verdict = 'reject-no-harm'
-    elif not inference or len(holdouts) < 5 or adjusted[0] > .05 or inference['lower90'] <= 0 or inference['mean'] < epsilon:
-        verdict = 'reject-insufficient-transfer'
-    else:
-        verdict = 'accept-class' if declared else 'accept-named'
-    return dict(verdict=verdict, class_claim=verdict == 'accept-class', generators=summaries,
-                inference=inference, primary_holm_p=adjusted, harm_holm_p=dict(zip(named, harm, strict=True)),
-                inference_generators=holdouts, minimum_pooled_gain=epsilon,
-                limitation='Named acceptance is positive transfer plus no detected material harm; not per-generator equivalence.',
-                secondary_results='descriptive; generators are the unit of inference')
+def evaluate(effects, roles, *, registration=None, **options):
+    """Validate registration before inference; every returned verdict is recorded."""
+    from study.practice.ledger import record_verdict, require_registration
+    require_registration(registration, classes=roles, exact=True)
+
+    def _assess(effects, roles, *, epsilon=.5, in_fold_ok=None, primary_pvalues=None, null_delta=None,
+                 null_tolerance=None, limits_ok=None, declared_class_generators=(), effective_instances=None):
+        from scipy.stats import t
+        if not effects or set(effects) != set(roles):
+            raise ValueError('complete effects require declared generator roles')
+        if in_fold_ok is not True:
+            return dict(verdict='reject-in-fold', class_claim=False)
+        if null_delta is None or null_tolerance is None or limits_ok is not True:
+            return dict(verdict='reject-missing-or-failed-checks', class_claim=False)
+        if not all(math.isfinite(x) for x in (epsilon, null_delta, null_tolerance)) or epsilon < 0 or null_tolerance < 0:
+            raise ValueError('finite nonnegative margins required')
+        summaries = {key: summarize(values, effective_instances=(effective_instances or {}).get(key),
+                                     source_sd_floor=FINITE_SOURCE_SD_FLOORS.get(key, 1.04)) for key, values in sorted(effects.items())}
+        named = [g for g in summaries if roles[g] not in ('calibration-only', 'control')]
+        # Familywise harm detection (not an equivalence claim for each generator).
+        harm_p = []
+        for g in named:
+            summary = summaries[g]
+            se = math.sqrt(max(summary['variance'], .01))
+            harm_p.append(float(t.cdf((summary['mean'] + epsilon) / se, summary['df'])))
+        harm = holm_unlimited(harm_p)
+        # Pool loss independently of machinery gain, then screen each declared role.
+        # Zero is the harm margin: the 0.5-SE gain threshold must not conceal a loss.
+        harm_groups = {'elsewhere': [g for g in named if roles[g] in ('design', 'holdout-class')]}
+        harm_groups.update({role: [g for g in named if roles[g] == role] for role in ('design', 'holdout-class')})
+        pooled_harm = {}
+        for group, members in harm_groups.items():
+            if len(members) >= 2:
+                fit = random_effects([summaries[g]['mean'] for g in members], [summaries[g]['variance'] for g in members])
+                # A deliberately sensitive loss-risk screen is calibrated jointly with
+                # transfer power by the full Monte Carlo table. Retain the conventional
+                # 5% test separately, so an 85% bound is never presented as 95% evidence.
+                risk_upper = fit['mean'] + float(t.ppf(.85, len(members) - 1)) * fit['se']
+                pooled_harm[group] = dict(fit, members=members, harm_margin=0.,
+                    credible_loss=bool(fit['upper90'] < 0.), risk_upper70=risk_upper,
+                    risk_alpha=.15, risk_reject=bool(risk_upper < 0.))
+        declared = set(declared_class_generators)
+        if declared and (not declared <= set(named) or any(roles[g] != 'holdout-class' for g in declared)):
+            raise ValueError('class inference may contain only explicitly declared holdout-class generators')
+        holdouts = sorted(declared) if declared else [g for g in summaries if roles[g] == 'holdout']
+        inference = None
+        p = 1.
+        if len(holdouts) >= 2:
+            inference = random_effects([summaries[g]['mean'] for g in holdouts], [summaries[g]['variance'] for g in holdouts])
+            inference['sign_test_p'] = sign_test([summaries[g]['mean'] for g in holdouts])
+            p = inference['sign_flip_p'] = float(sign_flip_pvalues(
+                [summaries[g]['mean'] for g in holdouts], [summaries[g]['variance'] for g in holdouts])[0])
+        # Caller supplies the other preregistered programme primaries; current p cannot be overridden.
+        adjusted = holm([p, *(primary_pvalues or [])])
+        if null_delta > null_tolerance:
+            verdict = 'reject-false-positive-claims'
+        elif any(value <= .05 for value in harm) or any(v['risk_reject'] for v in pooled_harm.values()):
+            verdict = 'reject-no-harm'
+        elif not inference or len(holdouts) < 5 or adjusted[0] > .05 or inference['lower90'] <= 0 or inference['mean'] < epsilon:
+            verdict = 'reject-insufficient-transfer'
+        else:
+            verdict = 'accept-class' if declared else 'accept-named'
+        return dict(verdict=verdict, class_claim=verdict == 'accept-class', generators=summaries,
+                    inference=inference, primary_holm_p=adjusted, harm_holm_p=dict(zip(named, harm, strict=True)),
+                    inference_generators=holdouts, minimum_pooled_gain=epsilon, pooled_harm=pooled_harm,
+                    limitation='Named acceptance is positive transfer plus no detected material harm; not per-generator equivalence.',
+                    secondary_results='descriptive; generators are the unit of inference')
+
+    result = _assess(effects, roles, **options)
+    return record_verdict(registration, result, classes=roles)
 
 
 def holm_unlimited(pvalues):
@@ -221,46 +248,14 @@ def identifier_violations(paths, identifiers):
     return found
 
 
-def guard_selftest():
+def guard_selftest(*, registration):
     """Noisy effect controls; the end-to-end screen control is in controls.py."""
     import numpy as np
     rng = np.random.default_rng(91873)
-    roles = {f'g{i}': 'holdout' for i in range(12)}
+    roles = {g: 'holdout' if i < 12 else 'control' for i, g in enumerate(registration['classes'])}
     noise = {g: rng.normal(0, .8, 4).tolist() for g in roles}
     options = dict(in_fold_ok=True, null_delta=0., null_tolerance=0., limits_ok=True)
     scenarios = {name: {g: [v + shift for v in values] for g, values in noise.items()}
                  for name, shift in [('helpful_operator', .8), ('neutral_operator', 0.), ('harmful_operator', -.5)]}
-    scenarios['card_specific_patch'] = {g: [v + (2. if g == 'g0' else 0.) for v in values] for g, values in noise.items()}
-    return {name: evaluate(effects, roles, **options)['verdict'] for name, effects in scenarios.items()}
-
-
-def register_burn(path, *, evaluation_id, classes, primary_verdict, candidate_digest):
-    """Locked, protected preregistration keyed to the evaluation, not harness edits."""
-    import fcntl
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
-    with os.fdopen(descriptor, 'r+') as stream:
-        fcntl.flock(stream, fcntl.LOCK_EX)
-        os.fchmod(stream.fileno(), 0o600)
-        content = stream.read()
-        ledger = json.loads(content) if content else {'burns': []}
-        for existing in ledger['burns']:
-            if existing['evaluation_id'] == evaluation_id:
-                if (existing['classes'] != sorted(set(classes)) or existing['primary_verdict'] != primary_verdict
-                        or existing['candidate_digest'] != candidate_digest):
-                    raise ValueError('a registered verdict cannot be changed after scoring')
-                return ledger
-        for name in classes:
-            if sum(name in item['classes'] for item in ledger['burns']) >= 2:
-                raise ValueError('two-burn limit reached; independent replacement and review required')
-        if len(ledger['burns']) >= 8:
-            raise ValueError('at most eight primary verdicts per programme')
-        ledger['burns'].append(dict(evaluation_id=evaluation_id, candidate_digest=candidate_digest,
-                                   classes=sorted(set(classes)), primary_verdict=primary_verdict))
-        stream.seek(0)
-        stream.write(json.dumps(ledger, indent=2, sort_keys=True) + '\n')
-        stream.truncate()
-        stream.flush()
-        os.fsync(stream.fileno())
-        return ledger
+    scenarios['card_specific_patch'] = {g: [v + (2. if g == next(iter(roles)) else 0.) for v in values] for g, values in noise.items()}
+    return {name: evaluate(effects, roles, registration=registration, **options)['verdict'] for name, effects in scenarios.items()}

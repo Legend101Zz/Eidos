@@ -14,7 +14,8 @@ from pathlib import Path
 import numpy as np
 
 from study.practice.build_cards import ROOT, tree_digest, write_json, write_npz
-from study.practice.guard import check_fit_trace, claim_metrics, evaluate, guard_selftest, register_burn
+from study.practice.guard import check_fit_trace, claim_metrics, evaluate, guard_selftest
+from study.practice.ledger import register, require_registration
 from study.practice.oracle import score
 from study.practice.pipelines import compute_table, select, source_digest
 from study.practice.selection_replay import replay
@@ -65,7 +66,7 @@ def semantic_digest(value):
     """Exclude measured timings, keep choices, scores, identities and all checks."""
     def stable(v):
         if isinstance(v, dict):
-            return {k: stable(x) for k, x in v.items() if not k.endswith('seconds') and k not in ('cache_hit', 'path')}
+            return {k: stable(x) for k, x in v.items() if not k.endswith('seconds') and k not in ('cache_hit', 'path', 'ledger_event_hash')}
         if isinstance(v, list):
             return [stable(x) for x in v]
         return v
@@ -75,11 +76,28 @@ def semantic_digest(value):
 def policy_digest():
     """Audit provenance for reports; candidate registrations have a separate stable identity."""
     paths = [Path(__file__).with_name(name) for name in ('run_gate.py', 'guard.py', 'selection_replay.py', 'acceptance.py', 'operating.py',
-                                                                  'controls.py', 'references.py', 'independence.py', 'recompute.py')]
+                                                                  'controls.py', 'references.py', 'independence.py', 'recompute.py', 'ledger.py', 'generators.py')]
     return hashlib.sha256(source_digest().encode() + b''.join(p.read_bytes() for p in paths)).hexdigest()
 
 
-def fresh_recipe(workspace, bundle, controller, row, task_type, baseline_score, practical_bar):
+def require_bundle_receipt(registration, bundle):
+    """Bind every scoring entry to the actual indexed bundle, not just any ID."""
+    receipt = require_registration(registration)
+    bundle = Path(bundle)
+    index = bundle.parent.parent / 'index.json'
+    if index.exists():
+        cards = json.loads(index.read_text())['cards']
+        item = next((r for r in cards if r['card'] == bundle.name), None)
+        if item is None:
+            raise ValueError('bundle missing from registered scoring index')
+        require_registration(receipt, classes=[item['generator']])
+    elif receipt['kind'] != 'construction':
+        raise ValueError('candidate scoring requires a registered generator index')
+    return receipt
+
+
+def fresh_recipe(workspace, bundle, controller, row, task_type, baseline_score, practical_bar, *, registration=None):
+    require_bundle_receipt(registration, bundle)
     from study.common import research_python
     from study.fresh_check import candidate_command, equal_predictions
     candidate = workspace / 'candidate'
@@ -141,8 +159,9 @@ def fresh_recipe(workspace, bundle, controller, row, task_type, baseline_score, 
                     practical_bar=practical_bar, hard_gate=False, error=str(exc), wall_seconds=time.perf_counter() - started)
 
 
-def supplied_baseline(workspace, bundle, controller):
+def supplied_baseline(workspace, bundle, controller, *, registration=None):
     """Execute the functioning supplied A0 through the same no-network evaluator command."""
+    require_bundle_receipt(registration, bundle)
     from study.common import research_python
     from study.fresh_check import candidate_command
     if workspace.exists():
@@ -173,7 +192,9 @@ def effect_tables(results):
     return effects, raw, roles
 
 
-def run(data_root, out, *, fresh=False, specs=None, evaluation_id=None, candidate_digest=None):
+def run(data_root, out, *, fresh=False, specs=None, evaluation_id=None, candidate_digest=None, kind="candidate"):
+    if not evaluation_id or not candidate_digest:
+        raise ValueError("every scoring run requires an evaluation ID and frozen candidate digest")
     data_root, out = Path(data_root).resolve(), Path(out).resolve()
     if out.is_relative_to(ROOT):
         raise ValueError('gate evidence must live outside repository')
@@ -187,19 +208,12 @@ def run(data_root, out, *, fresh=False, specs=None, evaluation_id=None, candidat
                 name, version = requirement.split('==')
                 if environment.get(name) != version:
                     raise ValueError(f'practice gate requires {requirement}; current interpreter has {environment.get(name)}')
-    holdouts = sorted({item['generator'] for item in index if item['role'] in ('holdout', 'holdout-class')})
-    # Construction/comparator calibration is descriptive and does not consume C burns.
-    registration = None
-    if bool(evaluation_id) != bool(candidate_digest):
-        raise ValueError('evaluation ID and frozen candidate digest are required together')
-    if evaluation_id is not None:
-        if not candidate_digest:
-            raise ValueError('registered evaluations require a frozen candidate digest')
-        registration = register_burn(ROOT.parent / 'claude-orch/v2/programme-burns.json',
-            evaluation_id=evaluation_id, candidate_digest=candidate_digest, classes=holdouts,
-            primary_verdict='candidate versus A2: named transfer')
+    classes = sorted({item['generator'] for item in index})
+    registration = register(evaluation_id=evaluation_id, candidate_digest=candidate_digest, classes=classes,
+                            primary_verdict='A3 versus A1 comparator calibration' if kind == 'construction' else 'candidate versus A2: named transfer', kind=kind)
     results = []
     for item in index:
+        require_registration(registration, classes=[item["generator"]])
         started = time.perf_counter()
         card = item['card']
         bundle, controller = data_root / 'bundles' / card, data_root / 'controller' / card
@@ -214,10 +228,10 @@ def run(data_root, out, *, fresh=False, specs=None, evaluation_id=None, candidat
                 raise ValueError('cache has no successful behavioural in-fold audit')
         else:
             baseline_started = time.perf_counter()
-            baseline = supplied_baseline(out / 'baselines' / key, bundle, controller)
+            baseline = supplied_baseline(out / 'baselines' / key, bundle, controller, registration=registration)
             baseline_seconds = time.perf_counter() - baseline_started
             table = compute_table(bundle, controller / 'test_inputs.npz', controller / 'test_labels.npz', specs=specs,
-                                  supplied_baseline=baseline)
+                                  supplied_baseline=baseline, registration=registration)
             table['baseline_wall_seconds'] = baseline_seconds
             if not table['in_fold_ok'] or not check_fit_trace(table['in_fold_trace']):
                 raise ValueError('learned preprocessing crossed a CV fold')
@@ -245,7 +259,7 @@ def run(data_root, out, *, fresh=False, specs=None, evaluation_id=None, candidat
                     workspace = out / 'executions' / key / name
                     if workspace.exists():
                         shutil.rmtree(workspace)
-                    evidence = fresh_recipe(workspace, bundle, controller, select(table['rows'], name), table['task_type'], baseline, bar)
+                    evidence = fresh_recipe(workspace, bundle, controller, select(table['rows'], name), table['task_type'], baseline, bar, registration=registration)
                     write_json(evidence_path, evidence)
                 pipeline.update(evidence)
         if not hit:
@@ -270,8 +284,8 @@ def run(data_root, out, *, fresh=False, specs=None, evaluation_id=None, candidat
                                                 **r['pipelines'][name]) for r in controls], practical_bar=0.02, null=True)
     effects, raw_effects, roles = effect_tables(results)
     # A3–A1 is descriptive comparator calibration, never acceptance of pipeline C.
-    report = dict(schema='practice-gate/1', cards=results, claim_metrics=metrics, guard_selftest=guard_selftest(),
-                  comparator_guard_descriptive=evaluate(effects, roles, epsilon=.5,
+    report = dict(schema='practice-gate/1', cards=results, claim_metrics=metrics, guard_selftest=guard_selftest(registration=registration),
+                  comparator_guard_descriptive=evaluate(effects, roles, registration=registration, epsilon=.5,
                       in_fold_ok=all(r['in_fold'] for r in results), null_delta=(metrics['A3']['false_positive_claim_rate'] - metrics['A2']['false_positive_claim_rate']) if metrics else None,
                       null_tolerance=0., limits_ok=all(r['measurement_seconds'] <= 840 for r in results),
                       effective_instances={g: 1 for g in ('gen-008', 'gen-009', 'gen-015') if g in effects}),
@@ -290,14 +304,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--data', required=True)
     parser.add_argument('--out', required=True)
-    parser.add_argument('--evaluation-id')
-    parser.add_argument('--candidate-digest')
+    parser.add_argument('--evaluation-id', required=True)
+    parser.add_argument('--candidate-digest', required=True)
+    parser.add_argument('--kind', choices=('candidate', 'construction'), default='candidate')
     parser.add_argument('--fresh', action='store_true', help='execute all three evaluator seeds for each selected comparator')
     parser.add_argument('--package-development', action='store_true')
     args = parser.parse_args()
     if args.package_development:
         package_development(args.data)
-    report = run(args.data, args.out, fresh=args.fresh, evaluation_id=args.evaluation_id, candidate_digest=args.candidate_digest)
+    report = run(args.data, args.out, fresh=args.fresh, evaluation_id=args.evaluation_id, candidate_digest=args.candidate_digest, kind=args.kind)
     print(json.dumps(dict(semantic_digest=report['semantic_digest'], cards=len(report['cards']))))
 
 

@@ -23,7 +23,8 @@
       "test": 400
     },
     "instances": 4,
-    "seed_stream": 2026131300
+    "seed_stream": 2026131300,
+    "nuisance_template": "none"
   },
   {
     "id": "gen-003",
@@ -62,7 +63,8 @@
       "test": 400
     },
     "instances": 4,
-    "seed_stream": 2026161300
+    "seed_stream": 2026161300,
+    "nuisance_template": "intrinsic-lowrank-sparse"
   },
   {
     "id": "gen-006",
@@ -101,7 +103,8 @@
       "test": 36
     },
     "instances": 4,
-    "seed_stream": 2026191300
+    "seed_stream": 2026191300,
+    "nuisance_template": "independent-gaussian"
   },
   {
     "id": "gen-009",
@@ -205,7 +208,8 @@
       "test": 400
     },
     "instances": 4,
-    "seed_stream": 2026271300
+    "seed_stream": 2026271300,
+    "nuisance_template": "none"
   },
   {
     "id": "gen-017",
@@ -218,7 +222,8 @@
       "test": 400
     },
     "instances": 4,
-    "seed_stream": 2026281300
+    "seed_stream": 2026281300,
+    "nuisance_template": "correlated-gaussian"
   },
   {
     "id": "gen-018",
@@ -231,7 +236,8 @@
       "test": 400
     },
     "instances": 4,
-    "seed_stream": 2026291300
+    "seed_stream": 2026291300,
+    "nuisance_template": "heavy-tailed"
   },
   {
     "id": "gen-019",
@@ -244,7 +250,8 @@
       "test": 400
     },
     "instances": 4,
-    "seed_stream": 2026301300
+    "seed_stream": 2026301300,
+    "nuisance_template": "near-duplicates"
   },
   {
     "id": "gen-020",
@@ -257,7 +264,8 @@
       "test": 400
     },
     "instances": 4,
-    "seed_stream": 2026311300
+    "seed_stream": 2026311300,
+    "nuisance_template": "heteroskedastic"
   },
   {
     "id": "gen-021",
@@ -270,7 +278,8 @@
       "test": 400
     },
     "instances": 4,
-    "seed_stream": 2026321300
+    "seed_stream": 2026321300,
+    "nuisance_template": "categorical"
   },
   {
     "id": "gen-022",
@@ -283,7 +292,8 @@
       "test": 400
     },
     "instances": 4,
-    "seed_stream": 2026331300
+    "seed_stream": 2026331300,
+    "nuisance_template": "periodic"
   },
   {
     "id": "gen-023",
@@ -296,7 +306,8 @@
       "test": 400
     },
     "instances": 4,
-    "seed_stream": 2026341300
+    "seed_stream": 2026341300,
+    "nuisance_template": "lowrank-uniform"
   },
   {
     "id": "gen-024",
@@ -309,6 +320,7 @@
       "test": 400
     },
     "instances": 4,
-    "seed_stream": 2026351300
+    "seed_stream": 2026351300,
+    "nuisance_template": "independent-uniform"
   }
 ]

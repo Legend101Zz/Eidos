@@ -4,6 +4,8 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.4.0
 
+- Harden the practice gate with mandatory ledger registration and durable verdict logging, authenticated append-only history at a fixed controller path, pooled loss-risk tests and mixed-harm Monte Carlo, diverse holdout nuisance structures, secret-derived row tokens, and statistical dev-recipe fingerprints (ADR 0043, r3).
+
 - [ADR 0043](docs/decisions/0043-generated-practice-cards-and-leave-one-generator-out-guard.md) adds an offline 96-card practice harness with neutral bundles, controller-only labels and oracle sidecars, cached A0–A3 comparator replay, generator-level no-harm inference, claim audits, exposure tracking and measured noisy positive/negative guard controls. Review rework removes the dev-recipe replica from design, adds independent row tokens, actual pipeline poison audits, attainable references, cold recomputation evidence, powered generator inference and a fixed candidate-evaluation ledger. Pipeline C remains a later build step.
 
 - Support selected-arm pilot blocks (arms 2 and 4) in study planning, grading and analysis while preserving historical four-arm outputs; no runtime change.

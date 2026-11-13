@@ -6,7 +6,7 @@ import pytest
 from sklearn.feature_selection import SelectKBest, f_classif
 
 from study.practice.generators import generate, registry
-from study.practice.guard import evaluate
+from study.tests.practice_support import evaluate
 
 
 def test_dev_recipe_lint_observes_actual_factories(monkeypatch):
@@ -53,7 +53,7 @@ def test_defaults_fail_closed():
 
 def test_real_supervised_pre_cv_screen_is_detected(tmp_path):
     from study.practice.build_cards import write_json, write_npz
-    from study.practice.pipelines import compute_table
+    from study.tests.practice_support import compute_table
     rng = np.random.default_rng(991)
     bundle = tmp_path / 'bundle'
     write_json(bundle / 'task.json', {'task_type': 'classification'})
@@ -108,15 +108,15 @@ def test_missing_claim_checks_and_actual_false_claims_reject():
 
 
 def test_burn_file_is_protected_and_candidate_bound(tmp_path):
-    from study.practice.guard import register_burn
-    path = tmp_path / 'burns.json'
+    from study.practice.ledger import LEDGER_ROOT
+    from study.practice.ledger import register as register_burn
     options = dict(evaluation_id='step2-c-vs-A2', classes=['g'], primary_verdict='transfer', candidate_digest='abc')
-    first = register_burn(path, **options)
+    first = register_burn(**options)
     # Changing evidence directory or unrelated source is absent from the identity.
-    assert register_burn(path, **options) == first
-    assert path.stat().st_mode & 0o777 == 0o600
+    assert register_burn(**options) == first
+    assert (LEDGER_ROOT / 'entries.jsonl').stat().st_mode & 0o777 == 0o600
     with pytest.raises(ValueError, match='cannot be changed'):
-        register_burn(path, **dict(options, candidate_digest='changed'))
+        register_burn(**dict(options, candidate_digest='changed'))
 
 
 def test_vectorised_guard_keeps_holm_stepdown_stopping_rule():
@@ -156,6 +156,14 @@ def test_identical_finite_source_resplits_do_not_imply_precision():
                         in_fold_ok=True, null_delta=0., null_tolerance=0., limits_ok=True,
                         effective_instances={'gen-008': 1})
     assert expected['verdict'] == 'accept-named'
+    # The fixed-source digits uncertainty must not inherit wine's moderate floor.
+    roles['gen-009'] = 'design'
+    draws['gen-009'] = np.array([[.8] * 4])
+    expected = evaluate({g: v[0].tolist() for g, v in draws.items()}, roles,
+                        in_fold_ok=True, null_delta=0., null_tolerance=0., limits_ok=True,
+                        effective_instances={'gen-008': 1, 'gen-009': 1})
+    assert expected['generators']['gen-009']['variance'] >= 4.1 ** 2
+    assert np.array_equal(decisions(draws, roles), [expected['verdict'].startswith('accept')])
 
 
 def test_vectorised_full_family_and_multiplicity_match_evaluate():

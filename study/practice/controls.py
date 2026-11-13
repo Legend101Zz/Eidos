@@ -13,7 +13,9 @@ from study.practice.oracle import paired_interval
 from study.practice.pipelines import compute_table
 
 
-def produce(data_root, reference_root, out):
+def produce(data_root, reference_root, out, *, registration):
+    from study.practice.ledger import require_registration
+    require_registration(registration, classes=[g["id"] for g in registry()])
     out = Path(out)
     index = json.loads((Path(data_root) / 'index.json').read_text())['cards']
     entries = {g['id']: g for g in registry()}
@@ -42,7 +44,7 @@ def produce(data_root, reference_root, out):
             interval = paired_interval(entry['task_type'], truth, candidate, baseline)
             effects[name].setdefault(g, []).append(interval['effect'] / max(interval['se'], .001))
             raw[name].setdefault(g, []).append(interval)
-    options = dict(in_fold_ok=True, null_delta=0., null_tolerance=0., limits_ok=True,
+    options = dict(registration=registration, in_fold_ok=True, null_delta=0., null_tolerance=0., limits_ok=True,
                    effective_instances={g: 1 for g in ('gen-008', 'gen-009', 'gen-015')})
     controls = {name: evaluate(values, roles, **options) for name, values in effects.items()}
     # Real pre-CV supervised screen on the compute_table data path, noise labels.
@@ -54,8 +56,8 @@ def produce(data_root, reference_root, out):
                   y=rng.integers(0, 2, 200), ids=np.arange(200) + i * 200)
     specs = [dict(id='linear', family='linear', complexity=0, pipelines=['A0', 'A1', 'A2', 'A3'])]
     args = bundle, bundle / 'test.npz', bundle / 'test.npz'
-    clean = compute_table(*args, specs=specs)
-    leaky = compute_table(*args, specs=specs, pre_cv_transform=SelectKBest(f_classif, k=5))
+    clean = compute_table(*args, specs=specs, registration=registration)
+    leaky = compute_table(*args, specs=specs, pre_cv_transform=SelectKBest(f_classif, k=5), registration=registration)
     leak = dict(clean_cv=clean['rows'][0]['cv_score'], leaky_cv=leaky['rows'][0]['cv_score'],
                 clean_in_fold=clean['in_fold_ok'], leaky_in_fold=leaky['in_fold_ok'],
                 actual_leaky_audits=leaky['in_fold_audits'],
@@ -76,8 +78,13 @@ def main():
     parser.add_argument('--data', required=True)
     parser.add_argument('--references', required=True)
     parser.add_argument('--out', required=True)
+    parser.add_argument('--evaluation-id', required=True)
+    parser.add_argument('--candidate-digest', required=True)
     args = parser.parse_args()
-    produce(args.data, args.references, args.out)
+    from study.practice.ledger import register
+    registration = register(evaluation_id=args.evaluation_id, candidate_digest=args.candidate_digest,
+                            classes=[g['id'] for g in registry()], primary_verdict='measured construction controls', kind='construction')
+    produce(args.data, args.references, args.out, registration=registration)
 
 
 if __name__ == '__main__':

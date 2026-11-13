@@ -14,13 +14,13 @@ def score_projection(table):
                 rows=[{key: row[key] for key in fields if key in row} for row in table['rows']])
 
 
-def produce(family_path, first_gate, out):
+def produce(family_path, first_gate, out, *, evaluation_id, candidate_digest):
     out = Path(out)
     if (out / 'gate/cache').exists():
         raise ValueError('cold evidence requires a new cache directory')
     family = json.loads(Path(family_path).read_text())
     build(out / 'data', instances=1)
-    second = run(out / 'data', out / 'gate')
+    second = run(out / 'data', out / 'gate', evaluation_id=evaluation_id, candidate_digest=candidate_digest, kind='construction')
     return compare(family, first_gate, second, out)
 
 
@@ -45,8 +45,10 @@ def main():
     parser.add_argument('--family', required=True)
     parser.add_argument('--first-gate', required=True)
     parser.add_argument('--out', required=True)
+    parser.add_argument('--evaluation-id', required=True)
+    parser.add_argument('--candidate-digest', required=True)
     args = parser.parse_args()
-    print(json.dumps(produce(args.family, args.first_gate, args.out)))
+    print(json.dumps(produce(args.family, args.first_gate, args.out, evaluation_id=args.evaluation_id, candidate_digest=args.candidate_digest)))
 
 
 if __name__ == '__main__':

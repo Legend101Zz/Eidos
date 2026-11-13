@@ -73,14 +73,13 @@ def produce(family, rerun, development, out, *, rebuilt_data_digest, references,
                   limitation='Offline harness evidence. A3 is an EDA proxy, not a coding-agent ceiling. Pipeline C and the investigator remain unevaluated. Positive fault-repair controls are distinct from the +0.8-SE Monte Carlo power target.')
     out = Path(out)
     write_json(out / 'acceptance.json', result)
-    lines = ['# V2 step 1 r2 acceptance', '', f"Family: {len(family['cards'])} cards; development: {len(development['cards'])}.", '']
+    lines = ['# V2 step 1 r3 acceptance', '', f"Family: {len(family['cards'])} cards; development: {len(development['cards'])}.", '']
     lines += [f"- {'PASS' if v['passed'] else 'NOT MET'} — {k}" for k, v in criteria.items()]
-    lines += ['', '| Variance profile | Primaries | Neutral accept | Harmful accept | Card-specific accept | Helpful accept |',
-              '|---|---:|---:|---:|---:|---:|']
-    profiles = list(dict.fromkeys((r['profile'], r['primaries']) for r in operating['rows']))
-    for profile, primaries in profiles:
-        rates = {r['scenario']: r['acceptance_rate'] for r in operating['rows'] if r['profile'] == profile and r['primaries'] == primaries}
-        lines.append(f"| {profile} | {primaries} | {rates['neutral']:.2%} | {rates['harmful']:.2%} | {rates['card-specific']:.2%} | {rates['helpful']:.2%} |")
+    lines += ['', '| Variance profile | Scenario | Primaries | Accepted / trials | Acceptance (Wilson 95%) | Target met |',
+              '|---|---|---:|---:|---:|---|']
+    for row in operating['rows']:
+        status = 'descriptive' if row['target_met'] is None else 'YES' if row['target_met'] else 'NO'
+        lines.append(f"| {row['profile']} | {row['scenario']} | {row['primaries']} | {row['accepted']} / {row['trials']} | {row['acceptance_rate']:.2%} ({row['mc_lower95']:.2%}–{row['mc_upper95']:.2%}) | {status} |")
     lines += ['', operating['effect_justification'], '', operating['scope'], '', result['limitation']]
     (out / 'SUMMARY.md').write_text('\n'.join(lines) + '\n')
     return result

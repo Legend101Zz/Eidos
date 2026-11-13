@@ -15,6 +15,7 @@ from threadpoolctl import threadpool_limits
 
 from study.practice.build_cards import ROOT
 from study.practice.guard import check_in_fold
+from study.practice.ledger import require_registration
 from study.practice.models import Recipe
 from study.practice.oracle import paired_interval, score, score_se
 
@@ -112,7 +113,17 @@ class FoldWorkflow:
 
 
 def compute_table(bundle, test_inputs, test_labels, *, partition_seed=81723, folds=5, model_seed=11, specs=None,
-                  supplied_baseline=None, pre_cv_transform=None):
+                  supplied_baseline=None, pre_cv_transform=None, registration=None):
+    receipt = require_registration(registration)
+    index_path = Path(bundle).parent.parent / 'index.json'
+    if index_path.exists():
+        cards = json.loads(index_path.read_text())['cards']
+        card = next((r for r in cards if r['card'] == Path(bundle).name), None)
+        if card is None:
+            raise ValueError('bundle missing from registered scoring index')
+        require_registration(receipt, classes=[card['generator']])
+    elif receipt['kind'] != 'construction':
+        raise ValueError('candidate scoring requires a registered generator index')
     started = time.perf_counter()
     bundle = Path(bundle)
     task = json.loads((bundle / 'task.json').read_text())
