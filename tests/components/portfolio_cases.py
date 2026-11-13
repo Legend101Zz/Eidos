@@ -337,6 +337,10 @@ def large_plan(root):
         assert models.build(trees[0], 11).named_steps["model"].early_stopping is False
         assert len({spec.recipe_id(s) for s in values}) == len(values)
         assert registry.applicable(kind) <= {registry.hypothesis(s) for s in values}
+        kernels = [s for s in values if registry.hypothesis(s) == "kernel"]
+        assert kernels[0]["model"]["family"] == "svm_linear"
+        medium = portfolio_specs(kind, n=4000, d=10)
+        assert next(s for s in medium if registry.hypothesis(s) == "kernel")["model"]["family"] == "svm_linear"
 
 
 def multiclass_checkpoint(root):

@@ -34,6 +34,10 @@ def portfolio_specs(kind, *, n=0, d=0):
         for family in ("svm_rbf", "knn"):
             grids.append(recipe(kind, family, [{"op": pre}, {"op": "standardize"}]))
     expanded = expand(grids)
+    if n > 3000:
+        # A linear-margin kernel-class scout has bounded memory and avoids an
+        # all-RBF timeout wiping out this class before the dense grid starts.
+        expanded.insert(0, recipe(kind, "svm_linear", C=.1))
     # Guarantee representative coverage before spending the remainder on density.
     first, rest, seen = [], [], set()
     for s in expanded:

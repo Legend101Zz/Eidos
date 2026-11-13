@@ -81,3 +81,45 @@ Step-2 design-only measurements exposed a large-n density bug: duplicate forest 
 Portfolio and harness scores use accuracy or negative RMSE so higher always wins; generated train receipts also expose positive `validation_rmse` and its SE for the native lower-is-better selection rule. The step-3 macro must normalize the portfolio score by task type before comparing it with a native RMSE incumbent. Multiple sweeps are design-only; holdout replay fixes the multiple at 1.0 and retains the predeclared complexity-permutation diagnostic.
 
 Step-2 resource measurements confirmed the deferred halving reopen trigger: separate visible-input timing probes put at least 12/96 instances above 350 seconds. The original 350-second-budget selections remain frozen; halving is not implemented in this step. See the step-2 evidence report for the censored primary timings and probe conditions.
+
+## Step-2 round-2 design calibration
+
+The accepted step-1 API is retained at `69e1b38`. Pipeline C now passes a ledger
+receipt at every scoring entry, including cache admission, controller replay and
+fresh export, binds the authorized full epoch-2 index, and uses construction-only
+receipts on a separate design view. Design aggregation emits no candidate verdict.
+
+On 32 design cards, the structural complexity prior's one-SE rule had mean regret
+0.72089 in chosen-recipe test-SE units; half-SE gave 0.57452 and argmax-validation
+0.46819. The predeclared seed-81723 permutation at one SE gave 0.42996. We select
+that **single, already measured ordering** as the production prior. The paired
+band stays at 1.0; seed 81723 was not searched. `choose` retains its explicit
+complexity-order API; `portfolio_choice` supplies the frozen permutation of the
+completed export-eligible rows, in evaluation order. Tables retain structural
+complexity as a diagnostic and identify the selected prior explicitly. This
+supersedes the structural-complexity default above, not the paired arithmetic.
+
+Five-fold single-repeat versus repeated-CV regret was 15.76062 versus 15.59568 SE
+units across design cards. On IID design cards repeated CV improved 0.64714 to
+0.42722; the only design regression generator improved 0.63624 to 0.0. Ten-fold
+refits of outcome-blind finalists did not justify a default fold-count change.
+CV train fractions are .8 (fivefold), .9 (tenfold), versus 1.0 for export; every
+estimator still fits the same preprocessing and model, on train only. Full-train
+visible scores, CV gaps and tenfold failures are retained in the evidence. The
+refit subset is a diagnostic, not a new full-portfolio comparison.
+
+Shifted-validation design cards have CV-argmax regret 58.28876 SE units versus
+0.45314 for argmax-validation: train-only repartitioning cannot see a changed
+validation distribution. The target-free shift detector and train-fit/validation
+scheme remain. This design set is small, has only one regression mechanism and
+no design small-n wine generator; the seeded prior depends on the completed set.
+None of these observations promises improved holdout selection regret.
+
+Four old large design cards missed the kernel class because all RBF trials hit
+60-second timeouts. Above 3,000 rows, a standardised linear SVM is now the first
+kernel-class representative; RBF recipes remain in the plan. This is an existing
+registry family, uses every training row and every fold, and introduces no halving.
+
+Reproduction: `claude-orch/v2/step2-r2/design_analysis.py`, its `design-analysis/`
+JSON, and `coverage_probe.py`. Only design/calibration generators were scored;
+no candidate burn or protected holdout result informed this choice.

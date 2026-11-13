@@ -11,6 +11,19 @@ from study.practice import pipeline_c
 
 
 class PipelineCContracts(unittest.TestCase):
+    def test_controller_and_fresh_export_require_bound_receipt_before_reading(self):
+        missing = Path('/nonexistent')
+        with patch.object(pipeline_c, 'require_bundle_registration', side_effect=ValueError('unbound')) as require:
+            with self.assertRaisesRegex(ValueError, 'unbound'):
+                pipeline_c.controller_scores(missing, missing, {})
+            with self.assertRaisesRegex(ValueError, 'unbound'):
+                pipeline_c.fresh_c(missing, missing, missing, {}, {}, 0, .02)
+            self.assertEqual(require.call_count, 2)
+
+    def test_cached_comparator_still_requires_registered_bundle(self):
+        with patch.object(pipeline_c, 'require_bundle_registration', side_effect=ValueError('unbound')), self.assertRaisesRegex(ValueError, 'unbound'):
+            pipeline_c.comparator_table(Path('/nonexistent'), Path('/nonexistent'), dict(card='P0001'))
+
     def test_replay_ignores_test_scores_and_permutation_is_deterministic(self):
         rows = [dict(id='best', scores=[.9, .7, .9, .7], mean=.8, complexity=9,
                      export_eligible=True, status='ok', test_score=0),
@@ -20,6 +33,10 @@ class PipelineCContracts(unittest.TestCase):
         rows[0]['test_score'], rows[1]['test_score'] = 1, 0
         self.assertEqual(first, pipeline_c.replay_choices(rows))
         self.assertEqual(first['paired-1.0/fixed'], 'simple')
+        selected = pipeline_c.recipe_select.portfolio_choice(rows)
+        self.assertEqual(selected['chosen_id'], first['paired-1.0/permuted'])
+        self.assertEqual(selected['multiple'], 1.)
+        self.assertEqual(selected['prior'], 'seeded-permutation/81723')
         fixed = pipeline_c.replay_choices(rows, multiples=(1.,))
         self.assertEqual(set(fixed), {'argmax-cv', 'paired-1.0/fixed', 'paired-1.0/permuted'})
 
@@ -53,7 +70,7 @@ class PipelineCContracts(unittest.TestCase):
                     return fit(features, target)
                 model.fit = recording_fit
                 return model
-            with patch.object(pipeline_c.models, 'build', side_effect=recording_build), patch.object(pipeline_c.cv, 'partitions', wraps=pipeline_c.cv.partitions) as partitions:
+            with patch.object(pipeline_c, 'require_bundle_registration'), patch.object(pipeline_c.models, 'build', side_effect=recording_build), patch.object(pipeline_c.cv, 'partitions', wraps=pipeline_c.cv.partitions) as partitions:
                 _, (_, prediction), _ = pipeline_c.controller_scores(bundle, controller, table)
             self.assertTrue(seen and all(dtype == np.dtype('float64') for dtype in seen))
             np.testing.assert_array_equal(partitions.call_args.kwargs['groups'], np.arange(50) // 5)
@@ -86,7 +103,7 @@ class PipelineCContracts(unittest.TestCase):
                 dict(card='P0001', generator='g1', role='design'),
                 dict(card='P0002', generator='g2', role='holdout')
             ])))
-            with patch.object(pipeline_c, 'register_burn', side_effect=AssertionError('burned early')), self.assertRaisesRegex(ValueError, 'finish design'):
+            with patch.object(pipeline_c, 'register', side_effect=AssertionError('burned early')), self.assertRaisesRegex(ValueError, 'finish design'):
                 pipeline_c.run(data, out, stage='holdout')
 
 

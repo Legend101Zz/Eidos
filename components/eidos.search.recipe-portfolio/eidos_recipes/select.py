@@ -61,6 +61,22 @@ def choose(rows, *, multiple=1., complexity_order=None):
                 winners_curse_interpretation="approximate expected maximum of m independent draws under no true differences; neither an upper bound nor corrected for fold-sharing")
 
 
+def portfolio_choice(rows):
+    """Design-frozen one-SE band with the predeclared seeded ordering.
+
+    Structural complexity is an unvalidated prior: design replay showed higher
+    regret than this already registered ablation. The seed is fixed, never
+    searched. Row order and the completed eligible set determine the ranks.
+    """
+    eligible = [r for r in rows if r.get("status", "ok") == "ok" and r["export_eligible"]]
+    ranks = dict(zip([r["id"] for r in eligible],
+                     map(int, np.random.default_rng(81723).permutation(len(eligible))), strict=True))
+    result = choose(rows, multiple=1., complexity_order=ranks)
+    result.update(prior="seeded-permutation/81723",
+                  reason="lowest design-frozen seeded rank in the paired band among export-eligible recipes")
+    return result
+
+
 def class_contrasts(rows):
     good = [r for r in rows if r["status"] == "ok"]
     def best(candidates):

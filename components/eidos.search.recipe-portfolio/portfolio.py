@@ -146,7 +146,7 @@ def search(ports, config, scratch, *, seed=11):
             if histories.get(cls) == "stopped":
                 candidates[index + 1:] = [s for s in candidates[index + 1:] if registry.hypothesis(s) != cls]
                 stop_reason = "family-gain-below-se"
-        selection = select.choose(rows)
+        selection = select.portfolio_choice(rows)
         # Check actual full-fit size and time before exporting. Oversized or failed
         # finalists become ineligible; never silently fall back to an out-of-band fit.
         while True:
@@ -156,7 +156,7 @@ def search(ports, config, scratch, *, seed=11):
                 if result["status"] != "ok" or not result["export_eligible"]:
                     chosen["export_eligible"] = False
                     chosen["export_error"] = result.get("error", "full fit exceeded resource guard")
-                    selection = select.choose(rows)
+                    selection = select.portfolio_choice(rows)
                     continue
                 validation_fits[chosen["id"]] = result
             check = validation_fits[chosen["id"]]
@@ -178,6 +178,7 @@ def search(ports, config, scratch, *, seed=11):
                  purpose="reproduction" if mode == "rescore" else config.get("purpose", "open-search"),
                  interpretation="re-scored on resampled train partitions; same data, not independent confirmation" if mode == "rescore" else "visible exploratory selection; independent assessor evidence required",
                  task_type=kind, scheme=scheme, partition_seed=split_seed, model_seed=config.get("seed", seed),
+                 cv_folds=folds, cv_repeats=repeats,
                  folds_digest=cv.folds_digest(partitions) if scheme == "cv-train" else evidence_digest(vids.tolist()),
                  library_digest=export.library_digest(), recipes=rows, selection=selection,
                  class_summary={cls: dict(full=sum(r["class"] == cls and r["status"] == "ok" for r in rows)) for cls in sorted(planned_classes)},

@@ -79,3 +79,12 @@ the lowest fraction of planned recipes attempted. 16 probes measured at least
 halving reopen trigger is therefore confirmed. This is an operational finding;
 halving remains deferred, and diagnostic selections do not replace the primary
 results. The original candidate and test scores remain frozen.
+
+## Round 2
+
+Rebased onto accepted step-1 `69e1b38`; only the changelog conflicted. Pipeline C
+uses index-bound construction/candidate receipts and the authorized epoch-2 root.
+Design-only analysis, freeze, validation and single epoch-2 acceptance evidence
+are stored in `claude-orch/v2/step2-r2/`. ADR 0046 records the selection calibration:
+one-SE with the predeclared seeded ordering, repeated fivefold CV and shift-aware
+train-fit/validation scoring. The large-n kernel representative is a linear SVM.

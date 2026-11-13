@@ -51,3 +51,13 @@ Train fit must finish within 60 seconds; the evaluator's 120-second cold-process
 clock is separately measured by acceptance. Step 3 supplies lab preparation,
 producer-pin handling, lock authority, margins, and include support; none is
 claimed here. No component locks or writes an improvement claim.
+
+Round-2 selection freezes the paired multiple at 1.0 and uses the previously
+predeclared seed-81723 permutation of completed export-eligible recipes as the
+within-band prior. Design replay favored this over structural complexity and
+half-SE. `selection.prior` records `seeded-permutation/81723`; the table still
+reports structural complexity. The order depends on evaluation order and the
+completed recipe set. This is a design-calibrated heuristic with limited evidence.
+Five folds, repeated twice below 1,000 training rows, and the shift-aware scheme
+remain. Above 3,000 rows a linear SVM kernel-class scout precedes RBF density,
+so slow RBF fits need not remove that hypothesis class. No halving is performed.

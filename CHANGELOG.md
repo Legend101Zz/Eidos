@@ -4,6 +4,8 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.4.0
 
+- Calibrate portfolio selection on design generators, freeze the predeclared seeded one-SE ordering, protect large-n kernel coverage with a linear SVM scout, and bind pipeline C scoring and cached evidence to accepted epoch-2 ledger receipts (ADR 0046).
+
 - Retire practice holdout epoch 1 without resetting burns, bind fresh epoch 2 data and separate frozen-comparator validation budgets, preserve step-2 candidate capacity, and document single-generator detection, large-n coverage and fingerprint-lint limits (ADR 0043, r5).
 
 - Require burn-counted candidate receipts for practice holdout scoring and verdicts, bind indexed bundle/controller bytes, witness ledger heads, strengthen mixed and single-generator loss checks and transformed-recipe lint, and reduce large practice instances under the unchanged 840-second limit (ADR 0043, r4).

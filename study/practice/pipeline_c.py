@@ -18,7 +18,8 @@ import numpy as np
 from threadpoolctl import threadpool_limits
 
 from study.practice.build_cards import ROOT, tree_digest, write_json
-from study.practice.guard import check_in_fold, claim_metrics, evaluate, identifier_violations, register_burn
+from study.practice.guard import check_in_fold, claim_metrics, evaluate, identifier_violations
+from study.practice.ledger import register, require_bundle_registration, verify_chain
 from study.practice.oracle import paired_interval, score, score_se
 from study.practice.pipelines import compute_table, replay, select, source_digest
 from study.practice.run_gate import fresh_recipe, semantic_digest, supplied_baseline
@@ -39,23 +40,25 @@ def candidate_digest():
     digest = hashlib.sha256()
     for p in paths:
         digest.update(p.relative_to(COMPONENT).as_posix().encode() + b'\0' + p.read_bytes())
+    digest.update(Path(__file__).read_bytes())
     return hashlib.sha256((digest.hexdigest() + canonical(CONFIG)).encode()).hexdigest()
 
 
 def freeze(out):
     path = Path(out) / 'frozen-candidate.json'
     value = dict(schema='pipeline-c-freeze/1', candidate_digest=candidate_digest(), library_digest=export.library_digest(),
-                 config=CONFIG, paired_multiple=1., complexity='registry.complexity; frozen before any holdout scoring',
+                 config=CONFIG, paired_multiple=1., complexity='seeded-permutation/81723 of completed export-eligible rows; design-frozen',
                  primary='pipeline C versus A2: named transfer', secondary=['C versus A1', 'selection replay', 'resource diagnostics'],
-                 design_band_sweep=[.5, 1., 1.5, 2.], holdout_tuning=False)
+                 design_band_sweep=[0., .5, 1., 1.5, 2.], holdout_tuning=False)
     if path.exists() and json.loads(path.read_text()) != value:
         raise ValueError('candidate differs from frozen acceptance run; use a new output directory and registered evaluation')
     write_json(path, value)
     return value
 
 
-def comparator_table(data, out, item, comparator_root=None):
+def comparator_table(data, out, item, comparator_root=None, *, registration=None):
     bundle, controller = data / 'bundles' / item['card'], data / 'controller' / item['card']
+    require_bundle_registration(registration, bundle, test_inputs=controller / 'test_inputs.npz', test_labels=controller / 'test_labels.npz', purpose='comparators')
     key = hashlib.sha256((tree_digest(bundle) + tree_digest(controller) + source_digest()).encode()).hexdigest()
     path = out / 'comparators' / f'{key}.json'
     if path.exists():
@@ -64,21 +67,18 @@ def comparator_table(data, out, item, comparator_root=None):
             raise ValueError('stale comparator source digest')
         return value
     if comparator_root:
-        report = json.loads((comparator_root / 'gate.json').read_text())
-        if report['source_digest'] == source_digest():
-            match = next((r for r in report['cards'] if r['card'] == item['card']), None)
-            if match:
-                # Match the input content as well as code, never just a neutral id.
-                from study.practice.run_gate import cache_key
-                expected = cache_key(bundle, controller)
-                if expected == match['cache_key']:
-                    cache = comparator_root / 'cache' / f'{expected}.json'
-                    value = json.loads(cache.read_text())
-                    if value['source_digest'] == source_digest() and value.get('in_fold_ok'):
-                        write_json(path, value)
-                        return value
-    baseline = supplied_baseline(out / 'baselines' / key, bundle, controller)
-    value = compute_table(bundle, controller / 'test_inputs.npz', controller / 'test_labels.npz', supplied_baseline=baseline)
+        # A per-card content-addressed cache avoids opening a combined report
+        # containing protected results during design calibration.
+        from study.practice.run_gate import cache_key
+        expected = cache_key(bundle, controller)
+        cache = comparator_root / 'cache' / f'{expected}.json'
+        if cache.exists():
+            value = json.loads(cache.read_text())
+            if value['source_digest'] == source_digest() and value.get('in_fold_ok') and value.get('cache_key') == expected:
+                write_json(path, value)
+                return value
+    baseline = supplied_baseline(out / 'baselines' / key, bundle, controller, registration=registration)
+    value = compute_table(bundle, controller / 'test_inputs.npz', controller / 'test_labels.npz', supplied_baseline=baseline, registration=registration)
     write_json(path, value)
     return value
 
@@ -98,8 +98,9 @@ def replay_choices(rows, *, multiples=(.5, 1., 1.5, 2.)):
     return choices
 
 
-def controller_scores(bundle, controller, table, *, design_sweep=False):
+def controller_scores(bundle, controller, table, *, design_sweep=False, registration=None):
     """Cached post-selection fits, trusted controller only; never fed back to search."""
+    require_bundle_registration(registration, bundle, test_inputs=controller / 'test_inputs.npz', test_labels=controller / 'test_labels.npz')
     with np.load(bundle / 'train.npz', allow_pickle=False) as data:
         x, y = np.asarray(data['x'], dtype=float).reshape(len(data['x']), -1), data['y']
         groups = data.get('groups', None)
@@ -111,7 +112,8 @@ def controller_scores(bundle, controller, table, *, design_sweep=False):
         xt, ids = np.asarray(data['x'], dtype=float).reshape(len(data['x']), -1), data['ids']
     # Validation-argmax is a separate controller replay, never a component choice.
     fitted, rows, audits, audited_paths = {}, [], [], set()
-    splits = cv.partitions(x, y, table['task_type'], seed=table['partition_seed'], groups=groups)
+    splits = cv.partitions(x, y, table['task_type'], seed=table['partition_seed'], groups=groups,
+                           folds=table.get('cv_folds', 5), repeats=table.get('cv_repeats'))
     if table['scheme'] == 'cv-train' and table.get('folds_digest') and cv.folds_digest(splits) != table['folds_digest']:
         raise ValueError('controller CV partitions differ from portfolio partitions')
     with threadpool_limits(limits=1), warnings.catch_warnings():
@@ -161,7 +163,8 @@ def controller_scores(bundle, controller, table, *, design_sweep=False):
     return dict(rows=rows, in_fold_audits=audits, choices_before_test=choices, replay=replayed, chosen=chosen), fitted[chosen_id], (xt, truth)
 
 
-def fresh_c(workspace, bundle, controller, source, table, baseline, bar):
+def fresh_c(workspace, bundle, controller, source, table, baseline, bar, *, registration=None):
+    require_bundle_registration(registration, bundle, test_inputs=controller / 'test_inputs.npz', test_labels=controller / 'test_labels.npz')
     from study.common import research_python
     from study.fresh_check import candidate_command, equal_predictions
     if workspace.exists():
@@ -206,9 +209,10 @@ def fresh_c(workspace, bundle, controller, source, table, baseline, bar):
                     hard_gate=False, practical_bar=bar, error=str(exc))
 
 
-def compute(item, data, out, comparator_root=None):
+def compute(item, data, out, comparator_root=None, registration=None):
     started = time.perf_counter()
     card = item['card']
+    require_bundle_registration(registration, data / 'bundles' / card, test_labels=data / 'controller' / card / 'test_labels.npz')
     result_path = out / 'cards' / f'{card}.json'
     if result_path.exists():
         result = json.loads(result_path.read_text())
@@ -217,7 +221,7 @@ def compute(item, data, out, comparator_root=None):
         return result
     bundle, controller = data / 'bundles' / card, data / 'controller' / card
     task = json.loads((bundle / 'task.json').read_text())
-    comparator = comparator_table(data, out, item, comparator_root)
+    comparator = comparator_table(data, out, item, comparator_root, registration=registration)
     baseline = replay(comparator)['pipelines']['A0']['test_score']
     bar = .02 if task['task_type'] == 'classification' else max(abs(baseline) * .05, 1e-12)
     portfolio_path = out / 'portfolio' / f'{card}.json'
@@ -231,12 +235,12 @@ def compute(item, data, out, comparator_root=None):
         ports['task'] = bundle / 'task.json'
         table, oof, source = portfolio.search(ports, CONFIG, out / 'scratch' / card, seed=11)
         write_json(portfolio_path, dict(table=table, oof=oof, source=source))
-    scores, (pv, pt), (xt, truth) = controller_scores(bundle, controller, table, design_sweep=item['role'] == 'design')
+    scores, (pv, pt), (xt, truth) = controller_scores(bundle, controller, table, design_sweep=item['role'] == 'design', registration=registration)
     with np.load(bundle / 'validation.npz', allow_pickle=False) as data_values:
         yv = data_values['y']
     baseline_validation = np.asarray(select(comparator['rows'], 'A0')['validation_predictions'])
     visible = paired_interval(task['task_type'], yv, pv, baseline_validation)
-    fresh = fresh_c(out / 'executions' / card / 'C', bundle, controller, source, table, baseline, bar)
+    fresh = fresh_c(out / 'executions' / card / 'C', bundle, controller, source, table, baseline, bar, registration=registration)
     pipeline = dict(recipe=table['selection']['chosen_id'], test_score=scores['chosen']['test_score'],
                     selection_regret=max(r['test_score'] for r in scores['rows']) - scores['chosen']['test_score'],
                     optimism=next(r for r in table['recipes'] if r['id'] == table['selection']['chosen_id'])['mean'] - scores['chosen']['test_score'],
@@ -258,7 +262,7 @@ def compute(item, data, out, comparator_root=None):
         comparisons[name] = paired_interval(task['task_type'], truth, pt, pred)
     a2_fresh = None
     if item['role'] == 'control':
-        a2_fresh = fresh_recipe(out / 'executions' / card / 'A2', bundle, controller, select(comparator['rows'], 'A2'), task['task_type'], baseline, bar)
+        a2_fresh = fresh_recipe(out / 'executions' / card / 'A2', bundle, controller, select(comparator['rows'], 'A2'), task['task_type'], baseline, bar, registration=registration)
     result = dict(**item, task_type=task['task_type'], pipeline_C=pipeline,
                   comparators=replay(comparator)['pipelines'], paired_test_comparisons=comparisons,
                   A2_fresh=a2_fresh, replay=scores['replay'],
@@ -319,9 +323,10 @@ def aggregate(data, out, registration=None):
             paired = r['paired_test_comparisons'][name]
             effects.setdefault(r['generator'], []).append(paired['effect'] / max(paired['se'], .001))
             raw.setdefault(r['generator'], []).append(paired['effect'])
-        if all(len(values) >= 2 for values in effects.values()):
-            prior_primaries = max(0, len((registration or {}).get('burns', [])) - 1)
-            inference[name] = dict(evaluate(effects, roles, epsilon=.5, in_fold_ok=all(r['in_fold_ok'] for r in rows),
+        if registration and registration['kind'] == 'candidate' and len(rows) == len(index) and all(len(values) >= 2 for values in effects.values()):
+            prior_primaries = sum(e['event'] == 'registration' and e.get('kind') == 'candidate'
+                                  and e['sequence'] < registration['sequence'] for e in verify_chain())
+            inference[name] = dict(evaluate(effects, roles, registration=registration, epsilon=.5, in_fold_ok=all(r['in_fold_ok'] for r in rows),
                        null_delta=null_delta, null_tolerance=0., limits_ok=all(r['pipeline_C']['export_eligible'] for r in rows),
                        primary_pvalues=[1.] * prior_primaries if name == 'A2' else [],
                        effective_instances={g: 1 for g in ('gen-008', 'gen-009', 'gen-015') if g in effects}),
@@ -349,7 +354,7 @@ def aggregate(data, out, registration=None):
                 replay_metrics[subset][name]['test_se_units'] = {key: float(np.mean([v[key] / scales[r['card']] for v, r in zip(values, eligible, strict=True) if scales[r['card']] is not None])) for key in ('selection_regret', 'optimism')}
     # Production source cannot contain generator/card ids or oracle field names.
     oracle_fields = set()
-    for item in index:
+    for item in rows:
         oracle_path = data / 'controller' / item['card'] / 'oracle.json'
         if oracle_path.exists():
             oracle_fields.update(json.loads(oracle_path.read_text()).keys())
@@ -416,28 +421,37 @@ def run(data, out, *, stage='all', comparator_root=None, evaluation_id='v2-step2
     rest = [r for r in index if r not in design]
     if type(workers) is not int or not 1 <= workers <= 4:
         raise ValueError('use one to four sequential one-thread card workers')
-    def score_items(items):
+    def score_items(items, scoring_data, receipt):
         from concurrent.futures import ProcessPoolExecutor
         if workers == 1:
             for item in items:
-                compute(item, data, out, Path(comparator_root) if comparator_root else None)
+                compute(item, scoring_data, out, Path(comparator_root) if comparator_root else None, receipt)
         else:
             with ProcessPoolExecutor(max_workers=workers) as pool:
-                futures = [pool.submit(compute, item, data, out, Path(comparator_root) if comparator_root else None) for item in items]
+                futures = [pool.submit(compute, item, scoring_data, out, Path(comparator_root) if comparator_root else None, receipt) for item in items]
                 for future in futures:
                     future.result()
     registration = None
     if stage in ('design', 'all'):
-        score_items(design)
+        design_data = out / 'design-data'
+        if not (design_data / 'index.json').exists():
+            for item in design:
+                for part in ('bundles', 'controller'):
+                    shutil.copytree(data / part / item['card'], design_data / part / item['card'])
+            write_json(design_data / 'index.json', dict(schema='practice-index/2', cards=design))
+        construction = register(evaluation_id=evaluation_id + '-design', candidate_digest=frozen['candidate_digest'],
+            classes=sorted({r['generator'] for r in design}), primary_verdict='design-only descriptive calibration',
+            kind='construction', data_root=design_data)
+        write_json(out / 'design-registration.json', construction)
+        score_items(design, design_data, construction)
     if stage in ('holdout', 'all'):
         if not all((out / 'cards' / f'{r["card"]}.json').exists() for r in design):
             raise ValueError('finish design scoring before frozen holdout evaluation')
-        registration = register_burn(ROOT.parent / 'claude-orch/v2/programme-burns.json',
-            evaluation_id=evaluation_id, candidate_digest=frozen['candidate_digest'],
-            classes=sorted({r['generator'] for r in rest if r['role'].startswith('holdout')}),
-            primary_verdict=frozen['primary'])
+        registration = register(evaluation_id=evaluation_id, candidate_digest=frozen['candidate_digest'],
+            classes=sorted({r['generator'] for r in index}), primary_verdict=frozen['primary'],
+            kind='candidate', data_root=data)
         write_json(out / 'preregistration.json', registration)
-        score_items(rest)
+        score_items(rest, data, registration)
     return aggregate(data, out, registration)
 
 
@@ -451,10 +465,12 @@ def development(data, out, *, comparator_root=None, workers=1):
     index = json.loads((data / 'index.json').read_text())['cards']
     if {r['card'] for r in index} - {'N01', 'N02', 'N03', 'N04', 'D02', 'D03', 'D04'}:
         raise ValueError('only the seven public development cards are allowed')
-    freeze(out)
+    frozen = freeze(out)
+    receipt = register(evaluation_id='v2-step2-c-r2-development', candidate_digest=frozen['candidate_digest'],
+        classes=sorted({r['generator'] for r in index}), primary_verdict='public calibration descriptive', kind='construction', data_root=data)
     with ProcessPoolExecutor(max_workers=workers) as pool:
         rows = list(pool.map(compute, index, [data] * len(index), [out] * len(index),
-                             [Path(comparator_root) if comparator_root else None] * len(index)))
+                             [Path(comparator_root) if comparator_root else None] * len(index), [receipt] * len(index)))
     result = dict(schema='pipeline-c-public-development/1', cards=rows, model_calls=0, provider_calls=0,
                   candidate_digest=candidate_digest(),
                   interpretation='Descriptive public calibration only; fresh gains use the practice raw-metric bar, not a study verdict.')
