@@ -48,11 +48,11 @@ else:
 """
 
 
-def make_seal(root):
+def make_seal(root, bars=None):
     def write(path, value):
         path.write_text(json.dumps(value))
 
-    for card, (metric, bar) in PRIVATE_CARD_BARS.items():
+    for card, (metric, bar) in (PRIVATE_CARD_BARS if bars is None else bars).items():
         directory = root / card
         bundle = directory / "bundle"
         bundle.mkdir(parents=True)
@@ -65,6 +65,7 @@ def make_seal(root):
         write(bundle / "task.json", {
             "task_id": card,
             "project": card,
+            "nclasses": 2 if metric == "accuracy" else None,
             "hashes": {path.name: digest(path.read_bytes()) for path in bundle.iterdir()},
         })
         np.savez(directory / "test_inputs.npz", x=[[1], [2]], ids=[10, 20])
@@ -72,7 +73,7 @@ def make_seal(root):
         np.savez(directory / "baseline_test.npz", ids=[20, 10], predictions=[0, 0])
         write(directory / "manifest.json", {
             "id": card, "task_type": "classification" if metric == "accuracy" else "regression",
-            "metric": metric, "min_reference_gain": bar, "qualified": True, "seeds": [11, 23, 37],
+            "metric": metric, "min_reference_gain": bar if metric == "accuracy" else bar * (0.5 ** 0.5), "qualified": True, "seeds": [11, 23, 37],
             "files": {path.relative_to(directory).as_posix(): digest(path.read_bytes())
                       for path in directory.rglob("*") if path.is_file()},
         })

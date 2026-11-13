@@ -45,8 +45,10 @@ def environment():
         for name in PROMPT_OVERRIDES:
             env.pop(name, None)
 
+    from study.private_card_registry import SEAL_ROOT_ENVS
+
     for key in list(env):
-        if key.endswith(('_API_KEY', '_AUTH_TOKEN', '_OAUTH_TOKEN')) or key in ('EIDOS_TOKEN', 'EIDOS_API_URL', 'PYTHONPATH', 'EIDOS_EVAL_AUDIT_IDENTIFIERS',
+        if key.endswith(('_API_KEY', '_AUTH_TOKEN', '_OAUTH_TOKEN')) or key in SEAL_ROOT_ENVS or key in ('EIDOS_TOKEN', 'EIDOS_API_URL', 'PYTHONPATH', 'EIDOS_EVAL_AUDIT_IDENTIFIERS',
                         'EIDOS_PRIVATE_SEAL_ROOT'):
             env.pop(key, None)
     return env
