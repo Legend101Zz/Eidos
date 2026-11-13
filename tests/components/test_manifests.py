@@ -19,7 +19,7 @@ TORCH = {
 }
 LAB = {"eidos.assessors.paired-ci", "eidos.qualification-runner"}
 NUMPY = {"eidos.task.score-classification", "eidos.task.score-regression",
-         "eidos.diagnose.baseline-errors"}  # need numpy (project env)
+         "eidos.diagnose.baseline-errors", "eidos.search.recipe-portfolio"}  # need numpy (project env)
 
 
 def test_ten_components_present():

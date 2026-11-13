@@ -1,0 +1,83 @@
+# ADR 0046 — Portfolio sweep v2: diverse round 1, train-matched estimators, a paired band, and a corrected round count
+
+Status: Accepted for implementation (step 2)
+Resolves review findings 8, 9, 10, 13, 17, 25, 29. Successive halving is deferred.
+
+## Context
+
+Arm 4's N04 search was wide in count and narrow in kind (all recipes were 20 raw columns by per-example normalisation by SVC, kernel ridge, GBM or ExtraTrees; discovery-gap report 3.1). Selection was argmax on one
+validation split: N01 locked a 15-NN with 0.991 validation and 0.953 train-CV over logistic regression with 0.965 and 0.975, about three test examples; N02's attribution is plausible but unproven (report 3.3, 3.4). The
+sweep ranked by validation in every transcript that shows a config and cross-validated only the top three by validation. The only split that shows a train-to-validation shift is validation itself, which is why D03 is closed
+today by a validation-ranked sweep.
+
+Review findings that change rev 1: (9) the `validation-anchored` scheme fitted on train plus other validation folds, but export and the evaluator fit on train only, so the estimator was not the shipped pipeline; (10) the
+lock evidence was a re-score of the data that selected the recipe, and `se_b * sqrt(2 ln m)` is an approximation, not a bound; (13) a mode named `confirm` re-scores the same data; (17) `rounds()` in
+`domain/exploration.py:364-396` counts a round as evaluated only when `selection_evidence` finds a receipt from the rule's scorer on the rule's data in the job or its lineage, so a round whose jobs are `refine` or `rescore`
+jobs is never evaluated and patience never fires; (25) round 1 unhalved costs about 150-200 s on an N04-sized card [reviewer-measured fit times], so halving can wait.
+
+## Decision
+
+Add `eidos.search.recipe-portfolio` 1.0.0 (modes `portfolio`, `refine`, `rescore`, `export`) and change the lab's re-lock and round accounting.
+
+**Round 1** (`include: "auto"`, about 150-250 recipes, no halving) is diverse by construction across eight classes: `linear`, `screen`, `lowrank`, `generative` (LDA, QDA, per-class GMM k = 1..6), `neighbors`,
+`kernel` (SVM-RBF C x gamma grids), `trees` and `neural` (sklearn MLP seed ensembles), plus four scouts ({SVM-RBF, kNN} x {`per_example_center`, `per_example_standardize`}). Profile priors, when a profile exists,
+size grids and never remove a class. It is widened (denser grids, more seeds for stochastic models, bigger ET/MLP) rather than halved; successive halving returns only if round 1 exceeds 350 s on more than 10% of
+harness instances, and then as family-protected halving with folds as the resource. The component runs recipes in one persistent child killed and restarted on a per-recipe timeout (reusing the process-group and scrubbed-environment
+discipline of `recipe_sweep._run_group`) and stores out-of-fold predictions for every fully cross-validated recipe (`recipe-oof/1`).
+
+**Estimators match the shipped fit.** Scheme `cv-train` (default): repeated stratified K-fold on train only (K = 5; R = 2 below 1,000 rows; group-aware with a `groups` port) selects the recipe; the chosen recipe and its
+runners-up are then fitted on train and scored once on validation (`validation_check`). Scheme `train-fit-validation-score` (shift detected): every recipe is fitted on train only and scored on validation rows, one fit per
+recipe, which is exactly the pipeline export ships; there is no untouched split on such a card and the table says so. `scheme: auto` uses `eidos_recipes/shift.py` (logistic domain classifier, DeLong lower bound on AUC above
+0.6), shared with the profile later so the first live smoke does not depend on it.
+
+**Paired band.** The best recipe b has the highest mean. A recipe r is in the band when `mean_b - mean_r <= se(d_r)`, where `d_r` is the paired difference to b (over folds, or over validation rows) and
+`se(d_r) = sd(d_r)/sqrt(count)`. The chosen recipe is the in-band, export-eligible recipe with the lowest `complexity` (ties: higher mean, lower se, id). The fold-score SE is known to be optimistic (fold fits share data), so
+the band is a heuristic, not a test. The multiple (1.0) and the complexity order are frozen on design generators before any holdout generator is scored; the multiple is swept over {0.5, 1, 1.5, 2} on design generators only, and
+an ablation applies a random permutation of the complexity order to show how much selection depends on it.
+
+**Table content that replaces rev 1's optimism bound.** `recipe-portfolio-table/1` (slot `portfolio_table`, not `evidence_table`, which the study adapter would match and reject) records `winners_curse_scale_indep = se_b *
+sqrt(2 ln m)` labelled "approximate expected maximum of m independent draws under no true differences; neither an upper bound nor corrected for fold-sharing", always shown beside the validation check. It also records
+`class_contrasts` (linear vs best nonlinear, qda vs best gmm, screened vs unscreened, low-rank vs standardised) as estimated achievable gain in the task metric with paired intervals, which order the investigator's hypotheses after
+round 1. `validation_check` is untouched by selection only for the first portfolio; the packet states how many candidates have been scored on validation since.
+
+**`rescore`** (renamed from `confirm`) re-scores the incumbent and runners-up on resampled train partitions: same data, lower partition variance. Its job purpose is `reproduction`; it is never given the `confirmation` purpose
+(reserved by `domain/exploration.py` for finalisation and by ADR 0021 for assessor evidence), and every output says "re-scored on resampled train partitions". `refine` stops a family when its last six evaluated neighbours
+gain less than one paired SE (`family-gain-below-se`). `train --seed` controls all model randomness; `rescore` takes an explicit `partition_seed`.
+
+**Lab part.** The rule metric for the prepared candidate is the exported pipeline's own validation score: the training job's receipt carries `validation_accuracy` and `validation_accuracy_se` (binomial), or `validation_rmse` and
+`validation_rmse_se` (delta method), under the rule scorer `eidos.project.command@<study pin>` on `data.inputs {train, validation}`, split `"validation"`. Because the metric is the same under both schemes, a mis-detected scheme
+cannot silently pick the wrong lock estimator, and the rule is immutable once recorded. In `domain/exploration.py` and `handlers/exploration.py`: (1) `parse_rule` accepts `margin: {"metric", "multiple"}`; `selection_evidence`
+returns `se`; `check_note` refuses a re-lock unless `challenger.value - incumbent.value > multiple * max(se_inc, se_ch)` in the rule's direction (conservative, since unpaired SEs over the same rows overstate the SE of a difference);
+a rule without margin behaves exactly as today. (2) `rounds()`/`evaluated()` changes: a succeeded job that consumes outputs of an evidence-bearing challenger job in its lineage (`check`, `compare`) is evaluated; jobs of components
+under `eidos.diagnose.` are observations and excluded from challenger accounting; a succeeded `eidos.search.recipe-portfolio` job whose receipt carries `round_evaluated` is evaluated, so a sub-noise `refine` or `rescore` round counts toward
+patience. (3) `DEFAULT_POLICY` gains `selection_margin_multiple`, `project_command_ref` (the study sets the 1.0.9 pin) and `planner`; `rules.state` reports `exploration-policy/3` only for investigations that select it.
+
+## Rejected alternatives
+
+- `validation-anchored` K-fold over validation rows with all of train in each fit set (rev 1): it scored a pipeline that is not exported.
+- A CV re-score job as the lock evidence (rev 1): it compares two selected maxima and is not independent of selection.
+- Pooling train and validation for CV: it shrinks the SE by about 13% and makes validation part of selection; pooled refit is deferred (Q4).
+- Row-subsampled halving or Hyperband fidelity: it penalises data-hungry classes first. Step 2 measures the reopen trigger before this deferred feature is reconsidered.
+- Argmax on mean CV, and an unpaired band around the best recipe's SE.
+- Leaving `rules.state` unchanged (rev 1's claim): verified false.
+
+## Verification and limits
+
+Tests: fold-digest stability; **in-fold fitting**; paired-band arithmetic on hand-built tables; train-fit scheme per-row pairing; complexity tie-break and permutation hook; OOF stored with row ids; per-recipe timeout; stable
+`evidence_digest`; held-out guard (`train`, `validation`, `task`, `profile`, `groups`, `predictions` only); parity with the generated project; margin parse/accept/refuse; a property test that a rule without margin is unchanged and
+replay-identical; **`rounds()` tests built from ledger-shaped jobs** (component, inputs, outputs, receipt), including a round whose only job is a `refine` and a round with the macro's `check` and `compare` jobs. Acceptance on the
+harness (ADR 0043): pipeline C against A1 and A2 under the generator-level rule; selection regret and optimism against argmax-validation and argmax-CV by replay; claim-level null metrics no worse than A2; round-1 wall; evaluator-clock
+versus lab-clock fit seconds.
+
+Limits: the one-SE band is a heuristic with an optimistic SE; `complexity` is a prior; the train-fit scheme has no untouched split on shifted cards; round-1 cost is an estimate until step 2 measures it; the margin uses unpaired SEs
+and is conservative; the lab margin cannot see the portfolio's CV, so the portfolio's choice and the investigator's judgement remain the pre-filter for what is prepared and locked.
+
+## Incremental scope
+
+Step 2 implements the library, portfolio, generated project interface, toolkit parity and model-free evidence. Lab margin/round accounting and author_source include support belong to step 3. Draft numbering is retained: 0044 is reserved for the steering/profile ADR in the sibling step-0 change. Scientific acceptance is measured separately from implementation; see the step-2 evidence report.
+
+Step-2 design-only measurements exposed a large-n density bug: duplicate forest settings crowded out HGB. The frozen implementation now protects cost-ranked class representatives and distinct model families before duplicate settings, deduplicates reduced neural specs, and includes the compact HGB strong default (150 iterations, 31 leaves, learning rate .1, no internal early stopping). The one-SE multiple and complexity prior stay unchanged. This correction preceded all holdout scoring. Group-aware replay uses the same train partitions as the component.
+
+Portfolio and harness scores use accuracy or negative RMSE so higher always wins; generated train receipts also expose positive `validation_rmse` and its SE for the native lower-is-better selection rule. The step-3 macro must normalize the portfolio score by task type before comparing it with a native RMSE incumbent. Multiple sweeps are design-only; holdout replay fixes the multiple at 1.0 and retains the predeclared complexity-permutation diagnostic.
+
+Step-2 resource measurements confirmed the deferred halving reopen trigger: separate visible-input timing probes put at least 12/96 instances above 350 seconds. The original 350-second-budget selections remain frozen; halving is not implemented in this step. See the step-2 evidence report for the censored primary timings and probe conditions.
