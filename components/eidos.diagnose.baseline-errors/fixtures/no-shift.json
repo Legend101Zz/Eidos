@@ -1,0 +1,27 @@
+{
+ "name": "no shift: positive sub-threshold scores do not steer",
+ "author_test": true,
+ "inputs": {
+  "train": {
+   "file": "fixtures/data/no-shift-train.npz",
+   "media_type": "application/x-npz"
+  },
+  "validation": {
+   "file": "fixtures/data/no-shift-validation.npz",
+   "media_type": "application/x-npz"
+  }
+ },
+ "config": {
+  "layout": "tabular"
+ },
+ "expect": {
+  "status": "succeeded",
+  "receipt": {
+   "top_hypothesis": "no-transfer-shift-detected",
+   "hypotheses": [
+    "no-transfer-shift-detected"
+   ],
+   "exploratory": true
+  }
+ }
+}

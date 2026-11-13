@@ -259,7 +259,7 @@ def test_the_planted_cause_ranks_first_and_the_plant_hurts_the_reference(lab, sp
     # the same rows without the plant: the reference probe does clearly worse once the plant is there
     _, clean, _ = lab.diagnose(seed=seed, **{k: v for k, v in spec.items() if k != "plant"})
     assert reference(report) < reference(clean), (reference(report), reference(clean))
-    assert not hypothesis(clean, cause)["supported"], ranking(clean)  # and the clean twin is not diagnosed with it
+    assert not any(h["supported"] and h["cause"] == cause for h in clean["hypotheses"]), ranking(clean)  # and the clean twin is not diagnosed with it
 
 
 @pytest.mark.parametrize("noise", [pytest.param(0.5, id="learnable-invariant-features"), pytest.param(None, id="noisy")])
@@ -297,11 +297,17 @@ def test_clean_data_is_left_undiagnosed(lab, kind, seed):
 
 
 def test_a_raised_min_effect_demotes_a_real_cause_and_is_quoted_in_the_falsifier(lab):
-    _, report, _ = lab.diagnose(kind="image", plant="offset", seed=1, config={"min_effect": 0.9})
+    res, report, data = lab.diagnose(kind="image", plant="offset", seed=1, config={"min_effect": 0.9})
     assert report["hypotheses"][0]["cause"] == NOTHING, ranking(report)
     assert all(not h["supported"] for h in report["hypotheses"])
-    offset = hypothesis(report, OFFSET)
+    old = run_component(lab.tmp_path, NAME + "@1.0.0", ENTRY,
+                        inputs={p: (data.path(p), NPZ) for p in ("train", "validation")},
+                        config={"min_effect": 0.9}, python=NUMPY_PY, label="old-threshold")
+    assert old.ok, old.manifest.error
+    offset = hypothesis(old.json("report"), OFFSET)
     assert 0.02 < offset["score"] < 0.9 and "0.900" in offset["falsifier"]
+    assert [h["cause"] for h in report["hypotheses"]] == [NOTHING]
+    assert res.receipt["next"] == report["next"]
     assert hypothesis(report, NOTHING)["score"] == 0.9
 
 
@@ -321,7 +327,7 @@ def test_the_feature_shift_statistics_name_the_planted_columns(lab):
     "spec, causes",
     [
         pytest.param({"kind": "image", "plant": "offset"}, {OFFSET, GAIN, FEATURES, SPATIAL, LOSS, NOTHING}, id="image"),
-        pytest.param({"kind": "tabular"}, {OFFSET, GAIN, FEATURES, LOSS, NOTHING}, id="tabular"),
+        pytest.param({"kind": "tabular"}, {NOTHING}, id="tabular"),
     ],
 )
 def test_every_hypothesis_is_ranked_and_comes_with_a_prediction_and_a_falsifier(lab, spec, causes):
@@ -830,3 +836,49 @@ def test_toolkit_runs_the_diagnosis_without_the_lab_and_matches_the_lab_run(tool
     assert lab_res.ok, lab_res.manifest.error
     assert report == lab_res.json("report")
     assert manifest["receipt"]["hypotheses"] == lab_res.receipt["hypotheses"]
+
+
+def test_no_shift_with_positive_unsupported_scores_does_not_steer(lab):
+    res, report, data = lab.diagnose(kind="tabular", seed=5)
+    old = run_component(lab.tmp_path, NAME + "@1.0.0", ENTRY,
+                        inputs={p: (data.path(p), NPZ) for p in ("train", "validation")},
+                        config={"layout": "tabular"}, python=NUMPY_PY, label="old-no-shift")
+    assert old.ok, old.manifest.error
+    previous = old.json("report")
+    assert previous["hypotheses"][0]["cause"] == NOTHING
+    assert any(h["cause"] != NOTHING and not h["supported"] and h["score"] > 0
+               for h in previous["hypotheses"])
+    assert report["hypotheses"] == previous["hypotheses"][:1]
+    assert res.receipt["hypotheses"] == [NOTHING]
+    assert res.receipt["next"] == report["next"]
+    assert "class contrasts" in report["next"] and "profile" in report["next"]
+    for key in ("invariance_probes", "split_statistics", "error_slices"):
+        assert report[key] == previous[key]
+
+
+def test_supported_offset_preserves_the_entire_previous_hypothesis_list(lab):
+    res, report, data = lab.diagnose(kind="image", plant="offset", seed=1)
+    old = run_component(lab.tmp_path, NAME + "@1.0.0", ENTRY,
+                        inputs={p: (data.path(p), NPZ) for p in ("train", "validation")},
+                        python=NUMPY_PY, label="old-offset")
+    assert old.ok, old.manifest.error
+    assert report["hypotheses"][0]["cause"] == OFFSET
+    assert report["hypotheses"] == old.json("report")["hypotheses"]
+    assert "next" not in res.receipt and "next" not in report
+
+
+@pytest.mark.parametrize("name,release", [(NAME, "1.1.0"), (NAME + "@1.0.0", "1.0.0")])
+def test_toolkit_no_shift_runs_the_requested_release(toolkit, lab, tmp_path, name, release):
+    data = lab.data(kind="tabular", seed=5)
+    args = {"inputs": {p: {"file": str(data.path(p)), "media_type": NPZ}
+                       for p in ("train", "validation")}, "config": {"layout": "tabular"}}
+    out = tmp_path / "toolkit-no-shift"
+    proc = run_toolkit(toolkit, tmp_path, name, "--args", json.dumps(args), "--out", str(out))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    manifest = json.loads((out / "staging/eidos-output-manifest.json").read_text())
+    assert manifest["status"] == "succeeded", manifest.get("error")
+    entry = next(o for o in manifest["outputs"] if o["slot"] == "report")
+    report = json.loads((out / "staging" / entry["filename"]).read_text())
+    assert report["provenance"]["component"] == NAME + "@" + release
+    assert (len(report["hypotheses"]) == 1) == (release == "1.1.0")
+    assert ("next" in manifest["receipt"]) == (release == "1.1.0")

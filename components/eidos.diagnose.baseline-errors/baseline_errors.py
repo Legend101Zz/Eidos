@@ -14,7 +14,7 @@ import re
 import numpy as np
 
 REPORT_SCHEMA = "baseline-diagnosis/1"
-COMPONENT = "eidos.diagnose.baseline-errors@1.0.0"
+COMPONENT = "eidos.diagnose.baseline-errors@1.1.0"
 ALLOWED_INPUTS = ("train", "validation", "predictions", "groups", "task")
 PROBES = ("none", "per_example_center", "per_example_standardize", "split_standardize", "shift_invariant")
 LAYOUTS = ("auto", "tabular", "sequence", "image")
@@ -441,6 +441,9 @@ def _hypotheses(task, probes, min_effect, metric):
         h = out[i]
         h.update(rank=rank, id="H%d" % rank, supported=h["score"] >= min_effect and h["cause"] != "no-transfer-shift-detected")
         ranked.append(h)
+    # With no detected transfer shift, raw sub-threshold scores must not steer the search.
+    if ranked[0]["cause"] == "no-transfer-shift-detected":
+        return [h for h in ranked if h["supported"] or h["cause"] == "no-transfer-shift-detected"]
     return ranked
 
 
@@ -545,6 +548,13 @@ def run(inputs, config, *, reader, writer, context):
             "data_read": sorted(inputs), "test_data": "none: no test or held-out port exists",
         },
     }
+    next_step = {}
+    if hypotheses[0]["cause"] == "no-transfer-shift-detected":
+        next_step["next"] = (
+            "Run a broad recipe sweep over model families and train-fitted preprocessing. "
+            "Inspect the portfolio class contrasts when available, and the data profile once available; "
+            "these invariance probes do not test model-family structure.")
+    report.update(next_step)
     writer.stage_json("report", report, schema=REPORT_SCHEMA)
     top = hypotheses[0]
     context.record("top_hypothesis", top["cause"])
@@ -552,4 +562,4 @@ def run(inputs, config, *, reader, writer, context):
                         report["error_slices"]["overall"].get("error_rate", report["error_slices"]["overall"].get("rmse")),
                         "reference_probe_validation_%s" % metric: probes["none"]["best_validation"],
                         "top_hypothesis_score": top["score"]},
-            "top_hypothesis": top["cause"], "hypotheses": [h["cause"] for h in hypotheses], "exploratory": True}
+            "top_hypothesis": top["cause"], "hypotheses": [h["cause"] for h in hypotheses], "exploratory": True, **next_step}
