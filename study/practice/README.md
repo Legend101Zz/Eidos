@@ -45,6 +45,20 @@ changed source invalidates that validation authorization. `references` and
 a second validation registration. Construction is limited to trusted
 design/calibration/control generators and cannot emit a candidate verdict.
 
+Step-2 R3 ledger disclosure: adding `pipeline_c.py` to this directory also adds
+it to `comparator_digest()`'s `*.py` glob. The epoch-2 pin remains
+`9a8d6f3f02df0774efed8cf28f46cdc9d50355ce331736bdbe00c567447923a7`;
+this checkout computes
+`a2072f253560bcf188417dc1ec8d43c1bf6413fbdd74bef582b2d540c55de218`.
+Excluding only `pipeline_c.py` reproduces the original pin. Authenticated event
+481 (`comparator-source-digest-disclosure`, hash
+`981214da499ad380994c61dd6de0f8867c42c1739223a75084b3acb1e4c0f447`)
+records this change without rewriting history or changing the epoch-2 pin.
+Epoch-2 harness-validation receipts still refuse this checkout's source mismatch;
+epoch 3 must explicitly re-pin the reviewed source before harness-validation.
+This disclosure neither registers a candidate nor spends a burn. See ADR 0046
+and `docs/experiments/recipe-portfolio-step2.md` for the R3 acceptance corrections.
+
 For step 2, register the candidate directly with
 `ledger.register(..., kind='candidate', data_root=EPOCH2_ROOT)` and pass that
 receipt to candidate scoring and `guard.evaluate`. Candidate receipts support

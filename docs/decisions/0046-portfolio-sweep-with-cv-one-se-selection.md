@@ -32,8 +32,8 @@ recipe, which is exactly the pipeline export ships; there is no untouched split 
 
 **Paired band.** The best recipe b has the highest mean. A recipe r is in the band when `mean_b - mean_r <= se(d_r)`, where `d_r` is the paired difference to b (over folds, or over validation rows) and
 `se(d_r) = sd(d_r)/sqrt(count)`. The chosen recipe is the in-band, export-eligible recipe with the lowest `complexity` (ties: higher mean, lower se, id). The fold-score SE is known to be optimistic (fold fits share data), so
-the band is a heuristic, not a test. The multiple (1.0) and the complexity order are frozen on design generators before any holdout generator is scored; the multiple is swept over {0.5, 1, 1.5, 2} on design generators only, and
-an ablation applies a random permutation of the complexity order to show how much selection depends on it.
+the band is a heuristic, not a test. R1 froze the multiple (1.0) and structural complexity order on design generators before R1 holdout scoring; the multiple was swept over {0.5, 1, 1.5, 2} on design generators only, and
+an ablation applied a random permutation of the complexity order to show how much selection depends on it. The round-2 decision below supersedes this structural prior after R1 exposure and before epoch-2 scoring.
 
 **Table content that replaces rev 1's optimism bound.** `recipe-portfolio-table/1` (slot `portfolio_table`, not `evidence_table`, which the study adapter would match and reject) records `winners_curse_scale_indep = se_b *
 sqrt(2 ln m)` labelled "approximate expected maximum of m independent draws under no true differences; neither an upper bound nor corrected for fold-sharing", always shown beside the validation check. It also records
@@ -80,7 +80,9 @@ Step-2 design-only measurements exposed a large-n density bug: duplicate forest 
 
 Portfolio and harness scores use accuracy or negative RMSE so higher always wins; generated train receipts also expose positive `validation_rmse` and its SE for the native lower-is-better selection rule. The step-3 macro must normalize the portfolio score by task type before comparing it with a native RMSE incumbent. Multiple sweeps are design-only; holdout replay fixes the multiple at 1.0 and retains the predeclared complexity-permutation diagnostic.
 
-Step-2 resource measurements confirmed the deferred halving reopen trigger: separate visible-input timing probes put at least 12/96 instances above 350 seconds. The original 350-second-budget selections remain frozen; halving is not implemented in this step. See the step-2 evidence report for the censored primary timings and probe conditions.
+The pre-rebase R1 resource probes belonged to a different family, including 20,000-row design cards; their at-least-12/96 above-350-second result does not describe R2. R2 measured 96 searches, with 8 budget-censored searches, all design/calibration cards (gen-011 and gen-014). The R2 family has at most 1,800 training rows per card. Its halving trigger did not fire: 0 observed walls exceeded 350 seconds. Full-grid completion times remain censored; no large-n completion claim follows. Halving remains deferred.
+
+**R3 correction to the acceptance record:** the frozen, launch-pinned summary code returned `halving_trigger_assessment: NOT MET`, because uncapped timings were not assessable. That verdict is restored and retained. The later 8/96 = 8.33% upper-bound argument is a **post-hoc, family-specific interpretation**, not a replacement PASS. The original criterion was poorly specified: the 350-second overall budget reserves 20% for full-fit checks, making an observed search-wall-above-350 metric uninformative about uncapped grid cost. The post-hoc bound assumes the fixed timeout policy; it does not recover full-grid timings.
 
 ## Step-2 round-2 design calibration
 
@@ -122,4 +124,47 @@ registry family, uses every training row and every fold, and introduces no halvi
 
 Reproduction: `claude-orch/v2/step2-r2/design_analysis.py`, its `design-analysis/`
 JSON, and `coverage_probe.py`. Only design/calibration generators were scored;
-no candidate burn or protected holdout result informed this choice.
+this analysis spent no candidate burn. However, the production selection rule
+was chosen **after the R1 pre-rebase holdout exposure**: R1's C regret .807
+versus argmax-validation .630 motivated the calibration. Restricting the replay
+to design cards does not make the rule independent of that earlier exposure.
+Epoch 2 provides fresh instances of the same target generators, not independent
+mechanisms. The R1 `v2-step2-c-v1` burn is recorded only in
+`claude-orch/v2/programme-burns.json`, and is absent from the current authenticated
+ledger. These generators have been scored by two candidates across epochs;
+the one-of-two candidate-burn count is specific to epoch 2. The recorded Holm
+p=.0029296875 omits R1; conservatively counting one additional prior primary at
+p=1 gives .00390625 (eight-primary maximum: .0078125). These are sensitivity
+calculations, not replacement registered verdicts.
+
+## R3 disclosures and next-build backlog
+
+The within-band ordering permutes **positions** in the completed export-eligible
+list. It depends on evaluation order and the completed set, which timeouts can
+change. Reviewer replay found that dropping one eligible recipe changed the
+choice on **33/68 multi-recipe-band cards**. This fragility remains in the frozen
+candidate. A fixed per-recipe hash rank and design evidence across seeds are
+deferred to the next build; changing the ordering requires a new frozen candidate
+and candidate evaluation, not a reporting correction.
+
+The summary-added `small_n_selection_quality` criterion remains **NOT MET** and
+is **descriptive and under-powered**. It covers one 178-row gen-008 source,
+four correlated re-splits, and 36 test rows per split (one effective source).
+Regret corresponds to C losing 6 test rows versus argmax-validation losing 5
+relative to the best completed recipe across the four splits; these are not
+independent observations. Below roughly 200 source rows, selection has not been
+shown to beat argmax-validation. This supplements the frozen component method
+card, whose bytes cannot be edited in this round. Add a small-n **design
+generator before the next calibration**, and carry this limit into the next
+method card; do not tune on gen-008's holdout result.
+
+The epoch-2 comparator pin also includes `study/practice/*.py`, so adding
+`pipeline_c.py` changed the observed digest from `9a8d6f3f02df0774efed8cf28f46cdc9d50355ce331736bdbe00c567447923a7`
+to `a2072f253560bcf188417dc1ec8d43c1bf6413fbdd74bef582b2d540c55de218`.
+Excluding only that file exactly reproduces the pin. Authenticated ledger event
+481 (`comparator-source-digest-disclosure`, hash
+`981214da499ad380994c61dd6de0f8867c42c1739223a75084b3acb1e4c0f447`)
+records the change without altering any past entry or epoch pin. Epoch-2
+harness-validation on this checkout still refuses the source mismatch; epoch 3
+must explicitly re-pin the reviewed comparator source. No burn or evaluation
+was performed for this disclosure.
