@@ -41,6 +41,8 @@ def estimators(kind, seed):
 def produce(family, data_root, out, *, registration):
     from study.practice.ledger import require_bundle_registration, require_registration
     require_registration(registration, classes=[g["id"] for g in registry()])
+    if registration['kind'] != 'harness-validation':
+        raise ValueError('harness references/controls require the separate harness-validation budget')
     out = Path(out)
     by_generator = {}
     rows = []
@@ -49,7 +51,7 @@ def produce(family, data_root, out, *, registration):
         for entry in registry():
             cards = [r for r in family['cards'] if r['generator'] == entry['id']]
             for card in cards:
-                require_bundle_registration(registration, Path(data_root) / 'bundles' / card['card'])
+                require_bundle_registration(registration, Path(data_root) / 'bundles' / card['card'], purpose='references')
                 i = card['instance']
                 finite = entry['mechanism'] in ('wine-nuisance', 'digits-rotation', 'offset-reenactment')
                 if finite:
@@ -138,7 +140,7 @@ def main():
     from study.practice.ledger import register
     registration = register(evaluation_id=args.evaluation_id, candidate_digest=args.candidate_digest,
                             classes=[g['id'] for g in registry()], primary_verdict='candidate versus A2: named transfer',
-                            kind='candidate', data_root=args.data)
+                            kind='harness-validation', data_root=args.data)
     produce(family, args.data, args.out, registration=registration)
 
 

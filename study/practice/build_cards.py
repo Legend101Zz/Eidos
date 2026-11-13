@@ -112,8 +112,9 @@ def build(out, *, generator_ids=None, instances=4):
             (bundle / 'project.py').write_text((Path(__file__).with_name('baseline.py')).read_text())
             (bundle / 'requirements.lock').write_text('numpy==2.5.4\nscikit-learn==1.9.1\njoblib==1.6.0\n')
             index.append(dict(card=card, generator=entry['id'], instance=instance, role=entry['role'],
-                              bundle_digest=tree_digest(bundle), controller_digest=tree_digest(controller)))
-    write_json(out / 'index.json', dict(schema='practice-index/1', cards=index))
+                              bundle_digest=tree_digest(bundle), controller_digest=tree_digest(controller),
+                              holdout_epoch=entry.get('holdout_epoch'), seed_stream=entry['seed_stream']))
+    write_json(out / 'index.json', dict(schema='practice-index/2', holdout_epoch=max((e.get('holdout_epoch', 1) for e in entries), default=1), cards=index))
     digest = tree_digest(out)
     return dict(cards=len(index), data_digest=digest)
 

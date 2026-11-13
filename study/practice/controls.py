@@ -16,6 +16,8 @@ from study.practice.pipelines import compute_table
 def produce(data_root, reference_root, out, *, registration):
     from study.practice.ledger import register, require_bundle_registration, require_registration
     require_registration(registration, classes=[g["id"] for g in registry()])
+    if registration['kind'] != 'harness-validation':
+        raise ValueError('harness references/controls require the separate harness-validation budget')
     out = Path(out)
     index = json.loads((Path(data_root) / 'index.json').read_text())['cards']
     entries = {g['id']: g for g in registry()}
@@ -23,7 +25,7 @@ def produce(data_root, reference_root, out, *, registration):
     effects = {name: {} for name in ('helpful', 'neutral', 'harmful', 'card-specific')}
     raw = {name: {} for name in effects}
     for card in index:
-        require_bundle_registration(registration, Path(data_root) / 'bundles' / card['card'])
+        require_bundle_registration(registration, Path(data_root) / 'bundles' / card['card'], purpose='fault-controls')
         g = card['generator']
         entry = entries[g]
         rng = np.random.default_rng(entry['seed_stream'] + card['instance'] + 49183)
@@ -45,7 +47,7 @@ def produce(data_root, reference_root, out, *, registration):
             interval = paired_interval(entry['task_type'], truth, candidate, baseline)
             effects[name].setdefault(g, []).append(interval['effect'] / max(interval['se'], .001))
             raw[name].setdefault(g, []).append(interval)
-    options = dict(registration=registration, in_fold_ok=True, null_delta=0., null_tolerance=0., limits_ok=True,
+    options = dict(registration=registration, harness_validation=registration['kind'] == 'harness-validation', in_fold_ok=True, null_delta=0., null_tolerance=0., limits_ok=True,
                    effective_instances={g: 1 for g in ('gen-008', 'gen-009', 'gen-015')})
     controls = {name: evaluate(values, roles, **options) for name, values in effects.items()}
     # Real pre-CV supervised screen on the compute_table data path, noise labels.
@@ -95,7 +97,7 @@ def main():
     from study.practice.ledger import register
     registration = register(evaluation_id=args.evaluation_id, candidate_digest=args.candidate_digest,
                             classes=[g['id'] for g in registry()], primary_verdict='candidate versus A2: named transfer',
-                            kind='candidate', data_root=args.data)
+                            kind='harness-validation', data_root=args.data)
     produce(args.data, args.references, args.out, registration=registration)
 
 

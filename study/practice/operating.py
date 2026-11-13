@@ -92,7 +92,7 @@ def wilson(accepted):
 def simulate(observed, roles, *, registration, trials=20000, seed=20261114, effect=.9):
     from study.practice.generators import registry
     from study.practice.ledger import require_registration
-    require_registration(registration, classes=roles, exact=True, candidate=True)
+    require_registration(registration, classes=roles, exact=True, candidate=registration['kind'] != 'harness-validation')
     rng = np.random.default_rng(seed)
     observed_sd = {g: float(np.std(v, ddof=1)) for g, v in observed.items()}
     profiles = {f'homoskedastic-{sd}': {g: sd for g in roles} for sd in (.1, .3, .66, .8, 1.04)}
@@ -131,7 +131,7 @@ def simulate(observed, roles, *, registration, trials=20000, seed=20261114, effe
                 accepted = diagnostic['accepted'] & (diagnostic['primary_p'] <= .05 / primaries)
                 power_required = profile not in ('observed-x0.5', 'observed-x1.5')
                 target = (.8 if name == 'helpful' and power_required else .1 if name == 'card-specific' or name.startswith('nuisance-specific/') or name == 'mixed--1.0'
-                          else .05 if name in ('neutral', 'harmful', 'mixed--2.0') or name.startswith('single-loss-4/') else None)
+                          else .05 if name in ('neutral', 'harmful', 'mixed--2.0') else None)
                 bounds = wilson(accepted)
                 met = None if target is None else bounds['mc_lower95'] >= target if name == 'helpful' else bounds['mc_upper95'] <= target
                 rows.append(dict(profile=profile, scenario=name, primaries=primaries, **bounds, target=target, target_met=met))
@@ -143,17 +143,19 @@ def simulate(observed, roles, *, registration, trials=20000, seed=20261114, effe
             print(json.dumps(dict(profile=profile, scenario=name, complete=True)), flush=True)
     primary = [r for r in rows if r['primaries'] == 1 and r['target'] is not None]
     core = [r for r in primary if not r['scenario'].startswith('single-loss-4/')]
-    single = [r for r in primary if r['scenario'].startswith('single-loss-4/')]
+    single = [r for r in rows if r['primaries'] == 1 and r['scenario'].startswith('single-loss-4/')]
     return dict(schema='practice-operating/4', seed=seed, trials=trials, effect_se=effect,
                 effect_justification='The orchestrator prospectively fixed +0.9 paired-test-SE as the one-primary minimum detectable effect before any v2 candidate evaluation. +0.8 is sensitivity only; high-variance x1.5 helpful power is descriptive.',
                 observed_instance_sd=observed_sd, rows=rows, targets_met=all(r['target_met'] for r in primary + catastrophic_neutral),
                 core_targets_met=all(r['target_met'] for r in core),
-                single_generator_targets_met=all(r['target_met'] for r in single + catastrophic_neutral),
+                single_generator_targets_met=None,
+                single_generator_diagnostic=single,
+                single_generator_limitation='Orchestrator r5: -4-SE detection is not a hard target. Four instances cannot support it; reviewer measured acceptance up to 84%. Credible-loss screen retained as diagnostic protection.',
                 catastrophic_neutral=catastrophic_neutral,
                 unmet_targets=[r for r in primary + catastrophic_neutral if not r['target_met']],
                 nuisance_groups=templates, pooled_harm_margin_se=0., finite_source_sd_floors=FINITE_SOURCE_SD_FLOORS,
                 mechanical_checks='Condition on valid in-fold, null-claim and resource checks; flags isolate statistical error rates.',
-                scope='Exposed calibration, not independent validation. Exact sign-flip and modified HK use independent generators. Pooled design/class and each-role zero-margin loss-risk screens use one-sided alpha .25 (upper 50% interval), calibrated on the previously exposed r3 SD profile including x1.5. Conventional .05 credible-loss tests remain separate. Any single named generator with a one-sided 97.5% upper t bound below -3 SE rejects; alpha .025 was calibrated on exposed r3 neutral draws (alpha .05 missed the x1.5 Wilson false-rejection bound). Its neutral familywise false-rejection rate is measured separately. Mixed cells help holdouts +0.9 and harm design/class generators; -0.5 is descriptive. Single-loss cells harm the named generator -4 and help all others +0.9, including every high-variance source. Four instances cannot guarantee detection of those losses; every failed target remains visible. All rates have Wilson 95% bounds. Eight-primary sensitivity carries no 80% power promise.',
+                scope='Exposed calibration, not independent validation. Exact sign-flip and modified HK use independent generators. Pooled design/class and each-role zero-margin loss-risk screens use one-sided alpha .25 (upper 50% interval), calibrated on the previously exposed r3 SD profile including x1.5. Conventional .05 credible-loss tests remain separate. Any single named generator with a one-sided 97.5% upper t bound below -3 SE rejects; alpha .025 was calibrated on exposed r3 neutral draws (alpha .05 missed the x1.5 Wilson false-rejection bound). Its neutral familywise false-rejection rate is measured separately. Mixed cells help holdouts +0.9 and harm design/class generators; -0.5 is descriptive. Single-loss cells harm the named generator -4 and help all others +0.9, including every high-variance source. Four instances cannot guarantee detection of those losses; single-loss cells are diagnostic only by the r5 decision. All rates have Wilson 95% bounds. Eight-primary sensitivity carries no 80% power promise.',
                 controls=guard_selftest(registration=registration))
 
 

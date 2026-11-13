@@ -4,6 +4,8 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.4.0
 
+- Retire practice holdout epoch 1 without resetting burns, bind fresh epoch 2 data and separate frozen-comparator validation budgets, preserve step-2 candidate capacity, and document single-generator detection, large-n coverage and fingerprint-lint limits (ADR 0043, r5).
+
 - Require burn-counted candidate receipts for practice holdout scoring and verdicts, bind indexed bundle/controller bytes, witness ledger heads, strengthen mixed and single-generator loss checks and transformed-recipe lint, and reduce large practice instances under the unchanged 840-second limit (ADR 0043, r4).
 
 - Harden the practice gate with mandatory ledger registration and durable verdict logging, authenticated append-only history at a fixed controller path, pooled loss-risk tests and mixed-harm Monte Carlo, diverse holdout nuisance structures, secret-derived row tokens, and statistical dev-recipe fingerprints (ADR 0043, r3).

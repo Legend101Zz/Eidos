@@ -114,7 +114,10 @@ class FoldWorkflow:
 
 def compute_table(bundle, test_inputs, test_labels, *, partition_seed=81723, folds=5, model_seed=11, specs=None,
                   supplied_baseline=None, pre_cv_transform=None, registration=None):
-    require_bundle_registration(registration, bundle, test_inputs=test_inputs, test_labels=test_labels)
+    receipt = require_bundle_registration(registration, bundle, test_inputs=test_inputs, test_labels=test_labels, purpose='comparators')
+    if receipt['kind'] == 'harness-validation' and (specs is not None or pre_cv_transform is not None
+            or (partition_seed, folds, model_seed) != (81723, 5, 11)):
+        raise ValueError('harness-validation scores only the frozen A0-A3 comparator configuration')
     started = time.perf_counter()
     bundle = Path(bundle)
     task = json.loads((bundle / 'task.json').read_text())

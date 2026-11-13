@@ -135,10 +135,12 @@ def check_in_fold(factory, x, y, train, held, *, fitted=None):
     return pickle.dumps(clean, protocol=5) == pickle.dumps(poisoned, protocol=5)
 
 
-def evaluate(effects, roles, *, registration=None, **options):
+def evaluate(effects, roles, *, registration=None, harness_validation=False, **options):
     """Validate registration before inference; every returned verdict is recorded."""
-    from study.practice.ledger import record_verdict, require_registration
-    require_registration(registration, classes=roles, exact=True, candidate=True)
+    from study.practice.ledger import record_validation, record_verdict, require_registration
+    require_registration(registration, classes=roles, exact=True, candidate=not harness_validation)
+    if harness_validation and registration['kind'] != 'harness-validation':
+        raise ValueError('diagnostics require harness-validation registration')
     from study.practice.generators import registry
     trusted = {g['id']: g['role'] for g in registry()}
     if any(g in trusted and role != trusted[g] for g, role in roles.items()):
@@ -214,7 +216,7 @@ def evaluate(effects, roles, *, registration=None, **options):
                     secondary_results='descriptive; generators are the unit of inference')
 
     result = _assess(effects, roles, **options)
-    return record_verdict(registration, result, classes=roles)
+    return (record_validation if harness_validation else record_verdict)(registration, result, classes=roles)
 
 
 def holm_unlimited(pvalues):
@@ -269,7 +271,8 @@ def guard_selftest(*, registration):
     trusted = {g['id']: g['role'] for g in registry()}
     roles = {g: trusted.get(g, 'holdout' if i < 12 else 'control') for i, g in enumerate(registration['classes'])}
     noise = {g: rng.normal(0, .8, 4).tolist() for g in roles}
-    options = dict(in_fold_ok=True, null_delta=0., null_tolerance=0., limits_ok=True)
+    options = dict(in_fold_ok=True, null_delta=0., null_tolerance=0., limits_ok=True,
+                   harness_validation=registration['kind'] == 'harness-validation')
     scenarios = {name: {g: [v + shift for v in values] for g, values in noise.items()}
                  for name, shift in [('helpful_operator', .8), ('neutral_operator', 0.), ('harmful_operator', -.5)]}
     scenarios['card_specific_patch'] = {g: [v + (2. if g == next(iter(roles)) else 0.) for v in values] for g, values in noise.items()}

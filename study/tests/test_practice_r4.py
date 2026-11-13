@@ -158,7 +158,7 @@ def test_cold_one_instance_per_generator_emits_measurements_without_inference(tm
                  wall_seconds=1., comparator_paired={'se': .01})
     write_json(out / 'cache' / f'{key}.json', table)
     monkeypatch.setattr(run_gate, 'replay', lambda t: dict(pipelines={name: {'test_score': .8} for name in ('A0', 'A1', 'A2', 'A3')}))
-    result = run_gate.run(data, out, evaluation_id='cold', candidate_digest='x')
+    result = run_gate.run(data, out, evaluation_id='cold', candidate_digest='x', kind='construction')
     assert 'verdict' not in result['comparator_guard_descriptive']
     assert result['cards'][0]['measurement_seconds'] == 1.
 

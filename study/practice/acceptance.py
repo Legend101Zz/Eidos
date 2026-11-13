@@ -63,7 +63,9 @@ def produce(family, rerun, development, out, *, rebuilt_data_digest, references,
         'c_cold_digest_stability': determinism_evidence(family, rerun, cold, rebuilt_data_digest),
         'd_real_controls_and_power': dict(passed=controls['all_met'] and operating['targets_met'],
                                           controls={k: v['verdict'] for k, v in controls['controls'].items()},
-                                          leak=controls['leak'], monte_carlo_targets_met=operating['targets_met']),
+                                          leak=controls['leak'], monte_carlo_targets_met=operating['targets_met'],
+                                          single_generator_diagnostic=operating.get('single_generator_diagnostic', []),
+                                          limitation=operating.get('single_generator_limitation')),
         'e_instance_wall_within_twice_estimate': dict(passed=all(r['seconds'] <= constants['wall_limit_seconds'] for r in wall),
                                                      estimate_seconds=constants['wall_estimate_seconds'], limit_seconds=constants['wall_limit_seconds'], instances=wall),
     }
@@ -73,7 +75,7 @@ def produce(family, rerun, development, out, *, rebuilt_data_digest, references,
                   limitation='Offline harness evidence. A3 is an EDA proxy, not a coding-agent ceiling. Pipeline C and the investigator remain unevaluated. Positive fault-repair controls are distinct from the +0.9-SE Monte Carlo power target (+0.8 sensitivity only).')
     out = Path(out)
     write_json(out / 'acceptance.json', result)
-    lines = ['# V2 step 1 r4 acceptance', '', f"Family: {len(family['cards'])} cards; development: {len(development['cards'])}.", '']
+    lines = ['# V2 step 1 r5 acceptance', '', f"Family: {len(family['cards'])} cards; development: {len(development['cards'])}.", '']
     lines += [f"- {'PASS' if v['passed'] else 'NOT MET'} — {k}" for k, v in criteria.items()]
     lines += ['', '| Variance profile | Scenario | Primaries | Accepted / trials | Acceptance (Wilson 95%) | Target met |',
               '|---|---|---:|---:|---:|---|']

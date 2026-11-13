@@ -6,7 +6,7 @@ The manifest was fixed before pipeline C existed and before scoring any generate
 
 - N01 and N04 training/validation data were inspected by the discovery-report author. The accepted design and its review disclose those probes. This implementation uses the public N01–N04 and D02–D04 generators for explicitly labelled calibration, including their public test partitions in the trusted offline scorer.
 - The proposed library and priors copy comparison-arm recipes on N04: arm 1 round 2 correlation screen + MLP ensemble; arm 2 round 1 per-class GMM with BIC; arm 1 round 1 PCA-whiten + SVM; arm 2 round 3 screen + MLP ensemble. D2's per-image centring on D03 is also design exposure.
-- No sealed or reserve card and nothing under `eidos-grading/` was used, inspected, listed or hashed. No model/provider calls were made.
+- No sealed or reserve card contents and no private grading contents were used, opened or hashed. The r4 metadata-search qualification below supersedes the earlier claim about listing. No model/provider calls were made.
 
 ## r2 roles and construction exposure
 
@@ -71,3 +71,29 @@ is 1,500/500/1,000. Authenticated design-only index revisions preserve every
 protected holdout entry and both original candidate receipts/burns. Every final
 family score/wall and independent-cold table is recomputed after this revision;
 the failed attempt is archived. No historical wall is used as a final pass.
+
+
+## r5 exposure and protected epoch transition
+
+The practice-family design **was informed by exposed N01/N04 practice data**,
+including the discovery probes and recipe comparisons described above. It is
+exposed development design, not independent holdout construction.
+
+In round 4 an executor's initial instruction-file search was rooted at the
+programme parent directory. No sealed file contents were opened, but listing of
+file names under the private grader directory **cannot be excluded**. This is a
+metadata-exposure qualification, not a claim of no traversal. R5 searches are
+confined to the worktree and named claude-orch paths.
+
+The r5 orchestrator authorizes new seeds/data for every protected holdout in
+epoch 2. Epoch 1 is retained and retired, with every burn preserved; no reset or
+refund occurs. The new epoch binds generator descriptors and full/cold index
+digests in the authenticated ledger and grants two candidate burns per protected
+generator. Frozen comparator/reference validation has a separate recorded
+harness-validation budget of two per generator; it cannot issue a candidate
+verdict. Measurements expose epoch 2 for harness calibration, not candidate
+threshold tuning or a prospective investigator claim. Wine's new nuisance draws
+and splits still share a finite source. The single-generator −4-SE target is
+now a documented limitation (reviewer acceptance up to 84%); diagnostic cells
+remain visible. Large-n resource coverage remains deferred because the measured
+6,000-row full sweep exceeded 840 seconds.

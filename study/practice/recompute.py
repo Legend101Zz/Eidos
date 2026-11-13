@@ -20,7 +20,7 @@ def produce(family_path, first_gate, out, *, evaluation_id, candidate_digest):
         raise ValueError('cold evidence requires a new cache directory')
     family = json.loads(Path(family_path).read_text())
     build(out / 'data', instances=1)
-    second = run(out / 'data', out / 'gate', evaluation_id=evaluation_id, candidate_digest=candidate_digest, kind='candidate')
+    second = run(out / 'data', out / 'gate', evaluation_id=evaluation_id, candidate_digest=candidate_digest, kind='harness-validation')
     return compare(family, first_gate, second, out)
 
 

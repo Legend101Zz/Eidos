@@ -83,11 +83,17 @@ def policy_digest():
 
 def require_bundle_receipt(registration, bundle):
     """Bind every scoring entry to the actual indexed bundle, not just any ID."""
-    return require_bundle_registration(registration, bundle)
+    return require_bundle_registration(registration, bundle, purpose='comparators')
 
 
 def fresh_recipe(workspace, bundle, controller, row, task_type, baseline_score, practical_bar, *, registration=None):
-    require_bundle_registration(registration, bundle, test_labels=controller / 'test_labels.npz', test_inputs=controller / 'test_inputs.npz')
+    require_bundle_registration(registration, bundle, test_labels=controller / 'test_labels.npz', test_inputs=controller / 'test_inputs.npz', purpose='fresh-export')
+    if registration['kind'] == 'harness-validation':
+        from study.practice.pipelines import recipe_specs
+        allowed = recipe_specs(task_type)
+        if row['spec'] not in allowed and not (row['spec'].get('supplied') and
+                {k: v for k, v in row['spec'].items() if k != 'supplied'} == allowed[-1]):
+            raise ValueError('harness-validation exports only frozen comparator recipes')
     from study.common import research_python
     from study.fresh_check import candidate_command, equal_predictions
     candidate = workspace / 'candidate'
@@ -151,7 +157,7 @@ def fresh_recipe(workspace, bundle, controller, row, task_type, baseline_score, 
 
 def supplied_baseline(workspace, bundle, controller, *, registration=None):
     """Execute the functioning supplied A0 through the same no-network evaluator command."""
-    require_bundle_registration(registration, bundle, test_labels=controller / 'test_labels.npz', test_inputs=controller / 'test_inputs.npz')
+    require_bundle_registration(registration, bundle, test_labels=controller / 'test_labels.npz', test_inputs=controller / 'test_inputs.npz', purpose='fresh-export')
     from study.common import research_python
     from study.fresh_check import candidate_command
     if workspace.exists():
@@ -182,8 +188,12 @@ def effect_tables(results):
     return effects, raw, roles
 
 
-def run(data_root, out, *, fresh=False, specs=None, evaluation_id=None, candidate_digest=None, kind="candidate",
+def run(data_root, out, *, fresh=False, specs=None, evaluation_id=None, candidate_digest=None, kind="harness-validation",
         registration=None, card_ids=None):
+    if kind == 'candidate':
+        raise ValueError('A0-A3 harness scoring requires harness-validation, never candidate burns')
+    if kind == 'harness-validation' and specs is not None:
+        raise ValueError('harness-validation requires frozen comparator specs')
     if not evaluation_id or not candidate_digest:
         raise ValueError("every scoring run requires an evaluation ID and frozen candidate digest")
     data_root, out = Path(data_root).resolve(), Path(out).resolve()
@@ -286,9 +296,10 @@ def run(data_root, out, *, fresh=False, specs=None, evaluation_id=None, candidat
                                                 **r['pipelines'][name]) for r in controls], practical_bar=0.02, null=True)
     effects, raw_effects, roles = effect_tables(results)
     # A3–A1 is descriptive comparator calibration, never acceptance of pipeline C.
-    complete_candidate = (kind == 'candidate' and set(roles) == set(registration['classes'])
+    complete_candidate = (kind in ('candidate', 'harness-validation') and set(roles) == set(registration['classes'])
                           and all(len(values) >= 2 for values in effects.values()))
     diagnostic = evaluate(effects, roles, registration=registration, epsilon=.5,
+                      harness_validation=kind == 'harness-validation',
                       in_fold_ok=all(r['in_fold'] for r in results), null_delta=(metrics['A3']['false_positive_claim_rate'] - metrics['A2']['false_positive_claim_rate']) if metrics else None,
                       null_tolerance=0., limits_ok=all(r['measurement_seconds'] <= 840 for r in results),
                       effective_instances={g: 1 for g in ('gen-008', 'gen-009', 'gen-015') if g in effects}) if complete_candidate else dict(status='construction-or-partial; no verdict')
@@ -312,7 +323,7 @@ def main():
     parser.add_argument('--out', required=True)
     parser.add_argument('--evaluation-id', required=True)
     parser.add_argument('--candidate-digest', required=True)
-    parser.add_argument('--kind', choices=('candidate', 'construction'), default='candidate')
+    parser.add_argument('--kind', choices=('candidate', 'construction', 'harness-validation'), default='harness-validation')
     parser.add_argument('--fresh', action='store_true', help='execute all three evaluator seeds for each selected comparator')
     parser.add_argument('--package-development', action='store_true')
     args = parser.parse_args()
