@@ -385,7 +385,11 @@ def check_note(ctx: Ctx, inv_id: str, body: dict[str, Any]) -> dict[str, Any] | 
             raise Invalid("ordinary finalization fixes candidate identity; a candidate lock must identify the existing job",
                           details={"stop": phase.get("stop")},
                           next_action="Keep the existing candidate lock or report its absence.")
-        return None  # Legacy exploration notes without a job are recorded; assessment refuses them (R13).
+        raise Invalid("candidate_lock names no job: text must contain a top-level job_id or evidence_refs must "
+                      "identify exactly one job; a nested lock object is not lock text",
+                      details={"kind": kind},
+                      next_action="Copy only the JSON line under Prepared lock text into record_note text, "
+                                  "including job_id and selection. Use an observation note if no candidate is selected.")
     text = rules.note_json(body) or {}
     selection = text.get("selection")
     rule: dict[str, Any] | None = existing[0] if existing else None

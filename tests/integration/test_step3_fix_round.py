@@ -20,8 +20,10 @@ from test_prepare_candidate_lab import (
 
 from eidos.application.handlers import exploration
 from eidos.domain import exploration as rules
+from eidos.domain.assessment import candidate_lock_job_id
 from eidos.domain.errors import Invalid
 from eidos.domain.promotion import PORTFOLIO_REF, suggested_lock
+from eidos.investigator.context import POLICY_V4, pack
 
 pytestmark = pytest.mark.pg
 scene = preparation_lab.scene
@@ -99,6 +101,48 @@ def test_bad_macro_input_is_correctable_coordinator_refusal(scene, bad):
     good = decide(scene, inv, acts, [dict(tool='record_note', args=dict(kind='observation', text='corrected proposal'))], index + 1)
     assert good['accepted']
     assert client.query('get_record', dict(kind='investigation', id=inv), project=scene['pid'])['status'] == 'active'
+
+
+@pytest.mark.parametrize('kind', ['classification', 'regression'])
+def test_prepared_lock_line_and_nested_copy_through_real_coordinator(scene, kind):
+    inv, acts, client = setup_scene(scene, kind)
+    _, view = fixture_turn(scene, inv, acts, 1)
+    prepared = suggested_lock(view)
+    lines = pack(view, [], policy=POLICY_V4)['text'].splitlines()
+    label = next(i for i, line in enumerate(lines) if line.startswith('- Prepared lock text ('))
+    lock_text = lines[label + 1]  # Copy the entire emitted line verbatim.
+    assert candidate_lock_job_id(dict(text=lock_text)) == prepared['lock']['job_id']
+    assert rules.parse_rule(json.loads(lock_text)['selection'], policy_id='exploration-policy/3') == prepared['lock']['selection']
+    nested_text = json.dumps(prepared)  # The formerly ambiguous, whole candidate fact.
+    assert candidate_lock_job_id(dict(text=nested_text)) is None
+
+    env = ActivityEnvironment()
+    base = dict(project_id=scene['pid'], investigation_id=inv, index=2)
+    base['turn_id'] = env.run(acts.begin_turn, base)['turn_id']
+    for slot, text in enumerate((nested_text, lock_text)):
+        accepted = client.command('accept_decision', dict(turn_id=base['turn_id'], slot=slot, usage_recorded=True,
+            proposal=dict(calls=[dict(tool='record_note', args=dict(kind='candidate_lock', text=text))],
+                          control=dict(action='wait_for_jobs'))), project=scene['pid'])['result']
+        assert accepted['accepted'], accepted
+        result = env.run(acts.execute_decision, dict(base, decision_id=accepted['decision_id']))
+        receipts = client.query('get_record', dict(kind='decision_receipts', id=accepted['decision_id']),
+                                project=scene['pid'])['body']['receipts']
+        (receipt,) = receipts
+        current = client_view(scene, inv)
+        notes = [n for n in current['pinned_notes'] if n['kind'] == 'candidate_lock']
+        if slot == 0:
+            assert not receipt['ok'] and receipt['code'] == 'INVALID', receipt
+            assert 'top-level job_id' in receipt['error']['message'] and 'nested lock' in receipt['error']['message']
+            assert 'Copy only the JSON line' in receipt['error']['next_action']
+            assert result['nothing_outstanding'] and result['failed_calls'][0]['code'] == 'INVALID'
+            assert notes == [] and current_state(scene, inv)['incumbent'] is None
+            assert current['investigation']['status'] == 'active'
+            # A correction can use the next slot in the same turn; no terminal failure or silent note.
+        else:
+            assert receipt['ok'], receipt
+            assert len(notes) == 1 and notes[0]['text'] == lock_text
+            assert current_state(scene, inv)['incumbent']['job_id'] == prepared['lock']['job_id']
+    env.run(acts.complete_turn, dict(base, stop_reason='waiting', control=dict(action='wait_for_jobs')))
 
 
 @pytest.mark.parametrize('direction,base,near,far', [('higher_is_better', .8, .81, .85), ('lower_is_better', 1., .99, .95)])

@@ -46,7 +46,7 @@ def test_candidate_lock_offer_is_suppressed_after_lock_or_finalization(monkeypat
     monkeypatch.setattr(promotion, 'suggested_lock', lambda view: dict(lock=dict(job_id='prepared', selection={})))
     view = dict(horizon=1, investigation=dict(id='i', status='active', body=dict(question='q')),
                 exploration=dict(phase='explore', incumbent=None))
-    assert 'investigator decides the separate lock' in pack(view, [], policy=POLICY_V4)['text']
+    assert '- Prepared lock text (' in pack(view, [], policy=POLICY_V4)['text']
     for stopped in ('locked', 'ordinary', 'autonomous'):
         current = copy.deepcopy(view)
         if stopped == 'locked':
@@ -55,4 +55,31 @@ def test_candidate_lock_offer_is_suppressed_after_lock_or_finalization(monkeypat
             current['exploration']['phase'] = 'finalize'
         else:
             current['finalization'] = dict(enabled=True)
-        assert 'investigator decides the separate lock' not in pack(current, [], policy=POLICY_V4)['text']
+        assert '- Prepared lock text (' not in pack(current, [], policy=POLICY_V4)['text']
+
+
+def test_prepared_lock_line_is_copyable_json_separate_from_evidence(monkeypatch):
+    import json
+
+    from eidos.domain import promotion
+    from eidos.domain.assessment import candidate_lock_job_id
+    from eidos.domain.exploration import parse_rule
+
+    rule = dict(metric='accuracy', split='validation', direction='higher_is_better', scorer='project.command',
+                data=dict(inputs=dict(validation='art_validation')), margin=dict(metric='se', multiple=1))
+    prepared = dict(lock=dict(job_id='job_prepared', selection=rule), validation=dict(value=.8, se=.01))
+    monkeypatch.setattr(promotion, 'suggested_lock', lambda view: prepared)
+    view = dict(horizon=1, investigation=dict(id='i', status='active', body=dict(question='q')),
+                exploration=dict(phase='explore', incumbent=None))
+    lines = pack(view, [], policy=POLICY_V4)['text'].splitlines()
+    label = next(i for i, line in enumerate(lines) if line.startswith('- Prepared lock text ('))
+    text = lines[label + 1]
+    assert json.loads(text) == prepared['lock']
+    assert candidate_lock_job_id(dict(kind='candidate_lock', text=text)) == 'job_prepared'
+    assert parse_rule(json.loads(text)['selection'], policy_id='exploration-policy/3') == rule
+    evidence = next(line.split(': ', 1)[1] for line in lines if line.startswith('- Prepared candidate evidence ('))
+    assert json.loads(evidence) == dict(validation=prepared['validation'])
+    assert candidate_lock_job_id(dict(text=json.dumps(prepared))) is None
+    # A small budget must not offer a truncated lock or a label without its JSON.
+    for limit in (1000, 3000):
+        assert '- Prepared lock text (' not in pack(view, [], policy=POLICY_V4, char_limit=limit)['text']

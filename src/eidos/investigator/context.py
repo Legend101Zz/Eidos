@@ -729,6 +729,8 @@ def _pinned_section(name: str, lines: list[str], char_limit: int, omitted: list[
     for i, line in enumerate(ordered):
         if len(line) > line_cap:
             omitted.append(f"{name}: last {len(line) - line_cap + 1} characters of an entry")
+            if line.startswith("- Prepared lock text ("):
+                continue  # Copyable lock JSON and its label must survive together, in full.
             if line.startswith("- Portfolio: "):
                 fact = json.loads(line[len("- Portfolio: "):])
                 while len(line) > line_cap and fact:
@@ -795,7 +797,10 @@ def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
         locked = (view.get('exploration') or {}).get('incumbent') or {}
         if prepared and (not can_lock or locked.get('job_id') == prepared['lock']['job_id']):
             prepared = None
-        raw["candidate"] = (["- Prepared candidate (investigator decides the separate lock): " + json.dumps(prepared, sort_keys=True)]
+        raw["candidate"] = (["- Prepared lock text (record_note text, copy the next line exactly):\n"
+                             + json.dumps(prepared['lock'], sort_keys=True),
+                             "- Prepared candidate evidence (investigator decides the separate lock): "
+                             + json.dumps({k: v for k, v in prepared.items() if k != 'lock'}, sort_keys=True)]
                             if prepared else ["- Prepared candidate: no new lock offered."])
         portfolio_facts = [_portfolio_line(job)
                            for job in view.get("jobs") or [] if str(job.get("component", "")).startswith("eidos.search.recipe-portfolio")]

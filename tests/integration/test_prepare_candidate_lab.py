@@ -15,6 +15,7 @@ from test_turn_recovery import ShimClient
 from eidos.cli.main import bundle_dir
 from eidos.domain.promotion import PORTFOLIO_REF, suggested_lock
 from eidos.investigator.activities import InvestigatorActivities
+from eidos.investigator.context import POLICY_V4, pack
 from eidos.investigator.runtime import fixture_policy
 
 pytestmark = pytest.mark.pg
@@ -38,7 +39,9 @@ def fixture(req):
             inputs=body['inputs'], config=dict(mode='refine', task_type=kind, add=[spec], scheme='cv-train', cv_folds=2,
                                               cv_repeats=1, budget=dict(max_seconds=60))))]
     elif candidate:
-        calls = [dict(tool='record_note', args=dict(kind='candidate_lock', text=json.dumps(candidate['lock'])))]
+        lines = pack(view, [], policy=POLICY_V4)['text'].splitlines()
+        label = next(i for i, line in enumerate(lines) if line.startswith('- Prepared lock text ('))
+        calls = [dict(tool='record_note', args=dict(kind='candidate_lock', text=lines[label + 1]))]
     else:
         calls = [dict(tool='run_component', args=dict(component_ref=PORTFOLIO_REF, environment='numpy', inputs=body['inputs'],
             config=dict(mode='portfolio', task_type=kind, include=['linear', 'neighbors'], scheme='cv-train', cv_folds=2,
@@ -306,7 +309,12 @@ def test_sixty_design_practice_preparations(scene, monkeypatch, tmp_path, case):
     candidate = suggested_lock(view)
     assert candidate['readiness']['readiness_ok'] == 1 and candidate['paired']['paired_n'] > 0
     assert candidate['reproduction']['reproduced_by']
-    fixture_turn(scene, inv, acts, 2)
+    lines = pack(view, [], policy=POLICY_V4)['text'].splitlines()
+    label = next(i for i, line in enumerate(lines) if line.startswith('- Prepared lock text ('))
+    lock_text = lines[label + 1]
+    _, locked = fixture_turn(scene, inv, acts, 2)
+    (lock_note,) = [n for n in locked['pinned_notes'] if n['kind'] == 'candidate_lock']
+    assert lock_note['text'] == lock_text
     from eidos.domain.exploration import at_ceiling
     if not at_ceiling(candidate['validation']['value'], candidate['lock']['selection']):
         fixture_turn(scene, inv, acts, 3)
@@ -318,6 +326,7 @@ def test_sixty_design_practice_preparations(scene, monkeypatch, tmp_path, case):
     record = dict(case=case, generator=entry['id'], instance=case % 10, task_type=generated.task_type,
                   newly_generated=case % 10 >= 4, wall_seconds=time.perf_counter() - started, model_calls=0,
                   readiness=candidate['readiness'], paired=candidate['paired'], reproduction=candidate['reproduction'],
+                  emitted_lock_text=lock_text, recorded_lock_text=lock_note['text'],
                   decision_id=decision['decision_id'], macro=candidate['macro'], lock=candidate['lock'], state=state, **evidence)
     record['jobs'] = [dict(id=j['id'], config=j['config'], receipt=j['receipt'], macro=j.get('macro')) for j in view['jobs']]
     accepted_turn = client.query('get_turn', dict(turn_id=view['turns'][-1]['id']), project=scene['pid'])
