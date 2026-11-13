@@ -1,0 +1,85 @@
+{
+  "administrative_snapshot_utc": "2026-11-19T20:00:00+00:00",
+  "arms": [
+    2,
+    4
+  ],
+  "assignments": 48,
+  "assignments_per_arm": 24,
+  "cards": [
+    "N05",
+    "N06",
+    "N07",
+    "N08"
+  ],
+  "charter_path": "docs/experiments/pilot-4/CHARTER.md",
+  "charter_sha256": "786f38008a1dfcb90354dc7e890b6821fc40abf610bcc6bf03e3adf7e9bc359e",
+  "controller_commit": "86dfe5791ac75e76998912ea19efd6461b93444d",
+  "decision_rule": {
+    "interval": "two-sided 95%",
+    "minimum_useful_difference": 0.1,
+    "pilot_inference": "exploratory only; fixed selected cards and uncalibrated few-card bootstrap",
+    "practical_advantage_requires_lower_bound_strictly_greater_than": 0.1
+  },
+  "design_path": "docs/experiments/pilot-4/design.json",
+  "design_sha256": "5807bb88f3206a93abf230982e466a408081d586d80dd380c43d6f858278719f",
+  "estimator": {
+    "bootstrap_draws": 2000,
+    "bootstrap_seed": 71027,
+    "controller_commit": "86dfe5791ac75e76998912ea19efd6461b93444d",
+    "exact_48_assignment_reconciliation_required": true,
+    "path": "research/public/development/analyze_results.py"
+  },
+  "executable_manifest_sha256": "4bab660e967d8af2b882b5d38d8411a7ea358975de9efd29ebff46db537eefcd",
+  "grader_commit": "187205ac782ea4d94ce6523ac8c66587e6ba4a19",
+  "grader_eidos_commit": "f504d795ef9fdeade4a2299ab7fd2e579312c6bd",
+  "guard_sha256": "dfaa12a0a705d738ae18ceec786e3d5c17e53ecb8b3c02262bf93f4655400793",
+  "investigator_config_sha256": "aacc14a0fa2419d347a1e58c31e765d37ac3b9c941834ab80ae0fe74e2aaaaea",
+  "limitations": [
+    "Post-Pilot-3 two-arm change and prior builder exposure disclosed in charter",
+    "Arm-2 toolkit identity is not independently reconciled by accepted capture tooling",
+    "Publication verification and actual-R registered smoke required before launch"
+  ],
+  "model": "MiniMax-M3.1-Flash",
+  "paired_blocks": 24,
+  "per_run_envelope": {
+    "cpu_threads": 1,
+    "processed_tokens": 8000000,
+    "wall_seconds": 1800
+  },
+  "primary_contrast": "Equal-card mean verified-success proportion, arm 4 minus arm 2",
+  "qualification": {
+    "comparison_receipt_sha256": "231564eb1a30eca87500175b8fb691fed043320fdc5f3e46a48e43293e33ee24",
+    "gate": "G-R5",
+    "independent_build_review_sha256": "21800cdeae7349d1e7b1afaec7b862e07138d2ac09a7ab93446808a0b01ead3c",
+    "independent_tooling_review_sha256": "6480d1dc4ba44e1fba4d1277d724d536c58c2918c837783decedc0f19107ea78",
+    "registration_commit": "0ef3058df707e1c6699b2d6384cb8cf76b232f03",
+    "result": "passed"
+  },
+  "quota_policy": {
+    "active_unexpired_interval_required": true,
+    "additional_headroom_floor": null,
+    "interval_remaining_percent_strictly_greater_than": 0,
+    "max_active_blocks": 2,
+    "max_observation_age_seconds": 60,
+    "provider_incident_cooldown_seconds": 300,
+    "valid_observation_required": true,
+    "weekly_remaining_percent_strictly_greater_than": 0,
+    "zero_active_batch_barrier": true
+  },
+  "randomization_seed": 20261113,
+  "registration_commit_identity": "The containing commit; recorded externally to avoid self-reference",
+  "replicates_per_card_per_arm": 6,
+  "runtime_commit": "86dfe5791ac75e76998912ea19efd6461b93444d",
+  "runtime_merge_commit": "f86fa1044231ce2e5eb2fca45a56667c79da801d",
+  "schema": "eidos-pilot4-registration/1",
+  "seal_commitment": "3c76692f9778296ea347d4855e1e544b2359a5ffc2e626df35f0fa0dcb66d653",
+  "seal_commitment_public_commit": "6700a11bd191c4f442b4d840cefc999042d26f02",
+  "status": "registered upon publication of the containing commit",
+  "window_end_utc": "2026-11-19T18:29:59+00:00",
+  "window_start_utc": "2026-11-13T05:00:00+00:00",
+  "within_block_arm_order": [
+    2,
+    4
+  ]
+}

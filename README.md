@@ -29,11 +29,11 @@ Underneath, one command API is the only write path, with idempotency keys so a c
 Pilots 1 to 3 were a four-arm study. It fixed the model (MiniMax-M3.1-Flash) and budget and changed only the harness. An independent grader on two fresh virtual machines judged every outcome.
 
 - In pilot 2 the Eidos investigator matched the strongest coding agent, 12 of 12 verified improvements each, on 5.5× fewer tokens.
-- It made no false improvement claim in any pilot. All 14 of its conclusions in pilots 2 and 3 were confirmed by the grader.
-- Eidos's components, given to an ordinary coding agent as a toolkit, made it the strongest or joint-strongest arm in every pilot.
+- It made no false improvement claim in pilots 1 to 3. All 14 of its conclusions in pilots 2 and 3 were confirmed by the grader. (Pilot 4 is reported by hosted verdict only; see below.)
+- Eidos's components, given to an ordinary coding agent as a toolkit, made it the strongest or joint-strongest arm in each of pilots 1 to 3.
 - Pilot 3's setback, 2 of 12 against 11 of 12, came from one timing rule in Eidos's own runtime. Round 4 fixed it: on seven practice tasks, completed runs went from 2 of 7 to 7 of 7.
 
-The evidence is exploratory: three small pilots. The paper reports the failures too.
+The evidence is exploratory: four small pilots. The paper reports the failures too.
 
 Before Pilot 4, the runtime was checked with paired development gates: arm 4 only, one seed, seven development cards, against the frozen baseline build. The full record is in [Benchmarks](#benchmarks).
 
@@ -43,7 +43,16 @@ Before Pilot 4, the runtime was checked with paired development gates: arm 4 onl
 
 The fallback request never fired in that gate. N02 and N03 concluded under armed conclude-only requests, and D02 concluded in ordinary finalization. So the gate shows the larger, split reserve working on these seven runs. Only the tests show the fallback rescuing a hung request. The gate is also one seed on seven development cards that were already used for tuning: development evidence, not an estimate of performance. The gap in what the investigator finds on cards N01 and N04 (0.63 and 0.81 of the reference gain) remains.
 
-**Pilot 4 runs two arms.** From Pilot 4, each pilot compares the Eidos investigator (arm 4) with a coding agent given the Eidos toolkit (arm 2). Arms 1 and 3 were dropped after pilot 3. The primary contrast was always arm 4 against arm 2. The MCP arm was diagnosed as limited by its plumbing rather than by the harness. Two fewer arms also halves the cost of each paired comparison, which buys six paired runs per card instead of three. The decision rule is unchanged. Pilot 4 is registered: cards N05 to N08, 24 paired blocks (48 assignments) and an admission window of 16 to 19 November 2026 UTC. As of 13 November 2026 it has not run, and there are no Pilot 4 results.
+**Pilot 4 ran on 13 November 2026 and is inconclusive.** From Pilot 4, each pilot compares the Eidos investigator (arm 4) with a coding agent given the Eidos toolkit (arm 2). Arms 1 and 3 were dropped after pilot 3. The primary contrast was always arm 4 against arm 2. The MCP arm was diagnosed as limited by its plumbing rather than by the harness. Two fewer arms also halves the cost of each paired comparison, which buys six paired runs per card instead of three. The decision rule is unchanged. The registered design was cards N05 to N08 (sealed), 24 paired blocks and 48 assignments, all kept in the denominator, on build `86dfe57` and the same model and envelope as before.
+
+- **Result.** Verified improvements: arm 4 20 of 24, arm 2 19 of 24. Family-balanced success was 0.833 against 0.792, and the primary contrast (arm 4 minus arm 2) is **+0.042, with an exploratory 95% interval of [−0.208, +0.333]**. The registered rule needs an advantage of at least +0.10 with the lower end of the interval above +0.10. Pilot 4 shows no advantage of practical size, and the interval spans zero.
+- **Quality.** Where both arms succeeded, the gains were essentially equal (arm 4's mean verified gain was within 1.4% of arm 2's on every card). Eidos found no larger improvements.
+- **Resources.** Arm 4 processed 24.0M tokens against 78.9M for arm 2 (3.3× fewer) and used more wall time (median 1,368 s against 838 s per run). Arm 4's usage is flagged uncertain on 17 of its 24 runs, the arms count cache reads very differently, and billed cost is unknown, so the token ratio is not a cost ratio.
+- **Completion.** All 24 arm-4 runs ended with run status ok: none crashed, timed out or stopped at the token ceiling. In Pilot 3, ten of twelve arm-4 runs had been stopped by one timing rule.
+
+Limits. The sign of the estimate depends on the registered run-status gate: three arm-2 runs produced candidates the hosted grader verified but exceeded the token budget, and the gate counts them as failures (without it the contrast would be −0.083). The local pre-check disagreed with the hosted grade on nine arm-4 runs because the local grading workspace refused a write (`PermissionError`); the hosted grade is the verdict of record, and a local-only contrast would be −0.333, which measures that defect and not the arms. The four cards are hand-selected, each has one fixed dataset and split, and the builders had seen thresholds derived from the sealed baselines. It is an exploratory pilot, not evidence that Eidos beats a coding agent that has its toolkit.
+
+Process. Pilot 4 was registered before its first run and then ran under five registered addenda: an earlier admission window (owner direction, before any model call), pay-as-you-go admission, an exhausted-weekly-status correction and a tooling-defect refusal recorded as an administrative non-admission (batch 13, block N05-r6, later admitted), and a post-run structural fix to capture validation that changed no estimator, rule or gate. One erratum: Addendum 4 says eight local `PermissionError`s, and the records show ten. A separate AI reviewer (not an outside party) audited the capture: 27 literal transcript matches, all benign, and no leakage found within that scope. Details and the full limits are in the [paper](docs/paper/Eidos-paper.pdf).
 
 ![Results at a glance: pilot 2 scores against tokens, pilot 3 run outcomes, and the round-4 repair](docs/paper/overview.png)
 
@@ -54,8 +63,8 @@ The fallback request never fired in that gate. N02 and N03 concluded under armed
 - [Pilot charters and addenda](docs/experiments/)
 - [ADR 0042: split the conclude-only reserve](docs/decisions/0042-split-conclude-only-reserve.md) (R5)
 - [Development gate G-R5: registration](https://github.com/Legend101Zz/Eidos/blob/0ef3058df707e1c6699b2d6384cb8cf76b232f03/docs/experiments/development-gates/GATE-R5.md), pinned to commit `0ef3058`, made before the gate ran
-- [Pilot 4: registered charter and design](https://github.com/Legend101Zz/Eidos/tree/f40f03c0dd522da39f27d8ed6852a0dcb087da97/docs/experiments/pilot-4), pinned to commit `f40f03c`
-- [Independent two-VM grader (private until the sealed Pilot-4 study completes)](https://github.com/Legend101Zz/eidos-grading). This repository is private, so the link works only for people who have been given access.
+- [Pilot 4: registered charter, addenda 1 to 4 and design](https://github.com/Legend101Zz/Eidos/tree/02e162dc70a17e5d80cb378651855af002f21bcd/docs/experiments/pilot-4), pinned to commit `02e162d`, which includes the Addendum 4 erratum (the first registration was `f40f03c`)
+- [Independent two-VM grader (private, because it also holds the sealed task sets for later pilots)](https://github.com/Legend101Zz/eidos-grading). This repository is private, so the link works only for people who have been given access.
 
 **Current release: v1.1.0** ([release notes](docs/release/RELEASE_NOTES_v1.1.0.md), [status](#status-and-evidence)). `main` is ahead of it: the changes since, including round 4 and R5, are listed as unreleased in the [changelog](CHANGELOG.md).
 
@@ -73,9 +82,31 @@ Contents: [Why](#why-eidos-exists) · [How it works](#how-it-works) · [Research
 | Eidos investigator | 1/3 | **12/12** | 2/12 | **7.5M / 5.6M** / 15.3M |
 
 - Pilot 3's 2/12 is ten runs stopped by one deadline-admission rule before they could report a locked candidate; both runs that reached a conclusion were verified. The round-4 repair (PR #24, now on `main`) took seven practice tasks from 2/7 to 7/7 completed runs and from 1 to 6 verified improvements, measured on build `e503821`. A later round-4 build, `a7c5d19`, failed its own gate (see below).
-- The Eidos investigator made no false improvement claim in any pilot.
-- These are three small development pilots. Every interval is exploratory; the pre-registered decision rule would need roughly 283 independent pairs.
-- From Pilot 4 only arms 2 and 4 run. Pilot 4 is registered and has not run, so it has no row here.
+- The Eidos investigator made no false improvement claim in pilots 1 to 3 (Pilot 4 is reported by hosted verdict only).
+- These are small development pilots. Every interval is exploratory; the pre-registered decision rule would need roughly 283 independent pairs, and Pilot 4, the largest, has 24.
+- From Pilot 4 only arms 2 and 4 run (below).
+
+**Pilot 4 (two arms, sealed cards, 13 November 2026).** Same model and envelope. The verdict of record is the hosted two-VM grade plus the run-status gate. Verified improvements, six runs per arm and card:
+
+| Arm | N05 | N06 | N07 | N08 | Total | Family-balanced | Processed tokens | Wall |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Coding agent + Eidos toolkit (arm 2) | 4/6 | 5/6 | 4/6 | 6/6 | 19/24 | 0.792 | 78.9M | 23,267 s |
+| Eidos investigator (arm 4) | 6/6 | 5/6 | 4/6 | 5/6 | **20/24** | 0.833 | **24.0M** | 32,152 s |
+
+Primary contrast, arm 4 minus arm 2: **+0.042, exploratory 95% interval [−0.208, +0.333]. Inconclusive** under the registered rule (needs a lower bound above +0.10). Mean verified gain, counting verified runs only (accuracy for N05 and N06, RMSE reduction for N07 and N08, so not comparable across cards):
+
+| Card | Arm 2 | Arm 4 | Arm 4 − arm 2 |
+|---|---:|---:|---:|
+| N05 (accuracy) | +0.1875 | +0.1896 | +0.0021 |
+| N06 (accuracy) | +0.4479 | +0.4421 | −0.0058 |
+| N07 (RMSE reduction) | 297.64 | 297.48 | −0.155 |
+| N08 (RMSE reduction) | 3.788 | 3.744 | −0.044 |
+
+- Where both arms succeeded the gains are equal to within 1.4%: no larger improvements from Eidos.
+- Arm 4 processed 3.3× fewer tokens but used more wall time (median 1,368 s against 838 s per run). Its usage is flagged uncertain on 17 of 24 runs, the arms count cache reads very differently (95% of arm 2's tokens, 3% of arm 4's), and billed cost is unknown.
+- The sign depends on the registered run-status gate. Three arm-2 candidates that the hosted grader verified are counted as failures because their runs exceeded the 8M-token budget; without the gate the contrast would be −0.083.
+- The local pre-check disagreed with the hosted grade on nine arm-4 runs because the local grading workspace refused a write (`PermissionError`). The hosted grade is the verdict of record; a local-only contrast (−0.333) measures that defect, not the arms. Addendum 4 says eight such errors; the records show ten (the nine plus N07-r5, where the hosted grade also failed).
+- Four hand-selected cards, one fixed dataset and split each, and builders who had seen thresholds derived from the sealed baselines: exploratory only. Cross-pilot comparisons do not show what the build repair did, because cards, arms and build all changed.
 
 **Development gates.** A development gate checks a new build before a pilot. It runs arm 4 only, with one seed, the same model, the same envelope (1,800 s, 8M processed tokens, one CPU thread) and the same seven development cards (N01–N04, D02–D04). The frozen baseline build `257792a` runs the same cards for comparison. The G-R5 rule, fixed before launch, was 7 of 7 candidate conclusions, zero dead ends, the existing evidence checks, and a zero-tolerance comparator against the baseline. Its registration says a failed gate is recorded and diagnosed, then followed by a fix and a new registration, and is never re-run, reinterpreted or waived. Scored attempts, one row per candidate build:
 
@@ -159,7 +190,7 @@ flowchart LR
 
 **Decision rule.** The primary contrast is arm 4 minus arm 2. A practically useful advantage needs at least +10 percentage points in verified success rate, with the lower end of the 95% confidence interval above +10 points. The owner fixed this rule before any comparative result.
 
-**Exploratory results from three development pilots are in [Research](#research) and the [paper](docs/paper/Eidos-paper.pdf).** The public research release is [`research/public/`](research/public/) (release `research-public-v0.1.0`): the study protocol, 14 development task cards, the answer format and draft analysis code. The plan for running the study, and for testing the harness, is [`docs/experiments/README.md`](docs/experiments/README.md).
+**Exploratory results from four development pilots are in [Research](#research) and the [paper](docs/paper/Eidos-paper.pdf).** The public research release is [`research/public/`](research/public/) (release `research-public-v0.1.0`): the study protocol, 14 development task cards, the answer format and draft analysis code. The plan for running the study, and for testing the harness, is [`docs/experiments/README.md`](docs/experiments/README.md).
 
 ## How it works in detail
 
@@ -348,7 +379,7 @@ The complete, scripted version of this journey (setup, qualified protocols and a
 
 Out of scope, with reasons: Windows, CUDA, distributed training, Lima VM, Claude Desktop, hosted multitenancy. Details: [`docs/release/SUPPORTED.md`](docs/release/SUPPORTED.md).
 
-The v1 software release makes **no scientific claim** of its own. Whether Eidos helps an LLM do model research (A16) is studied separately: the paper reports exploratory evidence from three development pilots, and a sealed fourth pilot follows; see [Research](#research).
+The v1 software release makes **no scientific claim** of its own. Whether Eidos helps an LLM do model research (A16) is studied separately: the paper reports exploratory evidence from four development pilots, the fourth on sealed cards and inconclusive; see [Research](#research).
 
 ## Testing
 
@@ -368,6 +399,9 @@ The study harness has its own tests (`study/tests`, `study/eidos_arms/test_parit
 - **R5 local run.** On `86dfe57` a local run passed 2,712 unit tests (12 real-keychain and secret-tool tests deselected), 325 MCP and reporting tests, 635 integration tests, 45 study contract, parity and grading tests, and 91 `study/tests`. These are local counts, not CI counts. The local run had no Temporal CLI, so 132 workflow tests were among the 143 skipped integration tests. The R5 timing tests also ran in separate processes, 20 times for the unit file and 5 times for the integration file, and passed every time.
 
 These tests use synthetic providers and accelerated clocks. They show control flow and accounting. They do not show better live success rates, and they cannot show that the fallback would have rescued D02.
+
+- **Pilot 4 as a live test (13 November 2026).** On the R5 build, all 24 arm-4 runs on sealed cards ended with run status ok: none crashed, timed out or stopped at the token ceiling. That is evidence about completion behaviour, not a success-rate estimate; the result itself is inconclusive (see [Research](#research)).
+- **Study tooling.** Before reporting, the Pilot 4 capture tooling passed a read-only structural dry-run (200 independent gates, including all 24 arm-4 question hashes and all 24 arm-2 render and delivery pairs, with the estimator disabled), and a separate AI reviewer audited the capture. The live run also exposed a defect in the local grading pre-check: its workspace refused a receipt write (`PermissionError`) in ten arm-4 grades, nine of which contradicted the hosted grade. The hosted grade is the verdict of record, and the local pre-check was not used for the Pilot 4 result.
 
 To run the suites locally, see [Development](#development).
 
@@ -389,7 +423,7 @@ To run the suites locally, see [Development](#development).
 | Round-4 development gate (`a7c5d19`, 12 Nov 2026) | **fail**: candidate 6/7 concluded and 6/7 verified; D02 crashed in the conclude-only wrap-up. PR #24 was merged to `main` by owner decision despite the failed gate | [ADR 0042](docs/decisions/0042-split-conclude-only-reserve.md) records the D02 diagnosis; run records are private |
 | R5 (ADR 0042, PR #27) | merged as `f86fa10`; conclusion reserve 10% → 15% of the wall, split into a read slot, an armed request timeout and one decision-only fallback; CI on `86dfe57` passed all 15 jobs and `study-evals`. The tests use synthetic providers, so they show control flow and accounting, not live success rates | [ADR 0042](docs/decisions/0042-split-conclude-only-reserve.md), [`CHANGELOG.md`](CHANGELOG.md), [Testing](#testing) |
 | Development gate G-R5 (`86dfe57`, registered before it ran) | **pass**: 7/7 concluded and verified, 0 dead ends, 0 crashes, median gain ratio 0.983; frozen baseline `257792a` 1/7. One seed on seven development cards, so development evidence only. The fallback request never fired; the N01 and N04 discovery gap remains | [registration](https://github.com/Legend101Zz/Eidos/blob/0ef3058df707e1c6699b2d6384cb8cf76b232f03/docs/experiments/development-gates/GATE-R5.md); scorecards are private; [Benchmarks](#benchmarks) |
-| Pilot 4 (arm 4 vs arm 2) | registered at commit `f40f03c`; **not run** as of 13 Nov 2026. Cards N05–N08, 24 paired blocks (48 assignments), admission window 16–19 Nov 2026 UTC, decision rule unchanged. No results | [charter and design](https://github.com/Legend101Zz/Eidos/tree/f40f03c0dd522da39f27d8ed6852a0dcb087da97/docs/experiments/pilot-4) |
+| Pilot 4 (arm 4 vs arm 2) | **run, inconclusive** (13 Nov 2026; registered at `f40f03c`, last addendum `6350616`). Cards N05–N08, 48 assignments, build `86dfe57`. Verified 20/24 (arm 4) against 19/24 (arm 2); contrast +0.042, exploratory 95% interval [−0.208, +0.333]; decision rule unchanged, so no practical advantage shown. The sign depends on the registered run-status gate (−0.083 without it); the local pre-check had a `PermissionError` defect on nine arm-4 runs (hosted grade is the verdict of record); five registered addenda and one erratum; independent AI audit found no leakage within its literal-match scope. Exploratory | [charter, addenda and design](https://github.com/Legend101Zz/Eidos/tree/02e162dc70a17e5d80cb378651855af002f21bcd/docs/experiments/pilot-4); [Research](#research); [Benchmarks](#benchmarks) |
 
 CI runs 15 jobs on every push: lint and unit, integration (PostgreSQL and Temporal), worker compatibility, components, fresh install, macOS arm64, upgrade across releases, end-to-end journey, switch journey, a Temporal source-build fallback, and since v1.1.0 separate identity (as root), the OS secret store on macOS and Linux, and the PyGlove and Composer adapters. A separate `study-evals` workflow runs on pull requests that change `study/`. Full criteria: [`ACCEPTANCE_MATRIX.md`](ACCEPTANCE_MATRIX.md). Release notes: [`docs/release/RELEASE_NOTES_v1.1.0.md`](docs/release/RELEASE_NOTES_v1.1.0.md) (and [v1.0.1](docs/release/RELEASE_NOTES_v1.0.1.md), [v1.0.0](docs/release/RELEASE_NOTES_v1.0.0.md)). History: [`CHANGELOG.md`](CHANGELOG.md). Documents dated before 2026-11-09 cite earlier commit IDs: [`COMMIT_ID_MAP.md`](docs/release/COMMIT_ID_MAP.md).
 
