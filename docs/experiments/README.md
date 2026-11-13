@@ -2,9 +2,30 @@
 
 This is the working plan for the people who test Eidos and run its research study: the owner and a teammate. It takes about ten minutes to read. It assumes you know ML engineering but have never seen Eidos.
 
-Status on 2026-11-09: Eidos v1.0.1 is released and v1.1.0 is prepared (harness features only, no experiment). **No comparative experiment has been run.** Nothing below is a result; it is what we plan to do and the rules we hold ourselves to. The source of truth for the study design is [`research/public/STUDY_PROTOCOL.md`](../../research/public/STUDY_PROTOCOL.md) (charter draft 0.3). Where this page and the protocol disagree, the protocol wins.
+Contents: [current status](#current-status-2026-11-13) · [development gates](#development-gates) · [the original plan](#the-original-plan-2026-11-09) · [what and why](#what-we-are-testing-and-why) · [study at a glance](#the-study-at-a-glance) · [phases](#phases-and-checklists) · [GitHub](#how-we-use-github) · [grading](#grading-on-github-actions) · [roles](#roles-who-does-what) · [open decisions](#decisions-still-open-for-the-owner) · [ground rules](#ground-rules) · [getting started](#getting-started-for-the-teammate)
 
-Contents: [what and why](#what-we-are-testing-and-why) · [study at a glance](#the-study-at-a-glance) · [phases](#phases-and-checklists) · [GitHub](#how-we-use-github) · [grading](#grading-on-github-actions) · [roles](#roles-who-does-what) · [open decisions](#decisions-still-open-for-the-owner) · [ground rules](#ground-rules) · [getting started](#getting-started-for-the-teammate)
+## Current status (2026-11-13)
+
+Eidos v1.1.0 is the latest release. `main` also carries unreleased round-4 and R5 runtime changes (see the [changelog](../../CHANGELOG.md)).
+
+- **Pilots 1 to 3 ran as a four-arm study.** They are exploratory development pilots. Results are in the [Research](../../README.md#research) and [Benchmarks](../../README.md#benchmarks) sections of the README and in the paper in [`docs/paper/`](../paper/).
+- **From Pilot 4, each pilot runs two arms:** the Eidos investigator (arm 4) against a coding agent given the Eidos toolkit (arm 2). Arms 1 and 3 were dropped after Pilot 3. The primary contrast was always arm 4 against arm 2. The MCP arm was diagnosed as limited by its plumbing rather than by the harness. Two fewer arms also halves the cost of each paired comparison, which buys six paired runs per card instead of three. The decision rule is unchanged.
+- **Pilot 4 is registered and has not run.** Its [registered charter and design](https://github.com/Legend101Zz/Eidos/tree/f40f03c0dd522da39f27d8ed6852a0dcb087da97/docs/experiments/pilot-4) are pinned to commit `f40f03c`: cards N05–N08, 24 paired blocks (48 assignments), admission window 16 to 19 November 2026 UTC. As of 13 November 2026 there are no Pilot 4 results.
+
+## Development gates
+
+A development gate is a paired check of a new Eidos build, run between pilots. It is not one of the numbered pilots.
+
+- **Design.** Arm 4 only, one seed, the same model and per-run envelope as the pilots (MiniMax-M3.1-Flash; 1,800 s, 8M processed tokens, one CPU thread) and seven development cards (N01–N04, D02–D04). The frozen baseline build `257792a` runs the same cards for comparison.
+- **Rule fixed before launch.** Gate G-R5 required 7 of 7 candidate conclusions, zero dead ends, the existing evidence checks, and a zero-tolerance comparator against the baseline. Its registration says a failed gate is recorded and diagnosed, then followed by a fix and a new registration, and is never re-run, reinterpreted or waived.
+- **G-R5.** Registered before it ran ([registration](https://github.com/Legend101Zz/Eidos/blob/0ef3058df707e1c6699b2d6384cb8cf76b232f03/docs/experiments/development-gates/GATE-R5.md), pinned to commit `0ef3058`) and passed on build `86dfe57` (R5, [ADR 0042](../decisions/0042-split-conclude-only-reserve.md)). Earlier gates, including the one for round-4 build `a7c5d19`, failed. The full record is in the README's [Benchmarks](../../README.md#benchmarks) section.
+- **Limits.** One seed on seven cards that were already used for tuning is development evidence about the harness, not an estimate of performance.
+
+## The original plan (2026-11-09)
+
+The rest of this page is the original plan. It was written on 2026-11-09, before any pilot ran, and is kept as written. Its four-arm design, its R0–R3 phase sizes and its checklists have not been brought up to date, apart from short notes marked **Update**. They do not describe what the pilots actually did: each pilot's own charter and addenda in this directory record that.
+
+Original status text, 2026-11-09: Eidos v1.0.1 was released and v1.1.0 was prepared (harness features only, no experiment). At that date no comparative experiment had been run. Nothing in the plan is a result; it is what we planned to do and the rules we hold ourselves to. The source of truth for the original study design is [`research/public/STUDY_PROTOCOL.md`](../../research/public/STUDY_PROTOCOL.md) (charter draft 0.3). Where this page and the protocol disagree about the original design, the protocol wins.
 
 ## What we are testing, and why
 
@@ -13,15 +34,17 @@ We test two different things. Keep them apart: a pass in one says nothing about 
 | | (a) Harness testing | (b) Research experiments |
 |---|---|---|
 | Question | Does the software behave correctly? | Does the same LLM make more independently verified, useful model improvements through Eidos than as a well-equipped coding agent? |
-| Examples | Crash recovery, sandbox isolation, budget enforcement, upgrades, MCP clients | A four-arm comparison on PyTorch tasks, graded by an independent grader |
+| Examples | Crash recovery, sandbox isolation, budget enforcement, upgrades, MCP clients | A comparison of arms on PyTorch tasks, graded by an independent grader (four arms in the original plan and in Pilots 1 to 3; two arms from Pilot 4) |
 | Where it lives | CI (15 jobs), `tests/`, the acceptance matrix ([`ACCEPTANCE_MATRIX.md`](../../ACCEPTANCE_MATRIX.md)) | This plan, `research/public/`, a private grading repo |
-| Status | v1.0.1 passed its release gates (see the [README](../../README.md#status-and-evidence)); machine sleep/restart is not yet verified on hardware | Not started. The acceptance matrix lists it as A16, a separate later release |
+| Status | v1.0.1 passed its release gates (see the [README](../../README.md#status-and-evidence)); machine sleep/restart is not yet verified on hardware | **Update (2026-11-13):** three exploratory development pilots have run and Pilot 4 is registered but has not run (see [Current status](#current-status-2026-11-13)). Original text: "Not started." The acceptance matrix lists it as A16, a separate later release |
 
-Question (b) is the question of the paper in preparation. The design states it in the section "Complete local v1 and scientific acceptance" of [`model-research-harness-design.md`](../design/eidos-claude-handoff/architecture/model-research-harness-design.md).
+Question (b) is the question of the [paper](../paper/). The design states it in the section "Complete local v1 and scientific acceptance" of [`model-research-harness-design.md`](../design/eidos-claude-handoff/architecture/model-research-harness-design.md).
 
 Why it matters: an LLM agent doing ML research can fiddle until a number goes up, grade its own work and over-claim. Eidos is built to stop that (success rules fixed in advance, an independent assessor, a ledger of every run and exposure). Whether that discipline produces *more verified improvements* than a capable coding agent with the same tools is an open, testable question. It may not.
 
 ## The study at a glance
+
+**Update (2026-11-13):** Pilots 1 to 3 used the four arms below. From Pilot 4 only arms 2 and 4 run, for the reason given in [Current status](#current-status-2026-11-13). The primary contrast and the decision rule are unchanged.
 
 **Four arms.** Every arm uses the same underlying LLM, the same settings, the same task information and the same resource envelope (time, tokens or dollars, CPU, memory).
 
@@ -80,6 +103,8 @@ flowchart LR
 ```
 
 Each phase ends with a short written review in a PR before the next starts. Results from R1 and R2 are development evidence and are labelled as such forever.
+
+**Update (2026-11-13):** the phase sizes and checklists below are the plan as written on 2026-11-09. The pilots that ran differ from them in size and cards, and each pilot's charter records what it did. The checkboxes were not ticked or revised.
 
 ### R0: study infrastructure (no API spend)
 
@@ -160,7 +185,7 @@ Tracking issue: [#15](https://github.com/Legend101Zz/Eidos/issues/15) "Experimen
 - The owner reviews and merges. Do not merge your own PR and do not force-push shared branches.
 - Commit as your own GitHub identity (see [ground rules](#ground-rules)).
 
-**What each CI job checks** (`.github/workflows/ci.yml`; details in [`docs/ops/CI.md`](../ops/CI.md)):
+**What each CI job checks** (`.github/workflows/ci.yml`; details in [`docs/ops/CI.md`](../ops/CI.md)). **Update:** this table lists the ten jobs that existed on 2026-11-09. CI now runs 15 jobs (see the [README](../../README.md#status-and-evidence)), and a separate `study-evals` workflow runs on pull requests that change `study/`.
 
 | Job | In plain words |
 |---|---|
@@ -182,7 +207,7 @@ Tracking issue: [#15](https://github.com/Legend101Zz/Eidos/issues/15) "Experimen
 
 **Eidos's own release flow.**
 1. Release work happens on `release/X.Y.Z` and reaches `main` through a PR with green CI.
-2. The owner tags the merge commit `eidos-vX.Y.Z` (latest: `eidos-v1.0.1`).
+2. The owner tags the merge commit `eidos-vX.Y.Z` (latest at the time: `eidos-v1.0.1`; the latest tag now is `eidos-v1.1.0`).
 3. The owner creates the GitHub release and attaches the wheels, source archives and `SHA256SUMS`. There is no release workflow; this step is manual.
 4. Users install with `gh release download eidos-v1.0.1 -R Legend101Zz/Eidos`, check `shasum -a 256 -c SHA256SUMS`, then install as in the [README](../../README.md#install).
 
@@ -245,7 +270,7 @@ sequenceDiagram
 
 ## Decisions still open, for the owner
 
-Each has a `decision` issue (see [GitHub](#how-we-use-github)).
+Each has a `decision` issue (see [GitHub](#how-we-use-github)). **Update (2026-11-13):** this list is as written on 2026-11-09 and has not been revised. The pilots have since run with MiniMax-M3.1-Flash as the shared model.
 
 1. **The shared model and settings for all arms.** The charter allows MiniMax or Codex models. Eidos has qualified only Anthropic: its OpenAI-compatible adapter works, but no tested model passed full conformance ([`SUPPORTED.md`](../release/SUPPORTED.md)). Arm 4 needs a model that Eidos supports.
 2. **The R0–R1 budget ceiling.** No research spend is authorized yet; the $200 implementation allocation is not a research budget.
