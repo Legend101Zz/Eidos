@@ -26,7 +26,7 @@ Underneath, one command API is the only write path, with idempotency keys so a c
 
 ## Research
 
-A four-arm study fixed the model (MiniMax-M3.1-Flash) and budget and changed only the harness. An independent grader on two fresh virtual machines judged every outcome.
+Pilots 1 to 3 were a four-arm study. It fixed the model (MiniMax-M3.1-Flash) and budget and changed only the harness. An independent grader on two fresh virtual machines judged every outcome.
 
 - In pilot 2 the Eidos investigator matched the strongest coding agent, 12 of 12 verified improvements each, on 5.5× fewer tokens.
 - It made no false improvement claim in any pilot. All 14 of its conclusions in pilots 2 and 3 were confirmed by the grader.
@@ -35,6 +35,16 @@ A four-arm study fixed the model (MiniMax-M3.1-Flash) and budget and changed onl
 
 The evidence is exploratory: three small pilots. The paper reports the failures too.
 
+Before Pilot 4, the runtime was checked with paired development gates: arm 4 only, one seed, seven development cards, against the frozen baseline build. The full record is in [Benchmarks](#benchmarks).
+
+- The gate for round-4 build `a7c5d19` (12 November 2026) failed. The candidate concluded 6 of 7 runs. D02 crashed in the conclude-only wrap-up: its final request had not returned when the decision deadline arrived. PR #24, which carries that build, was merged to `main` by owner decision after the failed gate.
+- R5 ([ADR 0042](docs/decisions/0042-split-conclude-only-reserve.md), PR #27, merged as `f86fa10`) was the response. It raised the conclusion reserve from 10% to 15% of the wall and split it into a read slot, an armed request timeout and one decision-only fallback request. The sizes come from the measured latency of 2,117 real requests.
+- Gate G-R5 was registered before it ran, and it passed on build `86dfe57`: 7 of 7 runs concluded and were verified, with no dead ends and no crashes. The frozen baseline concluded 1 of 7.
+
+The fallback request never fired in that gate. N02 and N03 concluded under armed conclude-only requests, and D02 concluded in ordinary finalization. So the gate shows the larger, split reserve working on these seven runs. Only the tests show the fallback rescuing a hung request. The gate is also one seed on seven development cards that were already used for tuning: development evidence, not an estimate of performance. The gap in what the investigator finds on cards N01 and N04 (0.63 and 0.81 of the reference gain) remains.
+
+**Pilot 4 runs two arms.** From Pilot 4, each pilot compares the Eidos investigator (arm 4) with a coding agent given the Eidos toolkit (arm 2). Arms 1 and 3 were dropped after pilot 3. The primary contrast was always arm 4 against arm 2. The MCP arm was diagnosed as limited by its plumbing rather than by the harness. Two fewer arms also halves the cost of each paired comparison, which buys six paired runs per card instead of three. The decision rule is unchanged. Pilot 4 is registered: cards N05 to N08, 24 paired blocks (48 assignments) and an admission window of 16 to 19 November 2026 UTC. As of 13 November 2026 it has not run, and there are no Pilot 4 results.
+
 ![Results at a glance: pilot 2 scores against tokens, pilot 3 run outcomes, and the round-4 repair](docs/paper/overview.png)
 
 ### Research and evaluation
@@ -42,9 +52,12 @@ The evidence is exploratory: three small pilots. The paper reports the failures 
 - [Paper (PDF): *Eidos: A Harness for Agents That Train Models*](docs/paper/Eidos-paper.pdf)
 - [Study protocol](research/public/STUDY_PROTOCOL.md)
 - [Pilot charters and addenda](docs/experiments/)
+- [ADR 0042: split the conclude-only reserve](docs/decisions/0042-split-conclude-only-reserve.md) (R5)
+- [Development gate G-R5: registration](https://github.com/Legend101Zz/Eidos/blob/0ef3058df707e1c6699b2d6384cb8cf76b232f03/docs/experiments/development-gates/GATE-R5.md), pinned to commit `0ef3058`, made before the gate ran
+- [Pilot 4: registered charter and design](https://github.com/Legend101Zz/Eidos/tree/f40f03c0dd522da39f27d8ed6852a0dcb087da97/docs/experiments/pilot-4), pinned to commit `f40f03c`
 - [Independent two-VM grader (private until the sealed Pilot-4 study completes)](https://github.com/Legend101Zz/eidos-grading). This repository is private, so the link works only for people who have been given access.
 
-**Current release: v1.1.0** ([release notes](docs/release/RELEASE_NOTES_v1.1.0.md), [status](#status-and-evidence)).
+**Current release: v1.1.0** ([release notes](docs/release/RELEASE_NOTES_v1.1.0.md), [status](#status-and-evidence)). `main` is ahead of it: the changes since, including round 4 and R5, are listed as unreleased in the [changelog](CHANGELOG.md).
 
 Contents: [Why](#why-eidos-exists) · [How it works](#how-it-works) · [Research](#research) · [Benchmarks](#benchmarks) · [How it stays honest](#how-eidos-keeps-the-investigator-honest) · [Study design](#the-research-behind-it) · [In detail](#how-it-works-in-detail) · [Key features](#key-features) · [Isolation](#isolation-model) · [Budgets](#budget-and-ledger-model) · [Install](#install) · [Quickstart](#quickstart) · [Scope](#supported-scope-v1) · [Testing](#testing) · [Status](#status-and-evidence) · [Docs](#documentation-map) · [Contributing](#contributing) · [Licence](#license)
 
@@ -59,9 +72,38 @@ Contents: [Why](#why-eidos-exists) · [How it works](#how-it-works) · [Research
 | Coding agent + Eidos (MCP) | 2/3 | 7/12 | 8/12 | 33.9M / 68.0M / 59.7M |
 | Eidos investigator | 1/3 | **12/12** | 2/12 | **7.5M / 5.6M** / 15.3M |
 
-- Pilot 3's 2/12 is ten runs stopped by one deadline-admission rule before they could report a locked candidate; both runs that reached a conclusion were verified. The round-4 repair (PR #24, not yet on `main`) took seven practice tasks from 2/7 to 7/7 completed runs and from 1 to 6 verified improvements.
+- Pilot 3's 2/12 is ten runs stopped by one deadline-admission rule before they could report a locked candidate; both runs that reached a conclusion were verified. The round-4 repair (PR #24, now on `main`) took seven practice tasks from 2/7 to 7/7 completed runs and from 1 to 6 verified improvements, measured on build `e503821`. A later round-4 build, `a7c5d19`, failed its own gate (see below).
 - The Eidos investigator made no false improvement claim in any pilot.
 - These are three small development pilots. Every interval is exploratory; the pre-registered decision rule would need roughly 283 independent pairs.
+- From Pilot 4 only arms 2 and 4 run. Pilot 4 is registered and has not run, so it has no row here.
+
+**Development gates.** A development gate checks a new build before a pilot. It runs arm 4 only, with one seed, the same model, the same envelope (1,800 s, 8M processed tokens, one CPU thread) and the same seven development cards (N01–N04, D02–D04). The frozen baseline build `257792a` runs the same cards for comparison. The G-R5 rule, fixed before launch, was 7 of 7 candidate conclusions, zero dead ends, the existing evidence checks, and a zero-tolerance comparator against the baseline. Its registration says a failed gate is recorded and diagnosed, then followed by a fix and a new registration, and is never re-run, reinterpreted or waived. Scored attempts, one row per candidate build:
+
+| Candidate build | Candidate: concluded, verified | Baseline: concluded, verified | Result |
+|---|---:|---:|---|
+| `454a9a6` | 5/7, 3/7 | not run | failed |
+| `daa689c` | 6/7, 6/7 | not run | failed |
+| `f0d1856` | 6/7, 5/7 | not run | failed |
+| `46b29e3` | 7/7, 5/7 | not run | failed |
+| `e503821` | 7/7, 6/7 | 2/7, 1/7 | passed |
+| `a7c5d19` | 6/7, 6/7 | 2/7, 2/7 | failed: D02 crashed in the conclude-only wrap-up |
+| `86dfe57` (R5) | **7/7, 7/7** | 1/7, 1/7 | **passed** (gate G-R5) |
+
+Two earlier `a7c5d19` attempts, a quota wait with no model start and a host sleep, have no complete scorecard.
+
+**Gate G-R5.** Registered before any model call of the gate, on candidate `86dfe57` (R5, the head of PR #27). Gain ratio is the verified gain divided by the coding-arm median gain on that card, from a reference file frozen from pilot 3. An unverified run counts as zero.
+
+| Card | N01 | N02 | N03 | N04 | D03 | D04 | D02 |
+|---|---:|---:|---:|---:|---:|---:|---|
+| Candidate `86dfe57`, gain ratio | 0.625 | 0.967 | 1.017 | 0.810 | 1.009 | 1.000 | verified, no reference |
+| Baseline `257792a` | crash | crash | crash | crash | 1.009 | crash | crash |
+
+- Candidate: 7/7 concluded, 7/7 verified, 0 dead ends, 0 crashes, median gain ratio 0.983 over the six cards with a reference. Baseline: 1/7 concluded and verified, 6 crashes, 6 dead ends. The comparator found no regression and no blocker.
+- The fallback request never fired. N02 and N03 concluded under armed conclude-only requests and D02 in ordinary finalization. The gate therefore shows the larger, split reserve working on these seven runs. It does not show the fallback rescuing a hung request; only the tests show that.
+- One seed on seven development cards that were already used for tuning is development evidence, not a performance estimate.
+- The gap on N01 and N04 remains: the investigator reached 0.63 and 0.81 of the reference gain there.
+
+**What R5 changed, and why.** On `a7c5d19`, D02's final conclude-only request was still in flight when the decision deadline arrived, and the run was recorded as a crash. R5 ([ADR 0042](docs/decisions/0042-split-conclude-only-reserve.md)) raised the conclusion reserve from 10% to 15% of the wall (on an 1,800 s run, 270 s instead of 180 s) and split it into a read slot, an armed request timeout and one decision-only fallback request. The sizes follow the measured latency of 2,117 real requests: among 28 answered conclude-only final requests, 57% returned within 60 s, 82% within 90 s, 89% within 120 s and 96% within 150 s, and two more never returned. The ADR records that this does not establish a counterfactual result for D02.
 
 **A stronger driver** (unregistered probe, one run per card). With Claude Opus 5.5 in the MCP arm, both runs verified: D03 at +0.278 (0.65M tokens, 127 s) and D06 at +0.496 (1.01M tokens, 154 s). MiniMax in the same seat verified 1/3 and 2/3 on those cards. Opus used Eidos sparingly, so this does not yet show what Eidos adds for a strong model.
 
@@ -99,6 +141,8 @@ The study asks one question: **does the same LLM make more independently verifie
 | 2 | Arm 1 plus the component library and written research method, without Eidos |
 | 3 | The same coding agent operating Eidos through MCP |
 | 4 | The Eidos internal investigator |
+
+Pilots 1 to 3 ran all four arms. From Pilot 4 only arms 2 and 4 run, because the primary contrast was always arm 4 against arm 2 (see [Research](#research)).
 
 ```mermaid
 flowchart LR
@@ -308,16 +352,22 @@ The v1 software release makes **no scientific claim** of its own. Whether Eidos 
 
 ## Testing
 
-Eidos is tested at four levels. The counts are from the latest `main` CI run ([43003521253](https://github.com/Legend101Zz/Eidos/actions/runs/43003521253), 15/15 jobs green).
+Eidos is tested at four levels. The table counts are from a `main` CI run ([43003521253](https://github.com/Legend101Zz/Eidos/actions/runs/43003521253), 15/15 jobs green) taken before round 4 (PR #24) and R5 (PR #27) were merged. Counts for those changes follow the table.
 
-| Level | What it covers | Latest on `main` |
+| Level | What it covers | `main` before round 4 |
 |---|---|---|
 | Unit, MCP and reporting | ledger rules, validators, policies, MCP tools and reports | 2,036 passed |
 | Integration | real PostgreSQL 16 and Temporal: investigations, jobs, assessments and budgets | 450 passed |
 | Components | the built-in research components, on CPU PyTorch | 344 passed |
 | Platform and install | worker SDK on Python 3.9+, macOS arm64, separate identity as root, OS secret stores (macOS and Linux), PyGlove and Composer adapters, fresh install, upgrade across releases, the 154-check switch-order journey | all jobs pass |
 
-The study harness has its own tests (`study/tests`, `study/eidos_arms/test_parity.py`), and the grader is qualified on planted improvements, unchanged baselines, invalid outputs and corrupt uploads before use. The round-4 branch (PR #24) passes 754 integration and 660 component tests in CI.
+The study harness has its own tests (`study/tests`, `study/eidos_arms/test_parity.py`), and the grader is qualified on planted improvements, unchanged baselines, invalid outputs and corrupt uploads before use.
+
+- **Round 4.** The round-4 branch (PR #24, now merged) passed 754 integration and 660 component tests in CI.
+- **R5.** R5 added unit tests for the split reserve (64 cases in `tests/unit/test_conclude_split.py`), and a real-coordinator test with 12 cases run against PostgreSQL and the real ledger (`tests/integration/test_r5_conclude_split.py`). It reproduces D02's sequence: the move into ordinary finalization, an abandoned conclude-only request and the fallback. The cases cover JSON and native tool modes, zero, one or two read rounds, and a fallback that concludes or also hangs. CI on `86dfe57`, the head of PR #27, passed all 15 jobs and the separate `study-evals` workflow.
+- **R5 local run.** On `86dfe57` a local run passed 2,712 unit tests (12 real-keychain and secret-tool tests deselected), 325 MCP and reporting tests, 635 integration tests, 45 study contract, parity and grading tests, and 91 `study/tests`. These are local counts, not CI counts. The local run had no Temporal CLI, so 132 workflow tests were among the 143 skipped integration tests. The R5 timing tests also ran in separate processes, 20 times for the unit file and 5 times for the integration file, and passed every time.
+
+These tests use synthetic providers and accelerated clocks. They show control flow and accounting. They do not show better live success rates, and they cannot show that the fallback would have rescued D02.
 
 To run the suites locally, see [Development](#development).
 
@@ -336,8 +386,12 @@ To run the suites locally, see [Development](#development).
 | G9 final verification (v1.0.0) | pass: suite 167 passed / 4 skipped, switch journey 154/154, macOS owner kit 15/15, CI 10/10, independent review | [`g9-*`](docs/release/evidence/), `ACCEPTANCE_MATRIX.md` § E |
 | v1.0.1 follow-up | mypy 0 errors in CI (also at a Python 3.9 target for worker packages); wire JSON Schemas and 15 golden fixtures; suite 199 passed / 4 skipped, worker packages 22 passed / 1 skipped; CI 10/10 on `main` | [`RELEASE_NOTES_v1.0.1.md`](docs/release/RELEASE_NOTES_v1.0.1.md) |
 | v1.1.0 features | all six items done (ADRs 0010–0015); 5 of the 6 `not-started` failure-table rows now verified; suite 371 passed / 7 skipped, worker SDK 26 passed; CI 15/15 on the release commit | [`RELEASE_NOTES_v1.1.0.md`](docs/release/RELEASE_NOTES_v1.1.0.md) |
+| Round-4 development gate (`a7c5d19`, 12 Nov 2026) | **fail**: candidate 6/7 concluded and 6/7 verified; D02 crashed in the conclude-only wrap-up. PR #24 was merged to `main` by owner decision despite the failed gate | [ADR 0042](docs/decisions/0042-split-conclude-only-reserve.md) records the D02 diagnosis; run records are private |
+| R5 (ADR 0042, PR #27) | merged as `f86fa10`; conclusion reserve 10% → 15% of the wall, split into a read slot, an armed request timeout and one decision-only fallback; CI on `86dfe57` passed all 15 jobs and `study-evals`. The tests use synthetic providers, so they show control flow and accounting, not live success rates | [ADR 0042](docs/decisions/0042-split-conclude-only-reserve.md), [`CHANGELOG.md`](CHANGELOG.md), [Testing](#testing) |
+| Development gate G-R5 (`86dfe57`, registered before it ran) | **pass**: 7/7 concluded and verified, 0 dead ends, 0 crashes, median gain ratio 0.983; frozen baseline `257792a` 1/7. One seed on seven development cards, so development evidence only. The fallback request never fired; the N01 and N04 discovery gap remains | [registration](https://github.com/Legend101Zz/Eidos/blob/0ef3058df707e1c6699b2d6384cb8cf76b232f03/docs/experiments/development-gates/GATE-R5.md); scorecards are private; [Benchmarks](#benchmarks) |
+| Pilot 4 (arm 4 vs arm 2) | registered at commit `f40f03c`; **not run** as of 13 Nov 2026. Cards N05–N08, 24 paired blocks (48 assignments), admission window 16–19 Nov 2026 UTC, decision rule unchanged. No results | [charter and design](https://github.com/Legend101Zz/Eidos/tree/f40f03c0dd522da39f27d8ed6852a0dcb087da97/docs/experiments/pilot-4) |
 
-CI runs 15 jobs on every push: lint and unit, integration (PostgreSQL and Temporal), worker compatibility, components, fresh install, macOS arm64, upgrade across releases, end-to-end journey, switch journey, a Temporal source-build fallback, and since v1.1.0 separate identity (as root), the OS secret store on macOS and Linux, and the PyGlove and Composer adapters. Full criteria: [`ACCEPTANCE_MATRIX.md`](ACCEPTANCE_MATRIX.md). Release notes: [`docs/release/RELEASE_NOTES_v1.1.0.md`](docs/release/RELEASE_NOTES_v1.1.0.md) (and [v1.0.1](docs/release/RELEASE_NOTES_v1.0.1.md), [v1.0.0](docs/release/RELEASE_NOTES_v1.0.0.md)). History: [`CHANGELOG.md`](CHANGELOG.md). Documents dated before 2026-11-09 cite earlier commit IDs: [`COMMIT_ID_MAP.md`](docs/release/COMMIT_ID_MAP.md).
+CI runs 15 jobs on every push: lint and unit, integration (PostgreSQL and Temporal), worker compatibility, components, fresh install, macOS arm64, upgrade across releases, end-to-end journey, switch journey, a Temporal source-build fallback, and since v1.1.0 separate identity (as root), the OS secret store on macOS and Linux, and the PyGlove and Composer adapters. A separate `study-evals` workflow runs on pull requests that change `study/`. Full criteria: [`ACCEPTANCE_MATRIX.md`](ACCEPTANCE_MATRIX.md). Release notes: [`docs/release/RELEASE_NOTES_v1.1.0.md`](docs/release/RELEASE_NOTES_v1.1.0.md) (and [v1.0.1](docs/release/RELEASE_NOTES_v1.0.1.md), [v1.0.0](docs/release/RELEASE_NOTES_v1.0.0.md)). History: [`CHANGELOG.md`](CHANGELOG.md). Documents dated before 2026-11-09 cite earlier commit IDs: [`COMMIT_ID_MAP.md`](docs/release/COMMIT_ID_MAP.md).
 
 ## Documentation map
 
