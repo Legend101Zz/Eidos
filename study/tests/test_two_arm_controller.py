@@ -67,8 +67,13 @@ class SelectedArmPlanning(unittest.TestCase):
             self.assertEqual(launcher.plan(20261113, ["N01", "N03", "N04", "D02"], 6),
                              old_plan(20261113, ["N01", "N03", "N04", "D02"], 6))
 
+    def test_single_arm_four_planning(self):
+        rows = launcher.plan(42, ["N01"], runs=1, arms=(4,))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]["arm"], rows[0]["block_id"]), (4, "N01-r1"))
+
     def test_invalid_arm_selection(self):
-        for arms in ((4,), (), (2, 2, 4), (4, 2), (True, 2, 3, 4), (2.0, 4)):
+        for arms in ((), (2, 2, 4), (4, 2), (True, 2, 3, 4), (2.0, 4)):
             with self.subTest(arms=arms), self.assertRaisesRegex(ValueError, "unsupported"):
                 launcher.plan(71, arms=arms)
 

@@ -20,7 +20,7 @@ from study.eidos_arms import lab
 from study.evals.mini_eval import configure_lab
 from study.evals.provenance import EVAL_ROOT, controller_record, disk_guard
 from study.exp.treatment import resolve
-from study.private_card_registry import PROFILES, PoolProfile
+from study.private_card_registry import PROFILES, SEAL_ROOT_ENVS, PoolProfile
 
 PROGRAMME = Path('/Volumes/Mrigesh SSD/eidos-v1/improvement')
 
@@ -233,8 +233,10 @@ def ensure_lab(v, *, dry_run=False):
         if not root.exists():
             if dry_run:
                 return dict(home=str(root / 'home'), python=str(python), build_required=True)
+            build_env = {key: value for key, value in os.environ.items() if key not in SEAL_ROOT_ENVS
+                         and not key.endswith(('_API_KEY', '_AUTH_TOKEN', '_OAUTH_TOKEN'))}
             subprocess.run(['nice', '-n', '10', 'bash', str(ROOT / 'study/evals/build_lab.sh'),
-                            v['commit'], root.name], cwd=ROOT, check=True)
+                            v['commit'], root.name], cwd=ROOT, env=build_env, check=True)
     home = root / 'home'
     if dry_run and not python.exists():
         return dict(home=str(home), python=str(python), build_required=True)

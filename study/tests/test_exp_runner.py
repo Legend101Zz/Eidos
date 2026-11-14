@@ -430,3 +430,21 @@ for card, regression in [('R0001', False), ('R0002', True)]:
     process = subprocess.run([installed, '-c', source, str(tmp_path)], cwd=ROOT,
                              text=True, capture_output=True, timeout=60)
     assert process.returncode == 0, process.stdout + process.stderr
+
+
+def test_builder_child_cannot_inherit_seal_locations(tmp_path, monkeypatch):
+    args = options(tmp_path)
+    variant = run.variants(args)[0]
+    variant['lab_root'] = str(tmp_path / 'ip-build')
+    monkeypatch.delenv('EIDOS_EXP_TEST_ROOT', raising=False)
+    for name in run.SEAL_ROOT_ENVS:
+        monkeypatch.setenv(name, 'FABRICATED_SEAL_MARKER')
+    monkeypatch.setenv('OPENAI_API_KEY', 'FAKE_KEY_MARKER')
+    builder = Mock()
+    monkeypatch.setattr(run.subprocess, 'run', builder)
+    monkeypatch.setattr(run, 'configure_lab', lambda *args: {'verified': True})
+    with run.environment({}):
+        run.ensure_lab(variant)
+    child_env = builder.call_args.kwargs['env']
+    assert all(name not in child_env for name in run.SEAL_ROOT_ENVS)
+    assert 'OPENAI_API_KEY' not in child_env
