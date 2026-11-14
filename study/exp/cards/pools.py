@@ -6,22 +6,27 @@ import os
 import random
 import re
 import shutil
-from collections import Counter, defaultdict
+from collections import defaultdict
 from pathlib import Path, PurePosixPath
 
 from .common import CARD_FILES, inventory, read_json, sha, write_json
 from .qualify import verify_card
-from .select import family, row_band
+from .select import family
 
 DEFAULT_SIZES = {"D": 8, "E1": 8, "E2": 8, "E3": 8, "H": 12}
 
 
 def _public_card(card, pool):
-    fields = ("card_id", "task_type", "n_rows", "n_features", "row_band", "imbalanced")
-    result = {name: card[name] for name in fields if name in card}
-    if pool == "D":
-        result.update(source=card.get("source"), key=card.get("key"))
-    return result
+    if pool in {"D", "SMOKE"}:
+        return dict(card)
+    return dict(id=card["card_id"], task_type=card["task_type"],
+                metric="accuracy" if card["task_type"] == "classification" else "rmse",
+                bar_rule=bar_rule(card["task_type"]))
+
+
+def bar_rule(kind):
+    return "absolute accuracy gain >= 0.02" if kind == "classification" else \
+        "absolute RMSE reduction >= 0.05 * seed-11 baseline test RMSE"
 
 
 def assign(catalog, sizes=None, seed=20261114, private_seed_file=None, *, allow_shortfall=False):
@@ -46,32 +51,25 @@ def assign(catalog, sizes=None, seed=20261114, private_seed_file=None, *, allow_
     for card in cards:
         groups[card.get("family", family(card.get("key", card["card_id"])))].append(card)
     rng = random.Random(seed)
-    group_list = [groups[key] for key in sorted(groups)]
+    # Public RNG acts on private anonymous slots, never catalog/source-name ranks.
+    group_list = sorted(groups.values(), key=lambda members: min(c["card_id"] for c in members))
     rng.shuffle(group_list)
     assignments = {}
-    # Reserve capacity for H before lower-priority pools using ONLY the public RNG.
-    # H's actual draw then uses its private seed from the reservation plus unused reserve.
-    # This preserves D/E determinism while giving shortages the D,E1,H,E2,E3 priority.
-    reserved_h = []
     order = [p for p in ("D", "E1", "H", "E2", "E3") if p in sizes]
     order.extend(p for p in sizes if p not in order)
+    # Capacity follows the promised shortfall priority; membership is drawn H first.
+    remaining = sum(map(len, group_list))
+    capacity = {}
     for pool in order:
-        if pool == "H":
-            if allow_shortfall:
-                members, group_list = _draw(group_list, sizes[pool], rng, max_null=null_limit(pool, sizes[pool]),
-                                            allow_shortfall=True)
-                reserved = defaultdict(list)
-                for card in members:
-                    reserved[card.get("family", family(card.get("key", card["card_id"])))].append(card)
-                reserved_h = list(reserved.values())
-            continue
-        assignments[pool], group_list = _draw(group_list, sizes[pool], rng, max_null=null_limit(pool, sizes[pool]),
-                                               allow_shortfall=allow_shortfall)
-    group_list += reserved_h
+        capacity[pool] = min(sizes[pool], remaining)
+        remaining -= capacity[pool]
     hidden_rng = random.Random(int.from_bytes(hidden_seed, "big"))
-    hidden_rng.shuffle(group_list)
-    assignments["H"], reserve = _draw(group_list, sizes["H"], hidden_rng, max_null=null_limit("H", sizes["H"]),
-                                       allow_shortfall=allow_shortfall)
+    for pool in ["H", *[p for p in order if p != "H"]]:
+        assignments[pool], group_list = _draw(
+            group_list, capacity[pool], hidden_rng if pool == "H" else rng,
+            max_null=null_limit(pool, sizes[pool]), max_synthetic=synthetic_limit(pool, sizes[pool]),
+            allow_shortfall=allow_shortfall)
+    reserve = group_list
     public = dict(seed=seed, sizes={p: n for p, n in sizes.items() if p != "H"},
                   pools={p: [_public_card(c, p) for c in assignments[p]] for p in sizes if p != "H"})
     private = dict(pools=assignments, reserve=[c for group in reserve for c in group])
@@ -84,34 +82,43 @@ def null_limit(pool, size):
     return min(size, 2 if pool == "H" else max(1, size // 8))
 
 
-def _draw(groups, size, rng, *, max_null=None, allow_shortfall=False):
-    """Subset-sum over size AND null count, preserving whole families."""
-    if max_null is None:
-        max_null = size
-    states = {(0, 0): [()]}
-    for i, group in enumerate(groups):
-        nulls = sum(bool(c.get("null_card", False)) for c in group)
-        for (count, old_nulls), subsets in sorted(list(states.items()), reverse=True):
-            new_count, new_nulls = count + len(group), old_nulls + nulls
-            if new_count > size or new_nulls > max_null:
-                continue
-            key = new_count, new_nulls
-            states.setdefault(key, []).extend(indices + (i,) for indices in list(subsets))
-            if len(states[key]) > 200:
-                states[key].sort(key=lambda indices: _balance([c for j in indices for c in groups[j]], new_count))
-                states[key] = states[key][:200]
-    feasible = max(count for count, _ in states)
-    if feasible != size and not allow_shortfall:
-        raise ValueError("not enough cards or family/null constraints cannot fill a pool exactly")
-    candidates = [indices for (count, _), subsets in states.items() if count == feasible for indices in subsets]
-    rng.shuffle(candidates)
-    selected = min(candidates, key=lambda indices: _balance([c for j in indices for c in groups[j]], feasible))
-    return [c for i in selected for c in groups[i]], [group for i, group in enumerate(groups) if i not in selected]
+def synthetic_limit(pool, size):
+    return min(size, 3 if pool == "H" else max(2, 2 * (size // 8)))
 
 
-def _balance(cards, size):
-    counts = Counter((c["task_type"], c.get("row_band", row_band(c["n_rows"]))) for c in cards)
-    return sum((counts[kind, band] - size / 6) ** 2 for kind in ("classification", "regression") for band in range(3))
+def _draw(groups, size, rng, *, max_null=None, max_synthetic=None, allow_shortfall=False):
+    """Sample uniformly among feasible whole-family subsets, with no balance objective."""
+    from functools import lru_cache
+
+    max_null = size if max_null is None else max_null
+    max_synthetic = size if max_synthetic is None else max_synthetic
+    weights = [(len(g), sum(bool(c.get("null_card")) for c in g),
+                sum(bool(c.get("synthetic")) for c in g)) for g in groups]
+
+    @lru_cache(None)
+    def ways(i, count, nulls, synth):
+        if min(count, nulls, synth) < 0:
+            return 0
+        if i == len(groups):
+            return int(count == 0)
+        n, k, s = weights[i]
+        return ways(i + 1, count, nulls, synth) + ways(i + 1, count - n, nulls - k, synth - s)
+
+    count = size
+    while count and not ways(0, count, max_null, max_synthetic):
+        count -= 1
+    if count != size and not allow_shortfall:
+        raise ValueError("not enough cards or family/null/synthetic constraints cannot fill a pool exactly")
+    selected = set()
+    nulls, synth = max_null, max_synthetic
+    for i, (n, k, s) in enumerate(weights):
+        total = ways(i, count, nulls, synth)
+        take = ways(i + 1, count - n, nulls - k, synth - s)
+        if rng.randrange(total) < take:
+            selected.add(i)
+            count, nulls, synth = count - n, nulls - k, synth - s
+    return ([c for i in selected for c in groups[i]],
+            [g for i, g in enumerate(groups) if i not in selected])
 
 
 def build_pool(pool_id, cards, pool_root):
@@ -133,6 +140,10 @@ def build_pool(pool_id, cards, pool_root):
     nulls = sum(bool(read_json(controller / "reference.json")["null_card"]) for _, controller, _ in prepared)
     if nulls > null_limit(pool_id, len(prepared)):
         raise ValueError("pool exceeds null-card allowance")
+    synthetic = sum(bool(read_json(controller / "provenance.json").get("synthetic"))
+                    for _, controller, _ in prepared if (controller / "provenance.json").exists())
+    if synthetic > synthetic_limit(pool_id, len(prepared)):
+        raise ValueError("pool exceeds synthetic-card allowance")
     root.mkdir(parents=True, exist_ok=True)
     (root / "seal").mkdir()
     (root / "controller").mkdir()

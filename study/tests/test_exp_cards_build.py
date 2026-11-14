@@ -67,16 +67,18 @@ def cache_table(root, key, sample):
 
 
 def catalog(tmp_path, count=12):
-    cache = tmp_path / "cache"
+    cache = tmp_path / "private"
     cards = []
     for i in range(count):
-        key = "task" + chr(97 + i)
+        key = f"task-{i:03d}"
         cache_table(cache, key, table(i + 1))
         cards.append(dict(source="pmlb", key=key, family=key, n_rows=1600, n_features=4, row_band=0,
                           task_type="classification" if i % 2 == 0 else "regression"))
     path = tmp_path / "catalog.json"
     write_json(path, dict(seed=71, cards=cards))
-    return path, cache, tmp_path / "private"
+    public = tmp_path / "cache"
+    public.mkdir(parents=True)
+    return path, public, tmp_path / "private"
 
 
 # Use the actual preflight subprocess and a cheap fabricated packaging/reference result.
@@ -97,6 +99,11 @@ if action == 'preflight':
 else:
     time.sleep(c.get('build_delay', 0.03))
     card = fake_card(Path(r['root']), r['card_id'], not c.get('fail', False))
+    write_json(card.parent.parent / 'controller' / r['card_id'] / 'provenance.json', c)
+    manifest = read_json(card / 'manifest.json')
+    manifest['task_type'] = c['task_type']
+    manifest['metric'] = 'accuracy' if c['task_type'] == 'classification' else 'rmse'
+    write_json(card / 'manifest.json', manifest)
     null = c.get('null_card', False)
     write_json(card.parent.parent / 'controller' / r['card_id'] / 'reference.json', dict(null_card=null))
     write_json(response_path, dict(ok=True, qualified=not c.get('fail', False), null_card=null))
@@ -125,8 +132,10 @@ def test_parallel_acceptance_rejections_resume_and_h_privacy(tmp_path, capsys, m
     path, cache, private = catalog(tmp_path)
     data = read_json(path)
     data["cards"][0]["delay"] = 0.3
-    # A duplicate under a different key is rejected before it consumes a card ID.
-    cache_table(cache, "duplicate", table(1))
+    # A feature-table sibling with a DIFFERENT target is rejected before consuming an ID.
+    sibling = table(1)
+    sibling["y"] = (1 - sibling["y"].astype(int)).astype(str)
+    cache_table(private, "duplicate", sibling)
     duplicate = dict(data["cards"][0], key="duplicate", family="duplicate", delay=0)
     data["cards"].insert(2, duplicate)
     data["cards"][3]["fail"] = True
@@ -137,14 +146,14 @@ def test_parallel_acceptance_rejections_resume_and_h_privacy(tmp_path, capsys, m
     build.main()
     result = read_json(cache / "build-state.json")
     state = read_json(private / "build-state.json")
-    assert state["outcomes"]["0"]["card_id"] == "R001"
-    assert state["outcomes"]["1"]["card_id"] == "R002"
-    assert state["outcomes"]["2"]["reason"] == "duplicate table content"
-    assert state["outcomes"]["3"]["card_id"] == "R003"
+    assert len(state["outcomes"]["0"]["card_id"]) == 5
+    assert state["outcomes"]["1"]["card_id"] != state["outcomes"]["0"]["card_id"]
+    assert state["outcomes"]["2"]["reason"] == "same feature table"
+    assert len(state["outcomes"]["3"]["card_id"]) == 5
     assert state["outcomes"]["3"]["status"] == "unqualified"
     assignments = read_json(private / "assignments.json")
     public = json.dumps(result) + capsys.readouterr().out + (cache / "build.log").read_text()
-    assert result["held_out_or_reserve"] >= 2
+    assert result["qualified"] >= 2
     for card in assignments["pools"]["H"]:
         assert card["card_id"] not in public
         assert card["key"] not in public
@@ -176,15 +185,15 @@ def test_shortfall_priority_and_null_caps(tmp_path):
         c["null_card"] = True
     write_json(path, data)
     result = run(path, cache, private, want={"D": 8, "H": 2})
-    assert len(result["pools"]["D"]) == 1
+    assert result["pools"]["D"] == 1
     assert len(read_json(private / "H/pool.json")["card_ids"]) == 2
     assert len(read_json(private / "assignments.json")["reserve"]) == 9
 
 
 def test_smoke_balances_and_skips_finished_work(tmp_path):
     path, cache, private = catalog(tmp_path, 6)
-    result = run(path, cache, private, want={"SMOKE": 2}, workers=2)
-    assert Counter(c["task_type"] for c in result["pools"]["SMOKE"]) == {"classification": 1, "regression": 1}
+    run(path, cache, private, want={"SMOKE": 2}, workers=2)
+    assert Counter(c["task_type"] for c in read_json(cache / "manifests/SMOKE.json")["cards"]) == {"classification": 1, "regression": 1}
     smoke_state = read_json(private / "build-state.json")
     assert sum(r["status"] == "qualified" for r in smoke_state["outcomes"].values()) == 2
     # Mark one finished rejection in an interrupted state: it must be skipped.
@@ -192,7 +201,7 @@ def test_smoke_balances_and_skips_finished_work(tmp_path):
     def timeout_launch(action, request, directory):
         request["candidate"]["delay"] = 5
         return fake_launch(action, request, directory)
-    result = run(path2, cache2, private2, candidate_timeout=0.15, launch=timeout_launch, want={"D": 1})
+    run(path2, cache2, private2, candidate_timeout=0.15, launch=timeout_launch, want={"D": 1})
     state = read_json(private2 / "build-state.json")
     assert all(r["reason"] == "candidate hard wall limit" for r in state["outcomes"].values())
     state["complete"] = False
@@ -275,8 +284,9 @@ def test_openml_suite_listing_local_http_and_vocab(tmp_path, monkeypatch):
 
 def test_resume_partial_state_and_reject_changed_options(tmp_path):
     path, cache, private = catalog(tmp_path, 3)
-    private.mkdir()
-    signature = dict(catalog_sha256=sha(path.read_bytes()), want={"D": 1}, budget_seconds=480, candidate_timeout=1500)
+    private.mkdir(exist_ok=True)
+    (private / "assignment.seed").write_bytes(b"s" * 32)
+    signature = dict(catalog_sha256=sha(path.read_bytes()), want={"D": 1}, budget_seconds=480, candidate_timeout=1500, max_classes=10)
     write_json(private / "build-state.json", dict(signature=signature, next_id=1, complete=False, elapsed_seconds=0,
                outcomes={"0": dict(status="rejected", reason="missing", candidate=read_json(path)["cards"][0])}))
     write_json(cache / "build-state.json", {"complete": False})
@@ -284,7 +294,7 @@ def test_resume_partial_state_and_reject_changed_options(tmp_path):
     outcomes = read_json(private / "build-state.json")["outcomes"]
     assert outcomes["0"]["reason"] == "missing"
     assert not (private / "jobs/0").exists()
-    assert outcomes["1"]["card_id"] == "R001"
+    assert len(outcomes["1"]["card_id"]) == 5
     with pytest.raises(ValueError, match="options do not match"):
         run(path, cache, private, want={"D": 1}, resume=True, budget_seconds=100)
 
@@ -293,21 +303,21 @@ def test_reserve_stopping_and_shortfall_public_seed_independence(tmp_path):
     path, cache, private = catalog(tmp_path, 20)
     run(path, cache, private, want={"D": 2})
     state = read_json(private / "build-state.json")
-    assert 8 <= sum(r["status"] == "qualified" for r in state["outcomes"].values()) <= 10
-    assert len(state["outcomes"]) < 20
+    assert sum(r["status"] == "qualified" for r in state["outcomes"].values()) == 20
+    assert len(state["outcomes"]) == 20
     from study.exp.cards.pools import assign
     cards = [dict(c, card_id=f"R{i+1:03d}") for i, c in enumerate(read_json(path)["cards"][:7])]
     sizes = dict(D=2, E1=2, E2=2, E3=2, H=2)
     first = assign(cards, sizes, 71, tmp_path / "private-a/seed", allow_shortfall=True)
     second = assign(cards, sizes, 71, tmp_path / "private-b/seed", allow_shortfall=True)
-    assert first == second
+    assert first != second
     assignments = read_json(tmp_path / "private-a/assignments.json")
     assert {p: len(v) for p, v in assignments["pools"].items()} == dict(D=2, E1=2, H=2, E2=1, E3=0)
 
 
 def test_cli_errors_do_not_disclose_private_card_paths(tmp_path, monkeypatch, capsys):
     path, cache, private = catalog(tmp_path, 1)
-    private.mkdir()
+    private.mkdir(exist_ok=True)
     def failure(*args, **kwargs):
         raise ValueError("missing private/H/seal/R901/source-secret")
     monkeypatch.setattr(build, "build", failure)

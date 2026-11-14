@@ -82,7 +82,9 @@ def prepare_arrays(x, y, task_type, seed):
             raise ValueError("constant train target")
         target_scaling = dict(mean=mean, std=scale)
         y = ((y - mean) / scale).astype(np.float32)
-    ids = rng.permutation(n).astype(np.int64)
+    ids = rng.integers(1, np.iinfo(np.int64).max, size=n, dtype=np.int64)
+    while len(np.unique(ids)) != n:
+        ids = rng.integers(1, np.iinfo(np.int64).max, size=n, dtype=np.int64)
     data = {name: dict(x=x[index], y=y[index], ids=ids[index])
             for name, index in (("train", train), ("validation", validation), ("test", test))}
     provenance = dict(seed=seed, split_seeds={"split": seed, "baseline": 11},
@@ -99,8 +101,8 @@ def prepare_arrays(x, y, task_type, seed):
 
 def package_card(x, y, task_type, card_id, pool_root, *, seed=20261114, source_info=None,
                  source_digest=None, columns=None):
-    if not re.fullmatch(r"R\d{3}", card_id):
-        raise ValueError("card id must be R followed by three digits")
+    if not re.fullmatch(r"R\d{3,4}", card_id):
+        raise ValueError("card id must be R followed by three or four digits")
     pool_root = Path(pool_root)
     card = pool_root / "seal" / card_id
     controller = pool_root / "controller" / card_id
@@ -140,7 +142,7 @@ def package_card(x, y, task_type, card_id, pool_root, *, seed=20261114, source_i
         raise ValueError("baseline ID mismatch")
     np.savez_compressed(card / "baseline_test.npz", ids=ids, predictions=predictions)
     measured = score(test["y"], predictions, task_type)
-    manifest = dict(id=card_id, task_type=task_type, metric=task["metric"], qualified=False,
+    manifest = dict(id=card_id, task_type=task_type, metric=task["metric"], nclasses=task["nclasses"], qualified=False,
                     min_reference_gain=bar_for(measured, task_type), seeds=list(SEEDS),
                     splits={s: {"n": len(d["y"])} for s, d in data.items()},
                     baseline=dict(seed=11, score=measured),

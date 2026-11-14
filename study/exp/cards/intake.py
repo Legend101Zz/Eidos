@@ -12,7 +12,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 import numpy as np
@@ -27,11 +27,20 @@ OPENML_BASE = "https://www.openml.org/api/v1/json/data"
 HOSTS = {"github.com", "raw.githubusercontent.com", "media.githubusercontent.com", "www.openml.org",
          "openml.org", "api.openml.org", "data.openml.org"}
 
+MAX_BYTES = 200 * 1024 * 1024
+MAX_ROWS = 150000
+
 
 def _check_url(url):
     parsed = urlparse(url)
-    if parsed.scheme != "https" or parsed.hostname not in HOSTS or parsed.username or parsed.password:
+    if parsed.scheme != "https" or parsed.hostname not in HOSTS or parsed.username or parsed.password or parsed.port not in {None, 443}:
         raise ValueError("download URL is outside the allowed HTTPS data hosts")
+
+    if parsed.hostname in {"github.com", "raw.githubusercontent.com", "media.githubusercontent.com"}:
+        path = unquote(parsed.path)
+        prefix = "/media/EpistasisLab/pmlb/" if parsed.hostname == "media.githubusercontent.com" else "/EpistasisLab/pmlb/"
+        if not path.startswith(prefix) or any(part in {".", ".."} for part in path.split("/")):
+            raise ValueError("GitHub downloads must use the EpistasisLab/pmlb repository path")
 
 
 class _Redirects(HTTPRedirectHandler):
@@ -44,7 +53,11 @@ def download(url, *, timeout=60):
     _check_url(url)
     request = Request(url, headers={"User-Agent": "eidos-card-intake"})
     with build_opener(_Redirects()).open(request, timeout=timeout) as response:
-        return response.read()
+        _check_url(response.geturl())
+        data = response.read(MAX_BYTES + 1)
+        if len(data) > MAX_BYTES:
+            raise ValueError("download exceeds 200 MB")
+        return data
 
 
 def cache_directory(cache_root, source, key, allow_root=False):
@@ -66,7 +79,7 @@ def cache_directory(cache_root, source, key, allow_root=False):
 
 
 def _table(header, rows, target, nominal=None):
-    if target not in header or len(set(header)) != len(header) or not rows:
+    if target not in header or len(set(header)) != len(header) or not rows or len(rows) > MAX_ROWS:
         raise ValueError("missing/ambiguous target or empty table")
     if any(len(row) != len(header) for row in rows):
         raise ValueError("ragged table")
@@ -102,12 +115,22 @@ def _table(header, rows, target, nominal=None):
 
 
 def parse_pmlb(data):
-    rows = list(csv.reader(io.StringIO(gzip.decompress(data).decode("utf-8")), delimiter="\t"))
+    with gzip.GzipFile(fileobj=io.BytesIO(data)) as stream:
+        expanded = stream.read(MAX_BYTES + 1)
+    if len(expanded) > MAX_BYTES:
+        raise ValueError("decompressed table exceeds 200 MB")
+    rows = []
+    for row in csv.reader(io.StringIO(expanded.decode("utf-8")), delimiter="\t"):
+        rows.append(row)
+        if len(rows) > MAX_ROWS + 1:
+            raise ValueError("table exceeds row limit")
     return _table(rows[0], rows[1:], "target")
 
 
 def parse_arff(data, target):
     """Dense numeric/nominal ARFF only. Reject sparse, string, date and relational types."""
+    if len(data) > MAX_BYTES:
+        raise ValueError("ARFF exceeds 200 MB")
     header, rows, in_data = [], [], False
     nominal = {}
     for raw in data.decode("utf-8-sig").splitlines():
@@ -123,6 +146,8 @@ def parse_arff(data, target):
             lexer.whitespace_split = True
             lexer.commenters = "%"
             rows.append([value.strip() for value in lexer])
+            if len(rows) > MAX_ROWS:
+                raise ValueError("table exceeds row limit")
         elif line.lower().startswith("@attribute "):
             parts = shlex.split(line, comments=False)
             if len(parts) < 3:

@@ -2,8 +2,11 @@
 
 import argparse
 import contextlib
+import hashlib
+import hmac
 import json
 import os
+import random
 import shutil
 import signal
 import subprocess
@@ -67,7 +70,8 @@ def _worker(action, request_path, response_path):
                 source_dir = intake.intake(candidate["source"], candidate["key"], request["cache"],
                                            allow_root=request["allow_root"], target=candidate.get("target"))
             table = intake.load_table(source_dir)
-            result = check_table(table, candidate["task_type"], seed=request["seed"])
+            result = check_table(table, candidate["task_type"], seed=request["seed"],
+                                 max_classes=request["max_classes"])
             result.update(ok=True, source_dir=str(source_dir))
         else:
             from .package import package
@@ -83,6 +87,15 @@ def _worker(action, request_path, response_path):
             card = package(request["source_dir"], request["card_id"], root,
                            candidate["task_type"], request["seed"])
             controller = root / "controller" / request["card_id"]
+            provenance_path = controller / "provenance.json"
+            provenance = read_json(provenance_path)
+            provenance["synthetic"] = candidate.get("synthetic", False)
+            write_json(provenance_path, provenance)
+            cheap = qualify(card, controller, cheap_only=True)
+            if not cheap["qualified"]:
+                write_json(response_path, dict(ok=True, qualified=False, null_card=False,
+                           failed_checks=[n for n, c in cheap["checks"].items() if not c["passed"]]))
+                return
             measured = reference(card, controller, budget_seconds=request["budget_seconds"])
             qualification = qualify(card, controller, allow_null=True)
             result = dict(ok=True, qualified=qualification["qualified"], null_card=measured["null_card"],
@@ -120,30 +133,48 @@ def _stop(process):
 
 
 def build(catalog_path, cache, want, *, workers=3, budget_seconds=480, private_root=None, resume=False,
-          candidate_timeout=1500, allow_root=False, launch=None):
+          candidate_timeout=1500, allow_root=False, launch=None, max_classes=10):
     from . import pools
     from .intake import CACHE_ROOT
 
     if workers < 1 or budget_seconds <= 0 or candidate_timeout <= 0:
         raise ValueError("workers, budget and candidate timeout must be positive")
-    if want.get("H", 0) and private_root is None:
-        raise ValueError("H requires --private-root")
+    if private_root is None:
+        raise ValueError("all builds require --private-root")
+    if not 2 <= max_classes <= 10:
+        raise ValueError("max-classes must be 2..10")
     cache = Path(cache).resolve()
     if not allow_root and not cache.is_relative_to(CACHE_ROOT):
         raise ValueError("cache root outside allowed root")
     if any((p / ".git").exists() for p in (cache, *cache.parents)):
         raise ValueError("cache root is inside a git work tree")
     cache.mkdir(parents=True, exist_ok=True)
-    private = Path(private_root).resolve() if private_root else cache / "build-private"
-    if private == cache or cache.is_relative_to(private):
+    if any((cache / name).exists() for name in ("raw", "staging", "jobs", "build-private")):
+        raise ValueError("public cache contains legacy candidate artifacts; use a fresh public cache")
+    if (cache / "pools").exists() and any(p.name not in {"D", "SMOKE"} for p in (cache / "pools").iterdir()):
+        raise ValueError("public cache contains legacy private pools; use a fresh public cache")
+    private = Path(private_root).resolve()
+    if private == cache or cache.is_relative_to(private) or private.is_relative_to(cache):
         raise ValueError("private root must be separate from the public cache root")
     private.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(private, 0o700)
+    seed_path = private / "assignment.seed"
+    if resume and not seed_path.exists():
+        raise ValueError("resume requires the original private seed")
+    if not seed_path.exists():
+        fd = os.open(seed_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(os.urandom(32))
+    salt = seed_path.read_bytes()
+    if len(salt) != 32:
+        raise ValueError("private seed must contain exactly 32 bytes")
+    id_rng = random.Random(hmac.digest(salt, b"card-identifiers", "sha256"))
+    card_ids = id_rng.sample(range(10000), 10000)
     state_path, private_path = cache / "build-state.json", private / "build-state.json"
     catalog_bytes = Path(catalog_path).read_bytes()
     catalog = json.loads(catalog_bytes)
     signature = dict(catalog_sha256=sha(catalog_bytes), want=want, budget_seconds=budget_seconds,
-                     candidate_timeout=candidate_timeout)
+                     candidate_timeout=candidate_timeout, max_classes=max_classes)
     if resume:
         state = read_json(private_path)
         if state["signature"] != signature:
@@ -164,13 +195,13 @@ def build(catalog_path, cache, want, *, workers=3, budget_seconds=480, private_r
         state["elapsed_seconds"] = previous_elapsed + time.monotonic() - started
         _atomic_json(private_path, state)
         os.chmod(private_path, 0o600)
-        public = dict(schema_version="eidos-card-build/0.1", signature=signature,
-                      outcomes={i: {k: r[k] for k in ("status", "reason") if k in r} for i, r in records.items()},
-                      complete=state["complete"], elapsed_seconds=state["elapsed_seconds"],
-                      pools=public_assignment.get("pools", {}),
-                      held_out_or_reserve=sum(r["status"] == "qualified" for r in records.values()) -
-                      sum(len(cards) for cards in public_assignment.get("pools", {}).values()))
-        _atomic_json(state_path, public)
+        public = dict(processed=sum(r["status"] in FINISHED for r in records.values()),
+                      accepted=len(accepted()), qualified=len(qualified()),
+                      rejected_by_reason=dict(Counter(r.get("reason", "unqualified") for r in records.values()
+                                                      if r["status"] in {"rejected", "unqualified"})),
+                      pools=state.get("pool_sizes", {}), shortfall=state.get("shortfall", {}))
+        if state["complete"]:
+            _atomic_json(state_path, public)
 
     def accepted():
         return [r for r in records.values() if "card_id" in r]
@@ -182,14 +213,12 @@ def build(catalog_path, cache, want, *, workers=3, budget_seconds=480, private_r
         ready = qualified()
         if smoke:
             return {r["candidate"]["task_type"] for r in ready} == {"classification", "regression"}
-        cap = sum(pools.null_limit(p, n) for p, n in want.items())
-        strong = sum(not r["null_card"] for r in ready)
-        nulls = len(ready) - strong
-        return strong + min(nulls, cap + 6) >= sum(want.values()) + 6
+        # Exhaust the catalog: a public stopping count must not identify a prefix containing H.
+        return False
 
     if state["complete"]:
         for pool in public_assignment.get("pools", {}):
-            pools.verify(cache / "pools" / pool)
+            pools.verify((cache / "pools" / pool) if pool in {"D", "SMOKE"} else private / "pools" / pool)
         if want.get("H", 0) and (private / "H/pool.json").exists():
             pools.verify(private / "H")
         return read_json(state_path)
@@ -227,7 +256,10 @@ def build(catalog_path, cache, want, *, workers=3, budget_seconds=480, private_r
                     next_index -= 1
                     break
                 old = records.get(str(index), {})
-                request = dict(candidate=candidate, cache=str(cache), allow_root=allow_root, seed=catalog["seed"],
+                split_seed = int.from_bytes(hmac.new(salt, f"{candidate['source']}:{candidate['key']}".encode(),
+                                                     hashlib.sha256).digest()[:8], "big")
+                request = dict(candidate=candidate, cache=str(private), allow_root=True, seed=split_seed,
+                               max_classes=max_classes,
                                root=str(private / "staging"), budget_seconds=budget_seconds)
                 action = "build" if "card_id" in old else "preflight"
                 if action == "build":
@@ -257,7 +289,11 @@ def build(catalog_path, cache, want, *, workers=3, budget_seconds=480, private_r
                     del active[index]
                 elif job["action"] == "preflight":
                     reason = None
-                    if result["fingerprint"] in {r["fingerprint"] for r in accepted()}:
+                    from .select import same_feature_family
+
+                    if any(same_feature_family(result["feature_signature"], r["feature_signature"]) for r in accepted()):
+                        reason = "same feature table"
+                    elif result["fingerprint"] in {r["fingerprint"] for r in accepted()}:
                         reason = "duplicate table content"
                     elif result["imbalanced"] and sum(r.get("imbalanced", False) for r in accepted()) >= 4:
                         reason = "minority class fraction/imbalanced cap"
@@ -265,7 +301,7 @@ def build(catalog_path, cache, want, *, workers=3, budget_seconds=480, private_r
                         record.update(status="rejected", reason=reason)
                         del active[index]
                     else:
-                        record.update(result, card_id=f"R{state['next_id']:03d}")
+                        record.update(result, card_id=f"R{card_ids[state['next_id'] - 1]:04d}")
                         state["next_id"] += 1
                         job["request"].update(card_id=record["card_id"], source_dir=result["source_dir"])
                         process, response = launch("build", job["request"], private / "jobs" / str(index))
@@ -274,7 +310,8 @@ def build(catalog_path, cache, want, *, workers=3, budget_seconds=480, private_r
                     record.update(result, status="qualified" if result["qualified"] else "unqualified")
                     if not result["qualified"]:
                         failed = result.get("failed_checks", [])
-                        record["reason"] = "qualification checks failed" + (": " + ", ".join(failed) if failed else "")
+                        record["reason"] = "qualification checks failed"
+                        record["failed_checks"] = failed
                     del active[index]
                 save()
             if not progress:
@@ -308,7 +345,7 @@ def build(catalog_path, cache, want, *, workers=3, budget_seconds=480, private_r
     for pool, members in private_assignment["pools"].items():
         if pool == "H" and not want.get("H", 0):
             continue
-        destination = private / "H" if pool == "H" else cache / "pools" / pool
+        destination = (cache / "pools" / pool) if pool in {"D", "SMOKE"} else (private / "H" if pool == "H" else private / "pools" / pool)
         if (destination / "pool.json").exists():
             existing = read_json(destination / "pool.json")
             if existing["card_ids"] != [c["card_id"] for c in members]:
@@ -318,14 +355,21 @@ def build(catalog_path, cache, want, *, workers=3, budget_seconds=480, private_r
                 shutil.rmtree(destination)  # an interrupted assembly, under this build's output root
             pools.build_pool(pool, [private / "staging/seal" / c["card_id"] for c in members], destination)
         pools.verify(destination)
+        if pool != "H":
+            metadata = read_json(destination / "pool.json")
+            if pool in {"D", "SMOKE"}:
+                published = metadata
+            else:
+                published = dict(pool=pool, commitment=metadata["commitment"],
+                                 cards=[dict(id=c["card_id"], **{k: c[k] for k in ("task_type", "metric", "bar_rule")})
+                                        for c in metadata["cards"]])
+            (cache / "manifests").mkdir(exist_ok=True)
+            write_json(cache / "manifests" / f"{pool}.json", published)
     actual = {pool: len(private_assignment["pools"].get(pool, [])) for pool in want}
-    state.update(complete=True, public_assignment=public_assignment,
+    state.update(complete=True, public_assignment=public_assignment, pool_sizes=actual,
                  shortfall={pool: want[pool] - actual[pool] for pool in want}, balance=dict(Counter(c["task_type"] for c in ready)))
     save()
-    public = read_json(state_path)
-    public.update(shortfall=state["shortfall"], balance=state["balance"])
-    _atomic_json(state_path, public)
-    return public
+    return read_json(state_path)
 
 
 def main():
@@ -336,6 +380,7 @@ def main():
     parser.add_argument("--workers", type=int, default=3)
     parser.add_argument("--budget-seconds", type=float, default=480)
     parser.add_argument("--private-root")
+    parser.add_argument("--max-classes", type=int, default=10)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--candidate-timeout", type=float, default=1500)
     parser.add_argument("--allow-root", action="store_true")
@@ -351,11 +396,11 @@ def main():
     try:
         result = build(args.catalog, args.cache, args.want, workers=args.workers, budget_seconds=args.budget_seconds,
                        private_root=args.private_root, resume=args.resume, candidate_timeout=args.candidate_timeout,
-                       allow_root=args.allow_root)
+                       allow_root=args.allow_root, max_classes=args.max_classes)
     except Exception as error:
         # Tracebacks from private verification can contain H paths. Keep them private too.
-        private = Path(args.private_root) if args.private_root else Path(args.cache) / "build-private"
-        if private.is_dir():
+        private = Path(args.private_root) if args.private_root else None
+        if private is not None and private.is_dir():
             (private / "driver-error.log").write_text(traceback.format_exc())
         message = f"build failed: {_safe_reason(error)}; details remain under the private root"
         print(message)

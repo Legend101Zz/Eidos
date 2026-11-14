@@ -53,7 +53,26 @@ def leakage_screen(x, y, task_type):
     return dict(passed=not flags, maximum=maximum, flags=flags)
 
 
-def qualify(card_dir, controller_dir, *, allow_null=True):
+def split_check(arrays):
+    pairs = (("train", "validation"), ("train", "test"), ("validation", "test"))
+    sets = {name: {(row.tobytes(), str(label)) for row, label in zip(data[0], data[1], strict=True)}
+            for name, data in arrays.items()}
+    features = {name: {row.tobytes() for row in data[0]} for name, data in arrays.items()}
+    duplicate_count = sum(len(sets[a] & sets[b]) for a, b in pairs)
+    labels = {}
+    for name, data in arrays.items():
+        labels[name] = {}
+        for row, label in zip(data[0], data[1], strict=True):
+            labels[name].setdefault(row.tobytes(), set()).add(str(label))
+    conflicts = sum(sum(any(left != right for left in labels[a][row] for right in labels[b][row])
+                        for row in features[a] & features[b]) for a, b in pairs)
+    id_sets = [set(data[2].tolist()) for data in arrays.values()]
+    return dict(passed=duplicate_count == 0 and
+                sum(len(data[2]) for data in arrays.values()) == len(set.union(*id_sets)),
+                cross_split_duplicate_rows=duplicate_count, conflicting_feature_rows=conflicts)
+
+
+def qualify(card_dir, controller_dir, *, allow_null=True, cheap_only=False):
     card, controller = Path(card_dir), Path(controller_dir)
     checks = {}
     manifest = read_json(card / "manifest.json")
@@ -89,15 +108,11 @@ def qualify(card_dir, controller_dir, *, allow_null=True):
             arrays[split] = (data["x"], data["y"], data["ids"])
     with np.load(card / "test_inputs.npz", allow_pickle=False) as data:
         arrays["test"] = (data["x"], y, data["ids"])
-    sets = {name: {row.tobytes() for row in data[0]} for name, data in arrays.items()}
-    duplicate_count = sum(len(sets[a] & sets[b]) for a, b in (("train", "validation"),
-                                                               ("train", "test"), ("validation", "test")))
-    id_sets = [set(data[2].tolist()) for data in arrays.values()]
-    checks["split_disjointness"] = dict(passed=duplicate_count == 0 and
-                                       sum(map(len, id_sets)) == len(set.union(*id_sets)),
-                                       cross_split_duplicate_rows=duplicate_count)
+    checks["split_disjointness"] = split_check(arrays)
     checks["leakage"] = leakage_screen(*arrays["validation"][:2], kind)
     try:
+        if cheap_only:
+            raise OSError("reference search deferred")
         reference = read_json(controller / "reference.json")
         checks["reference_digest"] = dict(passed=sha((controller / "reference_project.py").read_bytes()) ==
                                           reference["reference_py_sha256"])
@@ -106,6 +121,8 @@ def qualify(card_dir, controller_dir, *, allow_null=True):
     reference_scores = []
     for recipe, project in (("baseline", card / "bundle/project.py"),
                              ("reference", controller / "reference_project.py")):
+        if cheap_only and recipe == "reference":
+            continue
         for seed in SEEDS:
             name = f"{recipe}_{seed}"
             if recipe == "reference" and not checks["reference_digest"]["passed"]:
@@ -128,11 +145,17 @@ def qualify(card_dir, controller_dir, *, allow_null=True):
                                     retrain_seconds=elapsed, checkpoint_bytes=size)
             except (subprocess.TimeoutExpired, subprocess.CalledProcessError, ValueError) as error:
                 checks[name] = dict(passed=False, error=str(error))
+    if cheap_only:
+        checks.pop("reference_digest", None)
+        result = dict(qualified=all(c["passed"] for c in checks.values()), checks=checks)
+        write_json(controller / "qualification.json", result)
+        return result
     null_card = len(reference_scores) != 3 or any(gain(base_score, s, kind) < bar for s in reference_scores)
     manifest["null_card"] = null_card
     manifest["qualified"] = all(check["passed"] for check in checks.values())
     write_json(card / "manifest.json", manifest)
-    result = dict(qualified=manifest["qualified"], null_card=null_card, checks=checks)
+    result = dict(qualified=manifest["qualified"], null_card=null_card, checks=checks,
+                  conflicting_feature_rows=checks["split_disjointness"]["conflicting_feature_rows"])
     write_json(controller / "qualification.json", result)
     return result
 

@@ -23,6 +23,29 @@ RULES = {"excluded_name_substrings": list(EXCLUDED), "rows": [1600, 150000], "fe
          "stage2": ["minority fraction", "missing values", "nonconstant features", "train size", "content duplicates"]}
 
 
+SYNTHETIC = ("feynman_", "strogatz_", "bng", "2dplanes", "ring", "twonorm", "waveform", "mv",
+             "fried", "gametes", "parity", "monk", "led", "hill_valley", "clean", "banana")
+
+
+def likely_synthetic(name):
+    return any(part in name.lower() for part in SYNTHETIC)
+
+
+def feature_signature(x):
+    """Feature-only column multiset, canonical numbers and row-order independent."""
+    hashes = []
+    for column in np.asarray(x).T:
+        values = np.asarray(column, dtype=float).copy()
+        values[values == 0] = 0
+        hashes.append(sha("\n".join(format(v, ".9g") for v in np.sort(values)).encode()))
+    return sorted(hashes)
+
+
+def same_feature_family(a, b):
+    overlap = sum((Counter(a) & Counter(b)).values())
+    return bool(a and b) and overlap >= 0.8 * min(len(a), len(b))
+
+
 def family(name):
     name = name.lower()
     for prefix in ("gametes", "feynman", "strogatz", "mfeat"):
@@ -89,7 +112,7 @@ def select(summary_bytes, seed=20261114, count=None, openml_cards=()):
         if reason:
             rejected.append(dict(source=card["source"], key=card["key"], reason=reason))
         else:
-            card.update(family=family(card.get("name", card["key"])), row_band=row_band(card["n_rows"]),
+            card.update(synthetic=likely_synthetic(card.get("name", card["key"])), family=family(card.get("name", card["key"])), row_band=row_band(card["n_rows"]),
                         imbalanced=card["task_type"] == "classification" and
                         card.get("minority_fraction") is not None and card["minority_fraction"] < 0.05)
             eligible.append(card)
@@ -136,7 +159,7 @@ def table_fingerprint(x, y):
     return sha(repr((len(y), np.asarray(x).shape[1] + 1, sorted(hashes))).encode())
 
 
-def check_table(table, task_type, *, fingerprints=(), imbalanced_count=0, seed=20261114):
+def check_table(table, task_type, *, fingerprints=(), imbalanced_count=0, seed=20261114, max_classes=10):
     """Stage two is fail-closed on the actual table and on the exact packaging split."""
     from .package import prepare_arrays
 
@@ -150,8 +173,8 @@ def check_table(table, task_type, *, fingerprints=(), imbalanced_count=0, seed=2
     imbalanced, fraction = False, None
     if task_type == "classification":
         labels, counts = np.unique(y, return_counts=True)
-        if not 2 <= len(labels) <= 10:
-            raise ValueError("classification requires 2..10 classes")
+        if not 2 <= len(labels) <= max_classes:
+            raise ValueError("classification requires 2..max-classes classes")
         fraction = float(counts.min() / len(y))
         imbalanced = fraction < 0.05
         if fraction < 0.02 or (imbalanced and imbalanced_count >= 4):
@@ -162,7 +185,7 @@ def check_table(table, task_type, *, fingerprints=(), imbalanced_count=0, seed=2
     fingerprint = table_fingerprint(x, y)
     if fingerprint in fingerprints:
         raise ValueError("duplicate table content")
-    return dict(fingerprint=fingerprint, imbalanced=imbalanced, minority_fraction=fraction,
+    return dict(fingerprint=fingerprint, feature_signature=feature_signature(x), imbalanced=imbalanced, minority_fraction=fraction,
                 n_rows=len(y), n_features=data["train"]["x"].shape[1], split_sizes=provenance["split_sizes"])
 
 

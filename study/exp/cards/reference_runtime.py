@@ -6,6 +6,7 @@ Checkpoints are local self-trained sklearn objects, never downloaded source data
 """
 
 import argparse
+import gzip
 import json
 import os
 import pickle
@@ -52,10 +53,10 @@ def estimator(config, task_type, seed):
         model = SVC(probability=True, random_state=seed, **params) if classification else SVR(**params)
     elif family == "extra":
         model = (ExtraTreesClassifier if classification else ExtraTreesRegressor)(
-            n_estimators=300, n_jobs=1, random_state=seed, **params)
+            n_jobs=1, random_state=seed, **{**dict(n_estimators=100, min_samples_leaf=2, max_depth=20), **params})
     elif family == "forest":
         model = (RandomForestClassifier if classification else RandomForestRegressor)(
-            n_estimators=300, n_jobs=1, random_state=seed, **params)
+            n_jobs=1, random_state=seed, **{**dict(n_estimators=100, min_samples_leaf=2, max_depth=20), **params})
     elif family == "hist":
         model = (HistGradientBoostingClassifier if classification else HistGradientBoostingRegressor)(
             early_stopping=True, validation_fraction=0.15, random_state=seed, **params)
@@ -100,12 +101,20 @@ def cross_validate(data_path, config_path, output, task_type, seed):
     oof = np.zeros(shape, dtype=float)
     counts = np.zeros(len(y), dtype=int)
     started = time.monotonic()
+    estimated_bytes = 0
     for fold, (train, held) in enumerate(splitter.split(x, y)):
         models = fit_configuration(config, x[train], y[train], task_type, seed + fold)
+        if fold == 0:
+            # Fit once on the CV training fold; conservatively extrapolate to full train.
+            estimated_bytes = int(len(gzip.compress(pickle.dumps(models, protocol=5), compresslevel=3)) *
+                                  len(y) / len(train) * 1.5)
+            if estimated_bytes > config.get("size_limit_bytes", 48 * 1024 * 1024):
+                np.savez(output, estimated_bytes=estimated_bytes)
+                return
         oof[held] += predict_configuration(models, x[held], task_type)
         counts[held] += 1
     oof /= counts[:, None] if oof.ndim == 2 else counts
-    np.savez(output, predictions=oof, seconds=time.monotonic() - started)
+    np.savez(output, predictions=oof, estimated_bytes=estimated_bytes, seconds=time.monotonic() - started)
 
 
 def train(inputs, out, seed):
@@ -121,7 +130,7 @@ def train(inputs, out, seed):
         x, y = data["x"], data["y"]
     started = time.monotonic()
     members = [fit_configuration(member["config"], x, y, spec["task_type"], seed) for member in spec["members"]]
-    with (out / "model.pt").open("wb") as stream:
+    with gzip.open(out / "model.pt", "wb", compresslevel=3) as stream:
         pickle.dump(dict(spec=spec, members=members), stream, protocol=5)
     infer(out / "model.pt", inputs / "validation.npz", out / "validation_predictions.npz")
     (out / "receipt.json").write_text(json.dumps(dict(seed=seed, threads=1,
@@ -129,7 +138,7 @@ def train(inputs, out, seed):
 
 
 def infer(checkpoint, inputs, out):
-    with Path(checkpoint).open("rb") as stream:
+    with gzip.open(checkpoint, "rb") as stream:
         saved = pickle.load(stream)  # Locally trained candidate artifact, never an intake source.
     spec = saved["spec"]
     with np.load(inputs, allow_pickle=False) as data:

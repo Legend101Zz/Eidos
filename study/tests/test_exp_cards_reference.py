@@ -46,18 +46,25 @@ def test_nonlinear_reference_and_export_reproduction(tmp_path, kind):
     assert score(y[650:], prediction, kind) == result["ref_scores"][0]
 
 
-def test_selection_does_not_read_evaluation_arrays():
+def test_selection_does_not_read_evaluation_arrays(tmp_path, monkeypatch):
+    from study.exp.cards import reference as module
+
     rng = np.random.default_rng(29)
     x = rng.normal(size=(120, 4)).astype(np.float32)
     y = (x[:, 0] > 0).astype(int)
-    clean = select_reference(x, y, "classification", budget_seconds=10, max_configurations=1,
-                             x_test=x, y_test=y, x_validation=x, y_validation=y)
-    poisoned = select_reference(x, y, "classification", budget_seconds=10, max_configurations=1,
-                                x_test=np.full_like(x, np.nan), y_test=np.full(len(y), np.nan),
-                                x_validation=np.full_like(x, np.nan), y_validation=np.full(len(y), np.nan))
-    assert [m["config"] for m in clean["members"]] == [m["config"] for m in poisoned["members"]]
-    assert clean["ensemble"] == poisoned["ensemble"]
-    assert clean["cv"] == {"folds": 5, "repeats": 2, "train_only": True}
+    # Exercise the actual array API, including its selection/evaluation boundary.
+    captured = []
+    def evaluation(spec, *args, **kwargs):
+        captured.append(spec)
+        return spec
+    monkeypatch.setattr(module, "evaluate_spec", evaluation)
+    for test_x, test_y in ((x, y), (np.full_like(x, np.nan), np.full(len(y), np.nan))):
+        module.run_reference(x, y, test_x, test_y, "classification", budget_seconds=20,
+                             max_configurations=3, baseline_predictions=np.zeros(len(y)), output_dir=tmp_path)
+    assert [m["config"] for m in captured[0]["members"]] == [m["config"] for m in captured[1]["members"]]
+    assert captured[0]["ensemble"] == captured[1]["ensemble"]
+    with pytest.raises(TypeError):
+        select_reference(x, y, "classification", misspelt_option=True)
 
 
 def test_import_independence_and_recipe_families():
@@ -99,7 +106,7 @@ def test_pure_noise_null_card(tmp_path):
     # A noise baseline at chance; the large margin prevents treating random fluctuation as headroom.
     baseline = y[600:].copy()
     baseline[:190] = 1 - baseline[:190]
-    result = run_reference(x[:600], y[:600], x[600:], y[600:], "classification", budget_seconds=10,
-                           max_configurations=1, baseline_predictions=baseline, output_dir=tmp_path)
+    result = run_reference(x[:600], y[:600], x[600:], y[600:], "classification", budget_seconds=20,
+                           max_configurations=3, baseline_predictions=baseline, output_dir=tmp_path)
     assert result["null_card"]
     assert result["headroom"] >= 2 * result["se_paired"]

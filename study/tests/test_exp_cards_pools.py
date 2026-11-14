@@ -21,14 +21,15 @@ def test_assignment_public_determinism_family_atomicity_and_private_h(tmp_path):
     first = assign(catalog(), sizes, 71, tmp_path / "private1/seed")
     again = assign(catalog(), sizes, 71, tmp_path / "private1/seed")
     other_hidden = assign(catalog(), sizes, 71, tmp_path / "private2/seed")
-    assert first == again == other_hidden
+    assert first == again
+    assert first != other_hidden
     private = json.loads((tmp_path / "private1/assignments.json").read_text())
     family_pool = {}
     for pool, cards in private["pools"].items():
         assert len(cards) == sizes[pool]
         for card in cards:
             assert family_pool.setdefault(card["family"], pool) == pool
-    public_ids = {c["card_id"] for cards in first["pools"].values() for c in cards}
+    public_ids = {c.get("card_id", c.get("id")) for cards in first["pools"].values() for c in cards}
     assert not public_ids & {c["card_id"] for c in private["pools"]["H"]}
     encoded = json.dumps(first)
     assert all(c["card_id"] not in encoded for c in private["reserve"])

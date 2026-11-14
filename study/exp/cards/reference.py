@@ -59,8 +59,10 @@ def greedy_ensemble(predictions, y, task_type, *, seed=20261114, bags=10, steps=
     best = ordered[0]
     rng = np.random.default_rng(seed)
     weights = np.zeros(len(predictions))
+    bag_libraries = []
     for _ in range(bags):
-        library = sorted(rng.choice(top, size=max(1, math.ceil(len(top) * 0.5)), replace=False).tolist())
+        library = sorted({best, *rng.choice(top, size=max(1, math.ceil(len(top) * 0.5)), replace=False).tolist()})
+        bag_libraries.append(library)
         total = np.zeros_like(predictions[0], dtype=float)
         counts = np.zeros(len(predictions))
         best_counts, best_value = None, -float("inf")
@@ -82,11 +84,11 @@ def greedy_ensemble(predictions, y, task_type, *, seed=20261114, bags=10, steps=
         weights[best] = 1
     return weights, dict(best_single_index=best, best_single_score=measured[best],
                          ensemble_score=ensemble_score, ensemble_adopted=adopted,
-                         top_indices=top, bags=bags, steps=steps)
+                         top_indices=top, bag_libraries=bag_libraries, bags=bags, steps=steps)
 
 
 def select_reference(x_train, y_train, task_type, *, budget_seconds=480, per_fit_timeout=45,
-                     seed=20261114, max_configurations=None, **unused_evaluation_arrays):
+                     seed=20261114, max_configurations=None, size_limit_bytes=48 * 1024 * 1024):
     """Only x_train/y_train enter the worker file. No validation/test arrays are inspected."""
     if task_type not in {"classification", "regression"} or budget_seconds <= 0:
         raise ValueError("invalid task type/budget")
@@ -105,10 +107,31 @@ def select_reference(x_train, y_train, task_type, *, budget_seconds=480, per_fit
         configs = configurations(task_type, len(y), seed)
         if max_configurations is not None:
             configs = configs[:max_configurations]
-        for config in configs:
-            remaining = budget_seconds - (time.monotonic() - started)
+        extended = False
+        deadline_budget = budget_seconds
+        queue = list(configs)
+        index = 0
+        while True:
+            if index == len(queue):
+                families = {c["config"]["family"] for c in completed}
+                if extended or len(families) >= 3:
+                    break
+                queue.extend(c for c in configs if c["family"] not in families)
+                deadline_budget += 0.5 * budget_seconds
+                extended = True
+                if index == len(queue):
+                    break
+            config = queue[index]
+            index += 1
+            remaining = deadline_budget - (time.monotonic() - started)
             if remaining < 0.1:
-                break
+                if not extended and len({c["config"]["family"] for c in completed}) < 3:
+                    extended = True
+                    deadline_budget += 0.5 * budget_seconds
+                    remaining = deadline_budget - (time.monotonic() - started)
+                if remaining < 0.1:
+                    break
+            config = dict(config, size_limit_bytes=size_limit_bytes)
             write_json(root / "config.json", config)
             fit_started = time.monotonic()
             try:
@@ -118,10 +141,14 @@ def select_reference(x_train, y_train, task_type, *, budget_seconds=480, per_fit
                                check=True, capture_output=True, timeout=min(remaining, per_fit_timeout),
                                env=subprocess_env())
                 with np.load(root / "oof.npz", allow_pickle=False) as output:
+                    estimated_bytes = int(output["estimated_bytes"])
+                    if estimated_bytes > size_limit_bytes:
+                        attempted.append(dict(config=config, status="excluded_for_size", estimated_bytes=estimated_bytes))
+                        continue
                     prediction = output["predictions"].copy()
                 if not np.isfinite(prediction).all():
                     raise ValueError("nonfinite OOF predictions")
-                completed.append(dict(config=config, cv_seconds=time.monotonic() - fit_started,
+                completed.append(dict(config=config, estimated_bytes=estimated_bytes, cv_seconds=time.monotonic() - fit_started,
                                       oof_score=score(y, prediction, task_type)))
                 predictions.append(prediction)
                 attempted.append(dict(config=config, status="completed"))
@@ -130,17 +157,19 @@ def select_reference(x_train, y_train, task_type, *, budget_seconds=480, per_fit
             except (subprocess.CalledProcessError, ValueError) as error:
                 detail = error.stderr.decode(errors="replace")[-2000:] if isinstance(error, subprocess.CalledProcessError) else str(error)
                 attempted.append(dict(config=config, status="failed", detail=detail))
-    if not completed:
-        raise RuntimeError(f"budget completed no CV configurations: {attempted}")
+    if len({c["config"]["family"] for c in completed}) < 3:
+        raise RuntimeError(f"reference search requires completed configurations from at least three families "
+                           f"after one 50% budget extension (completed {len(completed)}): {attempted}")
     weights, ensemble = greedy_ensemble(predictions, y, task_type, seed=seed)
-    members = [dict(config=item["config"], weight=float(weight), cv_seconds=item["cv_seconds"])
+    members = [dict(config=item["config"], weight=float(weight), cv_seconds=item["cv_seconds"],
+                    estimated_bytes=item["estimated_bytes"])
                for item, weight in zip(completed, weights, strict=True) if weight > 0]
     return dict(schema_version="eidos-reference/0.1", task_type=task_type, seed=seed,
                 preprocessing="StandardScaler fitted inside each fold for linear/kNN/RBF/MLP; MLP: 3-seed mean; regression target scaled inside these fits",
                 cv=dict(folds=5, repeats=2 if len(y) < 1000 else 1, train_only=True),
                 members=members, ensemble=ensemble, configurations=completed,
                 attempts=attempted, n_configurations=len(completed), search_seconds=time.monotonic() - started,
-                dropped_for_retrain_budget=[])
+                dropped_for_retrain_budget=[], dropped_for_size=[], budget_extended=extended)
 
 
 def export_reference(spec, directory):
@@ -169,7 +198,11 @@ def paired_se(y, baseline, reference, task_type, seed=20261114):
     return float(influence.std(ddof=1) / np.sqrt(len(y)))
 
 
-def evaluate_spec(spec, bundle, test_inputs, y_test, baseline_predictions, base_score, bar, directory):
+
+class CheckpointTooLarge(Exception):
+    pass
+
+def evaluate_spec(spec, bundle, test_inputs, y_test, baseline_predictions, base_score, bar, directory, *, size_limit_bytes=64 * 1024 * 1024):
     directory = Path(directory)
     retrain_seconds, checkpoint_bytes, ref_scores, ref_predictions = [], [], [], []
     with np.load(test_inputs, allow_pickle=False) as data:
@@ -186,17 +219,30 @@ def evaluate_spec(spec, bundle, test_inputs, y_test, baseline_predictions, base_
                     predictions, ids, seconds, size = run_cli(project, bundle, test_inputs, Path(temporary), seed)
                 if not np.array_equal(expected_ids, ids):
                     raise ValueError("reference IDs disagree with test inputs")
+                if size > size_limit_bytes:
+                    raise CheckpointTooLarge(size)
                 retrain_seconds.append(seconds)
                 checkpoint_bytes.append(size)
                 ref_scores.append(score(y_test, predictions, spec["task_type"]))
                 ref_predictions.append(predictions)
             break
-        except subprocess.TimeoutExpired:
+        except (subprocess.TimeoutExpired, CheckpointTooLarge) as error:
+            size_failure = isinstance(error, CheckpointTooLarge)
+            field = "dropped_for_size" if size_failure else "dropped_for_retrain_budget"
+            spec.setdefault(field, [])
             if len(spec["members"]) == 1:
-                raise RuntimeError("single selected model exceeds the 120 s retrain budget") from None
-            slowest = max(spec["members"], key=lambda member: member["cv_seconds"])
-            spec["members"].remove(slowest)
-            spec["dropped_for_retrain_budget"].append(slowest)
+                member = spec["members"][0]
+                config = member["config"]
+                trees = config["params"].get("n_estimators", 100)
+                if not size_failure or config["family"] not in {"extra", "forest"} or trees <= 1:
+                    raise RuntimeError("single selected model exceeds checkpoint size or 120 s retrain budget") from None
+                import copy
+                spec[field].append(copy.deepcopy(member))
+                config["params"]["n_estimators"] = max(1, trees // 2)
+                continue
+            removed = max(spec["members"], key=lambda m: m.get("estimated_bytes", 0) if size_failure else m["cv_seconds"])
+            spec["members"].remove(removed)
+            spec[field].append(removed)
             total = sum(member["weight"] for member in spec["members"])
             for member in spec["members"]:
                 member["weight"] /= total
@@ -214,7 +260,8 @@ def evaluate_spec(spec, bundle, test_inputs, y_test, baseline_predictions, base_
                   headroom=max(ref_gain, 2 * se), err_base=error_base, err_ref=error_ref,
                   search_seconds=spec["search_seconds"], retrain_seconds=retrain_seconds,
                   checkpoint_bytes=checkpoint_bytes, n_configurations=spec["n_configurations"],
-                  chosen=spec["members"], reference_py_sha256=sha(project.read_bytes()))
+                  chosen=spec["members"], dropped_for_size=spec.get("dropped_for_size", []),
+                  dropped_for_retrain_budget=spec.get("dropped_for_retrain_budget", []), reference_py_sha256=sha(project.read_bytes()))
     write_json(directory / "reference.json", result)
     np.savez(directory / "reference_test.npz", ids=expected_ids, predictions=ref_predictions[0])
     return result
