@@ -33,13 +33,36 @@ def test_default_identity_and_selection(monkeypatch):
     assert resolved.investigator['settings']['price_per_mtok'] == {'input': .1, 'output': .5}
     assert treatment.resolve(provider=providers.DEFAULT).investigator == base
     assert treatment.resolve('v2-portfolio').investigator['exploration']['policy'] == 'exploration-policy/3'
-    with pytest.raises(ValueError, match='REPLACE_ME'):
-        treatment.resolve(provider='openai-default')
     with pytest.raises(ValueError, match='unknown provider'):
         providers.load('../other')
     with pytest.raises(ValueError, match='unknown provider'):
         providers.load('unknown')
     providers.check()
+
+
+def test_placeholder_profile_refuses_resolution(tmp_path, monkeypatch):
+    data = copy.deepcopy(providers.load('openai-default').data)
+    data.update(id='placeholder', served_models=['REPLACE_ME*'])
+    data['investigator']['model'] = 'openai:REPLACE_ME'
+    (tmp_path / 'placeholder.json').write_text(json.dumps(data))
+    monkeypatch.setattr(providers, 'DIRECTORY', tmp_path)
+    with pytest.raises(ValueError, match='REPLACE_ME'):
+        treatment.resolve(provider='placeholder')
+    inspected = providers.load('placeholder', allow_placeholder=True)
+    with pytest.raises(ValueError, match='REPLACE_ME'):
+        treatment.resolve(provider=inspected)
+
+
+def test_openai_profile_resolves_and_guards_served_models(monkeypatch):
+    resolved = treatment.resolve(provider='openai-default')
+    assert resolved.investigator['model'] == 'openai:gpt-5-nano'
+    assert resolved.investigator['settings']['price_per_mtok'] == resolved.provider.price_per_mtok == {
+        'input': .05, 'output': .40}
+    assert resolved.provider.model_usd_per_run == .60
+    monkeypatch.setenv('EIDOS_STUDY_PROVIDER', 'openai-default')
+    for model, accepted in [('gpt-5-nano-2025-08-07', True), ('gpt-5-mini', False), ('GPT-5-NANO', False)]:
+        result = launcher.version_guard([{'status': 'ok', 'model_ids_seen': [model]}])
+        assert (result is None) == accepted
 
 
 @pytest.mark.parametrize('change', [
@@ -77,12 +100,9 @@ def test_worker_refuses_provider_drift(monkeypatch):
 
 @pytest.mark.parametrize('name', ['minimax-m3.1-flash', 'anthropic-haiku-5-5', 'anthropic-sonnet-5-5', 'openai-default'])
 def test_keychain_to_stdin_only(tmp_path, monkeypatch, name):
-    # Complete the OpenAI placeholder only inside this isolated fixture registry.
     registry = tmp_path / 'profiles'
     registry.mkdir()
     data = copy.deepcopy(providers.load(name, allow_placeholder=True).data)
-    if name == 'openai-default':
-        data['investigator']['model'] = 'openai:fixture-openai'
     (registry / (name + '.json')).write_text(json.dumps(data))
     monkeypatch.setattr(providers, 'DIRECTORY', registry)
     monkeypatch.setenv('EIDOS_STUDY_PROVIDER', name)
@@ -186,7 +206,7 @@ def test_served_patterns_and_fixture_ids(monkeypatch):
     assert guard('fixture:')
 
 
-@pytest.mark.parametrize('name', [providers.DEFAULT, 'anthropic-haiku-5-5', 'anthropic-sonnet-5-5'])
+@pytest.mark.parametrize('name', [providers.DEFAULT, 'anthropic-haiku-5-5', 'anthropic-sonnet-5-5', 'openai-default'])
 @pytest.mark.parametrize('fixture', [False, True])
 def test_arm4_plumbs_bridge_prices_and_usd_limit(tmp_path, monkeypatch, name, fixture):
     monkeypatch.setenv('EIDOS_STUDY_PROVIDER', name)
@@ -472,7 +492,7 @@ def test_default_agent_environment_main_golden(tmp_path, monkeypatch):
      'anthropic-messages', ['claude-sonnet-5-5*'], 'repair', {'input': 2., 'output': 10.}, 6.,
      {'anthropic_base_url': 'https://api.anthropic.com', 'model': 'claude-sonnet-5-5'}),
     ('openai-default', 'openai_api_key', 'OPENAI_API_KEY', 'https://api.openai.com/v1',
-     'openai-chat', ['REPLACE_ME*'], 'json', None, None, None),
+     'openai-chat', ['gpt-5-nano*'], 'json', {'input': .05, 'output': .40}, .60, None),
 ])
 def test_profile_security_golden(name, item, credential, upstream, wire, served, mode, price, limit, arm2):
     profile = providers.load(name, allow_placeholder=True)

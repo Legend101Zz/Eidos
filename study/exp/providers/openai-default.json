@@ -1,21 +1,23 @@
 {
   "schema": "eidos-provider/1",
   "id": "openai-default",
-  "summary": "OpenAI profile awaiting orchestrator configuration",
+  "summary": "OpenAI gpt-5-nano (cheapest listed; verified 14 Nov 2026)",
   "wire": "openai-chat",
   "keychain_item": "openai_api_key",
   "credential_env": "OPENAI_API_KEY",
   "upstream": "https://api.openai.com/v1",
   "investigator": {
-    "model": "openai:REPLACE_ME",
+    "model": "openai:gpt-5-nano",
     "settings": {
       "output_mode": "json"
     }
   },
   "served_models": [
-    "REPLACE_ME*"
+    "gpt-5-nano*"
   ],
-  "price_per_mtok": null,
-  "model_usd_per_run": null,
-  "todo": "Orchestrator must fill a callable model id, served pattern, prices and USD limit."
+  "price_per_mtok": {
+    "input": 0.05,
+    "output": 0.4
+  },
+  "model_usd_per_run": 0.6
 }

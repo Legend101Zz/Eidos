@@ -4,6 +4,8 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.4.0
 
+- Configure `openai-default` with the verified cheapest listed text model, `gpt-5-nano`, USD 0.05/0.40 per million input/output tokens and a USD 0.60 run limit; cover resolution, pricing and case-sensitive served-model guards offline.
+
 - Fix pinned Anthropic SDK authentication through the study relay, verify supervisor credential changes before recording a provider switch, keep OpenAI grading environments usable, and pin provider defaults with offline goldens and mutation regressions. Fixture starts suppress stored credentials; required audits and fallback refusal receipts fail or report explicitly.
 
 - [ADR 0053](docs/decisions/0053-provider-profiles.md) adds explicit study provider profiles for MiniMax, Anthropic and an unconfigured OpenAI placeholder, with credential-safe supervisor switching, Messages deadline/audit relaying, served-model receipts, per-run USD limits and bounded Anthropic refusals. Default MiniMax configuration and prompt revision stay unchanged.

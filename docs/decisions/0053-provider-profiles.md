@@ -9,8 +9,8 @@ preserves the immutable investigator configuration, MiniMax credential names,
 bridge command and exact served-model guard. Profile identity (id, wire and SHA-256
 of the profile file bytes) accompanies arm, run, import and prompt receipts;
 workers refuse prepared provider drift. `python -m study.exp.providers check`
-validates every profile without credentials. OpenAI's `REPLACE_ME` is valid as an
-inventory entry but cannot resolve for execution.
+validates every profile without credentials. Any profile containing `REPLACE_ME`
+remains valid as an inventory entry but cannot resolve for execution.
 
 The lab reads the selected Keychain item only when credentials are required,
 passing one `<credential_env>=<key>\n` line to `lab start --credentials-stdin`.
@@ -68,3 +68,11 @@ slot/turn structured-output retries for a refusal. Normal bounded finalization
 remains available. The prompt revision and every default remain unchanged. All provider
 verification uses fixtures; callable model availability and live pricing remain
 the orchestrator's responsibility.
+
+`openai-default` selects `openai:gpt-5-nano` with JSON output, served pattern
+`gpt-5-nano*`, USD 0.05/0.40 per million input/output tokens and a USD 0.60 run
+limit, with no Claude CLI arm. On 14 Nov 2026 the orchestrator listed 96 models
+(HTTP 200), including gpt-5-nano, the cheapest listed text model at standard-tier
+prices; strict required function calling and JSON-schema response requests both
+returned HTTP 200, with schema-valid JSON and served id `gpt-5-nano-2025-08-07`.
+These are orchestrator measurements; no live checks were repeated here.
