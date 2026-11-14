@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .common import CARD_FILES, SEEDS, bar_for, read_json, run_cli, score, sha, write_json
+from .common import CARD_FILES, SEEDS, bar_for, private_tmp, read_json, run_cli, score, sha, write_json
 from .intake import load_table
 
 REPOSITORY = Path(__file__).resolve().parents[3]
@@ -37,6 +37,7 @@ def prepare_arrays(x, y, task_type, seed):
         raise ValueError("invalid table shape/type")
     if not np.isfinite(x).all():
         raise ValueError("nonfinite features")
+    original_x, original_y = x, y
     # Preserve source order: np.unique's lexicographic order would make test values alter train membership.
     original_n = len(y)
     seen, keep = set(), []
@@ -82,6 +83,22 @@ def prepare_arrays(x, y, task_type, seed):
             raise ValueError("constant train target")
         target_scaling = dict(mean=mean, std=scale)
         y = ((y - mean) / scale).astype(np.float32)
+    if not classification:
+        # Train-fitted scaling can merge nearby raw targets at float32 precision.
+        # Remove those rows and refit/resplit until the stored representation is unique.
+        seen, retained = set(), []
+        for i, (row, label) in enumerate(zip(x, y, strict=True)):
+            key = (row.tobytes(), str(label))
+            if key not in seen:
+                retained.append(keep[i])
+                seen.add(key)
+        if len(retained) < n:
+            data, provenance = prepare_arrays(original_x[retained], original_y[retained], task_type, seed)
+            provenance["retained_source_rows"] = [retained[i] for i in provenance["retained_source_rows"]]
+            provenance["split_source_rows"] = {name: [retained[i] for i in rows]
+                                                for name, rows in provenance["split_source_rows"].items()}
+            provenance["duplicate_rows_dropped"] = original_n - len(provenance["retained_source_rows"])
+            return data, provenance
     ids = rng.integers(1, np.iinfo(np.int64).max, size=n, dtype=np.int64)
     while len(np.unique(ids)) != n:
         ids = rng.integers(1, np.iinfo(np.int64).max, size=n, dtype=np.int64)
@@ -135,7 +152,7 @@ def package_card(x, y, task_type, card_id, pool_root, *, seed=20261114, source_i
     (bundle / "brief.md").write_text(f"{card_id}: {brief}")
     task["hashes"] = {p.name: sha(p.read_bytes()) for p in sorted(bundle.iterdir())}
     write_json(bundle / "task.json", task)
-    with tempfile.TemporaryDirectory(prefix="cards-baseline-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="cards-baseline-", dir=private_tmp(pool_root)) as temporary:
         predictions, ids, elapsed, size = run_cli(bundle / "project.py", bundle, card / "test_inputs.npz",
                                                 Path(temporary), 11)
     if not np.array_equal(ids, test["ids"]):

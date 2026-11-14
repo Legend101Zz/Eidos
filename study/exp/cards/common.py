@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -58,12 +59,23 @@ def bar_for(base, task_type):
     return 0.02 if task_type == "classification" else 0.05 * base
 
 
-def subprocess_env():
+def private_tmp(root=None):
+    """Explicit staging for builds; private local scratch for standalone array calls."""
+    configured = os.environ.get("EIDOS_CARDS_TMPDIR")
+    path = Path(configured) if configured else (Path(root) / "tmp" if root is not None else
+                                               Path(tempfile.gettempdir()) / f"eidos-cards-{os.getuid()}")
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(path, 0o700)
+    return path.resolve()
+
+
+def subprocess_env(temp_root=None):
     env = dict(os.environ)
     for name in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "VECLIB_MAXIMUM_THREADS",
                  "NUMEXPR_NUM_THREADS", "BLIS_NUM_THREADS"):
         env[name] = "1"
     env["PYTHONHASHSEED"] = "0"
+    env["TMPDIR"] = str(private_tmp(temp_root))
     return env
 
 
@@ -75,11 +87,11 @@ def run_cli(project, bundle, inputs, out, seed, timeout=120):
     started = time.monotonic()
     command = [python, str(Path(project).resolve()), "train", "--inputs", str(Path(bundle).resolve()),
                "--out", str(out.resolve()), "--seed", str(seed)]
-    subprocess.run(command, check=True, capture_output=True, timeout=timeout, env=subprocess_env())
+    subprocess.run(command, check=True, capture_output=True, timeout=timeout, env=subprocess_env(out))
     elapsed = time.monotonic() - started
     subprocess.run([python, str(Path(project).resolve()), "infer", "--model", str(out / "model.pt"),
                     "--inputs", str(Path(inputs).resolve()), "--out", str(out / "predictions.npz")],
-                   check=True, capture_output=True, timeout=timeout, env=subprocess_env())
+                   check=True, capture_output=True, timeout=timeout, env=subprocess_env(out))
     with np.load(out / "predictions.npz", allow_pickle=False) as data:
         predictions, ids = data["predictions"].copy(), data["ids"].copy()
     return predictions, ids, elapsed, (out / "model.pt").stat().st_size

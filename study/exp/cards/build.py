@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 import traceback
+import uuid
 from collections import Counter
 from pathlib import Path
 
@@ -54,8 +55,20 @@ def _safe_reason(error):
 
 
 def _worker(action, request_path, response_path):
-    os.nice(10)
-    request = read_json(request_path)
+    with contextlib.suppress(OSError):
+        os.nice(10)
+    if request_path is None:
+        payload = json.load(sys.stdin)
+        request, response_path = payload["request"], payload["response"]
+    else:
+        request = read_json(request_path)
+    # Direct worker invocations also override the caller's TMPDIR before any work.
+    private = Path(request["cache"]) if "cache" in request else Path(request["root"]).parent
+    worker_tmp = Path(request.get("temp_dir", private / "tmp" / uuid.uuid4().hex))
+    worker_tmp.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(worker_tmp, 0o700)
+    previous_tmp = {key: os.environ.get(key) for key in ("EIDOS_CARDS_TMPDIR", "TMPDIR")}
+    os.environ["EIDOS_CARDS_TMPDIR"] = os.environ["TMPDIR"] = str(worker_tmp.resolve())
     try:
         candidate = request["candidate"]
         if action == "preflight":
@@ -103,6 +116,13 @@ def _worker(action, request_path, response_path):
         write_json(response_path, result)
     except Exception as error:
         write_json(response_path, dict(ok=False, reason=_safe_reason(error), detail=str(error)))
+    finally:
+        shutil.rmtree(worker_tmp, ignore_errors=True)
+        for key, value in previous_tmp.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def _launch(action, request, directory):
@@ -111,10 +131,28 @@ def _launch(action, request, directory):
     write_json(request_path, request)
     response.unlink(missing_ok=True)
     output = (directory / f"{action}.log").open("wb")
+    worker_tmp = Path(request["cache"]) / "tmp" / uuid.uuid4().hex
+    worker_tmp.mkdir(parents=True, mode=0o700)
+    payload = dict(request=dict(request, temp_dir=str(worker_tmp)), response=str(response))
+    env = subprocess_env(worker_tmp)
+    env["EIDOS_CARDS_TMPDIR"] = env["TMPDIR"] = str(worker_tmp)
     try:
-        process = subprocess.Popen([sys.executable, "-m", "study.exp.cards.build", "--worker-action", action,
-                                    "--request", str(request_path), "--response", str(response)],
-                                   stdout=output, stderr=subprocess.STDOUT, env=subprocess_env(), start_new_session=True)
+        # No catalog index or per-candidate path in the process list.
+        process = subprocess.Popen([sys.executable, "-m", "study.exp.cards.build", "--worker-action", action],
+                                   stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
+                                   env=env, start_new_session=True)
+        process.cards_temp_dir = worker_tmp
+        try:
+            # Journal before releasing stdin: a crash before save() cannot orphan unrecorded work.
+            (worker_tmp / "worker.pid").write_text(str(process.pid))
+            process.stdin.write(json.dumps(payload).encode())
+            process.stdin.close()
+        except BaseException:
+            _stop(process)
+            raise
+    except BaseException:
+        shutil.rmtree(worker_tmp, ignore_errors=True)
+        raise
     finally:
         output.close()
     return process, response
@@ -130,6 +168,31 @@ def _stop(process):
         with contextlib.suppress(ProcessLookupError):
             os.killpg(process.pid, signal.SIGKILL)
         process.wait()
+    # The worker can exit before a descendant that ignores SIGTERM.
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGKILL)
+    temporary = getattr(process, "cards_temp_dir", None)
+    if temporary is not None:
+        shutil.rmtree(temporary, ignore_errors=True)
+
+
+def _check_previous_workers(state, private):
+    pids = set(state.get("worker_pids", []))
+    for marker in (private / "tmp").glob("*/worker.pid"):
+        try:
+            pids.add(int(marker.read_text()))
+        except (OSError, ValueError):
+            raise ValueError("cannot read previous worker PID journal; refusing unsafe resume") from None
+    for pid in pids:
+        if pid <= 0:
+            continue
+        try:
+            os.killpg(pid, 0)
+        except ProcessLookupError:
+            continue
+        except PermissionError:
+            pass  # An existing group we cannot inspect is still unsafe to overlap.
+        raise ValueError("previous worker of this build is still alive; wait for it to exit before resume")
 
 
 def build(catalog_path, cache, want, *, workers=3, budget_seconds=480, private_root=None, resume=False,
@@ -183,6 +246,12 @@ def build(catalog_path, cache, want, *, workers=3, budget_seconds=480, private_r
         if state_path.exists() or private_path.exists():
             raise ValueError("build state exists; use --resume")
         state = dict(signature=signature, outcomes={}, next_id=1, complete=False, elapsed_seconds=0)
+    _check_previous_workers(state, private)
+    temporary = private / "tmp"
+    if temporary.exists():
+        shutil.rmtree(temporary)
+    temporary.mkdir(mode=0o700)
+    state["worker_pids"] = []
     launch = launch or _launch
     started = time.monotonic()
     previous_elapsed = state["elapsed_seconds"]
@@ -199,7 +268,8 @@ def build(catalog_path, cache, want, *, workers=3, budget_seconds=480, private_r
                       accepted=len(accepted()), qualified=len(qualified()),
                       rejected_by_reason=dict(Counter(r.get("reason", "unqualified") for r in records.values()
                                                       if r["status"] in {"rejected", "unqualified"})),
-                      pools=state.get("pool_sizes", {}), shortfall=state.get("shortfall", {}))
+                      pools=state.get("pool_sizes", {}), shortfall=state.get("shortfall", {}),
+                      h_candidate_margin=len(accepted()) - state.get("pool_sizes", {}).get("D", 0))
         if state["complete"]:
             _atomic_json(state_path, public)
 
@@ -265,6 +335,7 @@ def build(catalog_path, cache, want, *, workers=3, budget_seconds=480, private_r
                 if action == "build":
                     request.update(card_id=old["card_id"], source_dir=old["source_dir"])
                 process, response = launch(action, request, private / "jobs" / str(index))
+                state["worker_pids"].append(getattr(process, "pid", 0))
                 active[index] = dict(action=action, process=process, response=response, request=request,
                                      started=time.monotonic())
                 records[str(index)] = dict(old, status="running", candidate=candidate)
@@ -305,6 +376,7 @@ def build(catalog_path, cache, want, *, workers=3, budget_seconds=480, private_r
                         state["next_id"] += 1
                         job["request"].update(card_id=record["card_id"], source_dir=result["source_dir"])
                         process, response = launch("build", job["request"], private / "jobs" / str(index))
+                        state["worker_pids"].append(getattr(process, "pid", 0))
                         job.update(action="build", process=process, response=response)
                 else:
                     record.update(result, status="qualified" if result["qualified"] else "unqualified")
@@ -365,6 +437,8 @@ def build(catalog_path, cache, want, *, workers=3, budget_seconds=480, private_r
                                         for c in metadata["cards"]])
             (cache / "manifests").mkdir(exist_ok=True)
             write_json(cache / "manifests" / f"{pool}.json", published)
+            if pool in {"D", "SMOKE"}:
+                os.utime(cache / "manifests" / f"{pool}.json", (0, 0))
     actual = {pool: len(private_assignment["pools"].get(pool, [])) for pool in want}
     state.update(complete=True, public_assignment=public_assignment, pool_sizes=actual,
                  shortfall={pool: want[pool] - actual[pool] for pool in want}, balance=dict(Counter(c["task_type"] for c in ready)))

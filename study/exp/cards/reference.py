@@ -16,6 +16,7 @@ from .common import (
     SEEDS,
     bar_for,
     gain,
+    private_tmp,
     read_json,
     run_cli,
     score,
@@ -88,7 +89,7 @@ def greedy_ensemble(predictions, y, task_type, *, seed=20261114, bags=10, steps=
 
 
 def select_reference(x_train, y_train, task_type, *, budget_seconds=480, per_fit_timeout=45,
-                     seed=20261114, max_configurations=None, size_limit_bytes=48 * 1024 * 1024):
+                     seed=20261114, max_configurations=None, size_limit_bytes=48 * 1024 * 1024, temp_root=None):
     """Only x_train/y_train enter the worker file. No validation/test arrays are inspected."""
     if task_type not in {"classification", "regression"} or budget_seconds <= 0:
         raise ValueError("invalid task type/budget")
@@ -99,7 +100,7 @@ def select_reference(x_train, y_train, task_type, *, budget_seconds=480, per_fit
         raise ValueError("class labels must be contiguous 0..K-1")
     started = time.monotonic()
     completed, predictions, attempted = [], [], []
-    with tempfile.TemporaryDirectory(prefix="cards-search-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="cards-search-", dir=private_tmp(temp_root)) as temporary:
         root = Path(temporary)
         # Run outside this package: select.py must not shadow the stdlib select module.
         (root / "worker.py").write_bytes(RUNTIME.read_bytes())
@@ -139,7 +140,7 @@ def select_reference(x_train, y_train, task_type, *, budget_seconds=480, per_fit
                                 "--data", str(root / "train.npz"), "--config", str(root / "config.json"),
                                 "--out", str(root / "oof.npz"), "--task-type", task_type, "--seed", str(seed)],
                                check=True, capture_output=True, timeout=min(remaining, per_fit_timeout),
-                               env=subprocess_env())
+                               env=subprocess_env(root))
                 with np.load(root / "oof.npz", allow_pickle=False) as output:
                     estimated_bytes = int(output["estimated_bytes"])
                     if estimated_bytes > size_limit_bytes:
@@ -215,7 +216,7 @@ def evaluate_spec(spec, bundle, test_inputs, y_test, baseline_predictions, base_
         ref_predictions.clear()
         try:
             for seed in SEEDS:
-                with tempfile.TemporaryDirectory(prefix="cards-reference-fit-") as temporary:
+                with tempfile.TemporaryDirectory(prefix="cards-reference-fit-", dir=private_tmp(directory)) as temporary:
                     predictions, ids, seconds, size = run_cli(project, bundle, test_inputs, Path(temporary), seed)
                 if not np.array_equal(expected_ids, ids):
                     raise ValueError("reference IDs disagree with test inputs")
@@ -270,8 +271,9 @@ def evaluate_spec(spec, bundle, test_inputs, y_test, baseline_predictions, base_
 def run_reference(x_train, y_train, x_test, y_test, task_type, *, budget_seconds=480,
                   output_dir=None, baseline_predictions=None, seed=20261114, **search_options):
     """Array API for legacy cards. Only training arrays are used to choose the spec."""
-    spec = select_reference(x_train, y_train, task_type, budget_seconds=budget_seconds, seed=seed, **search_options)
-    with tempfile.TemporaryDirectory(prefix="cards-array-reference-") as temporary:
+    spec = select_reference(x_train, y_train, task_type, budget_seconds=budget_seconds, seed=seed,
+                            temp_root=output_dir, **search_options)
+    with tempfile.TemporaryDirectory(prefix="cards-array-reference-", dir=private_tmp(output_dir)) as temporary:
         root = Path(temporary)
         bundle = root / "bundle"
         bundle.mkdir()
@@ -294,7 +296,7 @@ def reference(card_dir, controller_dir, *, budget_seconds=480, **search_options)
     manifest = read_json(card / "manifest.json")
     with np.load(card / "bundle/train.npz", allow_pickle=False) as data:
         spec = select_reference(data["x"], data["y"], manifest["task_type"],
-                                budget_seconds=budget_seconds, **search_options)
+                                budget_seconds=budget_seconds, temp_root=controller, **search_options)
     # Test material is first opened after selection has completed.
     with np.load(card / "test_labels.npz", allow_pickle=False) as data:
         y, ids = data["y"], data["ids"]

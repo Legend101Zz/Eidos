@@ -121,6 +121,21 @@ def _draw(groups, size, rng, *, max_null=None, max_synthetic=None, allow_shortfa
             [g for i, g in enumerate(groups) if i not in selected])
 
 
+def _round_retrieval_dates(value):
+    if isinstance(value, dict):
+        if "retrieved_utc" in value:
+            date = str(value["retrieved_utc"])[:10]
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+                value["retrieved_utc"] = date
+            else:
+                del value["retrieved_utc"]
+        for item in value.values():
+            _round_retrieval_dates(item)
+    elif isinstance(value, list):
+        for item in value:
+            _round_retrieval_dates(item)
+
+
 def build_pool(pool_id, cards, pool_root):
     root = Path(pool_root)
     if root.exists() and any(root.iterdir()):
@@ -150,8 +165,8 @@ def build_pool(pool_id, cards, pool_root):
     metadata = []
     for card, controller, manifest in prepared:
         card_id = manifest["id"]
-        shutil.copytree(card, root / "seal" / card_id)
-        shutil.copytree(controller, root / "controller" / card_id)
+        shutil.copytree(card, root / "seal" / card_id, copy_function=shutil.copyfile)
+        shutil.copytree(controller, root / "controller" / card_id, copy_function=shutil.copyfile)
         task = read_json(card / "bundle/task.json")
         reference = read_json(controller / "reference.json")
         metadata.append(dict(card_id=card_id, task_type=manifest["task_type"], metric=manifest["metric"],
@@ -160,6 +175,11 @@ def build_pool(pool_id, cards, pool_root):
                              min_reference_gain=manifest["min_reference_gain"],
                              n_train=manifest["splits"]["train"]["n"],
                              n_features=task["inputs"]["train"]["shape"][1], null_card=reference["null_card"]))
+    if pool_id in {"D", "SMOKE"}:
+        for path in (root / "controller").glob("*/provenance.json"):
+            provenance = read_json(path)
+            _round_retrieval_dates(provenance)
+            write_json(path, provenance)
     files = inventory(root / "seal")
     salt = os.urandom(32)
     digest = sha(salt + json.dumps(files, sort_keys=True, separators=(",", ":")).encode())
@@ -167,6 +187,10 @@ def build_pool(pool_id, cards, pool_root):
     result = dict(pool_id=pool_id, card_ids=[c["card_id"] for c in metadata], cards=metadata, commitment=digest)
     write_json(root / "pool.json", result)
     verify(root)
+    if pool_id in {"D", "SMOKE"}:
+        for path in root.rglob("*"):
+            os.utime(path, (0, 0))
+        os.utime(root, (0, 0))
     return dict(**result, excluded_unqualified=excluded)
 
 

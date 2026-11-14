@@ -28,7 +28,9 @@ The bar is an absolute accuracy gain of 0.02, or an absolute RMSE reduction of
 0.05 times the seed-11 baseline test RMSE. Cheap qualification runs before reference
 search: file hashes, exact baseline reproduction, planted-null baseline seeds
 23/37, leakage, split disjointness, runtime and checkpoint size. Exact (features,
-target) duplicates are removed before splitting. Identical features with different
+target) duplicates are removed before splitting. Regression repeats deduplication
+on the float32 standardized target, refitting TRAIN statistics and splits after
+each removal until packaging and the cross-split check agree. Identical features with different
 targets are allowed across splits and counted as `conflicting_feature_rows`.
 IDs and identical (features, target) rows must remain disjoint.
 
@@ -63,7 +65,8 @@ cards: [{id, task_type, metric, bar_rule}]}`. They contain no source hints, row 
 feature sizes, numerical bars, null flags or timings. D may publish full metadata.
 
 Public state, log and stdout report aggregate counts only: processed, accepted,
-qualified, rejected by reason, pool sizes and shortfall. Publication occurs at
+qualified, rejected by reason, pool sizes, shortfall and `h_candidate_margin`.
+The margin is `accepted - |D|`, a count; it does not change assembly or refuse small builds. Publication occurs at
 completion; incremental candidate-level changes would reveal the ordered walk.
 Full builds exhaust the catalog rather than stopping at a revealing prefix.
 Resumable detailed state and elapsed time stay private. Public caches containing
@@ -83,25 +86,54 @@ without task/size balance optimization. D/E then use the public seed on the rema
 slots rather than source-name ranks. The unpublished source-to-slot permutation
 prevents replay of the public RNG against catalog names.
 Shortfall capacity follows D, E1, H, E2, E3 priority. Consequently D/E membership
-can change with the private seed. For the 77-entry catalog, publishing eight D
-sources leaves 69 source names for twelve H slots; qualification outcomes and E
-identities are not published. Builds on smaller catalogs cannot promise that margin.
+can change with the private seed. A reader can recompute stage two from public
+source tables: the H candidate margin is therefore `accepted - |D|`, not catalog
+size minus D. Family siblings of D members are also excluded from H, since whole
+families stay together; the published margin does not subtract those siblings.
+Qualification outcomes and E identities remain unpublished. Check the actual
+margin before relying on a large anonymity set; small builds cannot promise one.
 
 Literal byte equality of *all* public artifacts across different private seeds is
 impossible alongside private-seed IDs, commitments to different sealed bytes, and
 H-first membership: E manifests must change as well as D. The enforced boundary is
 counts-only progress and opaque, minimal E manifests, with no per-source outcome
 or private H/reserve ID. Tests compare counts across two fabricated builds and try
-to eliminate sources using the entire public artifact set plus the catalog. They
-cannot narrow the candidates beyond catalog minus D. This does not claim that
+to eliminate sources using the entire public artifact set plus the catalog. Public stage-two recomputation
+can narrow the candidate set to accepted minus D (and exclude D family siblings).
+The probe-H regression test checks that replay against public E identifiers
+recovers no more E identities than chance. This does not claim that
 public task types, prior dataset knowledge or observations across many cooperating
 builds convey zero statistical information.
 
 The threat model is a cooperating session on one machine. A tool hook guards the
-private root; filesystem permissions add protection, but the boundary is not
-cryptographic access control against a hostile local user. Identifying a small
+private root. Mode 0700 separates different users and adds nothing against another
+session of the same user. This boundary is not cryptographic access control
+against a hostile local user. Identifying a small
 public table from its feature values can still expose its test complement. Secret
 seeds and random IDs do not solve that residual dataset-identification risk.
+
+Build temporary files are staging too: the driver creates `<private>/tmp` with
+mode 0700 and wipes it at start and on resume, after checking for live previous
+workers. Each worker has its own random subdirectory there. Workers override the
+caller’s TMPDIR, all explicit temporary-directory calls use that private location,
+and CV and candidate train/infer subprocesses receive it. Normal completion and
+`_stop` remove the worker’s directory; hard driver kills leave staging private
+until a safe resume cleans it. Standalone packaging/reference APIs use scratch
+beneath their output roots (or private local scratch for an array-only search).
+
+The process list still shows build options, worker phase and anonymous temporary
+paths in CV/candidate commands. Worker requests and response paths travel on stdin,
+so worker arguments no longer expose `jobs/<catalog index>/<action>.request.json`.
+A same-user process can still inspect environments and open files; the cooperating
+session boundary remains necessary. D copies use no preserved source mtimes, every
+D pool file and its manifest receive a fixed epoch mtime, and D provenance retains
+retrieval dates only to the day. This removes the stored per-card build schedule;
+filesystem creation/change times and live write observation still reveal publication
+activity, and this is not protection against active same-user filesystem monitoring.
+
+Workers own separate process groups. Private state records their PIDs; resume
+refuses while a recorded group remains alive, before wiping scratch or staging.
+After a hard driver kill, allow orphan workers to finish before resuming.
 
 ## Two-stage selection and rebuilding
 

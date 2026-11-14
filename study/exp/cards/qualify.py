@@ -8,7 +8,18 @@ from pathlib import Path
 import numpy as np
 from sklearn.metrics import roc_auc_score
 
-from .common import CARD_FILES, MODEL_FILES, SEEDS, gain, read_json, run_cli, score, sha, write_json
+from .common import (
+    CARD_FILES,
+    MODEL_FILES,
+    SEEDS,
+    gain,
+    private_tmp,
+    read_json,
+    run_cli,
+    score,
+    sha,
+    write_json,
+)
 
 
 def verify_card(card):
@@ -129,7 +140,7 @@ def qualify(card_dir, controller_dir, *, allow_null=True, cheap_only=False):
                 checks[name] = dict(passed=False, error="reference source digest mismatch")
                 continue
             try:
-                with tempfile.TemporaryDirectory(prefix="cards-qualify-") as temporary:
+                with tempfile.TemporaryDirectory(prefix="cards-qualify-", dir=private_tmp(card.parent.parent)) as temporary:
                     predictions, actual_ids, elapsed, size = run_cli(project, card / "bundle",
                                                                      card / "test_inputs.npz",
                                                                      Path(temporary), seed)

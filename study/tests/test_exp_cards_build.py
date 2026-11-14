@@ -8,6 +8,7 @@ import threading
 import time
 from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -111,6 +112,10 @@ else:
 
 
 def fake_launch(action, request, directory):
+    if action == "preflight":
+        candidate = request["candidate"]
+        source = Path(request["cache"]) / "raw" / candidate["source"] / candidate["key"] / "SOURCE.json"
+        assert source.exists(), "fabricated worker must never fall back to network intake"
     directory.mkdir(parents=True, exist_ok=True)
     request_path = directory / f"{action}.request.json"
     response = directory / f"{action}.response.json"
@@ -148,7 +153,7 @@ def test_parallel_acceptance_rejections_resume_and_h_privacy(tmp_path, capsys, m
     state = read_json(private / "build-state.json")
     assert len(state["outcomes"]["0"]["card_id"]) == 5
     assert state["outcomes"]["1"]["card_id"] != state["outcomes"]["0"]["card_id"]
-    assert state["outcomes"]["2"]["reason"] == "same feature table"
+    assert state["outcomes"]["2"].get("reason") == "same feature table"
     assert len(state["outcomes"]["3"]["card_id"]) == 5
     assert state["outcomes"]["3"]["status"] == "unqualified"
     assignments = read_json(private / "assignments.json")
