@@ -1,5 +1,6 @@
 """Offline provider profile validation."""
 import argparse
+
 from . import check
 
 parser = argparse.ArgumentParser(description=__doc__)

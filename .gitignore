@@ -38,3 +38,6 @@ artifacts/local/
 # Scratch extraction of handoff examples and local wheelhouse
 /scratch/
 .wheelhouse/
+
+# Disposable runner validation and reference search scratch
+/.wp6b2-scratch/

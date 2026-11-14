@@ -4,6 +4,8 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.4.0
 
+- [ADR 0055](docs/decisions/0055-experiment-runner-and-pools.md) serves programme pools through card profiles, adds manifest-based multiclass scoring with the binary default preserved, and introduces the one-command treatment/build runner, paired descriptive output, live budget controls, blind held-out receipts and public legacy references.
+
 - Configure `openai-default` with the verified cheapest listed text model, `gpt-5-nano`, USD 0.05/0.40 per million input/output tokens and a USD 0.60 run limit; cover resolution, pricing and case-sensitive served-model guards offline.
 - [ADR 0054](docs/decisions/0054-autopilot-and-seams.md) adds registered investigator runtimes and byte-preserving prompt packs, validates new-investigation revision ids, and introduces the explicit model-free `autopilot-v2` fixture treatment. Pipeline C accepts evaluation ids and hashed configuration overrides at every stage. Shared labs retry transient health failures without cancelling other blocks' jobs when provider and credential mode are unchanged.
 

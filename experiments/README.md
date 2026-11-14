@@ -160,3 +160,10 @@ Branch protection is an external precondition: require `merge-gate`, disable
 force-push on main and experiment branches, and allow merge commits or fast-forwards
 only. These settings are managed outside this repository. The aggregate
 gate runs on pushes; fork PRs rely on their individual job checks.
+
+The [experiment runner](../study/exp/README.md#one-command-development-runs) turns a
+treatment/build/provider and a pool into independently graded scorecards with
+`python -m study.exp.run`; `--pair` interleaves variants and writes a descriptive
+paired summary. Start with `bash study/exp/smoke.sh`, inspect plans with `--dry-run`,
+and provide budget/quota evidence for live runs. `python -m study.exp.heldout`
+performs a limited blind H consultation and exports only a coarse receipt.

@@ -1,0 +1,987 @@
+{
+  "D02": {
+    "bar": 0.02,
+    "base_score": 0.8583333333333333,
+    "checkpoint_bytes": [
+      3071918,
+      3099373,
+      3075378
+    ],
+    "chosen": [
+      {
+        "config": {
+          "family": "extra",
+          "params": {
+            "max_features": 1.0
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 1.577129542012699,
+        "estimated_bytes": 1071363,
+        "weight": 0.15000000000000002
+      },
+      {
+        "config": {
+          "family": "knn",
+          "params": {
+            "n_neighbors": 7,
+            "weights": "distance"
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.667689208057709,
+        "estimated_bytes": 113158,
+        "weight": 0.07916666666666666
+      },
+      {
+        "config": {
+          "family": "extra",
+          "params": {
+            "max_features": "sqrt"
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.9536342499777675,
+        "estimated_bytes": 1820565,
+        "weight": 0.1575
+      },
+      {
+        "config": {
+          "family": "knn",
+          "params": {
+            "n_neighbors": 3,
+            "weights": "distance"
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.6473605419741943,
+        "estimated_bytes": 113154,
+        "weight": 0.0125
+      },
+      {
+        "config": {
+          "family": "rbf",
+          "params": {
+            "C": 1,
+            "gamma": 0.01
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.8742252910742536,
+        "estimated_bytes": 132141,
+        "weight": 0.0125
+      },
+      {
+        "config": {
+          "family": "extra",
+          "params": {
+            "max_features": 0.5
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 1.2822613749885932,
+        "estimated_bytes": 1285803,
+        "weight": 0.125
+      },
+      {
+        "config": {
+          "family": "rbf",
+          "params": {
+            "C": 10,
+            "gamma": "scale"
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.9336115419864655,
+        "estimated_bytes": 139225,
+        "weight": 0.04
+      },
+      {
+        "config": {
+          "family": "rbf",
+          "params": {
+            "C": 10,
+            "gamma": 0.01
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.9862132080597803,
+        "estimated_bytes": 124319,
+        "weight": 0.42333333333333334
+      }
+    ],
+    "clears_bar_all_seeds": true,
+    "dropped_for_retrain_budget": [],
+    "dropped_for_size": [],
+    "err_base": 0.14166666666666672,
+    "err_ref": 0.008333333333333304,
+    "headroom": 0.13333333333333341,
+    "metric": "accuracy",
+    "n_configurations": 58,
+    "null_card": false,
+    "project": "digits",
+    "ref_gain": 0.13333333333333341,
+    "ref_score": 0.9916666666666667,
+    "ref_scores": [
+      0.9916666666666667,
+      0.9916666666666667,
+      0.9916666666666667
+    ],
+    "reference_py_sha256": "6f1f9d1c112f613fb3cf21e91752a1061312a3c9db507b00b1ce227eb54590ac",
+    "retrain_seconds": [
+      1.528985167038627,
+      1.5197853749850765,
+      1.4732871659798548
+    ],
+    "se_paired": 0.019191326835022147,
+    "search_seconds": 154.53378674993291
+  },
+  "D03": {
+    "bar": 0.01,
+    "base_score": 0.6916666666666667,
+    "checkpoint_bytes": [
+      3071887,
+      3099367,
+      3075374
+    ],
+    "chosen": [
+      {
+        "config": {
+          "family": "extra",
+          "params": {
+            "max_features": 1.0
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 1.6230084580602124,
+        "estimated_bytes": 1071363,
+        "weight": 0.15000000000000002
+      },
+      {
+        "config": {
+          "family": "knn",
+          "params": {
+            "n_neighbors": 7,
+            "weights": "distance"
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.67249233298935,
+        "estimated_bytes": 113158,
+        "weight": 0.07916666666666666
+      },
+      {
+        "config": {
+          "family": "extra",
+          "params": {
+            "max_features": "sqrt"
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.9848924580728635,
+        "estimated_bytes": 1820565,
+        "weight": 0.1575
+      },
+      {
+        "config": {
+          "family": "knn",
+          "params": {
+            "n_neighbors": 3,
+            "weights": "distance"
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.6710918749449775,
+        "estimated_bytes": 113154,
+        "weight": 0.0125
+      },
+      {
+        "config": {
+          "family": "rbf",
+          "params": {
+            "C": 1,
+            "gamma": 0.01
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.9291787500260398,
+        "estimated_bytes": 132141,
+        "weight": 0.0125
+      },
+      {
+        "config": {
+          "family": "extra",
+          "params": {
+            "max_features": 0.5
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 1.2720368329901248,
+        "estimated_bytes": 1285803,
+        "weight": 0.125
+      },
+      {
+        "config": {
+          "family": "rbf",
+          "params": {
+            "C": 10,
+            "gamma": "scale"
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 1.6718460830161348,
+        "estimated_bytes": 139225,
+        "weight": 0.04
+      },
+      {
+        "config": {
+          "family": "rbf",
+          "params": {
+            "C": 10,
+            "gamma": 0.01
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 1.585395541973412,
+        "estimated_bytes": 124319,
+        "weight": 0.42333333333333334
+      }
+    ],
+    "clears_bar_all_seeds": false,
+    "dropped_for_retrain_budget": [],
+    "dropped_for_size": [],
+    "err_base": 0.30833333333333335,
+    "err_ref": 0.9,
+    "headroom": 0.051883437197248264,
+    "metric": "accuracy",
+    "n_configurations": 58,
+    "null_card": true,
+    "project": "digits_shift",
+    "ref_gain": -0.5916666666666667,
+    "ref_score": 0.10000000000000002,
+    "ref_scores": [
+      0.1,
+      0.1,
+      0.1
+    ],
+    "reference_py_sha256": "b58b7a77b5ad01d66095174dc8808749c27fcaea25ca59f4d032e788489ef0bd",
+    "retrain_seconds": [
+      2.0212438330054283,
+      2.1306909159757197,
+      2.296285834047012
+    ],
+    "se_paired": 0.025941718598624132,
+    "search_seconds": 227.3372059169924
+  },
+  "D04": {
+    "bar": 0.5,
+    "base_score": 2.1139446806967794,
+    "checkpoint_bytes": [
+      5314,
+      5314,
+      5314
+    ],
+    "chosen": [
+      {
+        "config": {
+          "family": "linear",
+          "params": {
+            "alpha": 0.01
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.9163966660853475,
+        "estimated_bytes": 1878,
+        "weight": 0.9819999999999999
+      },
+      {
+        "config": {
+          "family": "linear",
+          "params": {
+            "alpha": 0.1
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 1.3967460840940475,
+        "estimated_bytes": 1876,
+        "weight": 0.008
+      },
+      {
+        "config": {
+          "family": "rbf",
+          "params": {
+            "C": 10,
+            "gamma": 0.01
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 1.3540733749978244,
+        "estimated_bytes": 3422,
+        "weight": 0.004
+      },
+      {
+        "config": {
+          "family": "rbf",
+          "params": {
+            "C": 100,
+            "gamma": 0.01
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 1.1873547090217471,
+        "estimated_bytes": 3422,
+        "weight": 0.006
+      }
+    ],
+    "clears_bar_all_seeds": true,
+    "dropped_for_retrain_budget": [],
+    "dropped_for_size": [],
+    "err_base": 0.5272990789302605,
+    "err_ref": 0.012264989329056857,
+    "headroom": 2.0647742762963732,
+    "metric": "rmse",
+    "n_configurations": 58,
+    "null_card": false,
+    "project": "conditioning",
+    "ref_gain": 2.0647742762963732,
+    "ref_score": 0.04917040440040599,
+    "ref_scores": [
+      0.04917040440040599,
+      0.04917040440040599,
+      0.04917040440040599
+    ],
+    "reference_py_sha256": "dc7b61a78150eed48900233742cc99a8a0f03f5f71ca2496baeaee5698f28ab0",
+    "retrain_seconds": [
+      1.1467379999812692,
+      1.1426486249547452,
+      1.3159040830796584
+    ],
+    "se_paired": 0.07354488614728955,
+    "search_seconds": 99.48511675000191
+  },
+  "N01": {
+    "bar": 0.02,
+    "base_score": 0.9122807017543859,
+    "checkpoint_bytes": [
+      4064,
+      4065,
+      4065
+    ],
+    "chosen": [
+      {
+        "config": {
+          "family": "linear",
+          "params": {
+            "C": 1.0
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.7347671249881387,
+        "estimated_bytes": 2920,
+        "weight": 1.0
+      }
+    ],
+    "clears_bar_all_seeds": true,
+    "dropped_for_retrain_budget": [],
+    "dropped_for_size": [],
+    "err_base": 0.08771929824561409,
+    "err_ref": 0.02631578947368418,
+    "headroom": 0.061403508771929904,
+    "metric": "accuracy",
+    "n_configurations": 58,
+    "null_card": false,
+    "project": "breast_cancer",
+    "ref_gain": 0.061403508771929904,
+    "ref_score": 0.9736842105263158,
+    "ref_scores": [
+      0.9736842105263158,
+      0.9736842105263158,
+      0.9736842105263158
+    ],
+    "reference_py_sha256": "b3d73bbc0ccb8fb772138c539fc132e9f979a728733b326ab460749cdb854e15",
+    "retrain_seconds": [
+      0.6559212499996647,
+      0.6350147910416126,
+      0.6244623749516904
+    ],
+    "se_paired": 0.028645041143797158,
+    "search_seconds": 48.29937612498179
+  },
+  "N02": {
+    "bar": 8.900388389192335,
+    "base_score": 178.0077677838467,
+    "checkpoint_bytes": [
+      1541005,
+      1541304,
+      1544232
+    ],
+    "chosen": [
+      {
+        "config": {
+          "family": "linear",
+          "params": {
+            "alpha": 1.0
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.6277225420344621,
+        "estimated_bytes": 2094,
+        "weight": 0.10200000000000001
+      },
+      {
+        "config": {
+          "family": "extra",
+          "params": {
+            "max_features": 1.0
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.927595250075683,
+        "estimated_bytes": 620488,
+        "weight": 0.13881632653061227
+      },
+      {
+        "config": {
+          "family": "mlp",
+          "params": {
+            "alpha": 0.0001,
+            "learning_rate_init": 0.001
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 1.1263363749021664,
+        "estimated_bytes": 206983,
+        "weight": 0.14394897959183672
+      },
+      {
+        "config": {
+          "family": "linear",
+          "params": {
+            "alpha": 0.01
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.6538658329518512,
+        "estimated_bytes": 2101,
+        "weight": 0.068
+      },
+      {
+        "config": {
+          "family": "rbf",
+          "params": {
+            "C": 1,
+            "gamma": 0.01
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.6357450410723686,
+        "estimated_bytes": 15564,
+        "weight": 0.023081632653061228
+      },
+      {
+        "config": {
+          "family": "forest",
+          "params": {
+            "max_features": "sqrt"
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.9589442500146106,
+        "estimated_bytes": 404062,
+        "weight": 0.14
+      },
+      {
+        "config": {
+          "family": "mlp",
+          "params": {
+            "alpha": 0.0001,
+            "learning_rate_init": 0.01
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.8542047500377521,
+        "estimated_bytes": 204611,
+        "weight": 0.07444897959183674
+      },
+      {
+        "config": {
+          "family": "linear",
+          "params": {
+            "alpha": 0.1
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.6315233329078183,
+        "estimated_bytes": 2096,
+        "weight": 0.14469387755102042
+      },
+      {
+        "config": {
+          "family": "extra",
+          "params": {
+            "max_features": 0.5
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.8640767920296639,
+        "estimated_bytes": 599475,
+        "weight": 0.05253061224489797
+      },
+      {
+        "config": {
+          "family": "mlp",
+          "params": {
+            "alpha": 0.01,
+            "learning_rate_init": 0.001
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 1.1173615419538692,
+        "estimated_bytes": 206733,
+        "weight": 0.032285714285714286
+      },
+      {
+        "config": {
+          "family": "linear",
+          "params": {
+            "alpha": 10
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.6206316669704393,
+        "estimated_bytes": 2086,
+        "weight": 0.03469387755102041
+      },
+      {
+        "config": {
+          "family": "mlp",
+          "params": {
+            "alpha": 0.01,
+            "learning_rate_init": 0.01
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.8464143329765648,
+        "estimated_bytes": 204622,
+        "weight": 0.0455
+      }
+    ],
+    "clears_bar_all_seeds": true,
+    "dropped_for_retrain_budget": [],
+    "dropped_for_size": [],
+    "err_base": 2.2940293792571502,
+    "err_ref": 0.6657987867427448,
+    "headroom": 126.34436848612387,
+    "metric": "rmse",
+    "n_configurations": 58,
+    "null_card": false,
+    "project": "diabetes",
+    "ref_gain": 126.34436848612387,
+    "ref_score": 51.663399297722826,
+    "ref_scores": [
+      51.41303362647878,
+      51.70396272035261,
+      51.87320154633709
+    ],
+    "reference_py_sha256": "8253dec7c1deba2a9f96071ac786739312f2f53a3b8d189635d44962c178576f",
+    "retrain_seconds": [
+      0.9318187920143828,
+      0.9447560000699013,
+      0.9576984589220956
+    ],
+    "se_paired": 7.962855595300829,
+    "search_seconds": 42.410086416988634
+  },
+  "N03": {
+    "bar": 0.5521391269423149,
+    "base_score": 11.042782538846298,
+    "checkpoint_bytes": [
+      1044178,
+      1003510,
+      933071
+    ],
+    "chosen": [
+      {
+        "config": {
+          "family": "hist",
+          "params": {
+            "l2_regularization": 10.0,
+            "learning_rate": 0.07,
+            "max_iter": 200,
+            "max_leaf_nodes": 7,
+            "min_samples_leaf": 10
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.8282744579482824,
+        "estimated_bytes": 136886,
+        "weight": 0.019279907084785133
+      },
+      {
+        "config": {
+          "family": "mlp",
+          "params": {
+            "alpha": 0.0001,
+            "learning_rate_init": 0.01
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 1.2089058749843389,
+        "estimated_bytes": 205659,
+        "weight": 0.567079456920792
+      },
+      {
+        "config": {
+          "family": "hist",
+          "params": {
+            "l2_regularization": 10.0,
+            "learning_rate": 0.15,
+            "max_iter": 200,
+            "max_leaf_nodes": 63,
+            "min_samples_leaf": 40
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.8107145000249147,
+        "estimated_bytes": 143902,
+        "weight": 0.01590678824721378
+      },
+      {
+        "config": {
+          "family": "mlp",
+          "params": {
+            "alpha": 0.01,
+            "learning_rate_init": 0.01
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 1.2522603339748457,
+        "estimated_bytes": 206036,
+        "weight": 0.08543239706030403
+      },
+      {
+        "config": {
+          "family": "hist",
+          "params": {
+            "l2_regularization": 10.0,
+            "learning_rate": 0.15,
+            "max_iter": 100,
+            "max_leaf_nodes": 15,
+            "min_samples_leaf": 20
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.9626994580030441,
+        "estimated_bytes": 151753,
+        "weight": 0.015082130413140868
+      },
+      {
+        "config": {
+          "family": "hist",
+          "params": {
+            "l2_regularization": 0.0,
+            "learning_rate": 0.07,
+            "max_iter": 300,
+            "max_leaf_nodes": 63,
+            "min_samples_leaf": 40
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 1.0762976669939235,
+        "estimated_bytes": 252862,
+        "weight": 0.01818181818181818
+      },
+      {
+        "config": {
+          "family": "hist",
+          "params": {
+            "l2_regularization": 0.1,
+            "learning_rate": 0.07,
+            "max_iter": 300,
+            "max_leaf_nodes": 31,
+            "min_samples_leaf": 40
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 1.0656723330030218,
+        "estimated_bytes": 303821,
+        "weight": 0.07473357072660208
+      },
+      {
+        "config": {
+          "family": "hist",
+          "params": {
+            "l2_regularization": 0.1,
+            "learning_rate": 0.15,
+            "max_iter": 200,
+            "max_leaf_nodes": 63,
+            "min_samples_leaf": 40
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.879439749987796,
+        "estimated_bytes": 170536,
+        "weight": 0.017779320125245402
+      },
+      {
+        "config": {
+          "family": "hist",
+          "params": {
+            "l2_regularization": 0.0,
+            "learning_rate": 0.15,
+            "max_iter": 200,
+            "max_leaf_nodes": 7,
+            "min_samples_leaf": 20
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.7691722080344334,
+        "estimated_bytes": 79569,
+        "weight": 0.15204498069416428
+      },
+      {
+        "config": {
+          "family": "hist",
+          "params": {
+            "l2_regularization": 1.0,
+            "learning_rate": 0.15,
+            "max_iter": 100,
+            "max_leaf_nodes": 15,
+            "min_samples_leaf": 10
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.8158030000049621,
+        "estimated_bytes": 154012,
+        "weight": 0.03447963054593436
+      }
+    ],
+    "clears_bar_all_seeds": true,
+    "dropped_for_retrain_budget": [],
+    "dropped_for_size": [],
+    "err_base": 2.239145264658218,
+    "err_ref": 0.2370325200308765,
+    "headroom": 9.873810335635877,
+    "metric": "rmse",
+    "n_configurations": 58,
+    "null_card": false,
+    "project": "friedman1",
+    "ref_gain": 9.873810335635877,
+    "ref_score": 1.1689722032104208,
+    "ref_scores": [
+      1.1821750324756828,
+      1.1673408622728494,
+      1.1574007148827297
+    ],
+    "reference_py_sha256": "72529f2c037d942c5030577f584b1e6acd3a23b329f88131e62d3181aa3f6e37",
+    "retrain_seconds": [
+      1.3287520000012591,
+      1.3800705829635262,
+      1.2591599579900503
+    ],
+    "se_paired": 0.23000335693359375,
+    "search_seconds": 56.866130249924026
+  },
+  "N04": {
+    "bar": 0.02,
+    "base_score": 0.6883333333333334,
+    "checkpoint_bytes": [
+      6200486,
+      6259319,
+      6167736
+    ],
+    "chosen": [
+      {
+        "config": {
+          "family": "extra",
+          "params": {
+            "max_features": 1.0
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 1.5532666670624167,
+        "estimated_bytes": 1861113,
+        "weight": 0.4608960866509433
+      },
+      {
+        "config": {
+          "family": "forest",
+          "params": {
+            "max_features": 1.0
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 3.387634458951652,
+        "estimated_bytes": 843270,
+        "weight": 0.1167554511032772
+      },
+      {
+        "config": {
+          "family": "extra",
+          "params": {
+            "max_features": "sqrt"
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 1.0657757919980213,
+        "estimated_bytes": 2493826,
+        "weight": 0.11233192489436708
+      },
+      {
+        "config": {
+          "family": "mlp",
+          "params": {
+            "alpha": 0.0001,
+            "learning_rate_init": 0.01
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 1.1874055420048535,
+        "estimated_bytes": 245118,
+        "weight": 0.03758659677253572
+      },
+      {
+        "config": {
+          "family": "extra",
+          "params": {
+            "max_features": 0.5
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 1.2650855419924483,
+        "estimated_bytes": 2160189,
+        "weight": 0.06202898550724638
+      },
+      {
+        "config": {
+          "family": "forest",
+          "params": {
+            "max_features": 0.5
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 2.2067411669995636,
+        "estimated_bytes": 928726,
+        "weight": 0.054596872543218516
+      },
+      {
+        "config": {
+          "family": "hist",
+          "params": {
+            "l2_regularization": 10.0,
+            "learning_rate": 0.15,
+            "max_iter": 200,
+            "max_leaf_nodes": 63,
+            "min_samples_leaf": 40
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.9004541659960523,
+        "estimated_bytes": 203866,
+        "weight": 0.009405405405405406
+      },
+      {
+        "config": {
+          "family": "mlp",
+          "params": {
+            "alpha": 0.01,
+            "learning_rate_init": 0.01
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 1.2180406249826774,
+        "estimated_bytes": 245197,
+        "weight": 0.06016288027157593
+      },
+      {
+        "config": {
+          "family": "hist",
+          "params": {
+            "l2_regularization": 0.0,
+            "learning_rate": 0.07,
+            "max_iter": 100,
+            "max_leaf_nodes": 31,
+            "min_samples_leaf": 40
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 1.070447999984026,
+        "estimated_bytes": 237613,
+        "weight": 0.031669275195639675
+      },
+      {
+        "config": {
+          "family": "hist",
+          "params": {
+            "l2_regularization": 10.0,
+            "learning_rate": 0.15,
+            "max_iter": 100,
+            "max_leaf_nodes": 15,
+            "min_samples_leaf": 20
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.8603166670072824,
+        "estimated_bytes": 146066,
+        "weight": 0.02179155103299414
+      },
+      {
+        "config": {
+          "family": "hist",
+          "params": {
+            "l2_regularization": 10.0,
+            "learning_rate": 0.15,
+            "max_iter": 100,
+            "max_leaf_nodes": 15,
+            "min_samples_leaf": 20
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.8545650000451133,
+        "estimated_bytes": 146066,
+        "weight": 0.009405405405405406
+      },
+      {
+        "config": {
+          "family": "hist",
+          "params": {
+            "l2_regularization": 0.1,
+            "learning_rate": 0.15,
+            "max_iter": 300,
+            "max_leaf_nodes": 63,
+            "min_samples_leaf": 20
+          },
+          "size_limit_bytes": 50331648
+        },
+        "cv_seconds": 0.9232954169856384,
+        "estimated_bytes": 254793,
+        "weight": 0.023369565217391305
+      }
+    ],
+    "clears_bar_all_seeds": true,
+    "dropped_for_retrain_budget": [],
+    "dropped_for_size": [],
+    "err_base": 0.31166666666666665,
+    "err_ref": 0.1050000000000001,
+    "headroom": 0.20666666666666655,
+    "metric": "accuracy",
+    "n_configurations": 58,
+    "null_card": false,
+    "project": "classification",
+    "ref_gain": 0.20666666666666655,
+    "ref_score": 0.8949999999999999,
+    "ref_scores": [
+      0.89,
+      0.9016666666666666,
+      0.8933333333333333
+    ],
+    "reference_py_sha256": "0720af93a3bbc1c5e39da869818e73e1a501e260b843396dbd3afebf23018711",
+    "retrain_seconds": [
+      3.1397572910645977,
+      3.230057999957353,
+      3.2172348339809105
+    ],
+    "se_paired": 0.019352220544231618,
+    "search_seconds": 63.62241058296058
+  }
+}
