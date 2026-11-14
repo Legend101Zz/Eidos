@@ -19,6 +19,7 @@ from eidos.domain.turns import CONTROL_TOOLS, EFFECT_TOOLS, FINALIZATION_READ_RO
 from eidos_wire import canonical_json, sha256_bytes
 
 POLICY_ID = "context-policy/3"  # ADR 0023
+POLICY_V4 = "context-policy/4"  # ADR 0049, opt-in
 POLICY_V2 = "context-policy/2"  # ADR 0020
 POLICY_V1 = "context-policy/1"
 FINALIZATION_PROJECTION = "finalization-context/1"
@@ -157,17 +158,36 @@ Use only the remaining original wall/token budget; do not request operator input
     "FINALIZATION_ROUNDS", str(FINALIZATION_READ_ROUNDS))
 
 
+TOOL_GUIDE_V4 = """Propose calls as {tool, args} and control as {action, summary, claim}.
+run_component {component_ref, environment, inputs:{port:artifact}, config, purpose} runs installed components.
+Use eidos.search.recipe-portfolio@1.0.0 on train and validation with config {mode:"portfolio", task_type:"classification"|"regression", include:"auto"}; refine adds typed recipes, rescore uses purpose reproduction, export takes an explicit recipe. Outputs: portfolio_table, promotion_source, oof. Inspect class_contrasts and validation_check in the table.
+prepare_candidate {source:<promotion_source artifact or {"$ref":"call[i].outputs.promotion_source"}>, seeds:[11,23]} must be last. Four expanded calls must fit the turn's limit. Requires baseline validation_predictions. It prepares train/check/compare/reproduction, and never locks. Read pinned candidate; in a later decision record_note {kind:"candidate_lock", text:<prepared lock JSON string>} to choose it. Re-preparation requires an existing source clearing the SE margin.
+author_source {files:{path:text}, include:["eidos_recipes"]} includes the installed pinned library; collisions are refused. Outputs artifact_id for run_component inputs.source.
+Dependent refs name earlier calls only: call[i].outputs.<slot>, call[i].job_id, author_source call[i].artifact_id. Jobs run sequentially; a failure blocks dependents.
+record_note {kind, text, evidence_refs}; assess_candidate {success_rule_id, claim_id or claim:{statement, scope}, baseline:{job_id}, candidate:{job_id}, seeds:[fresh seeds], data_provenance:{split:"held-out"|"selection"}, required_isolation}; export_model {checkpoint_artifact_id, behavior_check_job_id}. describe_component and search_components describe other installed methods.
+Direct jobs with omitted args.purpose default to open-search. Set args.purpose explicitly for reproduction or confirmation; planned launches use the plan's purpose. After exploration stops, challenger-purpose work may only finish an already-admitted pending round using its pending outputs; do not add unrelated jobs.
+For manually authored candidates, record selection_rule before challengers, or include selection in the first candidate_lock text: {"job_id":"<job>","selection":{"metric":"validation_accuracy","split":"validation","direction":"higher_is_better","scorer":"eidos.project.command@1.0.9","data":{"inputs":{"train":"<train>","validation":"<validation>"}},"margin":{"metric":"validation_accuracy_se","multiple":1},"reproduce_within":0.02}}. Use the actual receipt metric, direction, installed scorer and selection data. A job_id-only lock needs a previously recorded rule. The rule is fixed once recorded; scorer/data cannot be chosen after challenger results. Never select on held-out data.
+You can submit a candidate without a held-out verdict: conclude with disposition "candidate", pending independent confirmation. This is a normal, complete result; the independent evaluator decides. An assessment without attested held-out data stays exploratory and can never confirm a claim; results must not exist when a plan is frozen. Success rules come only from the committed charter; you cannot set thresholds. Cite job/artifact ids for numbers and follow operator steering.
+Control: wait_for_jobs while jobs remain, request_input when operator input is required, conclude or stop with a scoped claim and limitations. An improvement claim needs the paired validation interval excluding zero in the right direction; otherwise null or abstain exports baseline. Rescore uses the same data, never independent confirmation; winners_curse_scale_indep is an approximation, never a bound. Only assessor evidence confirms. No new challengers after exploration stops.
+control.claim = {disposition: "candidate"|"confirmed"|"null"|"abstain", claim_id?, point_estimate: {metric, value or baseline+candidate, split?, direction?: "higher_is_better"|"lower_is_better"}, uncertainty?, population?, evidence_refs?: [ids], obligations?: [str]}. A value means improvement: positive is better, also for lower-is-better metrics. Abstaining or reporting a null takes precedence over every other field; "confirmed" without an assessor pass is downgraded.
+"""
+
 def _tool_guide(view: dict[str, Any]) -> str:
-    return FINALIZATION_GUIDE if view.get("finalization") else TOOL_GUIDE
+    if view.get("finalization"):
+        return FINALIZATION_GUIDE
+    if view.get("_v4"):
+        return TOOL_GUIDE_V4
+    return TOOL_GUIDE
 
 
 def _known_tools(view: dict[str, Any]) -> list[str]:
     return ["get_job", "inspect_evidence", "describe_component", "conclude", "stop"] if view.get("finalization") \
-        else sorted(EFFECT_TOOLS) + list(CONTROL_TOOLS)
+        else sorted(t for t in EFFECT_TOOLS if t != "prepare_candidate" or view.get("_v4")) + list(CONTROL_TOOLS)
 
 
 def pack(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int = MODEL_CONTEXT_CHAR_LIMIT,
          policy: str = POLICY_ID) -> dict[str, Any]:
+    view = {**view, "_v4": True} if policy == POLICY_V4 else view
     section, projection = "", None
     if view.get("finalization"):
         section, projection = _finalization_projection(view, min(FINALIZATION_CONTEXT_CHARS, char_limit // 3))
@@ -186,6 +206,8 @@ def pack(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit: int
         packed["text"] += section
         packed["chars"] = len(packed["text"])
         packed["truncations"]["finalization_projection"] = projection
+    if policy == POLICY_V4:
+        packed["policy"] = POLICY_V4
     return packed
 
 
@@ -308,6 +330,7 @@ def _pack_v1(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
         metrics = rec.get("metrics") if isinstance(rec, dict) else None
         lines.append(json.dumps({"id": j["id"], "component": j["component"], "status": j["status"], "purpose": j["purpose"],
                                  "inputs": j.get("inputs"), "config": _clip(j.get("config")), "metrics": metrics,
+                                 **({"next": rec["next"]} if isinstance(rec, dict) and rec.get("next") else {}),
                                  "error": _error_view_v1(j.get("error")),
                                  "outputs": [{"slot": o["slot"], "artifact_id": o["artifact_id"], "role": o["role"],
                                               "schema": o["schema"]} for o in j.get("outputs", [])]}, sort_keys=True))
@@ -395,7 +418,7 @@ PINNED_BUDGETS: dict[str, tuple[int, float, int]] = {
     "inputs": (3000, 0.05, 3000), "task": (2000, 0.04, 2000), "notes": (3000, 0.05, 3000), "budget": (1500, 0.03, 1500),
     "wall": (500, 0.06, 500), "baseline": (1200, 0.03, 1200), "lock": (1500, 0.03, 800), "success_rules": (1500, 0.03, 1500),
     "environments": (6000, 0.10, 900), "failures": (6000, 0.10, 400), "assessment": (2400, 0.04, 700), "search": (2400, 0.04, 600),
-    "batches": (1000, 0.02, 500), "exploration": (1600, 0.04, 600)}
+    "candidate": (4000, 0.08, 4000), "batches": (1000, 0.02, 500), "exploration": (1600, 0.04, 600)}
 HEAD_SECTIONS = ("revision", "model", "charter", "steering", "inputs", "task", "notes", "budget")
 FACT_SECTIONS = ("wall", "baseline", "lock", "exploration", "assessment", "success_rules", "environments", "search", "batches", "failures")
 # Dropped first when the sections together do not fit a small limit; the facts are not on this list.
@@ -629,7 +652,8 @@ def _sweep_facts(view: dict[str, Any]) -> list[str]:
             receipt = j.get("receipt") if isinstance(j.get("receipt"), dict) else {}
             report = [o["artifact_id"] for o in j.get("outputs", []) if o.get("slot") == "report"]
             diagnoses.append(f"- Diagnosis {j['id']} ({j.get('status')}): report {report[0] if report else None}, top hypothesis "
-                       f"{receipt.get('top_hypothesis')}, ranked {json.dumps(receipt.get('hypotheses'))}. Exploratory: test "
+                       f"{receipt.get('top_hypothesis')}" + (f", next {receipt['next']}" if receipt.get("next") else "")
+                       + f", ranked {json.dumps(receipt.get('hypotheses'))}. Exploratory: test "
                        "its prediction (and falsifier) with a sweep before changing architecture.")
             continue
         if not str(j.get("component") or "").startswith(SWEEP_COMPONENT):
@@ -673,7 +697,28 @@ def _wall_fact(view: dict[str, Any]) -> str | None:
             "remainder is reserved for your conclusion and no new compute is admitted. Plan to be done by then.")
 
 
-def _pinned_section(name: str, lines: list[str], char_limit: int, omitted: list[str], *, newest_first: bool = False) -> list[str]:
+def _portfolio_line(job: dict[str, Any], cap: int = 600) -> str:
+    receipt = job.get('receipt') or {}
+    metrics = receipt.get('metrics') or {}
+    fact: dict[str, Any] = dict(id=job.get('id'), status=job.get('status'),
+                outputs={o['slot']: o['artifact_id'] for o in job.get('outputs') or []},
+                metrics={k: metrics[k] for k in ('validation_chosen', 'se_chosen', 'fit_seconds_chosen',
+                                                'coverage_complete', 'round_evaluated') if k in metrics},
+                stop_reason=receipt.get('stop_reason'), basis=receipt.get('basis'))
+    def render() -> str:
+        return '- Portfolio: ' + json.dumps(fact, sort_keys=True, separators=(',', ':'))
+    # Large ids or receipts cannot force an incomplete JSON token into always-on context.
+    while len(render()) > cap:
+        if fact.get('outputs'):
+            fact['outputs'].pop(next(reversed(fact['outputs'])))
+        elif len(fact) > 1:
+            fact.pop(next(reversed(fact)))
+        else:
+            return ''
+    return render()
+
+
+def _pinned_section(name: str, lines: list[str], char_limit: int, omitted: list[str], *, newest_first: bool = False, v4: bool = False) -> list[str]:
     """``lines`` within the section's budget. What did not fit is recorded in ``omitted``."""
     total, share, line_cap = PINNED_BUDGETS[name]
     budget = min(total, int(char_limit * share))
@@ -684,7 +729,19 @@ def _pinned_section(name: str, lines: list[str], char_limit: int, omitted: list[
     for i, line in enumerate(ordered):
         if len(line) > line_cap:
             omitted.append(f"{name}: last {len(line) - line_cap + 1} characters of an entry")
-            line = line[:line_cap - 1] + "\u2026"
+            if v4 and line.startswith("- Prepared lock text ("):
+                continue  # Copyable lock JSON and its label must survive together, in full.
+            if v4 and line.startswith("- Portfolio: "):
+                fact = json.loads(line[len("- Portfolio: "):])
+                while len(line) > line_cap and fact:
+                    fact.pop(next(reversed(fact)))
+                    line = "- Portfolio: " + json.dumps(fact, separators=(",", ":"))
+                if len(line) > line_cap:
+                    line = ""
+                if not line:
+                    continue
+            else:
+                line = line[:line_cap - 1] + "\u2026"
         if used + len(line) + 1 > budget:
             omitted.append(f"{name}: {len(ordered) - i} of {len(ordered)} entries")
             break
@@ -732,6 +789,25 @@ def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
     raw["lock"] = _lock_fact(view)
     raw["assessment"] = _assessment_facts(view)
     raw["search"] = _sweep_facts(view)
+    if view.get("_v4"):
+        from eidos.domain.exploration import policy as exploration_policy
+        from eidos.domain.promotion import suggested_lock
+        prepared = suggested_lock({**view, "policy": exploration_policy(inv.get("investigator"))})
+        can_lock = not view.get('finalization') and (view.get('exploration') or {}).get('phase') != 'finalize'
+        locked = (view.get('exploration') or {}).get('incumbent') or {}
+        if prepared and (not can_lock or locked.get('job_id') == prepared['lock']['job_id']):
+            prepared = None
+        raw["candidate"] = (["- Prepared lock text (record_note text, copy the next line exactly):\n"
+                             + json.dumps(prepared['lock'], sort_keys=True),
+                             "- Prepared candidate evidence (investigator decides the separate lock): "
+                             + json.dumps({k: v for k, v in prepared.items() if k != 'lock'}, sort_keys=True)]
+                            if prepared else ["- Prepared candidate: no new lock offered."])
+        portfolio_facts = [_portfolio_line(job)
+                           for job in view.get("jobs") or [] if str(job.get("component", "")).startswith("eidos.search.recipe-portfolio")]
+        # The steering next fact must survive any number of later portfolios.
+        raw["search"] = ([line for line in raw["search"] if line.startswith("- Diagnosis")]
+                         + list(reversed(portfolio_facts[-2:]))
+                         + [line for line in raw["search"] if not line.startswith("- Diagnosis")])
     raw["batches"] = _batch_facts(view)
     raw["success_rules"] = (["- Charter success rule(s): " + json.dumps(ch.get("success_rules"), sort_keys=True)]
                             if ch and ch.get("success_rules") is not None else [])
@@ -741,7 +817,7 @@ def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
                            if view.get("environments") else [])
     failure_lines, omitted["known_failures"] = _known_failures(view)
     raw["failures"] = failure_lines
-    pinned = {name: _pinned_section(name, lines, char_limit, omitted["sections"], newest_first=name == "steering")
+    pinned = {name: _pinned_section(name, lines, char_limit, omitted["sections"], newest_first=name == "steering", v4=bool(view.get("_v4")))
               for name, lines in raw.items()}
 
     def assemble_head() -> list[str]:
@@ -759,7 +835,7 @@ def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
 
     def assemble_facts() -> list[str]:
         out = ["## Pinned facts (always present; they survive truncation and the job window)"]
-        for name in ("wall", "baseline", "lock", "exploration", "assessment", "success_rules", "environments", "search",
+        for name in ("wall", "baseline", "lock", "candidate", "exploration", "assessment", "success_rules", "environments", "search",
                      "batches"):
             out += pinned.get(name, [])
         if pinned.get("failures"):

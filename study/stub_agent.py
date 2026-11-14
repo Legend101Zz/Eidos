@@ -105,6 +105,9 @@ def stub(run_dir):
     write_json(out / "answer.json", answer)
     dev_command("validate_answer.py", out / "answer.json")
     record = {k: meta[k] for k in ("arm", "card", "run_index", "block_id")}
+    from study.exp.treatment import for_run
+
+    record["treatment"] = for_run(meta).record()
     record.update(
         status="ok",
         incident_reason=None,

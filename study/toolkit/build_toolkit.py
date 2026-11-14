@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -14,13 +15,23 @@ if __package__ in (None, ""):
 from study.common import ROOT, STUDY, write_json
 
 
-def build_toolkit(run_dir):
+def build_toolkit(run_dir, *, treatment=None):
+    from study.exp.treatment import resolve
+
+    treatment = treatment or resolve()
     destination = Path(run_dir) / "toolkit"
+    receipt = Path(run_dir) / "toolkit-treatment.json"
     if (destination / "manifest.json").exists():
+        if not receipt.is_file() or json.loads(receipt.read_text()) != treatment.record():
+            raise ValueError("existing toolkit differs from selected treatment")
         return destination
     destination.mkdir(parents=True, exist_ok=True)
     ignore = shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store")
-    shutil.copytree(ROOT / "components", destination / "components", dirs_exist_ok=True, ignore=ignore)
+    for name, source in treatment.toolkit_plan().items():
+        shutil.copytree(source, destination / "components" / name, dirs_exist_ok=True, ignore=ignore)
+    ancillary = json.loads((STUDY / "exp/toolkit-base.json").read_text())["files"]
+    for name in ancillary:
+        shutil.copyfile(ROOT / "components" / name, destination / "components" / name)
     for name in ("eidos-wire", "eidos-worker-sdk", "eidos-pytorch"):
         shutil.copytree(
             ROOT / "packages" / name,
@@ -37,13 +48,15 @@ def build_toolkit(run_dir):
     shutil.copyfile(ROOT / "src/eidos/__init__.py", support.parent / "__init__.py")
     shutil.copyfile(ROOT / "LICENSE", destination / "support/LICENSE")
     for name in ("run_component.py", "README.md", "COVERAGE.md"):
-        shutil.copyfile(STUDY / "toolkit" / name, destination / name)
+        source = "COVERAGE.pilot4.md" if name == "COVERAGE.md" and not treatment.patch.get("toolkit") else name
+        shutil.copyfile(STUDY / "toolkit" / source, destination / name)
     files = {
         str(p.relative_to(destination)): hashlib.sha256(p.read_bytes()).hexdigest()
         for p in sorted(destination.rglob("*"))
         if p.is_file()
     }
     write_json(destination / "manifest.json", {"format": "pilot-toolkit/1", "sha256": files})
+    write_json(receipt, treatment.record())
     return destination
 
 

@@ -20,7 +20,7 @@ from typing import Any
 
 from eidos.application.handlers.finalization_evidence import model_projection
 from eidos.domain.turns import validate_decision
-from eidos.investigator.context import POLICY_ID, POLICY_V1, POLICY_V2, pack
+from eidos.investigator.context import POLICY_ID, POLICY_V1, POLICY_V2, POLICY_V4, pack
 from eidos.investigator.runtime import DecisionRequest, InvestigatorRuntime
 
 ContextPolicy = Callable[[dict[str, Any], list[dict[str, Any]]], dict[str, Any]]
@@ -44,6 +44,7 @@ def _policy_v2(view: dict, catalog: list[dict]) -> dict:
 
 
 CONTEXT_POLICIES: dict[str, ContextPolicy] = {POLICY_ID: pack, POLICY_V2: _policy_v2, POLICY_V1: _policy_v1,
+                                              POLICY_V4: lambda view, catalog: pack(view, catalog, policy=POLICY_V4),
                                               "context-policy/minimal-1": minimal_policy}
 
 
@@ -80,7 +81,8 @@ def evaluate_turn(client: Any, project: str, turn_id: str, runtime: Investigator
                           conclude_only=bool(rec["turn"]["spec"].get("finalization")))
     result = runtime.decide(req)
     try:
-        proposal = validate_decision(result.proposal, max_calls=rec["turn"]["spec"]["limits"]["max_calls"])
+        proposal = validate_decision(result.proposal, max_calls=rec["turn"]["spec"]["limits"]["max_calls"],
+            allow_prepare_candidate="prepare_candidate" in rec["turn"]["spec"].get("tool_vocabulary", []))
         valid = True
     except Exception as exc:  # an invalid proposal is itself an evaluation outcome
         proposal, valid = {"error": str(exc), "raw": result.proposal}, False

@@ -1,0 +1,27 @@
+{
+  "name": "explicit-export",
+  "author_test": true,
+  "config": {
+    "mode": "export",
+    "spec": {
+      "schema": "recipe-spec/1",
+      "task_type": "classification",
+      "steps": [
+        {
+          "op": "standardize"
+        }
+      ],
+      "model": {
+        "family": "logistic",
+        "params": {}
+      }
+    }
+  },
+  "expect": {
+    "status": "succeeded",
+    "receipt": {
+      "basis": "explicit-export",
+      "exploratory": true
+    }
+  }
+}

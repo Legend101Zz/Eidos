@@ -117,3 +117,14 @@ def test_the_toolkit_lists_and_runs_each_release_with_its_own_module(toolkit, tm
     assert manifest["status"] == "failed"
     message = manifest["error"]["message"]
     assert ("objective.metric is required" in message) == (name == PINNED), message
+
+
+def test_baseline_errors_1_0_0_bundle_is_byte_identical_to_what_shipped():
+    assert hashlib.sha256(bundle_dir(COMPONENTS / "eidos.diagnose.baseline-errors@1.0.0")).hexdigest() == (
+        "82548802d9c50619dd4ce7e0b8418673044f4809fab17272230c8916773a281c")
+
+
+def test_a_fresh_installation_ships_both_baseline_errors_releases():
+    refs = {load_manifest(d / "eidos-component.json").ref for d in builtin_component_dirs()
+            if d.name.startswith("eidos.diagnose.baseline-errors")}
+    assert refs == {"eidos.diagnose.baseline-errors@1.0.0", "eidos.diagnose.baseline-errors@1.1.0"}

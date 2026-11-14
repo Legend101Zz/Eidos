@@ -32,15 +32,27 @@ from study.common import (
     research_python,
     write_json,
 )
-from study.private_card_registry import PRIVATE_CARD_BARS
+from study.private_card_registry import ALL_PRIVATE_CARDS, PROFILES, SEAL_ROOT_ENVS, card_bars, profile_for_card
 from study.run_arm import stop_process_tree, utc_now
 
 
-def plan(seed, cards=None, runs=3, arms=(1, 2, 3, 4)):
+def plan(seed, cards=None, runs=3, arms=(1, 2, 3, 4), *, profile=None):
     arms = tuple(arms)
     if any(type(arm) is not int for arm in arms) or arms not in ((2, 4), (1, 2, 3, 4)):
         raise ValueError("unsupported paired arm set")
-    blocks = [(card, index) for card in (cards if cards is not None else ("D01", "D02", "D12")) for index in range(1, runs + 1)]
+    profile = profile or os.environ.get("EIDOS_CARD_PROFILE")
+    if profile is not None:
+        spec = PROFILES[profile]
+        cards = tuple(cards) if cards is not None else spec.cards
+        if any(card not in spec.cards for card in cards):
+            raise ValueError("card/profile mismatch")
+    cards = tuple(cards) if cards is not None else ("D01", "D02", "D12")
+    for card in cards:
+        if card in ALL_PRIVATE_CARDS:
+            card_bars(card)
+            if profile is not None and profile_for_card(card) != profile:
+                raise ValueError("card/profile mismatch")
+    blocks = [(card, index) for card in cards for index in range(1, runs + 1)]
     random.Random(seed).shuffle(blocks)
     return [
         dict(
@@ -96,13 +108,16 @@ def archive_block(block_dir, reason):
 
 
 def prepare(row, run_dir):
+    from study.exp.treatment import resolve
+
+    treatment = resolve()
     free = int(subprocess.check_output(["df", "-k", "/"], text=True).splitlines()[1].split()[3])
     if free < int(12.5 * 1024 * 1024):  # pilot-2 addendum 2: owner floor 12 GiB (+0.5 margin)
         raise RuntimeError("STOP: less than 12.5 GiB free")
     run_dir.mkdir(parents=True, exist_ok=True)
     dev_command("package_task.py", "--task", row["task"], "--out", run_dir / "task")
     # The common structural interface contains no graders, labels or references.
-    if row["task"] not in PRIVATE_CARD_BARS:
+    if row["task"] not in ALL_PRIVATE_CARDS:
         shutil.copyfile(DEVELOPMENT / "validate_answer.py", run_dir / "task/answer_schema.py")
     if row["arm"] in (2, 3, 4):
         shutil.copyfile(STUDY / "METHOD.md", run_dir / "METHOD.md")
@@ -112,6 +127,7 @@ def prepare(row, run_dir):
         run_dir / "arm.json",
         dict(
             arm=row["arm"],
+            treatment=treatment.record(),
             card=row["task"],
             run_index=row["run"],
             block_id=row["block_id"],
@@ -167,8 +183,11 @@ def run_block(rows, runs_root, stub=False, replace_incident=False, *, eval_audit
     )
     write_json(record_path, block)
     processes, logs = [], []
-    worker_env = dict(os.environ)
-    worker_env.pop("EIDOS_PRIVATE_SEAL_ROOT", None)
+    from study.exp.treatment import resolve
+
+    worker_env = dict(os.environ, EIDOS_STUDY_TREATMENT=resolve().id)
+    for name in SEAL_ROOT_ENVS:
+        worker_env.pop(name, None)
     worker_env.pop("EIDOS_EVAL_AUDIT_IDENTIFIERS", None)
     for name in PROMPT_OVERRIDES:
         worker_env.pop(name, None)
@@ -211,6 +230,7 @@ def run_block(rows, runs_root, stub=False, replace_incident=False, *, eval_audit
                     root / "run_record.json",
                     dict(
                         arm=row["arm"],
+                        treatment=resolve().record(),
                         card=row["task"],
                         run_index=row["run"],
                         block_id=block_id,
@@ -274,6 +294,7 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     planning = sub.add_parser("plan")
     planning.add_argument("--cards", help="comma-separated card IDs")
+    planning.add_argument("--profile", choices=tuple(PROFILES))
     planning.add_argument("--arms", choices=("1,2,3,4", "2,4"), default="1,2,3,4")
     planning.add_argument("--runs", type=int, default=3)
     planning.add_argument("--seed", required=True, type=int)
@@ -294,7 +315,7 @@ def main():
         cards = args.cards.split(",") if args.cards else None
         if args.runs < 1 or (cards and (len(set(cards)) != len(cards) or any(c not in FAMILIES for c in cards))):
             parser.error("invalid cards or runs")
-        design = plan(args.seed, cards, args.runs, tuple(map(int, args.arms.split(","))))
+        design = plan(args.seed, cards, args.runs, tuple(map(int, args.arms.split(","))), profile=args.profile)
         write_json(args.out, design)
         print(f"Planned {len({r['block_id'] for r in design})} randomized paired blocks, {len(design)} assignments.")
         return

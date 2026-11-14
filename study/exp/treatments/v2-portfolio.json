@@ -1,0 +1,12 @@
+{
+  "schema": "eidos-treatment/1",
+  "id": "v2-portfolio",
+  "summary": "Experimental v2 portfolio with corrected diagnosis, selection margin and toolkit parity.",
+  "flags": [
+    "diagnose.steering-fix",
+    "floor.v2-slice",
+    "floor.selection-margin",
+    "toolkit.portfolio"
+  ],
+  "overrides": {}
+}
