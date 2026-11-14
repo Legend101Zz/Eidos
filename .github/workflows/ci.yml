@@ -63,9 +63,7 @@ jobs:
           else
             uv run python -m study.exp.ledger verify --against origin/main
           fi
-          if [[ -n "$EVENT_BEFORE" && ! "$EVENT_BEFORE" =~ ^0+$ ]] && git cat-file -e "$EVENT_BEFORE^{commit}" 2>/dev/null; then
-            uv run python -m study.exp.ledger verify --against "$EVENT_BEFORE"
-          fi
+          uv run python -m study.exp.ledger previous-push --before "$EVENT_BEFORE"
           if [ -f study/exp/flags.py ]; then
             uv run python -m study.exp.flags check
           fi

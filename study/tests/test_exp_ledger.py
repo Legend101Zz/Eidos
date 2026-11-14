@@ -101,7 +101,8 @@ def review(root, path, kind='code', verdict='ACCEPT'):
 
 def close(root, path):
     cli(root, 'decide', path, '--decision', 'revert', '--decision-file', path / 'DECISION.md', '--note', 'no gain')
-    cli(root, 'close', path, '--allow-branch', '--merged-commit', 'none', '--issue', 10)
+    cli(root, 'close', path, '--allow-branch', '--merged-commit', 'none', '--issue',
+        json.loads((path / 'plan.json').read_text())['issue'])
 
 
 def test_empty_and_new_ids(repo):
@@ -252,6 +253,7 @@ def test_chain_tampering(repo, tamper):
 
 def test_against_truncated_chain_and_append(repo):
     path = registered(repo)
+    commit(repo, 'registration before later push')
     cli(repo, 'event', path, '--type', 'note', '--data', '{}')
     commit(repo)
     git(repo, 'tag', 'reference')
@@ -291,8 +293,8 @@ def test_registered_file_edit_and_reference_rehash(repo):
     fields = {k: v for k, v in entry.items() if k not in {'seq', 'prev', 'sha256'}}
     file.write_bytes(b'')
     ledger.append(file, [], fields)
-    cli(repo, 'verify')
-    cli(repo, 'verify', '--against', 'reference', error='registered file violation')
+    cli(repo, 'verify', error='registration ledger prefix')
+    cli(repo, 'verify', '--against', 'reference', error='registration ledger prefix')
 
 
 def test_against_deleted_experiment(repo):
@@ -387,7 +389,7 @@ def test_close_requires_registration_and_decision(repo):
     cli(repo, 'register', path)
     cli(repo, 'close', path, '--allow-branch', '--merged-commit', 'none', '--issue', 10, error='requires a decision')
     cli(repo, 'decide', path, '--decision', 'abandon')
-    cli(repo, 'close', path, '--allow-branch', '--merged-commit', 'not-a-sha', '--issue', 10, error='hex SHA or none')
+    cli(repo, 'close', path, '--allow-branch', '--merged-commit', 'not-a-sha', '--issue', 10, error='requires merged commit none')
     assert not (repo / 'experiments/INDEX.jsonl').read_bytes()
 
 
@@ -745,3 +747,203 @@ def test_close_uses_local_branch_of_named_trunk(repo):
     git(repo, 'checkout', 'main')
     cli(repo, 'close', path, '--merged-commit', 'none', '--issue', 10)
     cli(repo, 'verify')
+
+
+# Second-review regressions: each was run against 84255b0 before its fix.
+def test_n1_review_survives_code_history_rewrite(repo):
+    path = registered(repo)
+    registration = commit(repo, 'registration')
+    (repo / 'code.py').write_text('built')
+    reviewed = commit(repo, 'original code')
+    review(repo, path)
+    # Preserve the public evidence while replacing the reviewed code commit.
+    commit(repo, 'review evidence')
+    git(repo, 'reset', '--soft', registration)
+    commit(repo, 'equivalent rewritten code and review')
+    assert git(repo, 'cat-file', '-t', reviewed) == 'commit'
+    cli(repo, 'verify', '--against', 'origin/main')
+    cli(repo, 'event', path, '--type', 'note', '--data', '{}')
+
+
+@pytest.mark.parametrize('kind', ['incident', 'exposure', 'budget', 'note'])
+def test_n2_event_file_is_metadata(repo, kind):
+    path = registered(repo)
+    cli(repo, 'event', path, '--type', kind, '--data', '{"file":"src/code.py"}')
+    cli(repo, 'verify')
+    cli(repo, 'status')
+
+
+def test_n2_candidate_is_fully_verified_before_append(repo):
+    path = registered(repo)
+    card = repo / 'card.json'
+    card.write_text('{"aggregate":{"duplicate":1,"duplicate":2}}')
+    before = (path / 'ledger.jsonl').read_bytes()
+    cli(repo, 'record', path, '--tier', 'T0', '--scorecard', card, error='duplicate JSON key')
+    assert (path / 'ledger.jsonl').read_bytes() == before
+    cli(repo, 'verify')
+
+
+@pytest.mark.parametrize('name', ['rule', 'vetoes'])
+def test_n4_snapshot_bound_to_registration_rules(repo, name):
+    path = registered(repo)
+    entries = ledger.read_chain(path / 'ledger.jsonl')
+    data = entries[0]['data']
+    data[f'{name}_snapshot']['keep_when'][0]['value'] = -5
+    data[f'{name}_sha256'] = ledger.digest(ledger.canonical(data[f'{name}_snapshot']))
+    rewrite_chain(path, entries)
+    commit(repo, 'forged snapshot with unchanged rule file')
+    cli(repo, 'verify', error=f'{name} snapshot differs from registration commit')
+
+
+def test_n4_registration_ledger_prefix_is_frozen(repo):
+    path = registered(repo)
+    commit(repo, 'registration')
+    entries = ledger.read_chain(path / 'ledger.jsonl')
+    entries[0]['actor'] = 'Rewritten actor'
+    rewrite_chain(path, entries)
+    commit(repo, 'rewrite registration chain')
+    cli(repo, 'verify', error='registration ledger prefix')
+
+
+@pytest.mark.parametrize('forged', [False, True])
+def test_n5_add_remove_before_registration(repo, forged):
+    path = new(repo)
+    fill(path)
+    if forged:
+        cli(repo, 'register', path)
+        raw = (path / 'ledger.jsonl').read_bytes()
+        (path / 'ledger.jsonl').write_bytes(b'')
+    (repo / 'code.py').write_text('built before registration')
+    commit(repo, 'build too early')
+    git(repo, 'rm', 'code.py')
+    commit(repo, 'remove early code')
+    if forged:
+        (path / 'ledger.jsonl').write_bytes(raw)
+        commit(repo, 'forged late registration')
+        cli(repo, 'verify', '--against', 'origin/main', error='code.py')
+    else:
+        cli(repo, 'register', path, error='code.py')
+        assert not (path / 'ledger.jsonl').read_bytes()
+
+
+@pytest.mark.parametrize('command', ['record', 'review', 'decide'])
+@pytest.mark.parametrize('text', ['/Users/person/x', '/Volumes/disk/x', '/home/person/x',
+                                  '/private/tmp/x', r'C:\\private', 'heldout/private',
+                                  'eidos-grading', 'trusted-plane', 'prospective/seals', 'commitment-opening'])
+def test_n6_evidence_hygiene(repo, command, text):
+    path = registered(repo)
+    file = repo / 'evidence.txt'
+    file.write_text(json.dumps({'detail': 'See ' + text}, indent=2))
+    args = {'record': ['--tier', 'T0', '--scorecard', file],
+            'review': ['--kind', 'code', '--verdict', 'ACCEPT', '--commit', 'HEAD', '--file', file],
+            'decide': ['--decision', 'abandon', '--decision-file', file]}[command]
+    before = (path / 'ledger.jsonl').read_bytes()
+    cli(repo, command, path, *args, error='line 2')
+    assert (path / 'ledger.jsonl').read_bytes() == before
+    assert not any((path / folder).exists() for folder in ('results', 'reviews', 'decisions'))
+    cli(repo, command, path, *args, '--allow-paths')
+    entry = ledger.read_chain(path / 'ledger.jsonl')[-1]
+    assert entry['data']['allow_paths'] is True
+    copied = entry['data']['scorecards'][0] if command == 'record' else entry['data']
+    assert (repo / copied['file']).read_bytes() == file.read_bytes()
+    cli(repo, 'verify')
+
+
+@pytest.mark.parametrize('trunk', ['HEAD', 'experiment', 'own-alias'])
+def test_n7_register_rejects_own_tip_as_trunk(repo, trunk):
+    path = new(repo)
+    fill(path)
+    commit(repo, 'unregistered plan')
+    git(repo, 'branch', 'own-alias')
+    cli(repo, 'register', path, '--trunk', trunk, error='trunk')
+    assert not (path / 'ledger.jsonl').read_bytes()
+
+
+@pytest.mark.parametrize('decision,merged,issue,message', [
+    ('keep', 'none', 10, 'keep requires an existing merged commit'),
+    ('keep', 'deadbeef', 10, 'commit'),
+    ('revert', 'HEAD', 10, 'requires merged commit none'),
+    ('abandon', 'HEAD', 10, 'requires merged commit none'),
+    ('abandon', 'none', 999, 'issue must match plan'),
+])
+def test_n10_close_metadata(repo, decision, merged, issue, message):
+    path = registered(repo)
+    if decision == 'keep':
+        result(repo, path)
+        review(repo, path)
+    cli(repo, 'decide', path, '--decision', decision)
+    before = (path / 'ledger.jsonl').read_bytes()
+    cli(repo, 'close', path, '--allow-branch', '--merged-commit', merged, '--issue', issue, error=message)
+    assert (path / 'ledger.jsonl').read_bytes() == before
+    assert not (repo / 'experiments/INDEX.jsonl').read_bytes()
+    cli(repo, 'verify')
+
+
+@pytest.mark.parametrize('before_kind', ['missing', 'diverged', 'ancestor', 'zero', 'empty'])
+@pytest.mark.parametrize('unmerged', [False, True])
+def test_n3_previous_push_history(repo, before_kind, unmerged):
+    path = registered(repo)
+    registration = commit(repo, 'registration')
+    if not unmerged:
+        git(repo, 'update-ref', 'refs/remotes/origin/main', registration)
+    before = {'missing': 'f' * 40, 'ancestor': registration, 'zero': '0' * 40, 'empty': ''}.get(before_kind)
+    if before_kind == 'diverged':
+        git(repo, 'checkout', '-b', 'old-tip')
+        (path / 'old-note').write_text('previous branch tip')
+        before = commit(repo, 'old branch tip')
+        git(repo, 'checkout', 'experiment')
+    error = ('history of a registered, unmerged experiment was rewritten'
+             if unmerged and before_kind in {'missing', 'diverged'} else None)
+    cli(repo, 'previous-push', '--before', before, error=error)
+
+
+def test_n3_previous_push_still_checks_prefix(repo):
+    path = registered(repo)
+    cli(repo, 'event', path, '--type', 'note', '--data', '{}')
+    previous = commit(repo, 'previous push with note')
+    entries = ledger.read_chain(path / 'ledger.jsonl')
+    rewrite_chain(path, entries[:1])
+    commit(repo, 'truncate pushed note')
+    cli(repo, 'previous-push', '--before', previous, error='append-only prefix')
+
+
+def test_n8_history_constraints_documented():
+    text = (ROOT / 'experiments/README.md').read_text().lower()
+    for phrase in ('no squash', 'no rebase', 'no force-push', 'nothing outside `experiments/`',
+                   'external precondition', 'merge-gate'):
+        assert phrase in text
+
+
+@pytest.mark.parametrize('trunk_merge', [False, True])
+def test_n5_pre_registration_merge_policy(repo, trunk_merge):
+    path = new(repo)
+    fill(path)
+    commit(repo, 'plan draft')
+    git(repo, 'checkout', 'main' if trunk_merge else '-b', *([] if trunk_merge else ['side']))
+    (repo / 'experiments/side-note').write_text('side branch record')
+    commit(repo, 'side record')
+    if trunk_merge:
+        git(repo, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
+    git(repo, 'checkout', 'experiment')
+    git(repo, 'merge', '--no-ff', 'main' if trunk_merge else 'side', '-m', 'merge before registration')
+    cli(repo, 'register', path, error=None if trunk_merge else 'only trunk merges')
+    if trunk_merge:
+        commit(repo, 'registration after trunk merge')
+        cli(repo, 'verify', '--against', 'origin/main')
+
+
+def test_n6_allow_paths_preserves_aggregate_paths(repo):
+    path = registered(repo)
+    card = repo / 'card.json'
+    card.write_text(json.dumps({'aggregate': {'source': '/home/person/data'}}))
+    cli(repo, 'record', path, '--tier', 'T0', '--scorecard', card, '--allow-paths')
+    cli(repo, 'verify')
+    assert ledger.read_chain(path / 'ledger.jsonl')[-1]['data']['scorecards'][0]['aggregate'] == {
+        'source': '/home/person/data'}
+
+
+def test_n6_embedded_path_in_note_is_refused_before_append(repo):
+    path = registered(repo)
+    before = (path / 'ledger.jsonl').read_bytes()
+    cli(repo, 'event', path, '--type', 'note', '--data', '{"note":"see /Volumes/disk/local"}', error='absolute')
+    assert (path / 'ledger.jsonl').read_bytes() == before

@@ -106,8 +106,8 @@ def test_ledger_tests_are_in_merge_gate():
 def test_previous_push_is_verified_when_available():
     block = WORKFLOW.read_text().split('      - name: Experiment ledger\n', 1)[1].split('      - run:', 1)[0]
     assert 'EVENT_BEFORE: ${{ github.event.before }}' in block
-    assert 'git cat-file -e "$EVENT_BEFORE^{commit}"' in block
-    assert 'verify --against "$EVENT_BEFORE"' in block
+    assert 'uv run python -m study.exp.ledger previous-push --before "$EVENT_BEFORE"' in block
+    assert 'git cat-file' not in block
     assert '${{' not in block.split('        run: |', 1)[1]
 
 
@@ -115,16 +115,17 @@ def test_gate_uses_python3():
     assert "python3 - <<'PYTHON'" in jobs_and_gate()[1]
 
 
-@pytest.mark.parametrize('before,available,compared', [
-    ('a' * 40, True, True), ('a' * 40, False, False), ('0' * 40, True, False), ('', True, False),
+@pytest.mark.parametrize('before', [
+    'a' * 40, '0' * 40, '', '$(touch should-not-exist)',
 ])
-def test_previous_push_runtime(before, available, compared):
+def test_previous_push_runtime(before):
     block = WORKFLOW.read_text().split('      - name: Experiment ledger\n', 1)[1].split('      - name:', 1)[0]
     script = block.split('        run: |\n', 1)[1]
     script = '\n'.join(line[10:] for line in script.splitlines())
     env = dict(os.environ, GITHUB_REF='refs/heads/task/example', EVENT_BEFORE=before)
-    stubs = 'uv() { printf "%s\\n" "$*"; }\ngit() { return ' + ('0' if available else '1') + '; }\n'
+    stubs = 'uv() { printf "[%s]\\n" "$@"; }\n'
     process = subprocess.run(['bash', '-e', '-c', stubs + script], cwd=ROOT,
                              env=env, text=True, capture_output=True)
     assert process.returncode == 0, process.stderr
-    assert (f'verify --against {before}\n' in process.stdout) == compared
+    assert f'[previous-push]\n[--before]\n[{before}]\n' in process.stdout
+    assert not (ROOT / 'should-not-exist').exists()

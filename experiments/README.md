@@ -94,6 +94,11 @@ python -m study.exp.ledger register experiments/EXP-123-mechanism --trunk origin
 
 Registration refuses unfilled hypotheses, invalid plans/rules and any code changes
 outside this area in the branch or working tree. Commit and push the registration.
+Nothing outside `experiments/` may be touched by any non-merge commit before the
+registration commit, including code committed and then removed, or documentation.
+Before registration, only two-parent trunk merges are allowed: the second parent
+must be an ancestor of the named trunk. Other merges, including octopus merges,
+are refused; merge resolutions must not introduce changes outside this area.
 The base is the merge-base of HEAD and the named trunk (default origin/main), which must exist.
 The three registered files, rule definition and vetoes are frozen; record later findings as events or decisions.
 `verify --against` also checks that the first committed registration preceded code.
@@ -114,7 +119,11 @@ python -m study.exp.ledger status
 
 `record` accepts repeated `--scorecard` arguments. It copies scorecards into `results/<tier>/`, hashes them and copies aggregates.
 Reviews are copied into `reviews/`; all ledger paths are repository-relative.
-Review commits must exist and be HEAD or an ancestor of HEAD. Verification re-hashes copied evidence.
+At append time review commits must exist and be HEAD or an ancestor of HEAD.
+Later verification checks commit existence and re-hashes copied evidence.
+Evidence text is scanned before copying for absolute local paths and restricted
+source names. Redact the source yourself, or explicitly use `--allow-paths` on
+`record`, `review` or `decide`; the entry records that flag and copies verbatim.
 Use `incident`, `exposure`, `budget` or `note` events for other evidence.
 Keep requires registration, a result and ACCEPT reviews; infra needs only code review.
 A later FIX-FIRST or REJECT supersedes an earlier ACCEPT of the same review kind.
@@ -123,6 +132,8 @@ An extension follows the registered policy; it does not rewrite the plan.
 `close` needs a final keep, revert or abandon decision; extend keeps the experiment open.
 It rechecks the latest required reviews for keep and binds the latest decision digest.
 It refuses duplicate closure and records `none` for an unmerged attempt.
+The issue must match the plan. Keep requires an existing merged commit SHA;
+revert and abandon require `--merged-commit none`.
 Close runs only on the trunk’s local branch (`main` by default); the index is appended at merge time only.
 The hidden `--allow-branch` bypass exists solely for disposable test repositories.
 
@@ -130,6 +141,10 @@ After experiment CI and review pass, merge the experiment branch into local `mai
 run `close` there, and commit the chain and index append. Push that commit to a
 `task/merge-…` branch for CI, then fast-forward `main` to the passing commit.
 For reverted/abandoned attempts, merge the public record with the code reverted.
+Merge with a merge commit or fast-forward only: no squash and no rebase of an
+experiment branch after registration. Do not amend its published history.
+No force-push: CI fails if the previous push is missing or is not an ancestor
+while the branch carries a registered experiment directory absent from origin/main.
 Serialize these merges so each index append starts with the preceding main index.
 Each chain and the index use canonical JSON, SHA-256 links and one-based sequence numbers.
 The actor is the configured Git user name; UTC comes from the system clock. Actor and time are self-reported;
@@ -137,9 +152,11 @@ verification checks timestamp syntax/order, not real-world identity or clock acc
 `verify` checks current files and links, including the registered file hashes.
 `--against` checks HEAD and the working tree against the merge-base with REF for the index and chains as byte-for-byte prefixes,
 and preserves the reference experiment's three registered files.
-CI runs pytest ledger tests, verification against origin/main and the available previous push,
+CI runs pytest ledger tests, verification against origin/main and the previous push,
 and per-commit Kernel-Change/Measurement-Change body trailer guards.
-Every guarded non-merge commit needs its own nonempty matching trailer.
-The push merge gate requires every job to pass. Repository branch protection must
-require this check; that setting is managed outside this repository. The aggregate
+Every guarded non-merge commit needs its own nonempty matching trailer in the body,
+separated from the subject by a blank line.
+Branch protection is an external precondition: require `merge-gate`, disable
+force-push on main and experiment branches, and allow merge commits or fast-forwards
+only. These settings are managed outside this repository. The aggregate
 gate runs on pushes; fork PRs rely on their individual job checks.
