@@ -132,11 +132,9 @@ class PrivateSeal:
 
         manifest = self.card(card)
         kind = manifest["task_type"]
-        classes = 2 if kind == "classification" else None
-        if kind == "classification" and set(self.cards) != set(PRIVATE_CARD_BARS):
-            classes = json.loads(self._read(card, "bundle/task.json")).get("nclasses")
-            if type(classes) is not int or classes < 2:
-                raise RuntimeError("private task class count missing or invalid")
+        classes = manifest.get("nclasses", 2) if kind == "classification" else None
+        if kind == "classification" and (type(classes) is not int or classes < 2):
+            raise RuntimeError("private manifest class count invalid")
         try:
             with np.load(io.BytesIO(self._read(card, "test_labels.npz")), allow_pickle=False) as labels:
                 if set(labels.files) != {"y", "ids"}:
@@ -168,6 +166,6 @@ def configured_seal(card=None, *, profile=None):
         spec = PROFILES[selected or "pilot-4"]
         commitment = spec.commitment()
         cards = spec.bars()
-        return PrivateSeal(os.environ[spec.seal_root_env], commitment, cards)
+        return PrivateSeal(spec.seal_root(), commitment, cards)
     except (KeyError, TypeError, ValueError, OSError) as error:
         raise RuntimeError("configured private seal failed verification") from error

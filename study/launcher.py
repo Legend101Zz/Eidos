@@ -38,7 +38,7 @@ from study.run_arm import stop_process_tree, utc_now
 
 def plan(seed, cards=None, runs=3, arms=(1, 2, 3, 4), *, profile=None):
     arms = tuple(arms)
-    if any(type(arm) is not int for arm in arms) or arms not in ((2, 4), (1, 2, 3, 4)):
+    if any(type(arm) is not int for arm in arms) or arms not in ((4,), (2, 4), (1, 2, 3, 4)):
         raise ValueError("unsupported paired arm set")
     profile = profile or os.environ.get("EIDOS_CARD_PROFILE")
     if profile is not None:
@@ -196,6 +196,10 @@ def run_block(rows, runs_root, stub=False, replace_incident=False, *, eval_audit
 
     worker_env = dict(os.environ, EIDOS_STUDY_TREATMENT=resolve().id,
                       EIDOS_STUDY_PROVIDER=resolve().provider.id)
+    from study.private_card_registry import PoolProfile
+    import json
+    worker_env["EIDOS_STUDY_POOL_PROFILES"] = json.dumps([
+        profile.public_manifest() for profile in PROFILES.values() if isinstance(profile, PoolProfile)])
     for name in SEAL_ROOT_ENVS:
         worker_env.pop(name, None)
     worker_env.pop("EIDOS_EVAL_AUDIT_IDENTIFIERS", None)

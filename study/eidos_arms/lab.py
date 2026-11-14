@@ -54,6 +54,9 @@ def environment(profile=None):
 
     from study.private_card_registry import SEAL_ROOT_ENVS
 
+    from study.private_card_registry import PROFILES, PoolProfile
+    env["EIDOS_STUDY_POOL_PROFILES"] = json.dumps([
+        profile.public_manifest() for profile in PROFILES.values() if isinstance(profile, PoolProfile)])
     for key in list(env):
         if key.endswith(('_API_KEY', '_AUTH_TOKEN', '_OAUTH_TOKEN')) or key in SEAL_ROOT_ENVS or key in ('EIDOS_TOKEN', 'EIDOS_API_URL', 'PYTHONPATH', 'EIDOS_EVAL_AUDIT_IDENTIFIERS',
                         'EIDOS_PRIVATE_SEAL_ROOT'):

@@ -133,28 +133,24 @@ class Profiles(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "relative bar"):
                     seal.score(card, io.BytesIO(seal._read(card, "baseline_test.npz")))
 
-    def test_new_profile_class_count_is_required_and_not_assumed_binary(self):
+    def test_manifest_class_count_defaults_to_two_and_supports_multiclass(self):
         bars = fabricated_bars("pilot-5")
         with TemporaryDirectory() as directory:
             root = Path(directory)
             digest = make_seal(root / "seal", bars)
             seal = PrivateSeal(root / "seal", digest, bars)
-            read = seal._read
             card = PROFILES["pilot-5"].cards[0]
             predictions = root / "predictions.npz"
             np.savez(predictions, ids=[20, 10], predictions=[2, 0])
-            for classes in (None, 3):
-                def task_metadata(got_card, name):
-                    if name == "bundle/task.json":
-                        return json.dumps({"nclasses": classes}).encode()
-                    return read(got_card, name)
-
-                with patch.object(seal, "_read", side_effect=task_metadata):
-                    if classes is None:
-                        with self.assertRaisesRegex(RuntimeError, "class count"):
-                            seal.score(card, predictions)
-                    else:
-                        self.assertEqual(seal.score(card, predictions)["candidate"], .5)
+            manifest = seal.card(card)
+            with self.assertRaises(ValueError):
+                seal.score(card, predictions)
+            with patch.object(seal, "card", return_value={**manifest, "nclasses": 3}):
+                self.assertEqual(seal.score(card, predictions)["candidate"], .5)
+            for invalid in (None, 1, True, 2.5):
+                with patch.object(seal, "card", return_value={**manifest, "nclasses": invalid}):
+                    with self.assertRaisesRegex(RuntimeError, "class count"):
+                        seal.score(card, predictions)
 
     def test_all_profile_roots_are_removed_from_lab_workers(self):
         with patch.dict(os.environ, {name: "synthetic-private-root" for name in SEAL_ROOT_ENVS}):
