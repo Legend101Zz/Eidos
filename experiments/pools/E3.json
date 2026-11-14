@@ -1,0 +1,18 @@
+{
+  "cards": [
+    {
+      "bar_rule": "absolute accuracy gain >= 0.02",
+      "id": "R5299",
+      "metric": "accuracy",
+      "task_type": "classification"
+    },
+    {
+      "bar_rule": "absolute accuracy gain >= 0.02",
+      "id": "R6524",
+      "metric": "accuracy",
+      "task_type": "classification"
+    }
+  ],
+  "commitment": "040ed769433e8a03452ee15e10a05c8eaa5b11968cf20fc08b5bed08dc8010bf",
+  "pool": "E3"
+}
