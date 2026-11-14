@@ -2,7 +2,7 @@ name: study-evals
 
 on:
   push:
-    branches: ["task/evals"]
+    branches: [main, "task/**"]
   pull_request:
     paths: ["study/**", ".github/workflows/study-evals.yml"]
 

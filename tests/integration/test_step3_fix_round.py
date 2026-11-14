@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -258,7 +260,7 @@ def test_multi_round_state_preserves_margin_clearing_repreparation_for_lock(scen
 
 @pytest.mark.parametrize('kind', ['classification', 'regression'])
 def test_macro_job_select_export_and_real_evaluator_contract(scene, tmp_path, study_arm4, kind):
-    from study.fresh_check import candidate_command, equal_predictions
+    from study.fresh_check import candidate_command
     from study.grade_block import reproduction_command
 
     inv, acts, client = setup_scene(scene, kind)
@@ -287,4 +289,10 @@ def test_macro_job_select_export_and_real_evaluator_contract(scene, tmp_path, st
     fresh = workspace / 'out'
     command = reproduction_command(candidate['reproduce_command'], candidate['code_path'], inputs, fresh, 11)
     candidate_command(workspace, command, timeout=120)
-    assert equal_predictions(out / candidate['predictions_path'], fresh / 'validation_predictions.npz')
+    comparison = subprocess.run([
+        os.environ['EIDOS_NUMPY_PYTHON'], '-c',
+        'import sys; from study.fresh_check import equal_predictions; '
+        'raise SystemExit(0 if equal_predictions(sys.argv[1], sys.argv[2]) else 1)',
+        str(out / candidate['predictions_path']), str(fresh / 'validation_predictions.npz'),
+    ], cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True, timeout=30)
+    assert comparison.returncode == 0, comparison.stdout + comparison.stderr
