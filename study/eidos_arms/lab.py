@@ -125,7 +125,7 @@ def start(profile=None, credentials=True):
         different = previous.get('provider', DEFAULT) != profile.id
         credential_change = previous.get('credentials', True) != credentials
         if running and (different or credential_change):
-            stop()
+            _stop_confirmed()
             running = False
         if not running:
             # Key exists only in memory and lab-start's stdin, never a file or argv.
@@ -134,15 +134,36 @@ def start(profile=None, credentials=True):
                                               '-a', os.environ['USER'], '-s', profile.keychain_item, '-w'],
                                              text=True, stderr=subprocess.DEVNULL).strip()
                 try:
-                    cli('start', '--credentials-stdin', stdin=profile.credential_env + '=' + key + '\n', timeout=300, profile=profile)
+                    _start_confirmed(profile, profile.credential_env + '=' + key + '\n', credentials=True)
                 finally:
                     key = None
             else:
-                cli('start', timeout=300, profile=profile)
+                _start_confirmed(profile, '', credentials=False)
             marker.write_text(json.dumps({'provider': profile.id, 'started_utc': datetime.now(UTC).isoformat(),
                                           'credentials': credentials}) + '\n')
         ensure_mcp()
     return {'home': str(home()), 'python': python(), 'mcp_url': mcp_url()}
+
+
+def _stop_confirmed():
+    for _ in range(2):
+        result = stop()
+        if (result.get('stopped') is True
+                or 'stopped' not in result and result.get('was_running') is False):
+            return
+    raise RuntimeError('lab stop did not confirm supervisor exit; credentials not changed')
+
+
+def _start_confirmed(profile, stdin, *, credentials):
+    expected = {profile.credential_env: 'stdin'} if credentials else {}
+    for attempt in range(2):
+        result = json.loads(cli('start', '--credentials-stdin', stdin=stdin, timeout=300, profile=profile))
+        if (not result.get('already_running') and result.get('phase') == 'running'
+                and result.get('credentials') == expected):
+            return
+        if attempt == 0:
+            _stop_confirmed()
+    raise RuntimeError('lab start did not confirm requested credentials were applied')
 
 
 def mcp_url():
@@ -191,8 +212,7 @@ def stop():
         if 'lab mcp --transport http' in r.stdout and str(rec['port']) in r.stdout:
             os.kill(rec['pid'], signal.SIGTERM)
         pidfile.unlink()
-    cli('stop', '--running-jobs', 'cancel')
-    return {'stopped': str(home())}
+    return json.loads(cli('stop', '--running-jobs', 'cancel'))
 
 
 if __name__ == '__main__':

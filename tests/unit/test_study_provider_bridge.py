@@ -29,7 +29,7 @@ def test_forward_body_allowlist_audit_and_timeout(tmp_path, wire, path, headers,
     headers = {**headers, 'Content-Type': 'application/json', 'x-not-forwarded': 'private',
                'Cookie': 'private', 'anthropic-beta': 'fixture-beta'}
     if wire == 'anthropic-messages':
-        headers['Authorization'] = 'Bearer must-not-forward'
+        headers['Authorization'] = 'Bearer fixture'
     else:
         headers['x-api-key'] = 'must-not-forward'
 
@@ -97,6 +97,9 @@ def test_invalid_requests_and_expired_deadline(wire, path, headers):
             bridge.request_mapping(wire, method, target, auth, length, upstream)
         assert error.value.status == status
     if wire == 'anthropic-messages':
+        with pytest.raises(bridge.RequestRejected) as error:
+            bridge.request_mapping(wire, 'POST', '/v1/chat/completions', headers, 1, upstream)
+        assert error.value.status == 404
         for missing in ('x-api-key', 'anthropic-version'):
             with pytest.raises(bridge.RequestRejected):
                 bridge.request_mapping(wire, 'POST', path, {**headers, missing: ' '}, 1, upstream)
@@ -112,6 +115,54 @@ def test_invalid_requests_and_expired_deadline(wire, path, headers):
         assert called == []
     finally:
         connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+@pytest.mark.parametrize('auth,key,accepted', [
+    ('Bearer fixture', None, True), (None, 'fixture', True),
+    ('Bearer fixture', 'fixture', True), ('Bearer other', 'fixture', False),
+    (None, None, False), ('Bearer ', None, False), ('Basic fixture', None, False),
+    ('Bearer fixture', ' ', False), (None, ' ', False),
+])
+def test_anthropic_authentication_mapping(auth, key, accepted):
+    headers = {'anthropic-version': '2026-10-21'}
+    if auth is not None:
+        headers['Authorization'] = auth
+    if key is not None:
+        headers['x-api-key'] = key
+    if accepted:
+        _, mapped = bridge.request_mapping('anthropic-messages', 'POST', '/v1/messages', headers, 2,
+                                            'https://example.invalid')
+        assert mapped == {'x-api-key': 'fixture', 'anthropic-version': '2026-10-21',
+                          'Content-Type': 'application/json'}
+        with pytest.raises(bridge.RequestRejected):
+            bridge.request_mapping('anthropic-messages', 'POST', '/v1/messages',
+                                   {**headers, 'anthropic-version': ' '}, 2, 'https://example.invalid')
+    else:
+        with pytest.raises(bridge.RequestRejected) as error:
+            bridge.request_mapping('anthropic-messages', 'POST', '/v1/messages', headers, 2,
+                                   'https://example.invalid')
+        assert error.value.status == 400
+
+
+def test_openai_content_type_is_always_json():
+    assert bridge.request_mapping('openai-chat', 'POST', '/v1/chat/completions',
+        {'Authorization': 'Bearer fixture', 'Content-Type': 'text/plain'}, 2,
+        'https://example.invalid/v1')[1] == {
+            'Authorization': 'Bearer fixture', 'Content-Type': 'application/json'}
+
+
+def test_malformed_content_length_returns_400():
+    server = bridge.make_server('https://example.invalid', time.time() + 5, 1)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with socket.create_connection(('127.0.0.1', server.server_port), timeout=2) as client:
+            client.sendall(b'POST /v1/chat/completions HTTP/1.0\r\nContent-Length: abc\r\n\r\n')
+            assert client.recv(1024).startswith(b'HTTP/1.0 400')
+    finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)

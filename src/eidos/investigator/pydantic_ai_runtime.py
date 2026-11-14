@@ -750,7 +750,10 @@ class PydanticAIRuntime:
         try:
             result = self._decide_text(req, mode) if mode != "tool" else self._decide_tool(req)
         except _ProviderRefusal:
+            self._fallback_outcome("provider-refused")
             usage = self._usage(self._responses)
+            if self._report is not None:
+                usage["structured_output"] = dict(self._report)
             usage["limit_reached"] = "Anthropic stop_reason=refusal; no re-ask"
             usage["provider_refusal"] = True
             return self._runtime_bound(self._responses, usage, int(self.config.get("max_requests_per_decision", 8)),

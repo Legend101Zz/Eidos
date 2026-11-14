@@ -241,6 +241,7 @@ def run_block(rows, runs_root, stub=False, replace_incident=False, *, eval_audit
                     dict(
                         arm=row["arm"],
                         treatment=resolve().record(),
+                        provider=resolve().provider.record(),
                         card=row["task"],
                         run_index=row["run"],
                         block_id=block_id,

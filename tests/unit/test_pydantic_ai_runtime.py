@@ -238,7 +238,7 @@ def test_anthropic_base_url_and_opt_in_auto_choice(monkeypatch):
     from eidos.investigator.pydantic_ai_runtime import build_model
 
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'fixture-key')
-    model = build_model({'model': 'anthropic:claude-haiku-5-5', 'base_url': 'http://127.0.0.1:9',
+    model = build_model({'model': 'anthropic:claude-3-5-haiku-latest', 'base_url': 'http://127.0.0.1:9',
                          'tool_choice': 'auto'})
     try:
         assert str(model.client.base_url) == 'http://127.0.0.1:9'
@@ -254,6 +254,41 @@ def test_anthropic_base_url_and_opt_in_auto_choice(monkeypatch):
             asyncio.run(default.client.close())
     finally:
         asyncio.run(model.client.close())
+
+
+def test_anthropic_auto_setting_changes_outgoing_tool_choice(monkeypatch):
+    import asyncio
+
+    import httpx2 as httpx
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.tools import ToolDefinition
+
+    from eidos.investigator.pydantic_ai_runtime import build_model
+
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'fixture-key')
+    choices = []
+    async def call(setting):
+        cfg = {'model': 'anthropic:claude-3-5-haiku-latest'}
+        if setting:
+            cfg['tool_choice'] = setting
+        model = build_model(cfg)
+        def respond(request):
+            choices.append(json.loads(request.content)['tool_choice'])
+            return httpx.Response(200, json={
+                'id': 'msg_fixture', 'type': 'message', 'role': 'assistant',
+                'model': 'claude-3-5-haiku-latest', 'content': [{'type': 'text', 'text': 'fixture'}],
+                'stop_reason': 'end_turn', 'usage': {'input_tokens': 1, 'output_tokens': 1}})
+        await model.client._client.aclose()
+        model.client._client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+        try:
+            await model.request([ModelRequest(parts=[UserPromptPart('hi')])], {'max_tokens': 16},
+                ModelRequestParameters(output_mode='tool', output_tools=[ToolDefinition(name='decision')], allow_text_output=False))
+        finally:
+            await model.client.close()
+    asyncio.run(call(None))
+    asyncio.run(call('auto'))
+    assert choices == [{'type': 'any'}, {'type': 'auto'}]
 
 
 def test_anthropic_refusal_after_read_preserves_all_usage():

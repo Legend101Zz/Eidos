@@ -153,6 +153,8 @@ def run(run_dir, meta, *, eval_audit_config=None):
     setup_started_at, setup_begin = utc(), time.monotonic()
     profile = treatment.provider
     fixture = treatment.investigator.get("runtime") == "fixture"
+    if fixture and eval_audit_config is not None:
+        raise RuntimeError('required provider audit cannot activate for fixture runtime')
     if profile.id == 'minimax-m3.1-flash' and not fixture:
         lab.start()
     else:

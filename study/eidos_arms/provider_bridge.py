@@ -54,10 +54,15 @@ def request_mapping(wire, method, path, headers, length, upstream):
             raise RequestRejected(400)
         return upstream.rstrip('/') + '/chat/completions', {
             'Authorization': auth, 'Content-Type': 'application/json'}
-    if not all(incoming.get(name, '').strip() for name in ('x-api-key', 'anthropic-version')):
+    key = incoming.get('x-api-key', '').strip()
+    authorization = incoming.get('authorization', '')
+    bearer = authorization[7:].strip() if authorization.startswith('Bearer ') else ''
+    if (not incoming.get('anthropic-version', '').strip() or not (key or bearer)
+            or 'x-api-key' in incoming and 'authorization' in incoming and key != bearer):
         raise RequestRejected(400)
     outgoing = {name: incoming[name] for name in ('x-api-key', 'anthropic-version', 'anthropic-beta')
                 if name in incoming}
+    outgoing['x-api-key'] = key or bearer
     outgoing['Content-Type'] = incoming.get('content-type', 'application/json')
     return upstream.rstrip('/') + '/v1/messages' + ('?' + parsed.query if parsed.query else ''), outgoing
 

@@ -80,8 +80,8 @@ def agent_env(run_dir):
             "VECLIB_MAXIMUM_THREADS": "1",
             "PYTHONNOUSERSITE": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
-            "ANTHROPIC_BASE_URL": profile.cli_settings()["anthropic_base_url"],
-            "EIDOS_STUDY_PROVIDER": profile.id,
+            "ANTHROPIC_BASE_URL": profile.data.get("arm2", {}).get(
+                "anthropic_base_url", "https://api.minimax.io/anthropic"),
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
             "DISABLE_AUTOUPDATER": "1",
         }
