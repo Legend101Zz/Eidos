@@ -138,10 +138,130 @@ blocks retry once by default, preserving launcher/grader incident archives. All
 labs are stopped in `finally`, unless `--keep-lab-running` is explicit. Exit 0
 means all requested blocks were graded and none remains an incident; it does not
 mean the treatment improved a task. `manifest.json`, `run.log`, per-block logs,
-`scorecard.json` and `scorecard.md` carry the evidence. Pair mode writes
+`usage.json`, and `arm<N>/scorecard.{json,md}` carry the evidence. Pair mode puts
+each variant's scorecards below its variant label. Only single-arm runs also write
+`scorecard.{json,md}` at the variant root for compatibility. The manifest lists
+every scorecard path and its arm. Arm 2 receipts also bind the verified build
+commit before grading. Pair mode writes `arm<N>/paired.md` and a combined
 `paired.md` using compare's descriptive statistics, with no keep/reject decision.
 The current `compare(aa=True)` requires identical treatments/builds, so the small
 runner adapter calls its `paired_stats` helper directly for different variants.
+
+`--tier T`, `--pool-role ROLE`, `--look initial|extension` and `--mode MODE`
+stamp every scorecard row and are recorded in the manifest. For evaluation
+rotations use `--pool E1 --pool-role evaluation_rotation`: the scorecard header
+retains the actual manifest id E1, while row selectors see evaluation_rotation.
+Omitted tags preserve the builder's existing behavior. Use a separate runner
+invocation for each declared tier/look, with its exact cards and replicate count.
+
+Accounting writes `eidos-exp-usage/1` JSON with `runs`, `usd`,
+`quota_weekly_percent`, `time_seconds`, and `per_variant`. Runs count executed
+attempts across all variants and arms, including archived incident retries;
+model-free attempts count too and cost zero. Wall time sums attempt `wall_s`,
+rather than elapsed controller time. Costs use billing receipts or known profile
+token prices; any unknown cost makes that variant and the total USD null. Missing
+wall receipts retain null time. MiniMax quota is the before/after decrease in
+weekly remaining fraction times 100 (percentage points), or null without both
+readings. Per-variant keys are the manifest's variant labels. Held-out usage
+stays beside its private spend detail; the run manifest records its relative path.
+
+## Registered run-to-decision recipe
+
+These are operator commands; live tiers require an approved budget and provider.
+Start from a clean experiment branch before making code changes. Choose an
+unused issue number (123 below), fill all hypothesis sections, and declare the
+exact tier cards, providers, replicates, budgets and stop rules before registering:
+
+```sh
+python -m study.exp.ledger new --title 'Portfolio behavior' --slug portfolio --kind performance --issue 123
+export EXP=experiments/EXP-123-portfolio
+"$EDITOR" "$EXP/HYPOTHESIS.md" "$EXP/plan.json" "$EXP/rule.json"
+python -m study.exp.ledger register "$EXP" --trunk origin/main
+git add "$EXP"
+git commit -m 'Register EXP-123 portfolio comparison'
+```
+
+For this example, choose R-behav version 1, no extension, incumbent `pilot4-v1`
+and candidate `v2-portfolio`. Declare T2 as the first four cards in E1 manifest
+order with one replicate, T3 as all eight E1 cards with two replicates, both with
+pool role `evaluation_rotation` and provider `openai-default`. Publish the
+registration through the programme workflow before implementation. After the
+candidate is committed and the controller is clean, set `B0_REF` to the frozen
+incumbent commit and run each tier. Set `RUNS` to a fresh directory below the
+approved runs root, and `BUDGET` to the operator's budget JSON:
+
+```sh
+export RUNS='/Volumes/Mrigesh SSD/eidos-v1/improvement/runs/EXP-123'
+export B0_REF='<full incumbent commit>'
+export BUDGET='<budget.json>'
+python -m study.exp.run --pair "pilot4-v1@$B0_REF" 'v2-portfolio@HEAD' \
+  --pool E1 --card-limit 4 --replicates 1 --arms 4 --provider openai-default \
+  --tier T2 --pool-role evaluation_rotation --look initial --mode live \
+  --budget "$BUDGET" --out "$RUNS/T2"
+python -m study.exp.run --pair "pilot4-v1@$B0_REF" 'v2-portfolio@HEAD' \
+  --pool E1 --replicates 2 --arms 4 --provider openai-default \
+  --tier T3 --pool-role evaluation_rotation --look initial --mode live \
+  --budget "$BUDGET" --out "$RUNS/T3"
+```
+
+Combine accounting across the supplied tiers, mapping manifest labels to compare's
+recognized incumbent/candidate keys. This preserves null costs/quota and leaves
+each original usage file intact:
+
+```sh
+python - <<'PY'
+import json, os
+from pathlib import Path
+root = Path(os.environ['RUNS'])
+batches = [json.loads((root / tier / 'usage.json').read_text()) for tier in ('T2', 'T3')]
+def total(values):
+    values = list(values)
+    return None if any(v is None for v in values) else sum(values)
+usage = {'schema': 'eidos-exp-usage/1', 'per_variant': {}}
+for key in ('runs', 'usd', 'quota_weekly_percent', 'time_seconds'):
+    usage[key] = total(batch[key] for batch in batches)
+for index, side in enumerate(('incumbent', 'candidate')):
+    entries = []
+    for tier, batch in zip(('T2', 'T3'), batches):
+        manifest = json.loads((root / tier / 'manifest.json').read_text())
+        entries.append(batch['per_variant'][manifest['variants'][index]['label']])
+    usage['per_variant'][side] = {key: total(e[key] for e in entries) for key in ('runs', 'usd')}
+(root / 'usage.json').write_text(json.dumps(usage, indent=2) + '\n')
+PY
+```
+
+Record both scorecards for each tier and obtain the independent reviews. Here
+`CODE_REVIEW.md` and `RESULT_REVIEW.md` are actual review files, and
+`attest.json` contains checks backed by evidence, bound to `experiment: EXP-123`
+and the full candidate `commit`, with `checks` and optional `tier_checks`.
+Then compare the ordered tier lists against the effective registered rule:
+
+```sh
+python -m study.exp.ledger record "$EXP" --tier T2 \
+  --scorecard "$RUNS"/T2/v1-*/arm4/scorecard.json --scorecard "$RUNS"/T2/v2-*/arm4/scorecard.json
+python -m study.exp.ledger record "$EXP" --tier T3 \
+  --scorecard "$RUNS"/T3/v1-*/arm4/scorecard.json --scorecard "$RUNS"/T3/v2-*/arm4/scorecard.json
+python -m study.exp.ledger review "$EXP" --kind code --verdict ACCEPT --commit "$(git rev-parse HEAD)" --file CODE_REVIEW.md
+python -m study.exp.ledger review "$EXP" --kind result --verdict ACCEPT --commit "$(git rev-parse HEAD)" --file RESULT_REVIEW.md
+python -m study.exp.ledger rule "$EXP" > "$RUNS/effective-rule.json"
+python -m study.exp.compare \
+  --incumbent "$RUNS"/T2/v1-*/arm4/scorecard.json --candidate "$RUNS"/T2/v2-*/arm4/scorecard.json \
+  --incumbent "$RUNS"/T3/v1-*/arm4/scorecard.json --candidate "$RUNS"/T3/v2-*/arm4/scorecard.json \
+  --rule "$RUNS/effective-rule.json" --experiment "$EXP" --usage "$RUNS/usage.json" \
+  --attest attest.json --tier T3 --out "$RUNS/decision.json"
+```
+
+Reviews must report their actual verdict; the ACCEPT commands apply after acceptance.
+Unknown evidence can still yield incomplete, and evidence-backed vetoes can revert.
+Only a registered experiment can keep. For a single tier, pass that tier's usage
+file directly; runner label keys are accepted but do not supply compare's cost-ratio
+override, so map them to incumbent/candidate when that evidence is needed.
+The final compare API requires usage run counts to equal the supplied final rows.
+It currently refuses honest accounting containing extra retry attempts or arms
+omitted from the comparison. Preserve the accounting and resolve that API limit
+before a decision; never drop charged attempts to force acceptance.
+An extension needs a frozen `tiers[].extension` declaration and a separate run
+with `--look extension`, using replicate labels starting again at 1.
 
 ## Pools and references
 

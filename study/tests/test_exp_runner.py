@@ -15,7 +15,7 @@ import pytest
 
 from study.common import ROOT, read_json, write_json
 from study.exp import heldout, run
-from study.private_card_registry import PROFILES, CardProfile, PoolProfile, load_pool_manifest, load_pools
+from study.private_card_registry import PROFILES, CardProfile, load_pool_manifest, load_pools
 from study.tests.test_private_seal import make_seal
 
 
@@ -199,9 +199,11 @@ def fabricated_pool(root):
 
 
 @pytest.mark.parametrize('pool', [False, True])
-def test_stub_two_card_cli_end_to_end(tmp_path, monkeypatch, pool):
+@pytest.mark.parametrize('arms', ['2,4', '4'])
+def test_stub_two_card_cli_end_to_end(tmp_path, monkeypatch, pool, arms):
     monkeypatch.setenv('EIDOS_EXP_TEST_ROOT', str(tmp_path))
-    argv = ['--treatment', 'stub', '--out', str(tmp_path / 'out'), '--arms', '2,4']
+    argv = ['--treatment', 'stub', '--out', str(tmp_path / 'out'), '--arms', arms,
+            '--tier', 'T2', '--pool-role', 'evaluation_rotation', '--look', 'extension', '--mode', 'live']
     if pool:
         source = fabricated_pool(tmp_path)
         monkeypatch.setenv('EIDOS_IMP_PRIVATE_ROOT', str(tmp_path / 'private'))
@@ -215,23 +217,45 @@ def test_stub_two_card_cli_end_to_end(tmp_path, monkeypatch, pool):
     process = subprocess.run([sys.executable, '-m', 'study.exp.run', *argv], cwd=ROOT,
                              capture_output=True, text=True, timeout=240)
     assert process.returncode == 0, process.stdout + process.stderr + (tmp_path / 'out/run.log').read_text()
-    score = read_json(tmp_path / 'out/scorecard.json')
-    assert score['aggregate']['vrg'] == 0
-    assert score['aggregate']['false_claims'] == 0
-    assert score['aggregate']['tokens']['total'] == 0
-    assert all(row['grade_status'] == 'valid' for row in score['individual'])
-    assert len(score['individual']) == 4
-    assert str(tmp_path) not in json.dumps(score)
+    for arm in map(int, arms.split(',')):
+        score = read_json(tmp_path / f'out/arm{arm}/scorecard.json')
+        assert (tmp_path / f'out/arm{arm}/scorecard.md').is_file()
+        assert score['aggregate']['vrg'] == 0
+        assert score['aggregate']['false_claims'] == 0
+        assert score['aggregate']['tokens']['total'] == 0
+        assert len(score['individual']) == 2
+        assert all(row['grade_status'] == 'valid' and row['arm'] == arm
+                   and row['tier'] == 'T2' and row['pool'] == 'evaluation_rotation'
+                   and row['look'] == 'extension' and row['mode'] == 'live' for row in score['individual'])
+        assert str(tmp_path) not in json.dumps(score)
+    if arms == '4':
+        assert read_json(tmp_path / 'out/scorecard.json') == score
+        assert (tmp_path / 'out/scorecard.md').read_bytes() == (tmp_path / 'out/arm4/scorecard.md').read_bytes()
+    else:
+        assert not (tmp_path / 'out/scorecard.json').exists()
+        assert not (tmp_path / 'out/scorecard.md').exists()
     manifest = read_json(tmp_path / 'out/manifest.json')
     assert manifest['exit_status'] == 0
     assert manifest['labs'][0]['receipt']['test_fixture']
     assert manifest['variants'][0]['treatment']['id'] == 'stub'
+    assert {k: manifest[k] for k in ('tier', 'pool_role', 'look', 'mode')} == dict(
+        tier='T2', pool_role='evaluation_rotation', look='extension', mode='live')
+    assert [entry['arm'] for entry in manifest['scorecards']] == list(map(int, arms.split(',')))
+    for entry in manifest['scorecards']:
+        assert (tmp_path / 'out' / entry['json']).is_file()
+        assert (tmp_path / 'out' / entry['markdown']).is_file()
+    usage = read_json(tmp_path / 'out' / manifest['usage'])
+    assert usage['schema'] == 'eidos-exp-usage/1'
+    assert usage['runs'] == 2 * len(arms.split(',')) and usage['usd'] == 0
+    assert usage['quota_weekly_percent'] is None
+    assert usage['time_seconds'] > 0
+    assert usage['per_variant'] == {manifest['variants'][0]['label']: dict(runs=usage['runs'], usd=0)}
     if pool:
         for path in (tmp_path / 'out/runs').glob('*/arm*/task'):
             assert not (path / 'test_labels.npz').exists()
             assert not (path / 'manifest.json').exists()
         assert not list((tmp_path / 'out/grading').rglob('test_inputs.npz'))
-        assert len(list((tmp_path / 'private/grading').glob('*/**/workspace/test-inference/predictions.npz'))) == 4
+        assert len(list((tmp_path / 'private/grading').glob('*/**/workspace/test-inference/predictions.npz'))) == usage['runs']
 
 
 def fake_scores():
@@ -271,9 +295,9 @@ def test_heldout_receipt_and_exception_do_not_leak(tmp_path, monkeypatch, capsys
 
 def test_pool_model_surfaces_and_environment_markers(tmp_path, monkeypatch):
     """One fabricated roster exercises prompt, charter and arm component selection."""
+    import study.private_card_registry as registry
     from study import common, launcher
     from study.eidos_arms import charters, lab
-    import study.private_card_registry as registry
 
     profiles = {}
     load_pool_manifest(synthetic_manifest(), profiles)
@@ -322,6 +346,13 @@ def test_blind_runner_real_stub_pair(tmp_path, monkeypatch, capsys):
         assert marker not in captured.out
     assert len(list((private.parent / 'receipts').glob('*.json'))) == 1
     assert len(list((private / 'runs').glob('*/pair/paired.md'))) == 1
+    manifest_file = next((private / 'runs').glob('*/pair/manifest.json'))
+    run_manifest = read_json(manifest_file)
+    usage_file = (manifest_file.parent / run_manifest['usage']).resolve()
+    assert usage_file.is_relative_to(private)
+    usage = read_json(usage_file)
+    assert usage['runs'] == 4 and usage['usd'] == 0
+    assert not (private.parent / 'usage.json').exists()
 
 
 def test_smoke_output_cannot_enter_compare(tmp_path, monkeypatch):
@@ -343,7 +374,9 @@ def test_provider_family_caps_combine_all_anthropic_profiles(tmp_path):
 
 def test_multiclass_sealed_manifest_and_prediction_bounds(tmp_path):
     import hashlib
+
     import numpy as np
+
     from study.private_seal import PrivateSeal
 
     seal_root = tmp_path / 'seal'
@@ -388,6 +421,9 @@ def test_accounting_includes_archived_incidents_and_unknown_cost(tmp_path):
     assert len(rows) == 2
     assert {row['usd'] for row in rows} == {.01, None}
     assert all(row['run_id'] == 'mechanical-control' for row in rows)
+    usage = read_json(args.out / 'usage.json')
+    assert usage['runs'] == 2 and usage['usd'] is None
+    assert usage['per_variant'] == {'live-test': dict(runs=2, usd=None)}
 
 
 def test_failed_runner_manifest_matches_exit_status(tmp_path, monkeypatch, preflight):
@@ -467,6 +503,7 @@ def test_novelty_receipt_counts_known_zero_and_preserves_unknown():
 def test_task_class_count_base_goldens(tmp_path, monkeypatch, classes):
     """Hard-coded bdce95a outcomes from fabricated Pilot-5 metadata."""
     import numpy as np
+
     from study.private_seal import PrivateSeal
     bars = {'N09': ('accuracy', .02)}
     seal = PrivateSeal(tmp_path / 'seal', make_seal(tmp_path / 'seal', bars), bars)
@@ -507,6 +544,8 @@ def test_heldout_account_one_aggregate_and_private_detail(tmp_path):
     assert rows[0]['tokens_in'] == 1000 and rows[0]['usd'] == .02
     assert 'R000' not in ledger.read_text() and str(private) not in ledger.read_text()
     assert len((out / 'spend.jsonl').read_text().splitlines()) == 2
+    assert read_json(out / 'usage.json')['runs'] == 2
+    assert not (args.out / 'usage.json').exists()
 
 
 def test_lab_environment_never_exports_roster(monkeypatch):
@@ -787,15 +826,15 @@ def test_termination_handlers_restore_and_raise():
     import signal
     for sig in (signal.SIGTERM, signal.SIGINT):
         previous = signal.getsignal(sig)
-        with pytest.raises(RuntimeError, match='termination requested'):
-            with run.termination_handlers():
-                signal.raise_signal(sig)
+        with pytest.raises(RuntimeError, match='termination requested'), run.termination_handlers():
+            signal.raise_signal(sig)
         assert signal.getsignal(sig) == previous
 
 
 @pytest.mark.parametrize('kind,predictions', [('classification', [1, 1, 1]), ('regression', [.5, .5, .5])])
 def test_legacy_constant_reference_is_unestablished(tmp_path, monkeypatch, kind, predictions):
     import numpy as np
+
     from study.exp.cards import reference_legacy as legacy
     monkeypatch.setattr(legacy, 'dev_command', lambda *a: write_json(tmp_path / 'bundle/task.json', {'project': 'test'}))
     data = {'train': (np.zeros((3, 1)), np.array([0, 1, 1]), np.arange(3)),
@@ -823,6 +862,7 @@ def test_legacy_constant_reference_is_unestablished(tmp_path, monkeypatch, kind,
 @pytest.mark.parametrize('classes', [None, 1, True, 2.5])
 def test_manifest_class_count_validation(tmp_path, monkeypatch, classes):
     import numpy as np
+
     from study.private_seal import PrivateSeal
     bars = {'N09': ('accuracy', .02)}
     seal = PrivateSeal(tmp_path / 'seal', make_seal(tmp_path / 'seal', bars), bars)
@@ -836,6 +876,7 @@ def test_manifest_class_count_validation(tmp_path, monkeypatch, classes):
 
 def test_manifest_and_task_class_counts_must_agree(tmp_path, monkeypatch):
     import numpy as np
+
     from study.private_seal import PrivateSeal
     bars = {'N09': ('accuracy', .02)}
     seal = PrivateSeal(tmp_path / 'seal', make_seal(tmp_path / 'seal', bars), bars)
@@ -950,3 +991,97 @@ def test_heldout_preflight_git_error_does_not_leak(tmp_path, monkeypatch, capfd)
     captured = capfd.readouterr()
     assert captured.out == '' and captured.err == 'CalledProcessError\n'
     assert not (tmp_path / 'consultations.json').exists()
+
+
+@pytest.mark.parametrize('unknown', [False, True])
+def test_usage_all_variants_arms_retries_costs_and_quota(tmp_path, unknown):
+    args, selected, _, ledger = live_budget(tmp_path, 'openai-default')
+    selected.append({**selected[0], 'index': 1, 'label': 'candidate'})
+    roots = [tmp_path / 'incumbent', tmp_path / 'candidate']
+    for index, root in enumerate(roots):
+        for arm in (2, 4):
+            write_json(root / f'runs/N01-r1/arm{arm}/run_record.json',
+                       dict(tokens={'input': 1000000, 'output': 1000000}, wall_s=3))
+        # Both arms of the first attempt were archived by the launcher.
+        for arm in (2, 4):
+            write_json(root / f'runs/incidents/N01-r1-first/arm{arm}/run_record.json',
+                       dict(tokens={} if unknown and index else {'input': 10, 'output': 20},
+                            billed_usd=None if unknown and index else .1, wall_s=2))
+    args.quota_file = tmp_path / 'quota.json'
+    write_json(args.quota_file, dict(weekly_remaining_fraction=.75))
+    budget = dict(live=True, spend_ledger=str(ledger), quota_before=dict(weekly_remaining_fraction=.8))
+    run.account(args, budget, roots, selected, 'paired')
+    usage = read_json(args.out / 'usage.json')
+    assert usage['runs'] == 8 and usage['time_seconds'] == 20
+    assert usage['quota_weekly_percent'] == pytest.approx(5)
+    assert usage['per_variant']['live-test'] == dict(runs=4, usd=pytest.approx(1.1))
+    assert usage['per_variant']['candidate']['runs'] == 4
+    if unknown:
+        assert usage['usd'] is None and usage['per_variant']['candidate']['usd'] is None
+    else:
+        assert usage['usd'] == pytest.approx(2.2)
+        assert usage['per_variant']['candidate']['usd'] == pytest.approx(1.1)
+    assert len(ledger.read_text().splitlines()) == 8
+
+
+@pytest.mark.parametrize('fixture', [False, True])
+def test_usage_model_free_attempts_need_no_spend_ledger(tmp_path, fixture):
+    args = options(tmp_path)
+    selected = run.variants(args)
+    selected[0].update(stub=not fixture, fixture=fixture)
+    root = tmp_path / 'variant'
+    for suffix in ('N01-r1/arm4', 'incidents/N01-r1-first/arm4'):
+        write_json(root / 'runs' / suffix / 'run_record.json', dict(wall_s=2, billed_usd=None))
+    run.account(args, dict(live=False), [root], selected, 'model-free')
+    usage = read_json(args.out / 'usage.json')
+    assert usage == dict(schema='eidos-exp-usage/1', runs=2, usd=0, quota_weekly_percent=None,
+                         time_seconds=4, per_variant={selected[0]['label']: dict(runs=2, usd=0)})
+    assert not (args.out / 'spend.jsonl').exists()
+
+
+def test_heldout_usage_refuses_public_destination(tmp_path):
+    args = options(tmp_path)
+    with pytest.raises(ValueError, match='private root'):
+        run.account(args, dict(live=False), [], [], 'held-out', private_root=tmp_path / 'private', out=tmp_path / 'public')
+    assert not (tmp_path / 'public').exists()
+
+
+@pytest.mark.parametrize('reading', ['before', 'after'])
+def test_usage_without_both_quota_readings_keeps_quota_unknown(tmp_path, reading):
+    args = options(tmp_path)
+    args.quota_file = tmp_path / 'quota.json'
+    budget = dict(live=False)
+    if reading == 'before':
+        budget['quota_before'] = dict(weekly_remaining_fraction=.8)
+    else:
+        write_json(args.quota_file, dict(weekly_remaining_fraction=.7))
+    run.account(args, budget, [tmp_path / 'empty'], run.variants(args), 'partial-quota')
+    assert read_json(args.out / 'usage.json')['quota_weekly_percent'] is None
+
+
+def test_paired_pool_cli_scores_and_describes_each_arm(tmp_path, monkeypatch):
+    monkeypatch.setenv('EIDOS_EXP_TEST_ROOT', str(tmp_path))
+    pool = fabricated_pool(tmp_path)
+    monkeypatch.setenv('EIDOS_IMP_PRIVATE_ROOT', str(tmp_path / 'private'))
+    monkeypatch.setenv('EIDOS_EXTRA_POOL_MANIFESTS', str(pool / 'pool.json'))
+    monkeypatch.setenv('EIDOS_POOLS_ROOT', str(tmp_path))
+    out = tmp_path / 'pair'
+    process = subprocess.run([sys.executable, '-m', 'study.exp.run', '--pair', 'stub@HEAD', 'stub@HEAD',
+                              '--pool', 'FAB', '--arms', '2,4', '--out', str(out)],
+                             cwd=ROOT, capture_output=True, text=True, timeout=240)
+    assert process.returncode == 0, process.stdout + process.stderr + (out / 'run.log').read_text()
+    manifest = read_json(out / 'manifest.json')
+    assert len(manifest['scorecards']) == 4
+    for variant in manifest['variants']:
+        assert not (out / variant['label'] / 'scorecard.json').exists()
+        for arm in (2, 4):
+            score = read_json(out / variant['label'] / f'arm{arm}/scorecard.json')
+            assert {row['arm'] for row in score['individual']} == {arm}
+    assert manifest['paired'] == {'2': 'arm2/paired.md', '4': 'arm4/paired.md'}
+    for path in manifest['paired'].values():
+        assert '"mean_delta": 0.0' in (out / path).read_text()
+        assert 'No decision' in (out / path).read_text()
+    assert '## Arm 2' in (out / 'paired.md').read_text() and '## Arm 4' in (out / 'paired.md').read_text()
+    usage = read_json(out / 'usage.json')
+    assert usage['runs'] == 8 and usage['usd'] == 0
+    assert usage['per_variant'] == {v['label']: dict(runs=4, usd=0) for v in manifest['variants']}

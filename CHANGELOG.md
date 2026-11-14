@@ -4,6 +4,7 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.4.0
 
+- Integrate the experiment runner with the final scorecard API: score each arm separately, stamp tier/look/pool-role/mode, record complete usage including retries, and document registered multi-tier comparisons.
 - [ADR 0055](docs/decisions/0055-experiment-runner-and-pools.md) serves programme pools through card profiles, adds manifest-based multiclass scoring with historical task class-count checks preserved, and introduces the one-command treatment/build runner, paired descriptive output, live budget controls, blind held-out receipts and public legacy references.
 - Fix experiment runner review findings: private held-out labs and aggregate spend, live reservations and signal cleanup, write-free dry runs, strict preflight inputs, private pool grading scratch, and an unestablished D03 reference pending an owner recipe decision.
 

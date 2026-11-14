@@ -59,3 +59,13 @@ are copied into public results. Dry-run prints without writing. D03 has no
 established legacy reference: the measured recipe predicts one class on all
 shifted test rows (scores .1/.1/.1). Using D03 requires an explicit reference file;
 changing the reference recipe remains an owner decision.
+
+Final scorecard integration writes one scorecard per arm via explicit builder
+selection, retaining root aliases only for single-arm runs. Tier, pool role, look
+and mode stamp every row. The manifest indexes scorecards and descriptive pairs
+by arm. Usage JSON accounts for all executed attempts (including incident
+archives), known costs, quota deltas and summed wall time, with per-variant totals;
+held-out accounting stays private. Decisions consume registered experiments and
+one or more tier/look scorecards with their complete usage evidence. The current
+comparator's exact final-row count check cannot accept extra attempts from retries
+or omitted arms; the runner preserves these costs and documents the API limit.

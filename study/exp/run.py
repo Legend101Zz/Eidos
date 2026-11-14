@@ -65,6 +65,10 @@ def parser():
     p.add_argument('--dry-run', action='store_true')
     p.add_argument('--smoke', action='store_true')
     p.add_argument('--wall-seconds', type=int)
+    p.add_argument('--tier')
+    p.add_argument('--pool-role')
+    p.add_argument('--look', choices=['initial', 'extension'])
+    p.add_argument('--mode')
     return p
 
 
@@ -354,6 +358,14 @@ def block_worker(request):
     for attempt in range(args['retry_incidents'] + 1):
         try:
             run_block(rows, root / 'runs', stub=request['stub'], replace_incident=attempt > 0)
+            # Coding-arm producers predate build-bound scorecards. Bind their
+            # receipt to the build verified by this controller before dispatch.
+            if 2 in item['arms'] and request.get('build_commit'):
+                path = root / 'runs' / item['block_id'] / 'arm2/run_record.json'
+                record = read_json(path)
+                if 'eidos_commit_sha' not in record:
+                    record['eidos_commit_sha'] = request['build_commit']
+                    write_json(path, record)
             grades = grade_block(root / 'runs' / item['block_id'] / 'block_record.json',
                                  grading, root / 'results.json')
             if private_grading:
@@ -431,28 +443,50 @@ def reserve_spend(args, budget, selected, plan, item, reservations, *, private_r
 
 
 def account(args, budget, roots, selected, run_id, *, private_root=None, out=None, reservations=()):
-    if not budget['live']:
-        return
+    destination = Path(out) if out is not None else args.out
+    if private_root is not None and not destination.resolve().is_relative_to(Path(private_root).resolve()):
+        raise ValueError('held-out usage must remain under the private root')
+    quota_after = read_json(args.quota_file) if args.quota_file and args.quota_file.is_file() else None
+    quota_before = budget.get('quota_before')
+    quota_percent = None
+    if quota_before is not None and quota_after is not None:
+        before, after = (q['weekly_remaining_fraction'] for q in (quota_before, quota_after))
+        if not all(_number(x) and x <= 1 for x in (before, after)) or after > before:
+            raise ValueError('invalid weekly quota consumption readings')
+        quota_percent = (before - after) * 100
     detail = []
+    attempts = []
+    per_variant = {}
     for v, root in zip(selected, roots, strict=True):
-        if v['stub'] or v['fixture']:
-            continue
+        model_free = v['stub'] or v['fixture']
         provider = resolve(v['treatment']['id'], provider=v['provider']['id']).provider
+        variant_attempts = []
         for path in sorted((root / 'runs').rglob('run_record.json')):
             record = read_json(path)
             tokens = record.get('tokens') or {}
-            usd = record.get('billed_usd')
+            usd = 0 if model_free else record.get('billed_usd')
             if (usd is None and provider.price_per_mtok is not None
                     and all(type(tokens.get(k)) is int for k in ('input', 'output'))):
                 usd = (tokens['input'] * provider.price_per_mtok['input'] +
                        tokens['output'] * provider.price_per_mtok['output']) / 1e6
+            variant_attempts.append(dict(usd=usd, wall_s=record.get('wall_s')))
+            if model_free:
+                continue
             detail.append(dict(utc=utc(), provider=provider.id, model=provider.model,
                                purpose='development evidence', run_id=run_id, variant=v['label'],
                                block=record.get('block_id', path.parent.parent.name),
                                current=path.relative_to(root / 'runs').parts[0] != 'incidents',
                                tokens_in=tokens.get('input'), tokens_out=tokens.get('output'), usd=usd,
                                source='study.exp.run', quota_before=budget.get('quota_before'),
-                               quota_after=read_json(args.quota_file) if args.quota_file else None))
+                               quota_after=quota_after))
+        attempts.extend(variant_attempts)
+        per_variant[v['label']] = dict(runs=len(variant_attempts), usd=_sum_known(a['usd'] for a in variant_attempts))
+    write_json(destination / 'usage.json', dict(
+        schema='eidos-exp-usage/1', runs=len(attempts), usd=_sum_known(a['usd'] for a in attempts),
+        quota_weekly_percent=quota_percent, time_seconds=_sum_known(a['wall_s'] for a in attempts),
+        per_variant=per_variant))
+    if not budget['live']:
+        return
     if private_root is not None:
         destination = Path(out) / 'spend.jsonl'
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -487,6 +521,11 @@ def account(args, budget, roots, selected, run_id, *, private_root=None, out=Non
                     row.update(usd=max(0, row['usd'] - charge) if row['usd'] is not None else None,
                                status='uncertain')
         write_ledger(ledger, [*rows, *public])
+
+
+def _sum_known(values):
+    values = list(values)
+    return sum(values) if all(_number(value) for value in values) else None
 
 
 class RunTerminated(RuntimeError):
@@ -534,6 +573,8 @@ def execute(args, *, private_root=None):
     arms = tuple(map(int, args.arms.split(',')))
     plan = make_plan(cards, args.replicates, arms, selected)
     checked = preflight(args, selected, plan, private_root=private_root)
+    if args.quota_file and checked['budget'].get('quota_before') is None:
+        checked['budget']['quota_before'] = read_json(args.quota_file)
     if profile is not None and profile.pool != 'D' and not (private_root or os.environ.get('EIDOS_IMP_PRIVATE_ROOT')):
         raise ValueError('non-D grading requires EIDOS_IMP_PRIVATE_ROOT')
     references, reference_digest = load_references(args, profile, cards)
@@ -543,6 +584,8 @@ def execute(args, *, private_root=None):
                     references_sha256=reference_digest,
                     exit_status=1, status='preflight', labs=[],
                     timings=dict(resolve_s=resolved_at - started, preflight_s=time.monotonic() - resolved_at))
+    manifest.update(tier=args.tier, pool_role=args.pool_role, look=args.look, mode=args.mode,
+                    scorecards=[], paired={}, usage='../usage.json' if private_root is not None else 'usage.json')
     if args.dry_run:
         with environment({}):
             manifest['labs'] = [ensure_lab(v, dry_run=True) for v in selected]
@@ -604,6 +647,7 @@ def execute(args, *, private_root=None):
                     v = selected[item['variant']]
                     root = roots[item['variant']]
                     request = dict(block=item, root=str(root), stub=v['stub'],
+                                   build_commit=v['commit'],
                                    options=dict(wall_seconds=args.wall_seconds, retry_incidents=args.retry_incidents))
                     if profile is not None and profile.pool != 'D':
                         private = private_root or os.environ.get('EIDOS_IMP_PRIVATE_ROOT')
@@ -673,25 +717,45 @@ def execute(args, *, private_root=None):
             if profile:
                 scoring_pool = out / 'score-inputs'
                 write_json(scoring_pool / 'pool.json', dict(pool_id=profile.pool, commitment=profile.commitment()))
-            scores = []
+            scores = {arm: [] for arm in arms}
             for v, root in zip(selected, roots, strict=True):
-                event('Score ' + v['label'])
-                score = build(root, pool_root=scoring_pool, references=references, treatment=v['treatment'], provider=v['provider'],
-                              build_record=dict(commit=v['commit']), replicates=args.replicates,
-                              autopilot=args.autopilot_scorecard)
-                if profile:
-                    score['pool'] = dict(id=profile.pool, commitment=profile.commitment())
-                score['smoke'] = args.smoke
-                if args.smoke:
-                    # Existing compare rejects this distinct connectivity-only schema.
-                    score['schema'] = 'eidos-exp-smoke-scorecard/1'
-                if args.payg_approved:
-                    score['payg_approved'] = args.payg_approved
-                write_json(root / 'scorecard.json', score)
-                (root / 'scorecard.md').write_text(markdown(score))
-                scores.append(score)
-            if len(scores) == 2:
-                (out / 'paired.md').write_text(descriptive_pair(*scores))
+                for arm in arms:
+                    event('Score ' + v['label'] + f' arm{arm}')
+                    score = build(root, pool_root=scoring_pool, references=references, treatment=v['treatment'], provider=v['provider'],
+                                  build_record=dict(commit=v['commit']), replicates=args.replicates, arm=arm,
+                                  autopilot=args.autopilot_scorecard, tier=args.tier, pool_role=args.pool_role,
+                                  look=args.look, mode=args.mode)
+                    if profile:
+                        score['pool'] = dict(id=profile.pool, commitment=profile.commitment())
+                    score['smoke'] = args.smoke
+                    if args.smoke:
+                        # Existing compare rejects this distinct connectivity-only schema.
+                        score['schema'] = 'eidos-exp-smoke-scorecard/1'
+                    if args.payg_approved:
+                        score['payg_approved'] = args.payg_approved
+                    score_root = root / f'arm{arm}'
+                    write_json(score_root / 'scorecard.json', score)
+                    rendered = markdown(score)
+                    (score_root / 'scorecard.md').write_text(rendered)
+                    entry = dict(variant=v['label'], arm=arm,
+                                 json=str((score_root / 'scorecard.json').relative_to(out)),
+                                 markdown=str((score_root / 'scorecard.md').relative_to(out)))
+                    if len(arms) == 1:
+                        write_json(root / 'scorecard.json', score)
+                        (root / 'scorecard.md').write_text(rendered)
+                        entry['compatibility_json'] = str((root / 'scorecard.json').relative_to(out))
+                    manifest['scorecards'].append(entry)
+                    scores[arm].append(score)
+            if len(selected) == 2:
+                descriptions = []
+                for arm, pair in scores.items():
+                    description = descriptive_pair(*pair)
+                    target = out / f'arm{arm}/paired.md'
+                    target.parent.mkdir(exist_ok=True)
+                    target.write_text(description)
+                    manifest['paired'][str(arm)] = str(target.relative_to(out))
+                    descriptions.append(f'## Arm {arm}\n\n' + description)
+                (out / 'paired.md').write_text('\n'.join(descriptions))
             grades = [row for root in roots for row in read_json(root / 'results.json')]
             expected = len(plan) * len(arms)
             status = int(any(exits) or len(grades) != expected or any(r['status'] == 'incident' for r in grades))
