@@ -192,10 +192,19 @@ def _check(name, a, b, plan, choice):
         actual = {"usd": _cost(b), "live_runs": agg.get("live_runs"),
                   "quota_weekly_percent": agg.get("quota_weekly_percent"),
                   "time_seconds": agg.get("time_seconds")}
-        if any(k not in actual or not number(actual[k]) or not number(v)
-               or actual[k] < 0 or v < 0 for k, v in budget.items()):
-            return None
-        return all(actual[k] <= limit for k, limit in budget.items())
+        missing = False
+        breached = False
+        for key, limit in budget.items():
+            if key not in actual or not number(limit) or limit < 0:
+                raise ValueError("invalid plan budget")
+            value = actual[key]
+            if value is None:
+                missing = True
+            elif not number(value) or value < 0:
+                raise ValueError("invalid budget evidence")
+            else:
+                breached |= value > limit
+        return False if breached else None if missing else True
     if name == "code_review":
         commit = b.get("build", {}).get("commit")
         reviews = [r for r in choice.get("_reviews", []) if r.get("kind") == "code"

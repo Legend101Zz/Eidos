@@ -529,3 +529,12 @@ def test_exp_compare_veto_evidence_values_and_consistency_are_recorded():
     after["individual"][0]["false_claims"] = 1
     result = compare(cards(), after, simple_rule(), tier="T3")
     assert not result["vetoes"][0]["passed"]
+
+
+def test_exp_compare_known_budget_breach_fires_even_with_other_missing_budget_evidence():
+    before, after = cards(), cards(0.2)
+    plan = registered_plan()
+    plan["budget"] = {"usd": 0.5, "quota_weekly_percent": 10}
+    result = compare_scorecards(before, after, simple_rule(), tier="T3", rule_choice={"plan": plan})
+    assert result["decision"] == "revert"
+    assert result["vetoes"][4]["value"] is False
