@@ -1,0 +1,122 @@
+# Experiment record
+
+This area is the public development record for experiments on Eidos.
+Each attempt owns a directory, a registered plan and a separate hash chain.
+Kept, reverted and abandoned attempts all remain visible.
+The main branch owns `INDEX.jsonl`, appended once when an attempt closes.
+Separate chains let two experiments run on separate branches without a shared log fork.
+Allocate distinct experiment ids before parallel work; `new` uses locally visible ids.
+If branches allocate the same id, resolve the collision before registration.
+
+## The loop
+
+1. Observe a concrete failure. Collect sources and record which pools were exposed.
+2. Register a hypothesis, evaluation plan and keep/revert rule. Commit and push
+   the registration before changing code. The ledger prints the Git commands.
+3. Build the smallest change that tests the mechanism, behind a feature flag.
+4. Evaluate cheapest first. Stop when a pre-declared falsifier or guardrail fires.
+5. Decide by script using the registered rule and scorecards. Record its output;
+   the ledger stores evidence and does not itself compute or adjudicate statistics.
+6. Obtain independent code review and, except for infrastructure, result review.
+   Reviews identify the exact commit reviewed and preserve the review file digest.
+7. Merge only after CI and review pass, or revert/abandon and preserve the learning.
+   Close the record and append its index entry in the main-branch merge sequence.
+
+## Evaluation tiers
+
+T0 is tests and CI, including a golden check of the default treatment.
+T1 is model-free evaluation: a scripted "autopilot" investigator on real cards,
+generated practice cards, and replays. It is the cheapest mechanism check.
+T2 is a small paired live comparison on four cards, used as a smoke test.
+T3 is paired live confirmation on eight cards with two runs per card.
+One extension may be pre-declared; it is never chosen after looking at results.
+Pair incumbent and candidate runs and declare the pool, cards, replicates and provider.
+Declare stop rules, budgets and any second provider in the plan.
+Keep search and confirmation separate, and record every exposure.
+
+## Scorecard and guardrails
+
+The primary measure is verified reference-normalised gain (VRG).
+Secondary measures are verified-success rate, measured gain (MRG), error ratio
+against the reference, uplift over autopilot, and novelty that wins.
+A mechanism metric explains why the primary should move; name it before building.
+Scorecards are evidence inputs. Their aggregate blocks are copied without recomputation.
+Use exact paired sign-flip tests where a rule calls for a sign-flip p-value.
+
+Guardrails are vetoes, not compensating terms in a weighted score.
+Require zero false claims and zero held-out identifier matches.
+Reject a new failure class, and keep cost and time within the declared plan.
+Cost above 1.5 times incumbent requires a pre-declared exception.
+All five rules inherit `rules/VETOES.json`.
+
+## Default rules
+
+- `R-infra`: tests and CI green, default treatment unchanged in a golden test,
+  and independent code review ACCEPT.
+- `R-mech`: evaluation-rotation autopilot mean delta VRG at least 0.03 with exact
+  paired sign-flip p at most 0.10. No card loses more than one reference SE unless
+  named in the plan. Practice generators show no harm. T2 smoke has no guardrail
+  breach and mean delta VRG at least -0.25.
+- `R-behav`: T2 clean; T3 mean delta VRG reaches the declared delta (default 0.15),
+  with sign-flip p at most 0.10, or at most 0.06 at each look with an extension.
+- `R-disc`: as R-behav on MRG (default delta 0.08), with delta VRG at least -0.10
+  and verified-success rate no lower by more than one run.
+- `R-enable`: mean delta VRG at least -0.10, or autopilot delta VRG at least -0.01
+  when model-free evaluation suffices, plus the declared target improvement.
+
+Rule JSON uses metric/stat/op/value/tier clauses and named boolean checks.
+`when` selects conditional clauses; every selected clause must pass.
+`override` names a pre-registered choice override; `plan` values refer to plan fields.
+`each_look` requires the threshold at every declared look, not just the last.
+`except_plan_named_cards` and `unless` permit only exceptions declared before building.
+The `target` metric refers to the target named in the plan, including its direction.
+Additional target fields or a model-free sufficiency declaration may be added to the plan.
+Freeze rule choice, version, overrides and extension policy at registration.
+
+## Flags and treatments
+
+See [the experiment runtime guide](../study/exp/README.md) for flags and treatments.
+The default treatment must remain unchanged unless a registered change says otherwise.
+Infrastructure can use T0 evidence; behavioral claims require the appropriate live tiers.
+Everything here is development evidence. Only a registered pilot on sealed cards
+confirms anything. Development evidence must never be presented as confirmation.
+
+## Ledger commands
+
+Run from the repository root with the study Python interpreter.
+Create an attempt, then fill every hypothesis section and the plan/rule choices:
+
+```sh
+python -m study.exp.ledger new --title 'Test a mechanism' --slug mechanism --kind performance --issue 123
+python -m study.exp.ledger register experiments/EXP-000-mechanism --base origin/main
+```
+
+Registration refuses unfilled hypotheses, invalid plans/rules and any code changes
+outside this area in the branch or working tree. Commit and push the registration.
+The three registered files are frozen; record later findings as events or decisions.
+
+```sh
+python -m study.exp.ledger record experiments/EXP-000-mechanism --tier T1 --scorecard scorecard.json --cost '{"usd":0}'
+python -m study.exp.ledger review experiments/EXP-000-mechanism --kind code --verdict ACCEPT --commit HEAD_SHA --file REVIEW.md
+python -m study.exp.ledger review experiments/EXP-000-mechanism --kind result --verdict ACCEPT --commit HEAD_SHA --file RESULT_REVIEW.md
+python -m study.exp.ledger decide experiments/EXP-000-mechanism --decision keep --decision-file experiments/EXP-000-mechanism/DECISION.md
+python -m study.exp.ledger event experiments/EXP-000-mechanism --type exposure --data '{"pool":"practice"}'
+python -m study.exp.ledger close experiments/EXP-000-mechanism --merged-commit MERGED_SHA --issue 123
+python -m study.exp.ledger verify --against origin/main
+python -m study.exp.ledger status
+```
+
+`record` accepts repeated `--scorecard` arguments. It hashes each file and copies aggregates.
+Use `incident`, `exposure`, `budget` or `note` events for other evidence.
+Keep requires registration, a result and ACCEPT reviews; infra needs only code review.
+A later FIX-FIRST or REJECT supersedes an earlier ACCEPT of the same review kind.
+Use `revert`, `extend` or `abandon` to record other outcomes, with a decision note.
+An extension follows the registered policy; it does not rewrite the plan.
+`close` needs a decision, refuses duplicate closure, and records `none` for an unmerged attempt.
+Close only in the serialized index update sequence; parallel branches must preserve its prefix.
+Each chain and the index use canonical JSON, SHA-256 links and one-based sequence numbers.
+The actor is the configured Git user name; UTC comes from the system clock.
+`verify` checks current files and links, including the registered file hashes.
+`--against` checks HEAD and the working tree for the reference index and chains as byte-for-byte prefixes,
+and preserves the reference experiment's three registered files.
+CI runs verification and the kernel-change guard; the push merge gate requires every job to pass.

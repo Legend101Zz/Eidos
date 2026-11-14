@@ -1,0 +1,26 @@
+{
+  "schema": "eidos-exp-plan/1",
+  "id": "",
+  "kind": "performance|enabling|infra|measurement",
+  "treatment": {
+    "incumbent": "",
+    "candidate": ""
+  },
+  "tiers": [
+    {
+      "tier": "T1",
+      "pool": "",
+      "cards": [],
+      "replicates": 1,
+      "provider": null,
+      "what": ""
+    }
+  ],
+  "budget": {
+    "live_runs": 0,
+    "usd": 0,
+    "quota_weekly_percent": 0
+  },
+  "stop_early": [],
+  "second_provider": null
+}

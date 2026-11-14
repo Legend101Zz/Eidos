@@ -1,0 +1,24 @@
+{
+  "schema": "eidos-exp-rule/1",
+  "id": "R-infra",
+  "version": 1,
+  "text": "Tests and CI must be green, a golden test must show the default treatment unchanged, and independent code review must ACCEPT. The shared vetoes also apply.",
+  "keep_when": [
+    {
+      "check": "tests_green",
+      "equals": true
+    },
+    {
+      "check": "ci_green",
+      "equals": true
+    },
+    {
+      "check": "default_treatment_golden_unchanged",
+      "equals": true
+    },
+    {
+      "check": "code_review",
+      "equals": "ACCEPT"
+    }
+  ]
+}

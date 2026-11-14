@@ -1,0 +1,53 @@
+{
+  "schema": "eidos-exp-rule/1",
+  "id": "R-mech",
+  "version": 1,
+  "text": "On the evaluation rotation, autopilot mean delta VRG must be at least 0.03 with exact paired sign-flip p at most 0.10. No card may lose more than one reference SE unless named in the plan. Practice design generators must show no harm. T2 live smoke must have no guardrail breach and mean delta VRG at least -0.25. The shared vetoes also apply.",
+  "keep_when": [
+    {
+      "metric": "vrg",
+      "stat": "mean_delta",
+      "op": ">=",
+      "value": 0.03,
+      "tier": "T1",
+      "pool": "evaluation_rotation",
+      "mode": "autopilot"
+    },
+    {
+      "metric": "vrg",
+      "stat": "signflip_p",
+      "op": "<=",
+      "value": 0.1,
+      "tier": "T1",
+      "pool": "evaluation_rotation",
+      "mode": "autopilot",
+      "method": "exact_paired"
+    },
+    {
+      "metric": "vrg",
+      "stat": "min_card_delta_reference_se",
+      "op": ">=",
+      "value": -1,
+      "tier": "T1",
+      "pool": "evaluation_rotation",
+      "except_plan_named_cards": true
+    },
+    {
+      "check": "practice_generators_no_harm",
+      "equals": true,
+      "tier": "T1"
+    },
+    {
+      "check": "guardrails_clean",
+      "equals": true,
+      "tier": "T2"
+    },
+    {
+      "metric": "vrg",
+      "stat": "mean_delta",
+      "op": ">=",
+      "value": -0.25,
+      "tier": "T2"
+    }
+  ]
+}
