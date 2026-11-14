@@ -8,7 +8,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from study.private_card_registry import PRIVATE_CARD_BARS
+from study.private_card_registry import ALL_PRIVATE_CARDS, card_bars
 
 ROOT = Path(__file__).resolve().parents[1]
 STUDY = ROOT / "study"
@@ -16,8 +16,8 @@ DEVELOPMENT = ROOT / "research/public/development"
 MODEL = "MiniMax-M3.1-Flash"
 ENVELOPE = {"wall_s": 1800, "tokens": 8_000_000, "threads": 1}
 FAMILIES = {"D01": "iris", "D02": "digits", "D12": "duplicate-input-null", "D03":"digits_shift", "D04":"conditioning", "D05":"forecast", "D06":"order",
-            "N01":"breast_cancer", "N02":"diabetes", "N03":"friedman1", "N04":"classification", **{card: card for card in PRIVATE_CARD_BARS}}
-IMPROVEMENT_CARDS = frozenset({'D02', 'D03', 'D04', 'D05', 'D06', 'N01', 'N02', 'N03', 'N04'}) | frozenset(PRIVATE_CARD_BARS)
+            "N01":"breast_cancer", "N02":"diabetes", "N03":"friedman1", "N04":"classification", **{card: card for card in ALL_PRIVATE_CARDS}}
+IMPROVEMENT_CARDS = frozenset({'D02', 'D03', 'D04', 'D05', 'D06', 'N01', 'N02', 'N03', 'N04'}) | frozenset(ALL_PRIVATE_CARDS)
 FRESH_RECIPE_CARDS = IMPROVEMENT_CARDS - {'D02'}
 
 
@@ -189,8 +189,8 @@ def render_prompt(arm, card, *, base=None):
     if "{{TOOLS_PARAGRAPH}}" not in text:
         raise ValueError("base prompt must contain {{TOOLS_PARAGRAPH}}")
     cards = read_json(STUDY / "cards.json")
-    if card in PRIVATE_CARD_BARS:
-        metric, gain = PRIVATE_CARD_BARS[card]
+    if card in ALL_PRIVATE_CARDS:
+        metric, gain = card_bars(card)
         change = f"improves accuracy by {gain} absolute" if metric == "accuracy" else f"reduces RMSE by at least {gain:.0%}"
         cards[card] = {"practical_bar": (
             f"The task owner's practical bar: a candidate must show that its recipe {change} "
@@ -208,10 +208,10 @@ def render_prompt(arm, card, *, base=None):
 
 def dev_command(script, *args, **kwargs):
     if script == "package_task.py" and len(args) == 4 and args[0] == "--task" and args[2] == "--out":
-        if args[1] in PRIVATE_CARD_BARS:
+        if args[1] in ALL_PRIVATE_CARDS:
             from study.private_seal import configured_seal
 
-            configured_seal().stage_bundle(args[1], args[3])
+            configured_seal(args[1]).stage_bundle(args[1], args[3])
             return
     return subprocess.run(
         [research_python(), str(STUDY / "packaging/package_card.py" if script == "package_task.py" and any(str(a) in FRESH_RECIPE_CARDS for a in args) else DEVELOPMENT / script), *map(str, args)],

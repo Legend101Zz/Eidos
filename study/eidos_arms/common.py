@@ -91,7 +91,7 @@ def prepare(c, run_dir, arm):
     """One new project per invocation; immutable task bundle is the only scientific input."""
     import uuid
 
-    from study.private_card_registry import PRIVATE_CLASSIFICATION, PRIVATE_REGRESSION
+    from study.private_card_registry import is_classification, is_regression
 
     from eidos.cli.main import builtin_component_dirs, install_component
     from eidos.tasks.bundle import import_bundle
@@ -114,11 +114,11 @@ def prepare(c, run_dir, arm):
         name, pinned = directory.name.split('@')[0], '@' in directory.name
         if name in ('eidos.task.score-classification', 'eidos.task.score-regression', 'eidos.search.recipe-portfolio',
                     'eidos.search.recipe-sweep', 'eidos.diagnose.baseline-errors') or (
-                (card in ('D03', 'D06', 'N01', 'N04') or card in PRIVATE_CLASSIFICATION) and name == 'eidos.task.paired-classification-report'):
+                (card in ('D03', 'D06', 'N01', 'N04') or is_classification(card)) and name == 'eidos.task.paired-classification-report'):
             r = install_component(c, project, directory, 'default', not pinned)
             if 'component_ref' not in r or r.get('validation') == 'failed':
                 raise RuntimeError(f'component installation failed: {r}')
-    if card not in ('D01', 'D04', 'D05', 'N02', 'N03') and card not in PRIVATE_REGRESSION:
+    if card not in ('D01', 'D04', 'D05', 'N02', 'N03') and not is_regression(card):
         from .protocols import prepare as prepare_protocols
         prepare_protocols(c, project, run_dir)
     write_json(run_dir / 'lab_import.json', {'project': project, **imported})
