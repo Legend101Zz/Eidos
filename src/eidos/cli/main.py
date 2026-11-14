@@ -225,9 +225,10 @@ def wait_job(c: LabClient, project: str, job_id: str, timeout: float = 900) -> d
     raise TimeoutError(job_id)
 
 
-def install_component(c: LabClient, project: str, directory: Path, env: str = "default", bind: bool = True) -> dict:
+def install_component(c: LabClient, project: str, directory: Path, env: str = "default", bind: bool = True,
+                      *, upload_name: str | None = None) -> dict:
     up = c.upload(project, data=bundle_dir(directory), media_type="application/vnd.eidos.source-bundle+json",
-                  schema="source-bundle/1", role="source", name=directory.name)
+                  schema="source-bundle/1", role="source", name=directory.name if upload_name is None else upload_name)
     aid = up["result"]["artifact_id"]
     v = c.command("validate_component", {"bundle_artifact_id": aid, "environment": env}, project=project,
                   key=f"validate:{aid}:{env}:{uuid.uuid4().hex[:8]}")["result"]

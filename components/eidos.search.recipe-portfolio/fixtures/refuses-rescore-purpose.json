@@ -1,0 +1,11 @@
+{
+  "name": "refuses-rescore-purpose",
+  "author_test": true,
+  "config": {
+    "mode": "rescore",
+    "purpose": "confirmation"
+  },
+  "expect": {
+    "status": "failed"
+  }
+}

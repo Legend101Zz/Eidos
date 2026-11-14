@@ -9,7 +9,12 @@ input offset; an input offset is not a spatial translation.
 `config.template`), then targeted challengers built on what both showed. If the top hypothesis is supported, put its
 preprocessing in the sweep (the template already crosses `none`, train-fitted `standardize`, `per_example_center` and
 `per_example_standardize` with every model family) and check its falsifier. If nothing is supported
-(`no-transfer-shift-detected` ranks first), the sweep over model families is the next step.
+(`no-transfer-shift-detected` ranks first), the sweep over model families is the next step. Release 1.1.0
+omits unsupported hypotheses from this no-shift steering list and includes `next` in both the report and receipt.
+It points to portfolio class contrasts when available and to the data profile once available; until then use the
+existing broad recipe sweep. The no-shift entry remains a sentinel with `supported: false`, not a supported cause.
+Raw probe measurements remain in `invariance_probes`. When a supported cause ranks first, the full hypothesis list
+is unchanged from 1.0.0, including its scores, ranks and falsifiers.
 
 **Inputs.** NPZ arrays: `train` and `validation` with `x` (examples first; further dimensions are flattened, and a 3-D
 `x` is read as images), `y` and optionally `ids`; optional `predictions` (the baseline's validation predictions: `ids`,

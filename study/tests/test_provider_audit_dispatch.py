@@ -13,6 +13,7 @@ from unittest.mock import patch
 from study import launcher
 from study.eidos_arms import common, provider_bridge
 from study.evals.records import audited_requests
+from study.exp.treatment import resolve
 
 KNOWN = "a" * 64
 CARD = "N01"
@@ -132,8 +133,9 @@ class ProviderAuditDispatch(unittest.TestCase):
 
             def setup(row, target):
                 (target / "task").mkdir(parents=True)
-                (target / "arm.json").write_text(json.dumps(META))
-                launcher.record_prompt(target, META)
+                meta = {**META, "treatment": resolve().record()}
+                (target / "arm.json").write_text(json.dumps(meta))
+                launcher.record_prompt(target, meta)
 
             rows = [{"arm": 4, "task": CARD, "run": 1, "block_id": META["block_id"]}]
             with patch.dict(os.environ, env), patch.object(launcher, "prepare", side_effect=setup):

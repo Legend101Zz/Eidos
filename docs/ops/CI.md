@@ -33,3 +33,16 @@ Workflow: `.github/workflows/ci.yml`. Standard GitHub-hosted runners only (`ubun
 - `build_and_install.sh`, `lab_cycle.sh {init|start|doctor|project|status|stop|all}`, `sdk_tests.sh`, `research_smoke.sh`.
 - Requires `uv`, PostgreSQL >= 14 binaries. When run as root the lab uses `runuser -u postgres`; as a normal user (CI) it runs PostgreSQL as that user.
 - `upgrade_across_releases.sh`: the `upgrade-across-releases` job. Env: `OLD_TAG` (default `eidos-v0.1.0`), `CI_WORK`, `LAB_API_PORT`, `LAB_PG_PORT`, `LAB_TEMPORAL_PORT`, `PG_BIN`, `TEMPORAL_SOURCE`, `KEEP_WORK=1`. Helper: `scripts/ci/upgrade/check.py` (seed / snapshot / verify). Results: `$CI_WORK/out/result.json`. The upgrade is in place (new wheels over the same venv, which `lab.json` `lab_python` names): `lab upgrade` does not rewrite `lab_python`.
+
+## Study evaluations
+
+`.github/workflows/study-evals.yml` runs on pushes to `main` and `task/**`, and
+on pull requests touching `study/**` or that workflow. Its research environment
+installs numpy, scikit-learn, torch, `study/requirements-analysis.txt` and
+`pytest==9.2.0` (the version pinned in `uv.lock`). Run the complete study suite with
+`"$EIDOS_RESEARCH_PYTHON" -m pytest study/tests -q -rs`; pytest collects both
+function tests with fixtures and unittest classes. `EIDOS_RESEARCH_PYTHON` selects
+the research interpreter and `EIDOS_STUDY_PYTHON` selects the separately installed
+lab interpreter, both exported by the setup step. The job explicitly selects the
+default `pilot4-v1` treatment and caps numerical library threads at one. The later
+installed lab arm contract/parity tests retain their unittest runner.

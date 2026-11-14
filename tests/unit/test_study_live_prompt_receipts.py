@@ -6,13 +6,14 @@ from hashlib import sha256
 import pytest
 from study import launcher
 from study.common import record_live_delivery, record_prompt, render_prompt
+from study.exp.treatment import resolve
 
 
 @pytest.mark.parametrize("arm", (1, 2, 3, 4))
 def test_expected_and_exact_delivered_hashes_are_separate(tmp_path, monkeypatch, arm):
     run = tmp_path / f"arm{arm}"
     run.mkdir()
-    meta = dict(block_id="N05-r1", card="N05", run_index=1, arm=arm,
+    meta = dict(treatment=resolve().record(), block_id="N05-r1", card="N05", run_index=1, arm=arm,
                 charter_amendment_commit="a" * 40, charter_amendment_sha256="b" * 64)
     normal = render_prompt(arm, "N05")
     record_prompt(run, meta)
@@ -40,7 +41,7 @@ def test_live_launcher_refuses_override_before_writing(tmp_path, monkeypatch, ov
 def test_mismatched_live_delivery_is_refused(tmp_path):
     run = tmp_path / "arm1"
     run.mkdir()
-    meta = dict(block_id="N05-r1", card="N05", run_index=1, arm=1,
+    meta = dict(treatment=resolve().record(), block_id="N05-r1", card="N05", run_index=1, arm=1,
                 charter_amendment_commit="a" * 40, charter_amendment_sha256="b" * 64)
     record_prompt(run, meta)
     with pytest.raises(ValueError, match="differs"):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 import re
@@ -503,6 +504,11 @@ def _finalization_context(ctx: Ctx, inv, state: dict, finalization: dict) -> dic
                 "with source and receipt identifiers and limitations, or honestly abstain if none is eligible."}
 
 
+def tool_vocabulary(config: dict) -> list[str]:
+    v3 = (config.get("exploration") or {}).get("policy") == "exploration-policy/3"
+    return sorted(t for t in turn_rules.EFFECT_TOOLS if t != "prepare_candidate" or v3) + list(turn_rules.CONTROL_TOOLS)
+
+
 @command("begin_turn", "turn")
 def begin_turn(ctx: Ctx, p: dict) -> dict:
     run = str(p.get("run_id") or "")  # the TurnWorkflow run that begins or resumes the turn (F5, ADR 0017 addendum)
@@ -565,7 +571,7 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
         "configured_decision_seconds": int(cfg.get("turn_deadline_seconds", 600)),
         **({"completion": completion} if completion else {}),
         "budgets": budgets,
-        "tool_vocabulary": sorted(turn_rules.EFFECT_TOOLS) + list(turn_rules.CONTROL_TOOLS),
+        "tool_vocabulary": tool_vocabulary(cfg),
         "exposure_policy": p.get("exposure_policy", "development-feedback-allowed"),
     }
     if completion:
@@ -929,7 +935,10 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
             if p.get("bounded_outcome") and (p.get("usage") or {}).get("limit_reached"):
                 ctl["bounded_outcome"] = str(p["bounded_outcome"])[:64]
             proposal["control"] = ctl
-        decision = turn_rules.validate_decision(proposal, max_calls=turn["spec"]["limits"]["max_calls"])
+        decision = turn_rules.validate_decision(proposal, max_calls=turn["spec"]["limits"]["max_calls"],
+            allow_prepare_candidate=(inv.body.get("investigator", {}).get("exploration") or {}).get("policy") == "exploration-policy/3")
+        for call in decision["calls"]:
+            call.pop("macro", None)  # provenance stamps are lab-owned, never proposal arguments
         _check_conclusion_scope(inv, decision["control"])
         if turn["spec"].get("finalization") and (decision["calls"] or
                 decision["control"].get("action") not in turn_rules.CONCLUDING_ACTIONS):
@@ -939,6 +948,17 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
             if candidate.get("status") != "succeeded" and (decision["control"].get("claim") or {}).get(
                     "disposition") in ("candidate", "confirmed"):
                 raise Invalid("no eligible locked candidate: finalization must honestly abstain")
+        if exploration_rules.policy(inv.body["investigator"])["policy"] == "exploration-policy/3":
+            from eidos.application.handlers import promotion
+            from eidos.domain.promotion import expand
+            if any(c["tool"] == "prepare_candidate" for c in decision["calls"]):
+                decision["proposed_calls"] = copy.deepcopy(decision["calls"])
+                decision["calls"] = expand(decision["calls"], promotion.expansion_view(ctx, inv, decision["calls"]),
+                                           turn["spec"]["limits"], proposed_by=did)
+            for call in decision["calls"]:
+                if call["tool"] == "author_source":
+                    call["args"].pop("include_bundle", None)  # caller cannot choose the pin
+                    promotion.inclusion(ctx, call["args"])
         _check_component_contracts(ctx, decision["calls"])
         _check_conclusion_due(turn, decision)  # first: "nothing to wait for" would suggest running something
         _check_exploration_phase(turn, decision, live_stop=_live_exploration_stop(ctx, inv, turn), ctx=ctx)

@@ -90,6 +90,10 @@ def validate_component(ctx: Ctx, p: dict) -> dict:
         raise Invalid("component dependencies conflict with the project environment",
                       details={"conflicts": conflicts},
                       next_action="Use a separate environment; Eidos will not upgrade the project's packages.")
+    # The validator will execute authored fixtures in this environment. Apply the same
+    # measured dependency refusal as a component run before admitting any fixture job.
+    from eidos.application.handlers.runs import _preflight
+    _preflight(ctx, p, {"ref": man.ref, "manifest": man.to_dict()}, env)
     lock: dict[str, Any] = {"lock": "eidos-build-lock/1", "component": {"ref": "builtin:validator", "id": "eidos.validator",
             "entry": "eidos_worker.validate:run_component", "kind": "build", "implements": "component-validation/1",
             "effects": ["observe"], "digest": "builtin"},

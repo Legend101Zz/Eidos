@@ -243,6 +243,12 @@ def exploration_state(ctx: Ctx, inv: Any, *, completion: dict[str, Any] | None =
     began, its own jobs not yet counted, as a decision is checked when it is accepted (H2, R17 #1)."""
     base = ctx.tx.get_record(BASELINE_KIND, inv.id)
     jobs = _jobs(ctx, inv.id)
+    if rules.policy(inv.body.get('investigator'))['policy'] == 'exploration-policy/3':
+        from eidos.application.handlers.promotion import stamps
+        provenance = stamps(ctx, inv.id)
+        for job in jobs:
+            if job['id'] in provenance:
+                job['macro'] = provenance[job['id']]
     log, note_turns = turn_log(ctx, inv.id, jobs)
     if at_start_of_batch is not None:
         log = [r for r in log if r.get("batch") != at_start_of_batch]
@@ -354,10 +360,11 @@ def check_note(ctx: Ctx, inv_id: str, body: dict[str, Any]) -> dict[str, Any] | 
     if kind in ("candidate_lock", "selection_rule") and ctx.tx.get_record("investigation_finalization", inv_id):
         raise Invalid("autonomous finalization fixes the incumbent and selection rule; no lock or rule changes")
     notes = _notes(ctx, inv_id)
-    existing = rules.rule_from_notes(notes)
+    policy_id = rules.policy(inv.body.get('investigator'))['policy']
+    existing = rules.rule_from_notes(notes, policy_id=policy_id)
     if kind == "selection_rule":
         try:
-            new_rule = rules.parse_rule(body.get("text"))
+            new_rule = rules.parse_rule(body.get("text"), policy_id=policy_id)
         except rules.RuleError as exc:
             raise Invalid(str(exc), details={"kind": kind}) from None
         if existing is not None:
@@ -378,13 +385,19 @@ def check_note(ctx: Ctx, inv_id: str, body: dict[str, Any]) -> dict[str, Any] | 
             raise Invalid("ordinary finalization fixes candidate identity; a candidate lock must identify the existing job",
                           details={"stop": phase.get("stop")},
                           next_action="Keep the existing candidate lock or report its absence.")
-        return None  # Legacy exploration notes without a job are recorded; assessment refuses them (R13).
+        if policy_id != "exploration-policy/3":
+            return None  # Main's legacy note path; assessment refuses a lock without a job.
+        raise Invalid("candidate_lock names no job: text must contain a top-level job_id or evidence_refs must "
+                      "identify exactly one job; a nested lock object is not lock text",
+                      details={"kind": kind},
+                      next_action="Copy only the JSON line under Prepared lock text into record_note text, "
+                                  "including job_id and selection. Use an observation note if no candidate is selected.")
     text = rules.note_json(body) or {}
     selection = text.get("selection")
     rule: dict[str, Any] | None = existing[0] if existing else None
     if selection is not None:
         try:
-            proposed = rules.parse_rule(selection)
+            proposed = rules.parse_rule(selection, policy_id=policy_id)
         except rules.RuleError as exc:
             raise Invalid(str(exc), details={"kind": kind}) from None
         if rule is not None and proposed != rule:
@@ -446,6 +459,11 @@ def check_note(ctx: Ctx, inv_id: str, body: dict[str, Any]) -> dict[str, Any] | 
         raise Invalid("the candidate is not reproduced: no later run of its recipe under another seed was scored within "
                       "the rule's reproduction criterion", details={"job_id": job_id, "reproduction": rep})
     common = {"job_id": job_id, "rule": rule, "reproduction": rep}
+    if pol.get("policy") == "exploration-policy/3":
+        from eidos.application.handlers.promotion import stamps
+        provenance = stamps(ctx, inv_id).get(job_id)
+        if provenance:
+            common["preparation"] = provenance
     if previous is None:
         return {"version": 1, "evidence": evidence, "basis": "first-lock", **common}
     if previous["job_id"] == job_id:
@@ -472,9 +490,10 @@ def check_note(ctx: Ctx, inv_id: str, body: dict[str, Any]) -> dict[str, Any] | 
         raise Invalid(f"the challenger {job_id} was admitted before the selection rule was recorded: a challenger round "
                       "comes after its rule", details={"job_id": job_id, "rule_note": existing[1] if existing else None},
                       next_action="Run the challenger again in a round after the rule, then lock it if it is better.")
-    if not rules.better(float(evidence["value"]), float(prior["evidence"]["value"]), rule["direction"]):
+    if not rules.clears_margin(evidence, prior["evidence"], rule):
         raise Invalid(f"the challenger does not beat the incumbent on the selection rule: {rule['metric']} "
-                      f"{evidence['value']} vs {prior['evidence']['value']} ({rule['direction']}); the incumbent stays",
+                      f"{evidence['value']} vs {prior['evidence']['value']} ({rule['direction']})"
+                      + (f", margin {rule['margin']}" if rule.get("margin") else "") + "; the incumbent stays",
                       details={"challenger": evidence, "incumbent": prior, "rule": rule},
                       next_action="Keep the incumbent; try another challenger or finalize.")
     return {**out, "basis": "beats-incumbent"}

@@ -359,10 +359,33 @@ def test_a_lock_that_carries_the_rule_records_it_and_the_first_lock_is_accepted(
     assert len(scene.notes(inv, "candidate_lock")) == 1
 
 
-def test_a_lock_that_names_no_job_is_recorded_as_before_with_no_incumbent(scene):  # even without a rule
+@pytest.mark.parametrize('text,refs', [
+    ('the recipe with the deeper tree', None),
+    ('', None),
+    ('{"job_id": null}', None),
+    ('{"job_id": ""}', None),
+    ('{"job_id": 7}', None),
+    ('{"lock": {"job_id": "job_nested"}}', None),
+    ('{"selection": {}}', None),
+    ('{not json', None),
+    ('two candidates', ['job_a', 'job_b']),
+])
+def test_a_lock_that_names_no_job_is_refused_without_a_note_or_incumbent(scene, text, refs):
+    inv = scene.investigation(exploration={"policy": "exploration-policy/3"})
+    with pytest.raises(Invalid, match='candidate_lock names no job') as caught:
+        scene.cmd("record_note", dict(investigation_id=inv, kind="candidate_lock", text=text, evidence_refs=refs))
+    assert 'top-level job_id' in caught.value.message
+    assert 'observation' in caught.value.next_action
+    assert scene.notes(inv) == [] and scene.events(inv, "note.recorded") == []
+    assert scene.locked_job(inv) is None and scene.events(inv, "incumbent.changed") == []
+
+
+def test_policy_two_records_a_nameless_lock_without_an_incumbent_as_on_main(scene):
+    # origin/main:tests/integration/test_incumbent_challengers.py legacy note path.
     inv = scene.investigation()
-    out = scene.note(inv, "candidate_lock", "the recipe with the deeper tree")
-    assert "incumbent" not in out and scene.events(inv, "incumbent.changed") == []
+    note = scene.note(inv, "candidate_lock", "No candidate selected yet.")["note_id"]
+    assert [event["subject"] for event in scene.events(inv, "note.recorded")] == [note]
+    assert scene.locked_job(inv) is None and scene.events(inv, "incumbent.changed") == []
 
 
 # =====================================================================================================================
@@ -530,7 +553,8 @@ def test_a_rule_recorded_after_a_lock_that_names_no_job_binds_every_later_change
     """A lock that names no job fixes nothing; a rule recorded after it comes before any lock that names a job, so it
     binds every later change (the old test recorded the rule after unverified locks)."""
     inv = scene.investigation()
-    scene.note(inv, "candidate_lock", "the recipe with the deeper tree")
+    scene.put("note", "note_legacy_nameless", {"investigation_id": inv, "kind": "candidate_lock",
+              "text": "the recipe with the deeper tree"}, status="open", parent_id=inv)
     scene.rule(inv)
     a, b = scene.accuracy_job(inv, 0.6), scene.accuracy_job(inv, 0.7)
     scene.lock(inv, a)
@@ -652,12 +676,13 @@ def test_reaffirmation_is_inert_with_both_selection_freeze_and_an_exploration_st
     assert f"Incumbent v1: job {incumbent}" in context and "names no job" not in context
 
 
-def test_legacy_candidate_lock_without_a_job_can_be_recorded_during_exploration(scene):
-    inv = scene.investigation()
-    note = scene.note(inv, "candidate_lock", "No candidate selected yet.")["note_id"]
+def test_candidate_absence_is_an_observation_instead_of_a_nameless_lock(scene):
+    inv = scene.investigation(exploration={"policy": "exploration-policy/3"})
+    with pytest.raises(Invalid, match='candidate_lock names no job'):
+        scene.note(inv, "candidate_lock", "No candidate selected yet.")
+    note = scene.note(inv, "observation", "No candidate selected yet.")["note_id"]
     assert [event["subject"] for event in scene.events(inv, "note.recorded")] == [note]
-    (pinned_lock,) = [entry for entry in scene.view(inv)["pinned_notes"] if entry["kind"] == "candidate_lock"]
-    assert candidate_lock_job_id(pinned_lock) is None
+    assert [entry for entry in scene.view(inv)["pinned_notes"] if entry["kind"] == "candidate_lock"] == []
 
 
 def test_a_launched_assess_candidate_freezes_the_selection(lab, tmp_path):

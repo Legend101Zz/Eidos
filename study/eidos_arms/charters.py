@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 from study.common import EXPORT_READINESS_CONTRACT
-from study.private_card_registry import PRIVATE_CARD_BARS, PRIVATE_CLASSIFICATION, PRIVATE_REGRESSION
+from study.private_card_registry import ALL_PRIVATE_CARDS, card_bars, is_classification, is_regression, profile_for_card
+from study.private_card_registry import PRIVATE_CARD_BARS as PRIVATE_CARD_BARS
+from study.private_card_registry import PRIVATE_CLASSIFICATION as PRIVATE_CLASSIFICATION
+from study.private_card_registry import PRIVATE_REGRESSION as PRIVATE_REGRESSION
 
 from .common import write_json
 
@@ -16,12 +19,16 @@ REPRODUCTION_CONTRACT = (
 
 
 def charter(card):
-    paired = card in ('D03', 'D06', 'N01', 'N04') or card in PRIVATE_CLASSIFICATION
+    if card in ALL_PRIVATE_CARDS:
+        card_bars(card)
+    paired = card in ('D03', 'D06', 'N01', 'N04') or is_classification(card)
     metric = 'classification-report/1:accuracy' if paired else METRIC
     exposure = (
         'Prospectively sealed development task. The bundle supplies training and validation only. '
-        'The Pilot 4 charter records limited pre-run builder exposure.'
-        if card in PRIVATE_CARD_BARS else 'Public development task; no evaluator test data supplied'
+        + ('The Pilot 4 charter records limited pre-run builder exposure.'
+         if profile_for_card(card) == 'pilot-4' else
+         'Exposure history must be supplied in the registered pilot charter.')
+        if card in ALL_PRIVATE_CARDS else 'Public development task; no evaluator test data supplied'
     )
     body = {'study_id': card.lower() + '-pilot-practical',
             'question': 'Reproduce the supplied baseline (seed 11), then evaluate the practical accuracy bar.',
@@ -29,7 +36,7 @@ def charter(card):
             'reproduction_contract': REPRODUCTION_CONTRACT,
             'export_readiness_contract': EXPORT_READINESS_CONTRACT,
             'resource_limits': {'wall_seconds': 1800, 'model_tokens': 8_000_000, 'threads': 1}}
-    if card in ('D03', 'D04', 'D05', 'D06', 'N01', 'N02', 'N03', 'N04') or card in PRIVATE_CARD_BARS:
+    if card in ('D03', 'D04', 'D05', 'D06', 'N01', 'N02', 'N03', 'N04') or card in ALL_PRIVATE_CARDS:
         body['pilot_2_setup'] = {
             'policy': 'P2S prospective parity corrections; pilot-1 records remain unchanged.',
             'environments': 'All selectable environments use the arms-1–3 research interpreter, '
@@ -44,7 +51,7 @@ def charter(card):
                            'the launcher excludes it from the outer run deadline. Provider bridge startup, '
                            'investigation, export and accounting remain inside the timed interval. '
                            'adapter_wall_s includes setup and teardown.'}
-    if card in PRIVATE_CARD_BARS:
+    if card in ALL_PRIVATE_CARDS:
         # Pilot 4 onward uses two arms; retain historical public-card charter bytes.
         body['pilot_2_setup'].update(
             environments='All selectable environments use the coding-agent research interpreter, '
@@ -54,9 +61,9 @@ def charter(card):
     if card == 'D01':
         return {**body, 'question': 'Operational import and reproduction; no improvement requested.',
                 'exploration_only': True}
-    if card in ('D04', 'D05', 'N02', 'N03') or card in PRIVATE_REGRESSION:
-        if card in PRIVATE_REGRESSION:
-            rmse_bar = f"{PRIVATE_CARD_BARS[card][1]:.0%}"
+    if card in ('D04', 'D05', 'N02', 'N03') or is_regression(card):
+        if is_regression(card):
+            rmse_bar = f"{card_bars(card)[1]:.0%}"
         elif card.startswith('N'):
             # Pilot-3 addendum 1: read the frozen bar from JSON. Arms 3 and 4 run in the lab interpreter, which
             # has no NumPy, so the NumPy-based packaging module must not be imported here.
@@ -69,9 +76,9 @@ def charter(card):
         else:
             rmse_bar = 0.5
         return {**body, 'question': f'Reduce held-out RMSE by at least {rmse_bar} versus baseline seed 11; reproduce from fresh initialization.', 'exploration_only': True, 'notes': 'No built-in RMSE assessor; see CHARTER_RULES.md. Independent evaluator enforces the practical bar.'}
-    if card not in ('D03', 'D06', 'D02', 'D12', 'N01', 'N04', 'SYNTHETIC_LINEAR_SMOKE') and card not in PRIVATE_CLASSIFICATION:
+    if card not in ('D03', 'D06', 'D02', 'D12', 'N01', 'N04', 'SYNTHETIC_LINEAR_SMOKE') and not is_classification(card):
         raise ValueError(f'no prospective charter policy for {card}')
-    bar = PRIVATE_CARD_BARS[card][1] if card in PRIVATE_CLASSIFICATION else {'D03':0.01,'D06':0.30}.get(card,0.02)
+    bar = card_bars(card)[1] if is_classification(card) else {'D03':0.01,'D06':0.30}.get(card,0.02)
     return {**body, 'exploration_only': False,
             'population': 'Evaluator-owned held-out examples from the task population. Visible validation '
                           'is selection evidence only; it cannot confirm this population.',

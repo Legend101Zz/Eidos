@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from study.common import EXPORT_READINESS_CONTRACT, record_prompt, write_json
+from study.exp.treatment import resolve
 from study.launcher import outer_deadline
 from study.run_arm import run_claude, run_stream
 
@@ -100,7 +101,7 @@ class FinalOutcomes(unittest.TestCase):
         for arm in (1, 2):
             with self.subTest(arm=arm), tempfile.TemporaryDirectory() as d:
                 root = Path(d) / f'arm{arm}'
-                meta = dict(arm=arm, card='D03', run_index=1, block_id='fixture',
+                meta = dict(treatment=resolve().record(), arm=arm, card='D03', run_index=1, block_id='fixture',
                             charter_amendment_commit='a'*40, charter_amendment_sha256='b'*64)
                 write_json(root / 'arm.json', meta)
                 record_prompt(root, meta)
@@ -147,7 +148,7 @@ class SetupAndInformation(unittest.TestCase):
     def test_mcp_arm_sends_the_shared_checkpoint_contract(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d) / 'arm3'
-            metadata = dict(arm=3, card='N05', run_index=1, block_id='fixture',
+            metadata = dict(treatment=resolve().record(), arm=3, card='N05', run_index=1, block_id='fixture',
                             charter_amendment_commit='a'*40, charter_amendment_sha256='b'*64)
             write_json(root / 'arm.json', metadata)
             record_prompt(root, metadata)
@@ -222,7 +223,7 @@ class SetupAndInformation(unittest.TestCase):
             root = Path(d) / 'arm4'
             (root / 'task').mkdir(parents=True)
             (root / 'task/brief.md').write_text('Fixture brief')
-            meta = dict(arm=4, card='D03', run_index=1, block_id='fixture', envelope=dict(wall_s=30),
+            meta = dict(treatment=resolve().record(), arm=4, card='D03', run_index=1, block_id='fixture', envelope=dict(wall_s=30),
                         charter_amendment_commit='a'*40, charter_amendment_sha256='b'*64)
             write_json(root / 'arm.json', meta)
             record_prompt(root, meta)

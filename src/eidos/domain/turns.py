@@ -21,6 +21,7 @@ FINALIZATION_READ_ROUNDS = 2
 
 # Stable effectful tool vocabulary. Installed components are catalog data, never new tools.
 EFFECT_TOOLS = {
+    "prepare_candidate": "prepare_candidate",  # expanded before acceptance, never executed directly
     "run_component": "run_component",
     "plan_trial": "plan_trial",
     "launch_trial": "launch_trial",
@@ -43,6 +44,7 @@ EFFECT_TOOLS = {
 # acceptance, so "schema-valid" also means "executable" (live provider finding: strict-mode JSON
 # schemas can silently drop free-form objects).
 REQUIRED_ARGS = {
+    "prepare_candidate": ("source", "seeds"),
     "run_component": ("component_ref",), "plan_trial": ("component_ref",), "launch_trial": ("trial_id",),
     "plan_branch": ("parent_checkpoint_id", "component_ref", "migration", "stream_policy"),
     "launch_branch": ("trial_id",), "author_component": ("files",), "author_source": ("files",),
@@ -156,7 +158,8 @@ def validate_conclusion_scope(control: dict[str, Any], schema: dict[str, Any] | 
                       details={"problems": problems, "cause": "conclusion-scope-contract"})
 
 
-def validate_decision(proposal: dict[str, Any], *, max_calls: int) -> dict[str, Any]:
+def validate_decision(proposal: dict[str, Any], *, max_calls: int,
+                      allow_prepare_candidate: bool = False) -> dict[str, Any]:
     """Validate a model's proposed decision before it can be accepted.
 
     proposal = {"rationale", "hypotheses": [...], "calls": [{"tool", "args"}], "control": {...}}
@@ -166,10 +169,11 @@ def validate_decision(proposal: dict[str, Any], *, max_calls: int) -> dict[str, 
         raise Invalid("calls must be a list")
     if len(calls) > max_calls:
         raise Invalid(f"decision has {len(calls)} calls; this turn allows {max_calls}")
+    allowed = {t for t in EFFECT_TOOLS if t != "prepare_candidate" or allow_prepare_candidate}
     for i, c in enumerate(calls):
-        if c.get("tool") not in EFFECT_TOOLS:
+        if c.get("tool") not in allowed:
             raise Invalid(f"call {i}: unknown or non-effect tool {c.get('tool')!r}",
-                          details={"allowed": sorted(EFFECT_TOOLS)})
+                          details={"allowed": sorted(allowed)})
         if not isinstance(c.get("args"), dict):
             raise Invalid(f"call {i}: args must be an object")
         missing = [a for a in REQUIRED_ARGS.get(c["tool"], ()) if c["args"].get(a) in (None, "", {}, [])]

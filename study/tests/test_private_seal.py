@@ -14,7 +14,7 @@ import numpy as np
 from study.common import DEVELOPMENT, ENVELOPE, read_json, render_prompt
 from study.grade_block import grade_block
 from study.eidos_arms.charters import charter
-from study.fresh_check import candidate_command, infer
+from study.fresh_check import candidate_command, fresh_check, infer
 from study.launcher import plan, run_block
 from study.private_card_registry import PRIVATE_CARD_BARS
 from study.private_seal import MODEL_FILES, PrivateSeal
@@ -48,11 +48,11 @@ else:
 """
 
 
-def make_seal(root):
+def make_seal(root, bars=None):
     def write(path, value):
         path.write_text(json.dumps(value))
 
-    for card, (metric, bar) in PRIVATE_CARD_BARS.items():
+    for card, (metric, bar) in (PRIVATE_CARD_BARS if bars is None else bars).items():
         directory = root / card
         bundle = directory / "bundle"
         bundle.mkdir(parents=True)
@@ -65,6 +65,7 @@ def make_seal(root):
         write(bundle / "task.json", {
             "task_id": card,
             "project": card,
+            "nclasses": 2 if metric == "accuracy" else None,
             "hashes": {path.name: digest(path.read_bytes()) for path in bundle.iterdir()},
         })
         np.savez(directory / "test_inputs.npz", x=[[1], [2]], ids=[10, 20])
@@ -72,7 +73,7 @@ def make_seal(root):
         np.savez(directory / "baseline_test.npz", ids=[20, 10], predictions=[0, 0])
         write(directory / "manifest.json", {
             "id": card, "task_type": "classification" if metric == "accuracy" else "regression",
-            "metric": metric, "min_reference_gain": bar, "qualified": True, "seeds": [11, 23, 37],
+            "metric": metric, "min_reference_gain": bar if metric == "accuracy" else bar * (0.5 ** 0.5), "qualified": True, "seeds": [11, 23, 37],
             "files": {path.relative_to(directory).as_posix(): digest(path.read_bytes())
                       for path in directory.rglob("*") if path.is_file()},
         })
@@ -173,6 +174,130 @@ class SealTests(unittest.TestCase):
             self.assertTrue(grade["fresh_check"]["fresh_process_export_equal"])
             self.assertEqual(len(grade["reproduction"]), 2)
             self.assertFalse(grade["verified_success"])
+
+    @unittest.skipUnless(sys.platform == "darwin", "requires macOS Seatbelt")
+    def test_isolated_inference_may_write_sidecars_beside_its_output(self):
+        workspace = self.root / "workspace"
+        (workspace / "candidate").mkdir(parents=True)
+        inputs = workspace / "test_inputs.npz"
+        inputs.write_bytes(b"fabricated predictions")
+        code = workspace / "candidate/project.py"
+        code.write_text("""
+import argparse
+from pathlib import Path
+p = argparse.ArgumentParser()
+p.add_argument('action')
+p.add_argument('--model')
+p.add_argument('--inputs', type=Path)
+p.add_argument('--out', type=Path)
+a = p.parse_args()
+(a.out.parent / 'receipt.json').write_text('{}')
+a.out.with_suffix('.receipt.json').write_text('{}')
+a.out.write_bytes(a.inputs.read_bytes())
+""")
+        output = workspace / "validation-inference/predictions.npz"
+        with patch.dict(os.environ, {"EIDOS_RESEARCH_PYTHON": sys.executable}):
+            infer(workspace, code, workspace / "candidate/model.pt", inputs, output, isolated=True)
+        self.assertEqual(output.read_bytes(), inputs.read_bytes())
+        self.assertEqual((output.parent / "receipt.json").read_text(), "{}")
+        self.assertEqual(output.with_suffix(".receipt.json").read_text(), "{}")
+
+    @unittest.skipUnless(sys.platform == "darwin", "requires macOS Seatbelt")
+    def test_isolated_sidecars_do_not_open_channels_between_inferences(self):
+        workspace = self.root / "workspace"
+        (workspace / "candidate").mkdir(parents=True)
+        (workspace / "inputs").mkdir()
+        validation = workspace / "inputs/validation.npz"
+        validation.write_text("validation")
+        test_input = workspace / "test_inputs.npz"
+        test_input.write_text("test")
+        confirmation = workspace / "confirmation-inference-11"
+        confirmation.mkdir()
+        (confirmation / "receipt.json").write_text("earlier confirmation")
+        code = workspace / "candidate/project.py"
+        code.write_text("""
+import argparse
+import os
+from pathlib import Path
+p = argparse.ArgumentParser()
+p.add_argument('action')
+p.add_argument('--model')
+p.add_argument('--inputs', type=Path)
+p.add_argument('--out', type=Path)
+a = p.parse_args()
+root = Path.cwd().parent
+scratch = a.out.parent / 'scratch'
+for name in ('HOME', 'TMPDIR', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME'):
+    assert Path(os.environ[name]) == scratch
+(scratch / 'temporary').write_text('scratch')
+(a.out.parent / 'nested').mkdir()
+(a.out.parent / 'nested/receipt.json').write_text('{}')
+hidden = [root / 'confirmation-inference-11/receipt.json']
+if a.out.parent.name == 'test-inference':
+    hidden.append(root / 'validation-inference/receipt.json')
+for path in hidden:
+    try:
+        path.read_bytes()
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError(f'read another inference: {path}')
+for path in [root / 'side-channel', Path.cwd() / 'side-channel',
+             root / 'inputs/validation.npz', root / 'test_inputs.npz', *hidden]:
+    try:
+        path.write_text('leak')
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError(f'unexpected writable destination: {path}')
+(a.out.parent / 'receipt.json').write_text('{}')
+a.out.write_bytes(a.inputs.read_bytes())
+""")
+        with patch.dict(os.environ, {"EIDOS_RESEARCH_PYTHON": sys.executable}):
+            for name, inputs in (("validation", validation), ("test", test_input)):
+                output = workspace / f"{name}-inference/predictions.npz"
+                infer(workspace, code, workspace / "candidate/model.pt", inputs, output, isolated=True)
+                self.assertEqual(output.read_text(), name)
+                self.assertEqual((output.parent / "receipt.json").read_text(), "{}")
+                self.assertEqual((output.parent / "nested/receipt.json").read_text(), "{}")
+        self.assertEqual(validation.read_text(), "validation")
+        self.assertEqual(test_input.read_text(), "test")
+        self.assertEqual((confirmation / "receipt.json").read_text(), "earlier confirmation")
+        self.assertFalse((workspace / "side-channel").exists())
+        self.assertFalse((workspace / "candidate/side-channel").exists())
+
+    @unittest.skipUnless(sys.platform == "darwin", "requires macOS Seatbelt")
+    def test_fresh_check_isolated_accepts_sidecar_writing_candidate(self):
+        workspace = self.root / "workspace"
+        (workspace / "candidate").mkdir(parents=True)
+        (workspace / "inputs").mkdir()
+        code = workspace / "candidate/project.py"
+        code.write_text(BASELINE_PROJECT.replace(
+            "    ids = np.load(args.inputs)['ids']",
+            "    (args.out.parent / 'receipt.json').write_text('{}')\n"
+            "    args.out.with_suffix('.receipt.json').write_text('{}')\n"
+            "    ids = np.load(args.inputs)['ids']",
+        ))
+        model = workspace / "candidate/model.pt"
+        model.write_text("fabricated model")
+        validation = workspace / "inputs/validation.npz"
+        test_input = workspace / "test_inputs.npz"
+        locked_validation = workspace / "locked_validation.npz"
+        np.savez(validation, x=[[1], [2]], ids=[10, 20])
+        np.savez(test_input, x=[[3], [4]], ids=[30, 40])
+        np.savez(locked_validation, ids=[20, 10], predictions=[0, 0])
+        with patch.dict(os.environ, {"EIDOS_RESEARCH_PYTHON": sys.executable}):
+            result = fresh_check(
+                workspace, code, model, validation, locked_validation, test_input, isolated=True,
+            )
+        self.assertTrue(result["fresh_process_export_equal"])
+        self.assertTrue(result["locked_validation_equal"])
+        self.assertTrue(result["test_reload_equal"])
+        self.assertEqual(result["prediction_path"], str(workspace / "test-inference/predictions.npz"))
+        for name in ("validation-inference", "test-inference", "fresh-test-inference"):
+            output = workspace / name / "predictions.npz"
+            self.assertEqual((output.parent / "receipt.json").read_text(), "{}")
+            self.assertEqual(output.with_suffix(".receipt.json").read_text(), "{}")
 
     @unittest.skipUnless(sys.platform == "darwin", "requires macOS Seatbelt")
     def test_candidate_inference_can_read_current_input_and_cannot_retain_or_reuse_it(self):

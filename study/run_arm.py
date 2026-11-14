@@ -385,6 +385,9 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
                     if stream is not None:
                         stream.close()
     record = {k: arm[k] for k in ("arm", "card", "run_index", "block_id")}
+    from study.exp.treatment import for_run
+
+    record["treatment"] = for_run(arm).record()
     record.update(
         status=status,
         incident_reason=reason,
@@ -407,12 +410,15 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
 def run_claude(run_dir, arm, wall_s=None):
     root = Path(run_dir).resolve()
     metadata = read_json(root / "arm.json")
+    from study.exp.treatment import for_run
+
+    treatment = for_run(metadata)
     if arm == 2:
         import shutil
 
         from study.toolkit.build_toolkit import build_toolkit
 
-        build_toolkit(root)
+        build_toolkit(root, treatment=treatment)
         shutil.copyfile(Path(__file__).parent / "METHOD.md", root / "METHOD.md")
     env = agent_env(root)
     # The key exists only in this local environment, handed directly to the child.
@@ -492,6 +498,8 @@ def main():
         meta = read_json(args.run_dir / "arm.json")
         now = utc_now()
         record = {k: meta[k] for k in ("arm", "card", "run_index", "block_id")}
+        if "treatment" in meta:
+            record["treatment"] = meta["treatment"]
         transcript = args.run_dir / "transcript.jsonl"
         if not transcript.exists():
             transcript.write_text("")
