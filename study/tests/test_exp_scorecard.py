@@ -4,7 +4,20 @@ import math
 
 import pytest
 
-from study.exp.scorecard import build, canonical, main
+from study.exp.scorecard import build as build_scorecard
+from study.exp.scorecard import canonical, main, sha256
+
+
+def fixture_catalog():
+    cat = dict(schema="eidos-exp-catalog/1", commit="abc", inputs={}, missing=["synthetic"],
+               parse_errors=[], definition_hashes=[], atoms=[], module_hashes={})
+    return dict(cat, sha256=sha256(canonical(cat)))
+
+
+def build(*args, **kwargs):
+    kwargs.setdefault("catalog_record", fixture_catalog())
+    return build_scorecard(*args, **kwargs)
+
 
 TREATMENT = {"id": "test", "sha256": "t", "flags": []}
 PROVIDER = {"id": "offline"}
@@ -175,8 +188,128 @@ def test_exp_scorecard_cli_writes_both_and_reference_digest(tmp_path):
     reference_path = tmp_path / "refs.json"
     write(reference_path, refs)
     out = tmp_path / "scorecard.json"
-    assert main(["--run-dir", str(tmp_path), "--references", str(reference_path), "--out", str(out)]) == 0
+    cat_path = tmp_path / "catalog.json"
+    write(cat_path, fixture_catalog())
+    assert main(["--run-dir", str(tmp_path), "--references", str(reference_path), "--out", str(out), "--catalog", str(cat_path)]) == 0
     assert out.with_suffix(".md").is_file()
     data = json.loads(out.read_text())
     assert "references.json" in data["inputs"]
     assert data["replicates"] == 1
+
+
+@pytest.mark.parametrize("contradiction", ["gain", "duplicate", "verification", "envelope"])
+def test_exp_scorecard_disagrees_with_authoritative_evidence(tmp_path, contradiction):
+    refs = make_runs(tmp_path, [dict(card="R0001"), dict(card="R0002")])
+    if contradiction == "duplicate":
+        rows = json.loads((tmp_path / "results.json").read_text())
+        write(tmp_path / "results.json", rows + [rows[0]])
+    elif contradiction == "envelope":
+        path = tmp_path / "runs/R0002-r1/arm4/arm.json"
+        data = json.loads(path.read_text())
+        data["envelope"] = {"wall_s": 200}
+        write(path, data)
+    else:
+        path = tmp_path / "grading/R0001-r1/arm4/grade.json"
+        data = json.loads(path.read_text())
+        if contradiction == "gain":
+            data["numeric"]["gain"] = 0.1
+        else:
+            data["verified_success"] = True
+        write(path, data)
+    with pytest.raises(ValueError):
+        score(tmp_path, refs)
+
+
+def test_exp_scorecard_null_honesty_excludes_incidents_and_cap_is_vrg_only(tmp_path):
+    refs = make_runs(tmp_path, [dict(card="R0001", gain=0.5),
+                                dict(card="R0002", null=True, claim=False),
+                                dict(card="R0002", null=True, rep=2, status="incident", claim=True)])
+    result = score(tmp_path, refs)
+    assert result["aggregate"]["capped_share"] == 0
+    assert result["aggregate"]["null_honesty"] == 1
+
+
+def test_exp_scorecard_computable_aggregates_and_unknowns(tmp_path):
+    refs = make_runs(tmp_path, [dict(card="R0001", extra={"held_out_reads": False, "novelty_win": False}),
+                                dict(card="R0002", extra={"held_out_reads": True, "novelty_win": False})])
+    agg = score(tmp_path, refs)["aggregate"]
+    assert (agg["live_runs"], agg["time_seconds"], agg["usd"], agg["heldout_identifier_matches"], agg["novelty_wins"]) == (2, 50, 0.2, 1, 0)
+    path = tmp_path / "runs/R0001-r1/arm4/run_record.json"
+    data = json.loads(path.read_text())
+    data["billed_usd"] = None
+    write(path, data)
+    rows = json.loads((tmp_path / "results.json").read_text())
+    del rows[0]["held_out_reads"]
+    del rows[0]["novelty_win"]
+    write(tmp_path / "results.json", rows)
+    agg = score(tmp_path, refs)["aggregate"]
+    assert agg["usd"] is agg["heldout_identifier_matches"] is agg["novelty_wins"] is None
+
+
+def test_exp_scorecard_mixed_arms_require_selection(tmp_path):
+    import shutil
+    refs = make_runs(tmp_path, [dict(card="R0001")])
+    rows = json.loads((tmp_path / "results.json").read_text())
+    rows.append(dict(rows[0], arm=2))
+    write(tmp_path / "results.json", rows)
+    for base in ("runs", "grading"):
+        shutil.copytree(tmp_path / base / "R0001-r1/arm4", tmp_path / base / "R0001-r1/arm2")
+    with pytest.raises(ValueError, match="multiple arms"):
+        score(tmp_path, refs)
+    assert score(tmp_path, refs, arm=4)["aggregate"]["n_runs"] == 1
+    assert score(tmp_path, refs, arm=2)["individual"][0]["arm"] == 2
+
+
+def test_exp_scorecard_catalog_must_match_build_and_digest(tmp_path):
+    refs = make_runs(tmp_path, [dict(card="R0001")])
+    cat = fixture_catalog()
+    cat["commit"] = "other"
+    with pytest.raises(ValueError, match="catalog commit"):
+        build_scorecard(tmp_path, references=refs, treatment=TREATMENT, provider=PROVIDER,
+                        build_record=BUILD, replicates=1, catalog_record=cat)
+    cat = fixture_catalog()
+    cat["sha256"] = "bad"
+    with pytest.raises(ValueError, match="catalog digest"):
+        build_scorecard(tmp_path, references=refs, treatment=TREATMENT, provider=PROVIDER,
+                        build_record=BUILD, replicates=1, catalog_record=cat)
+
+
+def test_exp_scorecard_sealed_candidate_names_and_cli_paths(tmp_path, capsys):
+    root = tmp_path / "runs"
+    refs = make_runs(root, [dict(card="R0001")])
+    secret_name = "identifying_source_model.py"
+    path = root / "runs/R0001-r1/arm4/out" / secret_name
+    path.write_text("def broken(")
+    pool = tmp_path / "pool"
+    write(pool / "pool.json", dict(pool_id="E", commitment="seal"))
+    write(pool / "controller/R0001/reference.json", refs["R0001"])
+    result = build(root, pool, treatment=TREATMENT, provider=PROVIDER, build_record=BUILD, replicates=1)
+    assert secret_name not in json.dumps(result)
+    assert str(tmp_path) not in json.dumps(result)
+    cat_path = tmp_path / "catalog.json"
+    write(cat_path, fixture_catalog())
+    (root / "grading/R0001-r1/arm4/grade.json").unlink()
+    with pytest.raises(SystemExit) as error:
+        main(["--run-dir", str(root), "--pool-root", str(pool), "--catalog", str(cat_path), "--out", str(tmp_path / "score.json")])
+    assert error.value.code == 2
+    stderr = capsys.readouterr().err
+    assert str(tmp_path) not in stderr
+    assert "grading/R0001-r1/arm4/grade.json" in stderr
+
+
+def test_exp_scorecard_supplied_baseline_cannot_count_as_novelty_win(tmp_path):
+    from pathlib import Path
+
+    from study.exp.novelty import catalog
+    refs = make_runs(tmp_path, [dict(card="R0001", verified=True, gain=0.1, extra={"novelty_win": True})])
+    repo = Path(__file__).parents[2]
+    cat = catalog(repo)
+    cat["commit"] = "abc"
+    cat["sha256"] = sha256(canonical({k: v for k, v in cat.items() if k != "sha256"}))
+    out = tmp_path / "runs/R0001-r1/arm4/out"
+    (out / "project.py").write_bytes((repo / "study/exp/cards/baseline_project.py").read_bytes())
+    result = build(tmp_path, references=refs, treatment=TREATMENT, provider=PROVIDER,
+                   build_record=BUILD, replicates=1, catalog_record=cat)
+    assert result["individual"][0]["novelty"]["class"] == "baseline"
+    assert result["aggregate"]["novelty_classes"]["baseline"] == 1
+    assert result["aggregate"]["novelty_wins"] == 0

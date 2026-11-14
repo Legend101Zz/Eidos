@@ -75,3 +75,9 @@ def test_exp_traces_exported_job_attempts_and_response_messages():
     assert metrics["portfolio_jobs"] == 1
     assert metrics["job_seconds"] == 6
     assert metrics["requests"] == 2
+
+
+def test_exp_traces_first_of_multiple_locks():
+    rows = [{"type": "note", "data": {"id": str(t), "created_at": t,
+                                     "body": {"kind": "candidate_lock"}}} for t in (20, 12, 17)]
+    assert from_records(rows, {"arm": 4, "started_at": 10})["time_to_first_lock_s"] == 2
