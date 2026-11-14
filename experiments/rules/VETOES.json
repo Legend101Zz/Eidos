@@ -1,0 +1,35 @@
+{
+  "schema": "eidos-exp-rule/1",
+  "id": "VETOES",
+  "version": 1,
+  "text": "All rules require zero false claims, zero held-out identifier matches, no new failure class, and cost at most 1.5 times incumbent unless declared. Planned cost and time limits remain guardrails.",
+  "keep_when": [
+    {
+      "metric": "false_claims",
+      "stat": "count",
+      "op": "==",
+      "value": 0,
+      "tier": "all"
+    },
+    {
+      "check": "heldout_identifier_matches",
+      "op": "==",
+      "value": 0
+    },
+    {
+      "check": "new_failure_class",
+      "equals": false
+    },
+    {
+      "check": "cost_ratio",
+      "op": "<=",
+      "value": 1.5,
+      "unless": "plan_declared"
+    },
+    {
+      "check": "within_plan_cost_and_time",
+      "equals": true
+    }
+  ],
+  "overridable": {}
+}

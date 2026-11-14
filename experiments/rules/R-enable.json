@@ -1,0 +1,40 @@
+{
+  "schema": "eidos-exp-rule/1",
+  "id": "R-enable",
+  "version": 1,
+  "text": "Mean delta VRG must be at least -0.10, or autopilot delta VRG at least -0.01 when the plan declares model-free evaluation sufficient. The declared target metric must improve by the declared amount. The shared vetoes also apply.",
+  "keep_when": [
+    {
+      "metric": "vrg",
+      "stat": "mean_delta",
+      "op": ">=",
+      "value": -0.1,
+      "tier": "planned",
+      "override": "ni_margin",
+      "override_scale": -1
+    },
+    {
+      "metric": "target",
+      "stat": "improvement",
+      "op": ">=",
+      "value": {
+        "plan": "target.amount"
+      },
+      "tier": {
+        "plan": "target.tier"
+      },
+      "target_metric": {
+        "plan": "target.metric"
+      }
+    }
+  ],
+  "overridable": {
+    "ni_margin": {
+      "min": 0.02,
+      "max": 0.15
+    }
+  },
+  "inherits": [
+    "VETOES"
+  ]
+}

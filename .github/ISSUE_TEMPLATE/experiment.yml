@@ -1,0 +1,67 @@
+name: Experiment
+description: Use this issue number with new --issue N to register before building and record every outcome.
+title: 'EXP: '
+labels: [experiment]
+body:
+  - type: textarea
+    id: hypothesis
+    attributes:
+      label: Hypothesis
+      description: Mechanism and evidence, including sources for what fails today.
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: Change
+      description: What will be built and which feature flag controls it?
+    validations:
+      required: true
+  - type: textarea
+    id: prediction
+    attributes:
+      label: Prediction
+      description: Effect on the primary metric and a named mechanism metric.
+    validations:
+      required: true
+  - type: textarea
+    id: falsifier
+    attributes:
+      label: Falsifier
+    validations:
+      required: true
+  - type: textarea
+    id: plan
+    attributes:
+      label: Evaluation plan
+      description: Tiers, pool, cards, runs, budget, stop rules and exposure.
+    validations:
+      required: true
+  - type: dropdown
+    id: rule
+    attributes:
+      label: Keep/revert rule
+      options: [R-infra, R-mech, R-behav, R-disc, R-enable]
+    validations:
+      required: true
+  - type: textarea
+    id: overrides
+    attributes:
+      label: Rule overrides
+      description: Pre-declare thresholds and any single extension.
+  - type: textarea
+    id: result
+    attributes:
+      label: Result
+      description: Fill at close with evidence, scorecard digests and cost.
+  - type: dropdown
+    id: decision
+    attributes:
+      label: Decision
+      options: [pending, keep, revert, extend, abandon]
+      default: 0
+  - type: textarea
+    id: links
+    attributes:
+      label: Links
+      description: Branch, experiment directory, commits and independent reviews.

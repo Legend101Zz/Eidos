@@ -1,0 +1,67 @@
+{
+  "schema": "eidos-exp-rule/1",
+  "id": "R-disc",
+  "version": 1,
+  "text": "T2 must be clean. T3 mean delta MRG must reach the pre-declared delta (default 0.08), with exact paired sign-flip p at most 0.10, or at most 0.06 at each look if one extension was declared. Delta VRG must be at least -0.10 and verified-success rate must not fall by more than one run. The shared vetoes also apply.",
+  "keep_when": [
+    {
+      "check": "guardrails_clean",
+      "equals": true,
+      "tier": "T2"
+    },
+    {
+      "metric": "mrg",
+      "stat": "mean_delta",
+      "op": ">=",
+      "value": 0.08,
+      "tier": "T3",
+      "override": "delta"
+    },
+    {
+      "metric": "mrg",
+      "stat": "signflip_p",
+      "op": "<=",
+      "value": 0.1,
+      "tier": "T3",
+      "method": "exact_paired",
+      "when": {
+        "extension": false
+      }
+    },
+    {
+      "metric": "mrg",
+      "stat": "signflip_p",
+      "op": "<=",
+      "value": 0.06,
+      "tier": "T3",
+      "method": "exact_paired",
+      "each_look": true,
+      "when": {
+        "extension": true
+      }
+    },
+    {
+      "metric": "vrg",
+      "stat": "mean_delta",
+      "op": ">=",
+      "value": -0.1,
+      "tier": "T3"
+    },
+    {
+      "metric": "verified_rate",
+      "stat": "success_count_delta",
+      "op": ">=",
+      "value": -1,
+      "tier": "T3"
+    }
+  ],
+  "overridable": {
+    "delta": {
+      "min": 0.05,
+      "max": 0.3
+    }
+  },
+  "inherits": [
+    "VETOES"
+  ]
+}

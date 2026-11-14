@@ -1,0 +1,7 @@
+{
+  "schema": "eidos-exp-rule-choice/1",
+  "rule": "R-mech",
+  "version": 1,
+  "overrides": {},
+  "extension": false
+}
