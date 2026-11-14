@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The full switch-order acceptance journey from a clean wheel install: build wheels, fresh venv, fresh lab, run every step.
-# Env: CI_WORK (default $RUNNER_TEMP/eidos-switch or mktemp), EIDOS_TORCH_PYTHON (existing interpreter with torch+numpy; else a CPU
+# Env: CI_WORK (default $RUNNER_TEMP/eidos-switch or mktemp), EIDOS_TORCH_PYTHON (existing interpreter with torch+numpy+scikit-learn+joblib; else a CPU
 #      torch 2.15.0 venv is built from the wheelhouse), LAB_API_PORT/LAB_PG_PORT/LAB_TEMPORAL_PORT, PG_BIN, TEMPORAL_SOURCE, PYTHON.
 # Output: $CI_WORK/out/journey-run.json and journey.md; lab logs in $CI_WORK/lab/logs.
 set -euo pipefail
@@ -16,7 +16,7 @@ if [ -z "${EIDOS_TORCH_PYTHON:-}" ]; then
   export EIDOS_WHEELHOUSE="$CI_WORK/wheelhouse"
   bash "$REPO/scripts/dev/fetch_cpu_torch.sh" 2.15.0 cp312 >/dev/null
   uv venv -q --python "$PYTHON" "$CI_WORK/project-venv"
-  uv pip install -q --python "$CI_WORK/project-venv/bin/python" --find-links "$EIDOS_WHEELHOUSE" "torch==2.15.0+cpu" numpy
+  uv pip install -q --python "$CI_WORK/project-venv/bin/python" --find-links "$EIDOS_WHEELHOUSE" "torch==2.15.0+cpu" numpy==2.5.4 scikit-learn==1.9.1 joblib==1.6.0
   EIDOS_TORCH_PYTHON="$CI_WORK/project-venv/bin/python"
 fi
 export EIDOS_TORCH_PYTHON EIDOS_NUMPY_PYTHON="$EIDOS_TORCH_PYTHON"

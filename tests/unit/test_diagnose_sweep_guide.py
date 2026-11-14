@@ -114,3 +114,17 @@ def test_the_playbook_and_the_guide_give_one_order():
                                      "reproduce the incumbent", "assess or submit", "conclude before the deadline")]
     assert order == sorted(order)
     assert '"scorer"' in guide and "a lock cannot name its own scorer job" in guide
+
+
+def test_v3_playbook_and_v4_guide_order_portfolio_preparation_separate_lock_and_finalization():
+    from eidos.investigator.context import TOOL_GUIDE_V4
+    from eidos.investigator.playbook import PLAYBOOK_V3
+    order = ['1. Check environment', '2. Run eidos.search.recipe-portfolio', '3. As the last call',
+             'prepared lock JSON', '4. Refine', '5. An improvement claim', '6. Finalize']
+    positions = [PLAYBOOK_V3.index(s) for s in order]
+    assert positions == sorted(positions)
+    order = ['eidos.search.recipe-portfolio', 'prepare_candidate {', 'never locks', 'prepared lock JSON',
+             'An improvement claim needs']
+    positions = [TOOL_GUIDE_V4.index(s) for s in order]
+    assert positions == sorted(positions)
+    assert 'same data' in TOOL_GUIDE_V4 and 'approximation, never a bound' in TOOL_GUIDE_V4

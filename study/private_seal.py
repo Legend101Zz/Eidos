@@ -6,9 +6,10 @@ import json
 import math
 import os
 import re
+from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 
-from study.private_card_registry import PRIVATE_CARD_BARS
+from study.private_card_registry import PRIVATE_CARD_BARS, PROFILES, card_bars, profile_for_card, validate_bars
 
 MODEL_FILES = frozenset({
     "brief.md", "project.py", "train.npz", "validation.npz",
@@ -39,7 +40,11 @@ def _sealed_file(root, name):
 
 
 class PrivateSeal:
-    def __init__(self, root, commitment):
+    def __init__(self, root, commitment, cards=None):
+        if cards is not None and not isinstance(cards, Mapping):
+            cards = {card: card_bars(card) for card in cards}
+        self.cards = validate_bars(PRIVATE_CARD_BARS if cards is None else cards,
+                                  PRIVATE_CARD_BARS if cards is None else cards)
         self.root = Path(root).resolve(strict=True)
         opening = json.loads(_sealed_file(self.root, "commitment-opening.json").read_bytes())
         hashes = opening["files"]
@@ -49,7 +54,7 @@ class PrivateSeal:
             raise ValueError("private seal commitment mismatch")
         required = {
             f"{card}/{name}"
-            for card in PRIVATE_CARD_BARS
+            for card in self.cards
             for name in CARD_FILES | {"manifest.json"}
         }
         if not required <= hashes.keys():
@@ -62,7 +67,7 @@ class PrivateSeal:
         self.hashes = hashes
 
     def card(self, card):
-        metric, bar = PRIVATE_CARD_BARS[card]
+        metric, bar = self.cards[card]
         manifest = json.loads(self._read(card, "manifest.json"))
         kind = "classification" if metric == "accuracy" else "regression"
         seeds = manifest["seeds"]
@@ -80,6 +85,8 @@ class PrivateSeal:
         return manifest
 
     def _read(self, card, name):
+        if card not in self.cards:
+            raise ValueError("card outside configured private profile")
         relative = f"{card}/{name}"
         data = _sealed_file(self.root, relative).read_bytes()
         if _sha(data) != self.hashes[relative]:
@@ -126,6 +133,10 @@ class PrivateSeal:
         manifest = self.card(card)
         kind = manifest["task_type"]
         classes = 2 if kind == "classification" else None
+        if kind == "classification" and set(self.cards) != set(PRIVATE_CARD_BARS):
+            classes = json.loads(self._read(card, "bundle/task.json")).get("nclasses")
+            if type(classes) is not int or classes < 2:
+                raise RuntimeError("private task class count missing or invalid")
         try:
             with np.load(io.BytesIO(self._read(card, "test_labels.npz")), allow_pickle=False) as labels:
                 if set(labels.files) != {"y", "ids"}:
@@ -136,14 +147,27 @@ class PrivateSeal:
         except (KeyError, TypeError, ValueError, OSError) as error:
             raise RuntimeError("private scorer evidence failed verification") from error
         measured = score(y, read_predictions(candidate, ids, kind, classes), kind)
+        if kind == "regression" and set(self.cards) != set(PRIVATE_CARD_BARS) and not math.isclose(
+            manifest["min_reference_gain"], self.cards[card][1] * baseline,
+            rel_tol=1e-12, abs_tol=0.0,
+        ):
+            raise RuntimeError("private RMSE relative bar failed verification")
         return dict(metric=manifest["metric"], baseline=baseline, candidate=measured,
                     gain=measured - baseline if kind == "classification" else baseline - measured,
                     n=len(y), split="test", status="numeric development result")
 
 
-def configured_seal():
-    commitment = Path(__file__).with_name("pilot4_commitment.txt").read_text().strip()
+def configured_seal(card=None, *, profile=None):
     try:
-        return PrivateSeal(os.environ["EIDOS_PRIVATE_SEAL_ROOT"], commitment)
+        selected = profile or os.environ.get("EIDOS_CARD_PROFILE")
+        if card is not None:
+            expected = profile_for_card(card)
+            if selected is not None and selected != expected:
+                raise ValueError("card/profile mismatch")
+            selected = expected
+        spec = PROFILES[selected or "pilot-4"]
+        commitment = spec.commitment()
+        cards = spec.bars()
+        return PrivateSeal(os.environ[spec.seal_root_env], commitment, cards)
     except (KeyError, TypeError, ValueError, OSError) as error:
         raise RuntimeError("configured private seal failed verification") from error

@@ -59,6 +59,10 @@ def exercise(clock, mode, actions, *, window=253, tools=False, config=None):
             await asyncio.Future()
         if action == "early-timeout":
             raise TimeoutError("provider timeout before the admitted timeout")
+        if action == "refusal":
+            return ModelResponse(parts=[TextPart('Refused')], provider_name='anthropic',
+                                 provider_details={'finish_reason': 'refusal'},
+                                 usage=RequestUsage(input_tokens=100, output_tokens=12))
         if action == "runaway":
             return ModelResponse(parts=[TextPart("")], finish_reason="length",
                                  usage=RequestUsage(input_tokens=100, output_tokens=16_384))
@@ -236,6 +240,18 @@ def test_provider_error_in_fallback_preserves_its_outcome_and_abandoned_usage(co
     usage = caught.value.possible_usage
     assert usage["structured_output"]["fallback_outcome"] == "provider-failed" and len(seen) == 2
     assert usage["in_flight_estimate"]["output_tokens"] == 16_384
+
+
+@pytest.mark.parametrize('mode', ['json', 'repair', 'tool'])
+def test_provider_refusal_in_fallback_records_outcome(conclude_clock, mode):
+    rt, request, seen, _, _ = exercise(conclude_clock, mode, ['hang', 'refusal'],
+                                     config={'model': 'anthropic:fixture'})
+    result = rt.decide(request)
+    assert result.runtime_outcome == 'provider-refused' and not result.proposal
+    assert len(seen) == 2
+    assert result.usage['structured_output']['fallback_used']
+    assert result.usage['structured_output']['fallback_outcome'] == 'provider-refused'
+    assert result.usage['in_flight_estimate']['output_tokens'] == 16_384
 
 
 @pytest.mark.parametrize("mode", ["json", "repair", "tool"])

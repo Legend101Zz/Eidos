@@ -231,7 +231,8 @@ def test_the_refusal_lists_what_the_tool_does_produce():
 @pytest.mark.parametrize("tool", [t for t in turns.EFFECT_TOOLS if t not in turns.JOB_TOOLS])
 def test_output_slots_are_refused_on_a_tool_that_admits_no_job(tool):
     with pytest.raises(Invalid, match="names no result of"):
-        accept([minimal(tool), note(ref(0, "outputs.predictions"))])
+        turns.validate_decision({"calls": [minimal(tool), note(ref(0, "outputs.predictions"))]},
+                                max_calls=6, allow_prepare_candidate=tool == "prepare_candidate")
 
 
 @pytest.mark.parametrize("tool", turns.JOB_TOOLS)

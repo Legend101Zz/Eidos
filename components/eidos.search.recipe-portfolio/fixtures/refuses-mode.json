@@ -1,0 +1,10 @@
+{
+  "name": "refuses-mode",
+  "author_test": true,
+  "config": {
+    "mode": "confirm"
+  },
+  "expect": {
+    "status": "failed"
+  }
+}

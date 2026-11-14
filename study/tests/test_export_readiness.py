@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -94,6 +95,23 @@ class VisibleExportReadiness(unittest.TestCase):
     def test_serialized_preprocessing_round_trip_agrees_after_id_alignment(self):
         training, output = self.run_fixture("round_trip")
         self.assertTrue(equal_predictions(training, output))
+
+
+    @unittest.skipUnless(sys.platform == "darwin", "requires the study Seatbelt evaluator")
+    def test_evaluator_candidate_process_has_all_four_single_thread_caps(self):
+        from unittest.mock import patch
+
+        from study.fresh_check import candidate_command
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        workspace = Path(temp.name).resolve()
+        (workspace / "candidate").mkdir()
+        (workspace / "inputs").mkdir()
+        names = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "VECLIB_MAXIMUM_THREADS")
+        code = "import os,json; print(json.dumps({k:os.environ.get(k) for k in " + repr(names) + "}))"
+        with patch.dict("os.environ", {"EIDOS_RESEARCH_PYTHON": sys.executable}):
+            actual = json.loads(candidate_command(workspace, [sys.executable, "-c", code], timeout=120))
+        self.assertEqual(actual, dict.fromkeys(names, "1"))
 
 
 if __name__ == "__main__":

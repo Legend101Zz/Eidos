@@ -35,3 +35,8 @@ visible validation. It demonstrates the failure mechanisms without establishing
 what a model would do with the instruction. Visible parity remains separate
 from independent confirmation. The changed shared controller and prompt
 require matched prospective qualification before use in the study.
+
+
+## Amendment — v2 preparation (ADR 0047, step 3)
+
+For opt-in v2 investigations, ADR 0047 supersedes the sentence “It adds no execution tool, validator, automatic relock or post-submission repair”: the lab adds one preparation macro, with ordinary checked train, fresh-process readiness, paired comparison and reproduction jobs. The investigator records the lock in a separate later decision; there is no automatic lock, relock or post-submission repair. The shared fresh-process readiness instruction remains unchanged.

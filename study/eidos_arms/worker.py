@@ -27,6 +27,10 @@ def main():
     if int(meta['arm']) != a.arm:
         raise ValueError('arm.json disagrees with dispatcher')
     record = {k: meta.get(k) for k in ('arm', 'card', 'run_index', 'block_id')}
+    from study.exp.treatment import for_run
+
+    record['treatment'] = for_run(meta).record()
+    record['provider'] = for_run(meta).provider.record()
     record.update(started_at=started, incident_reason=None, billed_usd=None,
                   tokens={k: 0 for k in ('input', 'cache_read', 'cache_write', 'output', 'total')},
                   model_ids_seen=[], agent_claim='', transcript='transcript.jsonl')

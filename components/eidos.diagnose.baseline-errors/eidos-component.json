@@ -1,13 +1,13 @@
 {
  "id": "eidos.diagnose.baseline-errors",
- "release": "1.0.0",
+ "release": "1.1.0",
  "implements": "baseline-diagnosis/1",
  "kind": "artifact-op",
  "dependencies": [
   "numpy"
  ],
  "entry": "baseline_errors:run",
- "summary": "Baseline error analysis before changing the model: split statistics (per-feature mean/std shift between train and validation, per-example mean, std and norm), error slices of the baseline's validation predictions (by class or target quantile, input-norm and input-mean quantile, any given group), cheap invariance probes (quick ridge and k-NN refits on train under none, per-example centering, per-example standardization, split-wise standardization and shift-invariant features, plus within-split CV) and ranked hypotheses that tell an additive offset, a gain change, a feature-wise shift, a spatial or positional shift and information loss apart, each with a prediction and a falsifier. Inputs are NPZ arrays x, y, ids. Reads train, validation, optional predictions, groups and task only: no test data. Exploratory; makes no claim.",
+ "summary": "Baseline error analysis before changing the model: split statistics (per-feature mean/std shift between train and validation, per-example mean, std and norm), error slices of the baseline's validation predictions (by class or target quantile, input-norm and input-mean quantile, any given group), cheap invariance probes (quick ridge and k-NN refits on train under none, per-example centering, per-example standardization, split-wise standardization and shift-invariant features, plus within-split CV) and ranked hypotheses that tell an additive offset, a gain change, a feature-wise shift, a spatial or positional shift and information loss apart, each with a prediction and a falsifier. Inputs are NPZ arrays x, y, ids. Reads train, validation, optional predictions, groups and task only: no test data. Exploratory; makes no claim. When no transfer shift is detected, unsupported hypotheses are omitted from steering and next points to broad model-family discovery.",
  "scientific_effects": [
   "observe"
  ],
@@ -38,12 +38,14 @@
  "controls": [
   "fixtures/planted-offset.json",
   "fixtures/refuses-heldout-key.json",
-  "fixtures/refuses-extra-port.json"
+  "fixtures/refuses-extra-port.json",
+  "fixtures/no-shift.json"
  ],
  "receipt": [
   "top_hypothesis",
   "hypotheses",
-  "metrics"
+  "metrics",
+  "next"
  ],
  "config_schema": {
   "type": "object",

@@ -1,0 +1,155 @@
+{
+ "id": "eidos.diagnose.baseline-errors",
+ "release": "1.0.0",
+ "implements": "baseline-diagnosis/1",
+ "kind": "artifact-op",
+ "dependencies": [
+  "numpy"
+ ],
+ "entry": "baseline_errors:run",
+ "summary": "Baseline error analysis before changing the model: split statistics (per-feature mean/std shift between train and validation, per-example mean, std and norm), error slices of the baseline's validation predictions (by class or target quantile, input-norm and input-mean quantile, any given group), cheap invariance probes (quick ridge and k-NN refits on train under none, per-example centering, per-example standardization, split-wise standardization and shift-invariant features, plus within-split CV) and ranked hypotheses that tell an additive offset, a gain change, a feature-wise shift, a spatial or positional shift and information loss apart, each with a prediction and a falsifier. Inputs are NPZ arrays x, y, ids. Reads train, validation, optional predictions, groups and task only: no test data. Exploratory; makes no claim.",
+ "scientific_effects": [
+  "observe"
+ ],
+ "input": {
+  "train": "task-array/1",
+  "validation": "task-array/1"
+ },
+ "optional_inputs": {
+  "predictions": "prediction-array/1",
+  "groups": "task-array/1",
+  "task": "task-manifest/1"
+ },
+ "output": {
+  "report": "baseline-diagnosis/1"
+ },
+ "reads": [
+  "train",
+  "validation",
+  "predictions",
+  "groups",
+  "task"
+ ],
+ "writes": [
+  "output:report"
+ ],
+ "isolation": "immutable-artifacts",
+ "card": "method-card.md",
+ "controls": [
+  "fixtures/planted-offset.json",
+  "fixtures/refuses-heldout-key.json",
+  "fixtures/refuses-extra-port.json"
+ ],
+ "receipt": [
+  "top_hypothesis",
+  "hypotheses",
+  "metrics"
+ ],
+ "config_schema": {
+  "type": "object",
+  "properties": {
+   "task_type": {
+    "type": "string",
+    "enum": [
+     "classification",
+     "regression"
+    ],
+    "description": "default: task.task_type, else inferred from the training labels"
+   },
+   "layout": {
+    "type": "string",
+    "enum": [
+     "auto",
+     "tabular",
+     "sequence",
+     "image"
+    ],
+    "description": "how positions are arranged, for the shift-invariant probe; auto: image for 3-D arrays or a square number (>= 64) of features, else sequence; tabular skips that probe"
+   },
+   "image_shape": {
+    "type": "array",
+    "items": {
+     "type": "integer"
+    },
+    "minItems": 2,
+    "maxItems": 2
+   },
+   "probes": {
+    "type": "array",
+    "items": {
+     "type": "string",
+     "enum": [
+      "none",
+      "per_example_center",
+      "per_example_standardize",
+      "split_standardize",
+      "shift_invariant"
+     ]
+    }
+   },
+   "group_keys": {
+    "type": "array",
+    "items": {
+     "type": "string"
+    },
+    "description": "extra arrays in the validation NPZ to slice errors by; a name that is not there is refused"
+   },
+   "groups_key": {
+    "type": "string",
+    "description": "array in the groups input (with ids); default groups"
+   },
+   "x_key": {
+    "type": "string"
+   },
+   "y_key": {
+    "type": "string"
+   },
+   "ids_key": {
+    "type": "string"
+   },
+   "prediction_key": {
+    "type": "string",
+    "description": "array in the predictions input; default predictions"
+   },
+   "seed": {
+    "type": "integer"
+   },
+   "cv_folds": {
+    "type": "integer",
+    "minimum": 2,
+    "description": "folds of the within-split cross-validation; default 5"
+   },
+   "quantiles": {
+    "type": "integer",
+    "minimum": 2
+   },
+   "min_effect": {
+    "type": "number",
+    "minimum": 0,
+    "description": "smallest score that counts as support; default 0.02, and for accuracy at least 5 / validation rows"
+   },
+   "max_train_rows": {
+    "type": "integer",
+    "minimum": 2
+   },
+   "max_validation_rows": {
+    "type": "integer",
+    "minimum": 2
+   },
+   "ridge_alpha": {
+    "type": "number",
+    "minimum": 0
+   },
+   "knn_k": {
+    "type": "integer",
+    "minimum": 1
+   }
+  },
+  "examples": [
+   {
+    "layout": "auto",
+    "seed": 11
+   }
+  ]
+ }
+}

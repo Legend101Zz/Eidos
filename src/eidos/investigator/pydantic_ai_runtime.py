@@ -21,7 +21,7 @@ from eidos.domain.errors import Invalid
 from eidos.domain.turns import FINALIZATION_READ_ROUNDS, validate_conclusion_scope
 from eidos.investigator import structured_output as so
 from eidos.investigator.conclude_split import DURABLE_WRITE_MARGIN_SECONDS, ConcludeSplit
-from eidos.investigator.playbook import PLAYBOOK
+from eidos.investigator.playbook import PLAYBOOK, PLAYBOOK_V3
 from eidos.investigator.runtime import (
     ABORT_POLL_SECONDS,
     DecisionAbort,
@@ -338,9 +338,13 @@ def in_flight_estimate(abandoned: dict[str, Any], price: dict[str, float] | None
     return est
 
 
+class _ProviderRefusal(ModelCallFailed):
+    """Internal non-retryable signal; decide records the bounded unusable-output outcome."""
+
+
 def _guarded(model: Any, envelope: TokenEnvelope, abort: DecisionAbort | None = None,
              request_timeout: float = 120.0, *, runtime: PydanticAIRuntime | None = None,
-             terminal: bool = False) -> Any:
+             terminal: bool = False, response_hook: Any = None) -> Any:
     """Admit and account every request, including the one possible finalization fallback."""
     from pydantic_ai.models.wrapper import WrapperModel
 
@@ -392,7 +396,10 @@ def _guarded(model: Any, envelope: TokenEnvelope, abort: DecisionAbort | None = 
             async def send(active_settings: Any, timeout: float, params: Any) -> Any:
                 call = super(EnvelopeModel, self).request(messages, active_settings, params)
                 pending = _abortable(call, abort, envelope.admitted[-1]) if abort is not None else call
-                return await asyncio.wait_for(pending, timeout=timeout)
+                response = await asyncio.wait_for(pending, timeout=timeout)
+                if response_hook is not None:
+                    response_hook(response)
+                return response
 
             sent_at = time.monotonic()
             try:
@@ -565,10 +572,14 @@ def build_model(cfg: dict[str, Any]):
     if provider == "anthropic":
         from anthropic import AsyncAnthropic
         from pydantic_ai.models.anthropic import AnthropicModel
+        from pydantic_ai.profiles import ModelProfile
         from pydantic_ai.providers.anthropic import AnthropicProvider
         anthropic_client = AsyncAnthropic(api_key=os.environ.get(cfg.get("api_key_env", "ANTHROPIC_API_KEY")),
-                                          max_retries=0, timeout=timeout)
-        return AnthropicModel(name, provider=AnthropicProvider(anthropic_client=anthropic_client))
+                                          max_retries=0, timeout=timeout,
+                                          **({"base_url": cfg["base_url"]} if cfg.get("base_url") else {}))
+        return AnthropicModel(name, provider=AnthropicProvider(anthropic_client=anthropic_client),
+                              profile=ModelProfile(supports_forced_tool_choice=False)
+                              if cfg.get("tool_choice") == "auto" else None)
     if provider in ("openai", "openai-compatible"):
         from openai import AsyncOpenAI
         from pydantic_ai.models.openai import OpenAIChatModel
@@ -584,11 +595,14 @@ class PydanticAIRuntime:
 
     def __init__(self, config: dict[str, Any]):
         self.config = config
+        self.system = SYSTEM
+        self.prompt_revision = PROMPT_REVISION
         self.envelope: TokenEnvelope | None = None  # set per decision; every request of the decision passes it
         self.abort: DecisionAbort | None = None  # the decision's abort signal (stop, pause, cancellation, deadline)
         # The decision's structured-output report so far (repairs, re-asks, reads, runaways); kept on an aborted
         # decision too (F5, A3), so a runaway that arrived before a stop or deadline is never discarded.
         self._report: dict[str, Any] | None = None
+        self._responses: list[Any] = []
         self._native_error_response: Any = None
         self._split: ConcludeSplit | None = None
         self._decision_started = 0.0
@@ -597,7 +611,8 @@ class PydanticAIRuntime:
     def _model(self, *, finalization: bool = False, terminal: bool = False) -> Any:
         model = build_model(self.config)
         return _guarded(model, self.envelope, self.abort, float(self.config.get("request_timeout", 120)),
-                        runtime=self if finalization else None, terminal=terminal) \
+                        runtime=self if finalization else None, terminal=terminal,
+                        response_hook=self._observe_response) \
             if self.envelope is not None else model
 
     def _reads_allowed(self) -> bool:
@@ -670,7 +685,7 @@ class PydanticAIRuntime:
         final_request = req.conclude_only and not with_tools and (output_type is not str or decision_only)
 
         def current_instructions() -> str:
-            return (instructions or SYSTEM) + "\n\n" + self._time_note(terminal=final_request)
+            return (instructions or self.system) + "\n\n" + self._time_note(terminal=final_request)
 
         if output_retries is None:
             output_retries = 0 if req.conclude_only and with_tools else int(self.config.get("output_retries", 1))
@@ -700,7 +715,18 @@ class PydanticAIRuntime:
     def _terminal_requests(self, remaining: int) -> int:
         return min(remaining, 1 + int(int(self.config.get("output_retries", 1)) > 0))
 
+    def _observe_response(self, response: Any) -> None:
+        self._responses.append(response)
+        if (self._provider() == "anthropic"
+                and (response.provider_details or {}).get("finish_reason") == "refusal"):
+            assert self.envelope is not None
+            self.envelope.record(response)
+            raise _ProviderRefusal("Anthropic refused the response", retryable=False)
+
     def decide(self, req: DecisionRequest) -> DecisionResult:
+        v3 = ((req.view or {}).get("investigation", {}).get("body", {}).get("investigator", {}).get("exploration") or {}).get("policy") == "exploration-policy/3"
+        self.prompt_revision = "investigator-prompt/6" if v3 else PROMPT_REVISION
+        self.system = SYSTEM.replace(PLAYBOOK, PLAYBOOK_V3) if v3 else SYSTEM
         started = req.abort.clock() if req.abort is not None else time.monotonic()
         mode = self.config.get("output_mode", "tool")
         if mode not in OUTPUT_MODES:
@@ -716,12 +742,22 @@ class PydanticAIRuntime:
             self.abort.deadline = min(self.abort.deadline, bound) if self.abort.deadline is not None else bound
         self._report = None
         self._native_error_response = None
+        self._responses = []
         self._extra_terminal_used = False
         self._decision_started = started
         self._split = ConcludeSplit(max(0.0, self.abort.deadline - self._decision_started)) \
             if req.conclude_only and self.abort is not None and self.abort.deadline is not None else None
         try:
             result = self._decide_text(req, mode) if mode != "tool" else self._decide_tool(req)
+        except _ProviderRefusal:
+            self._fallback_outcome("provider-refused")
+            usage = self._usage(self._responses)
+            if self._report is not None:
+                usage["structured_output"] = dict(self._report)
+            usage["limit_reached"] = "Anthropic stop_reason=refusal; no re-ask"
+            usage["provider_refusal"] = True
+            return self._runtime_bound(self._responses, usage, int(self.config.get("max_requests_per_decision", 8)),
+                                       "provider-refused")
         except DecisionAborted as exc:
             self._fallback_outcome("deadline-exhausted" if exc.reason == "decision-deadline" else exc.reason)
             return self._aborted(exc)
@@ -768,7 +804,7 @@ class PydanticAIRuntime:
                                   else "decision deadline: no further request was started")
         usage["runtime_outcome"] = "deadline-exhausted"
         return DecisionResult({}, usage, json.loads(_messages_json(responses)),
-                              self._settings(usage, max_requests), PROMPT_REVISION, "deadline-exhausted")
+                              self._settings(usage, max_requests), self.prompt_revision, "deadline-exhausted")
 
     # -- text output with bounded repair (ADR 0014) and an Eidos-owned read loop (ADR 0016) -----------------------
     def _json_mode_settings(self, reads: list[str] | tuple[str, ...] = (), *, conclude_only: bool = False) -> dict[str, Any] | None:
@@ -867,7 +903,7 @@ class PydanticAIRuntime:
         shape = FINALIZATION_JSON_SHAPE if req.conclude_only else so.JSON_SHAPE
         if reads_allowed and not terminal:
             shape += "\n\n" + so.read_shape(reads_allowed)
-        instructions = SYSTEM + "\n\n" + shape
+        instructions = self.system + "\n\n" + shape
         agent = self._agent(req, with_tools=False, output_type=str, instructions=instructions)
         message = (req.context + "\n\n## This turn so far\n" + json.dumps(req.turn_so_far, default=str)[:20000]
                    + f"\n\n## Decision budget\nYou may make at most {max_requests} model requests for this decision, "
@@ -951,7 +987,7 @@ class PydanticAIRuntime:
             if terminal:
                 if terminal_agent is None:
                     terminal_agent = self._agent(req, with_tools=False, output_type=str,
-                                                 instructions=SYSTEM + "\n\n" + FINALIZATION_JSON_SHAPE, decision_only=True)
+                                                 instructions=self.system + "\n\n" + FINALIZATION_JSON_SHAPE, decision_only=True)
                 active_agent = terminal_agent
             active_settings = terminal_settings if terminal else settings
             with capture_run_messages() as captured:
@@ -1098,7 +1134,7 @@ class PydanticAIRuntime:
         usage["structured_output"] = report  # repairs, re-asks, reads and runaways are never silent
         assert proposal is not None
         return DecisionResult(proposal, usage, json.loads(_messages_json(archived + history)), self._settings(usage, max_requests),
-                              PROMPT_REVISION)
+                              self.prompt_revision)
 
     def _usage(self, messages: list) -> dict[str, Any]:
         usage = usage_from_messages(messages, self._provider(), self.config.get("model"),
@@ -1135,7 +1171,7 @@ class PydanticAIRuntime:
     def _runtime_bound(self, messages: list, usage: dict, max_requests: int, outcome: str) -> DecisionResult:
         usage["runtime_outcome"] = outcome
         return DecisionResult({}, usage, json.loads(_messages_json(messages)),
-                              self._settings(usage, max_requests), PROMPT_REVISION, outcome)
+                              self._settings(usage, max_requests), self.prompt_revision, outcome)
 
     def _decide_tool(self, req: DecisionRequest) -> DecisionResult:
         from pydantic_ai import capture_run_messages
@@ -1214,7 +1250,7 @@ class PydanticAIRuntime:
                     usage.get("structured_output", {}).pop("last_error_code", None)
                     raw = json.loads(result.all_messages_json())
                     return DecisionResult(proposal, usage, raw, self._settings(usage, max_requests),
-                                          PROMPT_REVISION)
+                                          self.prompt_revision)
 
         # The reserved request starts outside the prior UsageLimitExceeded
         # handler, so its provider failure has no local-limit exception context.
@@ -1302,7 +1338,7 @@ class PydanticAIRuntime:
                     usage.get("structured_output", {}).pop("last_error_code", None)
                     raw = json.loads(_messages_json(complete))
                     return DecisionResult(proposal, usage, raw,
-                                          self._settings(usage, max_requests), PROMPT_REVISION)
+                                          self._settings(usage, max_requests), self.prompt_revision)
                 except (DecisionAborted, ModelCallFailed):
                     raise
                 except Exception as final_exc:
@@ -1425,7 +1461,7 @@ class PydanticAIRuntime:
                 return self._runtime_bound(complete, usage, max_requests, "structured-output-invalid")
         usage.get("structured_output", {}).pop("last_error_code", None)
         return DecisionResult(proposal, usage, json.loads(_messages_json(complete)),
-                              self._settings(usage, max_requests), PROMPT_REVISION)
+                              self._settings(usage, max_requests), self.prompt_revision)
 
     def _tool_fresh_state(self, req: DecisionRequest, prompt: str, messages: list, error: BaseException,
                           max_requests: int, settings: dict[str, Any]) -> DecisionResult:
@@ -1480,7 +1516,7 @@ class PydanticAIRuntime:
         usage = self._usage(billed)
         usage["structured_output"] = report
         return DecisionResult(to_proposal(result.output, strict_scope=req.conclusion_scope_schema is not None), usage, json.loads(_messages_json(messages + new_messages)),
-                              self._settings(usage, max_requests), PROMPT_REVISION)
+                              self._settings(usage, max_requests), self.prompt_revision)
 
     def _settings(self, usage: dict, max_requests: int) -> dict[str, Any]:
         return {"runtime": "pydantic-ai", "model": self.config.get("model"), "served_models": usage.get("served_models"),

@@ -1,0 +1,19 @@
+{
+  "schema": "eidos-provider/1",
+  "id": "minimax-m3.1-flash",
+  "summary": "Unchanged default MiniMax study provider",
+  "wire": "openai-chat",
+  "keychain_item": "minimax_api_key",
+  "credential_env": "OPENAI_API_KEY",
+  "upstream": "https://api.minimax.io/v1",
+  "investigator": {},
+  "served_models": [
+    "MiniMax-M3.1-Flash"
+  ],
+  "price_per_mtok": null,
+  "model_usd_per_run": null,
+  "arm2": {
+    "anthropic_base_url": "https://api.minimax.io/anthropic",
+    "model": "MiniMax-M3.1-Flash"
+  }
+}

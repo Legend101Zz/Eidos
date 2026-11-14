@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import base64
+import copy
+import hashlib
 import json
 import math
 import re
@@ -141,14 +143,28 @@ def investigator_abstention_reason(shown, status):
 
 
 def run(run_dir, meta, *, eval_audit_config=None):
+    from study.exp.treatment import for_run
+
+    treatment = for_run(meta)
+    effective_sha = hashlib.sha256(json.dumps(treatment.investigator, sort_keys=True,
+                                           separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+    base_path = Path(__file__).parent / 'investigator.json'
+    config_sha = digest(base_path) if treatment.investigator == json.loads(base_path.read_text()) else effective_sha
     setup_started_at, setup_begin = utc(), time.monotonic()
-    lab.start()
+    profile = treatment.provider
+    fixture = treatment.investigator.get("runtime") == "fixture"
+    if fixture and eval_audit_config is not None:
+        raise RuntimeError('required provider audit cannot activate for fixture runtime')
+    if profile.id == 'minimax-m3.1-flash' and not fixture:
+        lab.start()
+    else:
+        lab.start(profile=profile, credentials=not fixture)
     c = lab.client()
     inv = None
     bridge = None
     try:
         project, imported = prepare(c, run_dir, 4)
-        investigator = json.loads((Path(__file__).parent / 'investigator.json').read_text())
+        investigator = copy.deepcopy(treatment.investigator)
         investigator['conclusion_scope_schema'] = CONCLUSION_SCOPE_SCHEMA
         wall, token_cap = envelope(meta)
         investigator['turn_deadline_seconds'] = wall
@@ -165,16 +181,19 @@ def run(run_dir, meta, *, eval_audit_config=None):
         began_at = utc()
         write_json(run_dir / 'setup.json', {'setup_started_at': setup_started_at,
                    'setup_ended_at': began_at, 'setup_wall_s': round(begin - setup_begin, 3),
-                   'setup_complete': True})
+                   'setup_complete': True, 'treatment': treatment.record(), 'provider': profile.record()})
         from .provider_bridge import start as start_bridge
         bridge_start_unix = time.time()
-        bridge, bridge_receipt = start_bridge(run_dir, investigator['settings']['base_url'],
-                                              deadline_utc, investigator['settings']['request_timeout'],
-                                              eval_audit_config=eval_audit_config)
+        bridge_receipt = {'upstream': profile.upstream}
+        if not fixture:
+            bridge, bridge_receipt = start_bridge(run_dir, profile.upstream,
+                                                  deadline_utc, investigator['settings']['request_timeout'],
+                                                  eval_audit_config=eval_audit_config,
+                                                  **({'wire': profile.wire} if profile.wire != 'openai-chat' else {}))
+            if eval_audit_config is not None and bridge_receipt.get('eval_provider_audit') is not True:
+                raise RuntimeError('required provider audit did not activate')
+            investigator['settings']['base_url'] = bridge_receipt['base_url']
         bridge_ready_unix = time.time()
-        if eval_audit_config is not None and bridge_receipt.get('eval_provider_audit') is not True:
-            raise RuntimeError('required provider audit did not activate')
-        investigator['settings']['base_url'] = bridge_receipt['base_url']
         # ADR 0020: completion state, the conclusion's reserve and the "conclude now" turn, inside the watchdog's envelope.
         investigator['wall_seconds'] = remaining_wall_seconds(deadline_utc)
         investigator['wall_deadline_unix'] = deadline_utc - WATCHDOG_MARGIN_SECONDS
@@ -185,7 +204,8 @@ def run(run_dir, meta, *, eval_audit_config=None):
             'question': question, 'charter_id': imported['charter_id'], 'environment': 'default',
             'inputs': imported['artifacts'], 'task': imported['task'], 'investigator': investigator,
             'limits': {'model_tokens': token_cap, 'turns': 10000,
-                       'compute_seconds': 100000000, 'trials': 1000000},
+                       'compute_seconds': 100000000, 'trials': 1000000,
+                       **({'model_usd': profile.model_usd_per_run} if profile.model_usd_per_run is not None else {})},
             'notes': f'Study deadline unix={deadline_utc}; wall_seconds={wall}. '
                      'Outer controller cancels the investigation and jobs at this deadline.',
         }, project=project)
@@ -261,6 +281,8 @@ def run(run_dir, meta, *, eval_audit_config=None):
             selected = baseline(c, project, inv, imported, wall - (time.monotonic() - begin))
             reason = 'operator baseline fallback: investigator produced no exportable locked candidate'
             write_json(run_dir / 'baseline_fallback.json', {'job_id': selected, 'reason': reason})
+        provenance = candidate_provenance(c, project, shown, selected)
+        write_json(run_dir / 'candidate_provenance.json', provenance)
         conclusion = (shown.get('body') or {}).get('conclusion') or {}
         claim = conclusion.get('summary') or ''
         conclusion_scope = conclusion.get('scope') or {}
@@ -287,18 +309,18 @@ def run(run_dir, meta, *, eval_audit_config=None):
             write_json(run_dir / 'validation_error.json', {'error': str(exc)})
         status, incident = classify(observed or shown, receipts, models, expired.is_set(), valid)
         controller_abstention = (shown.get('body') or {}).get('controller_abstention')
-        return {'status': status, 'finalization_read_coverage': finalization_read_coverage(receipts),
+        return {'status': status, 'treatment': treatment.record(), 'provider': profile.record(), 'finalization_read_coverage': finalization_read_coverage(receipts),
                 'investigator_abstention_reason': investigator_abstention_reason(shown, status),
                 **({'controller_abstention': controller_abstention} if controller_abstention else {}), 'incident_reason': incident, 'tokens': tokens, 'billed_usd': billed,
                 'started_at': began_at,
                 'model_ids_seen': models, 'agent_claim': agent_claim, 'transcript': 'transcript.jsonl',
                 'project': project, 'investigation_id': inv, 'selected_job': selected,
-                'selection_reason': reason, 'checkpoint_basename': checkpoint_basename, 'investigation_wall_s': round(time.monotonic() - begin, 3),
-                'provider_endpoint': bridge_receipt['upstream'], 'provider_outer_kill': True,
+                'selection_reason': reason, 'candidate_provenance': provenance, 'checkpoint_basename': checkpoint_basename, 'investigation_wall_s': round(time.monotonic() - begin, 3),
+                'provider_endpoint': bridge_receipt['upstream'], 'provider_outer_kill': not fixture,
                 'usage_uncertain': uncertain,
                 'evidence_plan_count': len(records['evidence_plan']),
                 'assessment_count': len(assessments),
-                'investigator_config_sha': digest(Path(__file__).parent / 'investigator.json')}
+                'investigator_config_sha': config_sha, 'investigator_effective_sha256': effective_sha}
     finally:
         if bridge is not None and bridge.poll() is None:
             bridge.kill()
@@ -314,6 +336,31 @@ def run(run_dir, meta, *, eval_audit_config=None):
         c.close()
 
 
+def candidate_provenance(c, project, shown, selected):
+    """Attribute selection from accepted ledger calls, never from an authored claim."""
+    if selected is None:
+        return dict(job_id=None, preparation='none', basis=None)
+    for turn in shown.get('turns') or []:
+        detail = c.query('get_turn', dict(turn_id=turn['id']), project=project)
+        for decision in detail.get('decisions') or []:
+            if not decision.get('accepted') or decision.get('revoked'):
+                continue
+            calls = (decision.get('body') or {}).get('calls') or []
+            try:
+                record = c.query('get_record', dict(kind='decision_receipts', id=decision['id']), project=project)
+            except Exception as exc:
+                if getattr(exc, 'status', None) == 404:
+                    continue
+                raise
+            for receipt in (record.get('body') or {}).get('receipts') or []:
+                if receipt.get('ok') and (receipt.get('result') or {}).get('job_id') == selected:
+                    index = receipt.get('index')
+                    macro = calls[index].get('macro') if isinstance(index, int) and 0 <= index < len(calls) else None
+                    return dict(job_id=selected, preparation='prepare_candidate' if macro else 'authored',
+                                basis=(macro or {}).get('basis'), decision_id=decision['id'], macro=macro)
+    return dict(job_id=selected, preparation='baseline-or-direct', basis=None)
+
+
 def select_job(c, project, shown, records):
     """Prefer explicit lock, then assessor-confirmed candidate; otherwise the unedited baseline.
 
@@ -324,6 +371,9 @@ def select_job(c, project, shown, records):
     eligible = {jid: j for jid, j in jobs.items()
                 if any(o.get('role') == 'model-export' for o in j.get('outputs', []))
                 and any(o.get('slot') == 'validation_predictions' for o in j.get('outputs', []))}
+    null_result = (((shown.get('body') or {}).get('conclusion') or {}).get('claim_state') or {}).get('state') in ('not-supported', 'null-reported', 'abstained')
+    if null_result and ((shown.get('body') or {}).get('investigator', {}).get('exploration') or {}).get('policy') == 'exploration-policy/3':
+        eligible = {jid: job for jid, job in eligible.items() if not job['lock']['inputs'].get('source')}
     notes = sorted(records['note'], key=lambda r: str(r.get('created_at', '')), reverse=True)
     for note in notes:
         if note['body'].get('kind') != 'candidate_lock':
@@ -424,8 +474,13 @@ _SWEEP_SLOT = 'evidence_table'
 
 
 def export_sweep_evidence(c, project, inv, out, reference, task_artifacts, authored_evidence=()):
-    """Copy one eligible visible recipe-sweep table to a study-private export."""
-    match = _SWEEP_ARTIFACT.fullmatch(reference)
+    """Export only the explicitly pinned sweep or portfolio table with verified visible provenance."""
+    portfolio = reference.endswith('_portfolio_table')
+    component_ref = 'eidos.search.recipe-portfolio@1.0.0' if portfolio else _SWEEP_COMPONENT
+    bundle_sha = 'bd52de8553c1c14302959496c8c333c8cd62706fe7159945711d9d0dbcaf59c5' if portfolio else _SWEEP_BUNDLE_SHA
+    schema = 'recipe-portfolio-table/1' if portfolio else _SWEEP_SCHEMA
+    slot = 'portfolio_table' if portfolio else _SWEEP_SLOT
+    match = re.fullmatch(r'art_([a-f0-9]{16})_portfolio_table', reference) if portfolio else _SWEEP_ARTIFACT.fullmatch(reference)
     splits = ('train', 'validation')
     if not match or not task_artifacts or not all(task_artifacts.get(split) for split in splits):
         raise ValueError('measurement artifact is outside the recipe-sweep export policy')
@@ -433,36 +488,39 @@ def export_sweep_evidence(c, project, inv, out, reference, task_artifacts, autho
     try:
         job = c.query('get_job', {'job_id': job_id}, project=project)
         art = c.query('get_artifact', {'artifact_id': reference}, project=project)
-        release = c.query('describe_component', {'component_ref': _SWEEP_COMPONENT}, project=project)
+        release = c.query('describe_component', {'component_ref': component_ref}, project=project)
     except Exception as exc:
         if getattr(exc, 'status', None) in (403, 404):
             raise ValueError('measurement artifact or its provenance is unavailable') from exc
         raise
     lock = job.get('lock') or {}
     inputs = lock.get('inputs') or {}
+    if portfolio and 'task' in inputs:
+        splits += ('task',)
     component = lock.get('component') or {}
     release_body = release.get('body') or {}
     config = lock.get('config') or {}
     outputs = [row for row in job.get('outputs', []) if row.get('artifact_id') == reference]
     size, sha = art.get('size'), art.get('digest')
-    expected = {'slot': _SWEEP_SLOT, 'role': 'output', 'schema': _SWEEP_SCHEMA,
+    expected = {'slot': slot, 'role': 'output', 'schema': schema,
                 'media_type': 'application/json', 'size': size, 'digest': sha}
     if (
         (job.get('id'), job.get('project_id'), job.get('investigation_id'), job.get('status'))
         != (job_id, project, inv, 'succeeded')
         or lock.get('project_id') != project or lock.get('grants') != []
         or lock.get('output_access_class') != 'project'
-        or component.get('ref') != _SWEEP_COMPONENT
-        or release.get('id') != _SWEEP_COMPONENT
+        or component.get('ref') != component_ref
+        or release.get('id') != component_ref
         or release.get('status') != 'active' or not release_body.get('digest')
         or release_body['digest'] != component.get('digest')
-        or release_body.get('bundle_digest') != _SWEEP_BUNDLE_SHA
-        or (component.get('bundle') or {}).get('digest') != _SWEEP_BUNDLE_SHA
-        or (lock.get('outputs') or {}).get(_SWEEP_SLOT) != _SWEEP_SCHEMA
-        or set(config) != {'template'} or not isinstance(config['template'], dict)
-        or set(inputs) != set(splits)
+        or release_body.get('bundle_digest') != bundle_sha
+        or (component.get('bundle') or {}).get('digest') != bundle_sha
+        or (lock.get('outputs') or {}).get(slot) != schema
+        or (not portfolio and (set(config) != {'template'} or not isinstance(config['template'], dict)))
+        or (portfolio and config.get('mode', 'portfolio') not in ('portfolio', 'refine', 'rescore'))
+        or set(inputs) != set(splits) or not all(task_artifacts.get(split) for split in splits)
         or any((inputs[split].get('artifact_id'), inputs[split].get('schema'))
-               != (task_artifacts[split], 'task-array/1') for split in splits)
+               != (task_artifacts.get(split), 'task-manifest/1' if split == 'task' else 'task-array/1') for split in splits)
         or (art.get('id'), art.get('project_id'), art.get('producer_job'), art.get('origin'), art.get('access_class'))
         != (reference, project, job_id, 'job-output', 'project')
         or not art.get('producer_attempt') or art['producer_attempt'] != job.get('current_attempt')
@@ -488,19 +546,21 @@ def export_sweep_evidence(c, project, inv, out, reference, task_artifacts, autho
         if payload.is_symlink() or payload.stat().st_size != size or digest(payload) != sha:
             raise ValueError('measurement artifact bytes differ from the registered digest or size')
         table = json.loads(payload.read_bytes())
-        if (not isinstance(table, dict) or table.get('schema') != _SWEEP_SCHEMA
-                or table.get('selection_split') != 'visible-validation' or table.get('exploratory') is not True
+        if (not isinstance(table, dict) or table.get('schema') != schema
+                or (not portfolio and table.get('selection_split') != 'visible-validation')
+                or (portfolio and table.get('scheme') not in ('cv-train', 'train-fit-validation-score'))
+                or table.get('exploratory') is not True
                 or 'claim' not in table or table['claim'] is not None or not isinstance(table.get('recipes'), list)):
             raise ValueError('measurement artifact is outside the visible exploratory export policy')
         payload.rename(target)
     filename = target.relative_to(out).as_posix()
-    entry = {'path': filename, 'sha256': sha, 'role': 'investigator-cited-visible-recipe-sweep',
-             'supports': 'The cited exploratory recipe-sweep results on supplied training and visible validation',
+    entry = {'path': filename, 'sha256': sha, 'role': 'investigator-cited-visible-recipe-portfolio' if portfolio else 'investigator-cited-visible-recipe-sweep',
+             'supports': 'The cited exploratory portfolio results on supplied training and visible validation' if portfolio else 'The cited exploratory recipe-sweep results on supplied training and visible validation',
              'limitations': 'No held-out or independent confirmation. Controller mapped the cited artifact to these exact bytes.'}
     mapping = {'author': 'study-adapter', 'artifact_id': reference, 'path': filename, 'sha256': sha, 'size': size,
-               'producer_job': job_id, 'component_ref': _SWEEP_COMPONENT,
+               'producer_job': job_id, 'component_ref': component_ref,
                'investigation_id': inv, 'producer_attempt': art['producer_attempt'],
-               'selection_split': 'visible-validation', 'authored_evidence': list(authored_evidence),
+               'selection_split': table.get('scheme') if portfolio else 'visible-validation', 'authored_evidence': list(authored_evidence),
                'inputs': {split: inputs[split]['artifact_id'] for split in splits}}
     return entry, mapping
 

@@ -1,3 +1,6 @@
+> Study test commands below use the current pytest runner (`pytest==9.2.0`
+> from `uv.lock`). Recorded counts and output remain historical unittest results.
+
 # W1c final integration verification — 11 November 2026
 
 All commands sourced `/Volumes/Mrigesh SSD/eidos-v1/env.sh`. All real model tasks
@@ -63,7 +66,7 @@ attempt in that overlap later timed out; it remains a timeout). Startup locking
 does not serialize model work.
 
 ```sh
-"$EIDOS_RESEARCH_PYTHON" -m unittest discover -s study/tests -v
+"$EIDOS_RESEARCH_PYTHON" -m pytest study/tests -q -rs
 "/Volumes/Mrigesh SSD/eidos-v1/venvs/pilot-1-lab/bin/python" -m unittest study.eidos_arms.test_contract -v
 uvx ruff check study/eidos_arms study/tests/test_prompts.py
 git diff --check
@@ -165,7 +168,7 @@ above the 12 GiB stop threshold.
 
 ## Executed checks and actual outputs
 
-`$EIDOS_RESEARCH_PYTHON -m unittest discover -s study/tests -v`:
+`$EIDOS_RESEARCH_PYTHON -m pytest study/tests -q -rs`:
 
 ```text
 Ran 17 tests in 0.534s

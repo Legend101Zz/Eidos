@@ -29,6 +29,10 @@ the original attempt is retained under `p2s-qualification/` and its log.
 
 ## Commands and real output
 
+The study command below uses the current pytest runner (install `pytest==9.2.0`,
+as pinned in `uv.lock`). The recorded counts and output are historical unittest
+results from this qualification.
+
 Every shell sourced `~/eidos-internal/env.sh`. Installed-runtime checks explicitly
 selected the pilot-2 interpreter and separate `~/eidos-internal/p2s-lab` home.
 
@@ -37,7 +41,7 @@ source ~/eidos-internal/env.sh
 cd ~/eidos-internal/p2
 export EIDOS_STUDY_HOME=~/eidos-internal/p2s-lab
 export EIDOS_STUDY_PYTHON=~/eidos-internal/venvs/pilot-2-lab/bin/python
-"$EIDOS_RESEARCH_PYTHON" -m unittest discover -s study/tests -v
+"$EIDOS_RESEARCH_PYTHON" -m pytest study/tests -q -rs
 "$EIDOS_STUDY_PYTHON" -m unittest study.eidos_arms.test_contract study.eidos_arms.test_parity -v
 uvx ruff check study/eidos_arms study/run_arm.py study/launcher.py
 git diff --check

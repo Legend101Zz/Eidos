@@ -103,11 +103,12 @@ jobs:
         run: |
           mkdir -p /tmp/temporal
           curl -fsSL "https://temporal.download/cli/archive/latest?platform=linux&arch=amd64" | tar xz -C /tmp/temporal
-      - name: numpy interpreter for component jobs through the lab (ADR 0024 lab-path tests)
+      - name: numpy and scikit-learn interpreter for portfolio jobs through the lab
         run: |
           uv venv --python 3.12 /tmp/numpy-venv
-          uv pip install --python /tmp/numpy-venv/bin/python numpy
+          uv pip install --python /tmp/numpy-venv/bin/python numpy==2.5.4 scikit-learn==1.9.1 joblib==1.6.0
           echo "EIDOS_NUMPY_PYTHON=/tmp/numpy-venv/bin/python" >> "$GITHUB_ENV"
+          echo "EIDOS_RESEARCH_PYTHON=/tmp/numpy-venv/bin/python" >> "$GITHUB_ENV"
       - run: uv run pytest tests/integration -q
 
   separate-identity:

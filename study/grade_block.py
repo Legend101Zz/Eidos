@@ -18,7 +18,7 @@ from datetime import UTC
 
 from study.common import DEVELOPMENT, FAMILIES, FRESH_RECIPE_CARDS, IMPROVEMENT_CARDS, dev_command, read_json, research_python, write_json
 from study.fresh_check import candidate_command, fresh_check, infer
-from study.private_card_registry import PRIVATE_CARD_BARS
+from study.private_card_registry import ALL_PRIVATE_CARDS
 from study.private_seal import configured_seal
 
 
@@ -243,7 +243,7 @@ def grade_run(run_dir, grading_dir, block_incident=None, expected_meta=None):
     meta = expected_meta or read_json(root / "arm.json")
     record_path = root / "run_record.json"
     record = read_json(record_path) if record_path.exists() else {"status": "invalid_output"}
-    private = meta["card"] in PRIVATE_CARD_BARS
+    private = meta["card"] in ALL_PRIVATE_CARDS
     result = dict(
         family=FAMILIES[meta["card"]],
         task=meta["card"],
@@ -282,7 +282,7 @@ def grade_run(run_dir, grading_dir, block_incident=None, expected_meta=None):
             if answer["task_id"] != meta["card"]:
                 raise ValueError("answer task_id differs from assignment")
             verify_artifacts(root / "out", answer)
-            seal = configured_seal() if private else None
+            seal = configured_seal(meta["card"]) if private else None
             if private:
                 try:
                     card = seal.card(meta["card"])

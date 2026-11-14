@@ -14,9 +14,12 @@ import signal
 import socket
 import subprocess
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(os.environ.get('EIDOS_STUDY_ROOT', '/Volumes/Mrigesh SSD/eidos-v1'))
+SECURITY = '/usr/bin/security'  # Injectable only by tests; production never searches PATH.
+
 DEFAULT_HOME = ROOT / 'pilot-1/lab/fixed'
 DEFAULT_PYTHON = ROOT / 'venvs/pilot-1-lab/bin/python'
 
@@ -37,28 +40,35 @@ def build_record():
     return record
 
 
-def environment():
-    env = dict(os.environ, EIDOS_HOME=str(home()), OMP_NUM_THREADS='1', MKL_NUM_THREADS='1')
+def environment(profile=None):
+    from study.exp.treatment import resolve
+
+    selected = resolve(provider=profile)
+    env = dict(os.environ, EIDOS_HOME=str(home()), OMP_NUM_THREADS='1', MKL_NUM_THREADS='1',
+               EIDOS_STUDY_TREATMENT=selected.id, EIDOS_STUDY_PROVIDER=selected.provider.id)
     if env.get("EIDOS_STUDY_LIVE_DISPATCH") == "1":
         from study.common import PROMPT_OVERRIDES, refuse_live_prompt_overrides
         refuse_live_prompt_overrides(os.environ)
         for name in PROMPT_OVERRIDES:
             env.pop(name, None)
 
+    from study.private_card_registry import SEAL_ROOT_ENVS
+
     for key in list(env):
-        if key.endswith(('_API_KEY', '_AUTH_TOKEN', '_OAUTH_TOKEN')) or key in ('EIDOS_TOKEN', 'EIDOS_API_URL', 'PYTHONPATH', 'EIDOS_EVAL_AUDIT_IDENTIFIERS',
+        if key.endswith(('_API_KEY', '_AUTH_TOKEN', '_OAUTH_TOKEN')) or key in SEAL_ROOT_ENVS or key in ('EIDOS_TOKEN', 'EIDOS_API_URL', 'PYTHONPATH', 'EIDOS_EVAL_AUDIT_IDENTIFIERS',
                         'EIDOS_PRIVATE_SEAL_ROOT'):
             env.pop(key, None)
     return env
 
 
-def cli(*args, timeout=300, stdin=None):
+def cli(*args, timeout=300, stdin=None, profile=None):
     exe = str(Path(python()).parent / 'lab')
-    r = subprocess.run([exe, *map(str, args)], env=environment(), input=stdin,
+    r = subprocess.run([exe, *map(str, args)], env=environment(profile), input=stdin,
                        text=True, capture_output=True, timeout=timeout)
     if r.returncode:
         # Never include credential input in exceptions.
-        raise RuntimeError(f'lab {args[0]} exited {r.returncode}: {r.stderr[-2000:]}')
+        detail = 'credential input withheld' if stdin is not None else r.stderr[-2000:]
+        raise RuntimeError(f'lab {args[0]} exited {r.returncode}: {detail}')
     return r.stdout
 
 
@@ -77,7 +87,10 @@ def guard_disk():
         raise ValueError('study lab must be under EIDOS_STUDY_ROOT')
 
 
-def start():
+def start(profile=None, credentials=True):
+    from study.exp.providers import DEFAULT, load
+
+    profile = load(profile)
     guard_disk()
     build_record()
     home().mkdir(parents=True, exist_ok=True)
@@ -107,17 +120,50 @@ def start():
             running = True
         except Exception:
             running = False
+        marker = home() / 'study-provider.json'
+        previous = json.loads(marker.read_text()) if marker.exists() else {}
+        different = previous.get('provider', DEFAULT) != profile.id
+        credential_change = previous.get('credentials', True) != credentials
+        if running and (different or credential_change):
+            _stop_confirmed()
+            running = False
         if not running:
             # Key exists only in memory and lab-start's stdin, never a file or argv.
-            key = subprocess.check_output(['/usr/bin/security', 'find-generic-password',
-                                          '-a', os.environ['USER'], '-s', 'minimax_api_key', '-w'],
-                                         text=True).strip()
-            try:
-                cli('start', '--credentials-stdin', stdin='OPENAI_API_KEY=' + key + '\n', timeout=300)
-            finally:
-                key = None
+            if credentials:
+                key = subprocess.check_output([SECURITY, 'find-generic-password',
+                                              '-a', os.environ['USER'], '-s', profile.keychain_item, '-w'],
+                                             text=True, stderr=subprocess.DEVNULL).strip()
+                try:
+                    _start_confirmed(profile, profile.credential_env + '=' + key + '\n', credentials=True)
+                finally:
+                    key = None
+            else:
+                _start_confirmed(profile, '', credentials=False)
+            marker.write_text(json.dumps({'provider': profile.id, 'started_utc': datetime.now(UTC).isoformat(),
+                                          'credentials': credentials}) + '\n')
         ensure_mcp()
     return {'home': str(home()), 'python': python(), 'mcp_url': mcp_url()}
+
+
+def _stop_confirmed():
+    for _ in range(2):
+        result = stop()
+        if (result.get('stopped') is True
+                or 'stopped' not in result and result.get('was_running') is False):
+            return
+    raise RuntimeError('lab stop did not confirm supervisor exit; credentials not changed')
+
+
+def _start_confirmed(profile, stdin, *, credentials):
+    expected = {profile.credential_env: 'stdin'} if credentials else {}
+    for attempt in range(2):
+        result = json.loads(cli('start', '--credentials-stdin', stdin=stdin, timeout=300, profile=profile))
+        if (not result.get('already_running') and result.get('phase') == 'running'
+                and result.get('credentials') == expected):
+            return
+        if attempt == 0:
+            _stop_confirmed()
+    raise RuntimeError('lab start did not confirm requested credentials were applied')
 
 
 def mcp_url():
@@ -166,8 +212,7 @@ def stop():
         if 'lab mcp --transport http' in r.stdout and str(rec['port']) in r.stdout:
             os.kill(rec['pid'], signal.SIGTERM)
         pidfile.unlink()
-    cli('stop', '--running-jobs', 'cancel')
-    return {'stopped': str(home())}
+    return json.loads(cli('stop', '--running-jobs', 'cancel'))
 
 
 if __name__ == '__main__':
