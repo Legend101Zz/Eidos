@@ -179,11 +179,12 @@ group; `--candidate-timeout` adjusts it. Finished resume verifies commitments.
 ## Build of 14 November 2026 (pools v1)
 
 Built from `main` 340d206 with `--want D=8,E1=8,E2=8,E3=8,H=12 --workers 3` (search budget 480 s, candidate
-timeout 1500 s) over the 77-candidate catalog (stage-one seed 20261114). Wall time 34 minutes. Public counts from
-the build state: processed 77, accepted at stage two 52, qualified 42, `h_candidate_margin` 44. Pools: D 8, E1 8,
+timeout 1500 s) over the 77-candidate catalog (stage-one seed 20261114). Public counts from the build state:
+processed 77, accepted at stage two 52, qualified 42, `h_candidate_margin` 44. Pools: D 8, E1 8,
 E2 8, **E3 2 (shortfall 6)**, H 12 (private; no manifest). Rejections by reason: minority-class/imbalance cap 9,
 qualification checks failed 10, same feature table 7, missing values 2, unsupported format 2, fewer than 600 train
-rows 1. No qualification check was relaxed to fill E3. The committed manifests are `D.json` (the open pool, full
+rows 1 (31 rejections; the remaining 4 of 77 are candidates skipped by the regression/classification balance rule
+for the OpenML supplement, which the public state does not count by name). No qualification check was relaxed to fill E3. The committed manifests are `D.json` (the open pool, full
 pool metadata), `E1.json`, `E2.json` and `E3.json` (pool id, commitment, and per card only id, task type, metric
 and bar rule). D's commitment is `401dd86bbbd91068c3ddaaa23ccc74b3226ad190a33ebc846eab2e5ffd68f41f`. This is
 development evidence about the build, nothing more.
