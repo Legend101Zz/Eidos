@@ -1,0 +1,54 @@
+{
+  "cards": [
+    {
+      "bar_rule": "absolute RMSE reduction >= 0.05 * seed-11 baseline test RMSE",
+      "id": "R9334",
+      "metric": "rmse",
+      "task_type": "regression"
+    },
+    {
+      "bar_rule": "absolute RMSE reduction >= 0.05 * seed-11 baseline test RMSE",
+      "id": "R3540",
+      "metric": "rmse",
+      "task_type": "regression"
+    },
+    {
+      "bar_rule": "absolute RMSE reduction >= 0.05 * seed-11 baseline test RMSE",
+      "id": "R4031",
+      "metric": "rmse",
+      "task_type": "regression"
+    },
+    {
+      "bar_rule": "absolute accuracy gain >= 0.02",
+      "id": "R8695",
+      "metric": "accuracy",
+      "task_type": "classification"
+    },
+    {
+      "bar_rule": "absolute RMSE reduction >= 0.05 * seed-11 baseline test RMSE",
+      "id": "R5510",
+      "metric": "rmse",
+      "task_type": "regression"
+    },
+    {
+      "bar_rule": "absolute RMSE reduction >= 0.05 * seed-11 baseline test RMSE",
+      "id": "R6863",
+      "metric": "rmse",
+      "task_type": "regression"
+    },
+    {
+      "bar_rule": "absolute accuracy gain >= 0.02",
+      "id": "R2798",
+      "metric": "accuracy",
+      "task_type": "classification"
+    },
+    {
+      "bar_rule": "absolute RMSE reduction >= 0.05 * seed-11 baseline test RMSE",
+      "id": "R7887",
+      "metric": "rmse",
+      "task_type": "regression"
+    }
+  ],
+  "commitment": "88f9aa0fbfdb295a1a02a7bc70521291c27176e2b418696d7532e57fdbd51166",
+  "pool": "E1"
+}
