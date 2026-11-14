@@ -49,11 +49,12 @@ def candidate_command(workspace, command, timeout=120, *, hidden=(), writable=()
 def infer(workspace, code, model, inputs, output, *, isolated=False):
     writable = ()
     if isolated:
-        # Each inference writes only its designated output and fresh scratch.
+        # Each inference may write anywhere in its own output directory, including
+        # fresh scratch; keep scratch last for candidate_command's HOME/TMPDIR.
         output.parent.mkdir()
         scratch = output.parent / "scratch"
         scratch.mkdir()
-        writable = (output, scratch)
+        writable = (output.parent, scratch)
     hidden = ()
     if isolated:
         hidden = tuple(
