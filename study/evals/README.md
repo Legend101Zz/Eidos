@@ -34,6 +34,9 @@ The helper uses the caller's environment and its own generated eval environment 
 
 ## Baseline-stub qualification
 
+The study suite uses `pytest==9.2.0` (pinned in `uv.lock`) in the research
+environment, with `EIDOS_STUDY_PYTHON` selecting the installed lab interpreter.
+
 The existing stub reads the frozen build receipt and runs the supplied baseline. This path performs zero model calls and uses zero processed model tokens. It can use an existing build receipt without starting services.
 
 ```bash
@@ -43,7 +46,7 @@ The existing stub reads the frozen build receipt and runs the supplied baseline.
   --lab-home '/Volumes/Mrigesh SSD/eidos-v1/evals-labs/candidate-a/home' \
   --lab-python '/Volumes/Mrigesh SSD/eidos-v1/evals-labs/candidate-a/venv/bin/python' \
   --stub
-"$EIDOS_RESEARCH_PYTHON" -m unittest discover -s study/tests
+"$EIDOS_RESEARCH_PYTHON" -m pytest study/tests -q -rs
 "$EIDOS_STUDY_PYTHON" -m unittest study.eidos_arms.test_contract study.eidos_arms.test_parity
 ```
 

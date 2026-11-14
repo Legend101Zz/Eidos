@@ -101,8 +101,11 @@ effort limit; Seatbelt is the tested filesystem boundary, not a qualified VM.
 
 ## Verification and smoke commands
 
+Install `pytest==9.2.0` (pinned in `uv.lock`) in the research environment and
+set `EIDOS_STUDY_PYTHON` to the installed lab interpreter before running the suite.
+
 ```sh
-"$EIDOS_RESEARCH_PYTHON" -m unittest discover -s study/tests -v
+"$EIDOS_RESEARCH_PYTHON" -m pytest study/tests -q -rs
 "$EIDOS_RESEARCH_PYTHON" study/sandbox/probe.py --run-dir "$pilot_root/lane-a-checks/sandbox"
 "$EIDOS_RESEARCH_PYTHON" study/sandbox/cli_probe.py --run-dir "$pilot_root/lane-a-checks/offline-startup-final"
 "$EIDOS_RESEARCH_PYTHON" study/toolkit/verify.py --run-dir "$pilot_root/lane-a-checks/toolkit-final"

@@ -26,6 +26,8 @@ jobs:
       OMP_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
+      VECLIB_MAXIMUM_THREADS: "1"
+      EIDOS_STUDY_TREATMENT: pilot4-v1
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
@@ -33,14 +35,14 @@ jobs:
         run: |
           mkdir -p "$TMPDIR"
           uv venv --python 3.12 "$RUNNER_TEMP/study-evals/research"
-          uv pip install --python "$RUNNER_TEMP/study-evals/research/bin/python" numpy==2.5.4 scikit-learn==1.9.1 torch==2.15.0 -r study/requirements-analysis.txt
+          uv pip install --python "$RUNNER_TEMP/study-evals/research/bin/python" numpy==2.5.4 scikit-learn==1.9.1 torch==2.15.0 pytest==9.2.0 -r study/requirements-analysis.txt
           uv build --all-packages -o "$RUNNER_TEMP/study-evals/wheels"
           uv venv --python 3.12 "$RUNNER_TEMP/study-evals/lab"
           uv pip install --python "$RUNNER_TEMP/study-evals/lab/bin/python" "$RUNNER_TEMP/study-evals/wheels/"*.whl
           echo "EIDOS_RESEARCH_PYTHON=$RUNNER_TEMP/study-evals/research/bin/python" >> "$GITHUB_ENV"
           echo "EIDOS_STUDY_PYTHON=$RUNNER_TEMP/study-evals/lab/bin/python" >> "$GITHUB_ENV"
       - name: Study tests with two-card mini-eval and real-record extraction
-        run: '"$EIDOS_RESEARCH_PYTHON" -m unittest discover -s study/tests -v'
+        run: '"$EIDOS_RESEARCH_PYTHON" -m pytest study/tests -q -rs'
       - name: Installed lab arm tests
         run: '"$EIDOS_STUDY_PYTHON" -m unittest study.eidos_arms.test_contract study.eidos_arms.test_parity -v'
       - name: Cache the pinned Temporal archive
