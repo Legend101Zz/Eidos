@@ -73,8 +73,9 @@ max_temporal = getattr(settings, 'TEMPORAL_MAX_PORT', 32767)
 with (root.parent / '.ports.lock').open('a') as lock:
     fcntl.flock(lock, fcntl.LOCK_EX)
     reserved = {28767, 25546, 27635, 28766, 25544, 27633, 28765}
-    # Only programme labs (ip-*): sibling lab homes that served sealed runs must never be opened. Ports of
-    # other labs are covered by the fixed reservations above and by the bind probe below.
+    # Only programme labs (ip-*): sibling lab homes that served sealed runs must never be opened. Ports held by
+    # other labs are protected only by the bind probe below, i.e. only while their services run; a STOPPED
+    # non-programme lab can later find its ports taken (it then fails to start; nothing is read or exposed).
     for path in root.parent.glob('ip-*/ports.json'):
         sibling = json.loads(path.read_text())
         reserved.update(sibling.values())
