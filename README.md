@@ -35,6 +35,41 @@ Pilots 1 to 3 were a four-arm study. It fixed the model (MiniMax-M3.1-Flash) and
 
 The evidence is exploratory: four small pilots. The paper reports the failures too.
 
+### How Eidos has improved
+
+The Eidos investigator (arm 4) across every pilot and development gate, next to the coding agent that has the Eidos toolkit (arm 2). Same model (MiniMax-M3.1-Flash) and per-run budget throughout; verified means confirmed by the independent grader.
+
+| Stage | Eidos build | Cards | Eidos investigator | Coding agent + toolkit | Eidos tokens vs arm 2 |
+|---|---|---|---:|---:|---:|
+| Pilot 1 | v1 | D02, 3 runs | 1/3 verified | 3/3 | 7.5M vs 31.3M |
+| Pilot 2 | round 2 | D03–D06, 12 runs | **12/12** verified | 12/12 | **5.6M vs 30.6M** |
+| Pilot 3 | `257792a` | N01–N04, 12 runs | 2/12 verified (10 runs stopped by one timing rule) | 11/12 | 15.3M vs 30.5M |
+| Round-4 gate | `e503821` | 7 practice cards | 7/7 completed, 6/7 verified | — | — |
+| Gate G-R5 | `86dfe57` (R5) | 7 practice cards | **7/7 completed, 7/7 verified**, 0 crashes | — | — |
+| **Pilot 4** | `86dfe57` | N05–N08, **sealed**, 24 runs | **20/24 verified, 24/24 completed, 0 crashes** | 19/24 | **24.0M vs 78.9M** |
+
+**What has improved**
+
+- **Reliability.** Pilot 3 was lost to the runtime, not the research: ten of twelve investigator runs were stopped by one deadline-admission rule. Three rounds of repair followed: the round-4 admission fix, the finalization contract, and R5's split wrap-up reserve ([ADR 0042](docs/decisions/0042-split-conclude-only-reserve.md)), each sized from measured data and checked by a registered gate. On sealed cards in Pilot 4, every one of the 24 investigator runs completed and none crashed, timed out or ran out of budget.
+- **Efficiency.** In every pilot the investigator used several times fewer tokens than the coding agents for comparable success: 5.5× fewer in Pilot 2 and 3.3× fewer in Pilot 4.
+- **Honesty.** No false improvement claim in pilots 1–3. Pilot 4's capture passed an independent audit with no leakage found within its scope.
+- **Head to head.** On sealed cards the investigator now matches or slightly exceeds a coding agent that has the same toolkit: 0.833 against 0.792 family-balanced success.
+
+**What has not improved yet**
+
+- **Discovery.** When both arms succeed, they find equally good models. In Pilot 4 the gains were within 1.4% of each other on every card. On the hardest practice cards the investigator still reaches only 0.63 (N01) and 0.81 (N04) of the reference gain.
+- **Statistical weight.** Pilot 4's advantage, +0.042 with an exploratory 95% interval of [−0.208, +0.333], is inconclusive under the registered rule. Its sign also depends on the registered run-status gate.
+- **The comparison is a timeline, not a controlled experiment.** Cards, builds and arms changed between pilots, so this table shows how Eidos has developed, not a measured causal effect of any single repair.
+
+**What comes next.** The next phase targets discovery quality directly. The v2 work is reviewed and on branches, but it has not yet passed a development gate:
+
+- a diagnostic that no longer steers the investigator the wrong way;
+- a generated practice-card harness with a guard that can reject changes that don't generalise;
+- a diverse recipe portfolio selected by cross-validation;
+- mechanical candidate preparation, so the investigator spends its time on research instead of rewriting code.
+
+An internal improvement programme will iterate on these with fast, model-free and small live checks. The next confirmatory pilot runs on cards that were sealed in advance: N09–N12, and N13–N16, whose commitment is already public.
+
 Before Pilot 4, the runtime was checked with paired development gates: arm 4 only, one seed, seven development cards, against the frozen baseline build. The full record is in [Benchmarks](#benchmarks).
 
 - The gate for round-4 build `a7c5d19` (12 November 2026) failed. The candidate concluded 6 of 7 runs. D02 crashed in the conclude-only wrap-up: its final request had not returned when the decision deadline arrived. PR #24, which carries that build, was merged to `main` by owner decision after the failed gate.
