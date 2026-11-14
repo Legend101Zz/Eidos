@@ -374,9 +374,17 @@ def _registration(directory, rule, choice, plan):
         raise ValueError("plan differs from registered plan")
     expected = ledger.effective_rule(RULES.parents[1], directory, entries)
     registered_choice = ledger.read_json(directory / "rule.json")
-    effective = _effective(rule, dict(registered_choice, **choice), registered_plan)
-    effective.setdefault("vetoes", entries[0]["data"]["vetoes_snapshot"])
+    if any(key in choice and choice[key] != registered_choice[key]
+           for key in ("rule", "version", "overrides", "extension")):
+        raise ValueError("rule choice differs from registered rule choice")
     _registered_vetoes(rule, entries[0]["data"]["vetoes_snapshot"])
+    if "vetoes" in rule and rule["vetoes"] != expected["vetoes"]:
+        raise ValueError("effective rule vetoes differ from registered snapshot")
+    # Apply exactly the ledger's merge to the caller's rule as well. No second
+    # implementation of registered override/model-free semantics lives here.
+    supplied_entries = copy.deepcopy(entries)
+    supplied_entries[0]["data"]["rule_snapshot"] = rule
+    effective = ledger.effective_rule(RULES.parents[1], directory, supplied_entries)
     if effective != expected:
         raise ValueError("effective rule differs from registered rule snapshot")
     snapshot = entries[0]["data"]["vetoes_snapshot"]
@@ -514,7 +522,8 @@ def compare(incumbent, candidate, rule, *, tier="T2", rule_choice=None, aa=False
         digests = [s.get("catalog", {}).get("sha256") for s in (incumbent, candidate)]
         if not all(digests) or digests[0] != digests[1]:
             raise ValueError("incompatible novelty catalog digests")
-    rule = _effective(rule, choice, plan)
+    if not registration:
+        rule = _effective(rule, choice, plan)
     if any(r.get("look") == "extension" for r in candidate["individual"]) and not rule["extension"]:
         raise ValueError("extension look was not declared")
     pairs = _pairs(incumbent, candidate, tier, default_tier=tier)
