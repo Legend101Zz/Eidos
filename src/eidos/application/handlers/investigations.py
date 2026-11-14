@@ -18,6 +18,7 @@ from eidos.domain import exploration as exploration_rules
 from eidos.domain import turns as turn_rules
 from eidos.domain.contracts import validate_config, validate_shape_schema
 from eidos.domain.errors import BudgetExhausted, EffectNotAdmitted, Invalid, QuestionRevised, StaleRevision
+from eidos.domain.investigator_config import CONTEXT_POLICIES, EXPLORATION_POLICIES, PROMPT_PACK_IDS
 from eidos.domain.redaction import redact_value
 
 RUNNING_JOB_POLICIES = ("drain", "checkpoint-and-stop", "cancel")
@@ -53,6 +54,13 @@ def start_investigation(ctx: Ctx, p: dict) -> dict:
     investigator = {"runtime": "fixture", "model": None, "context_policy": "context-policy/3",
                     "max_calls_per_turn": 6, "max_model_calls_per_turn": 4, "max_turns": 40,
                     "finalization": "autonomous", **(p.get("investigator") or {})}
+    for label, value, known in (
+        ("context_policy", investigator["context_policy"], CONTEXT_POLICIES),
+        ("exploration.policy", exploration_rules.policy(investigator)["policy"], EXPLORATION_POLICIES),
+        ("settings.prompt_pack", (investigator.get("settings") or {}).get("prompt_pack"), PROMPT_PACK_IDS),
+    ):
+        if (value is not None or label != "settings.prompt_pack") and (not isinstance(value, str) or value not in known):
+            raise Invalid(f"unknown investigator.{label} {value!r}; known ids: {', '.join(sorted(known))}")
     if "conclusion_scope_schema" in investigator:
         problems = validate_shape_schema(investigator["conclusion_scope_schema"], "investigator.conclusion_scope_schema")
         if problems:

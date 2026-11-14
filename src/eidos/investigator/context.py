@@ -14,14 +14,12 @@ import re
 from typing import Any
 
 from eidos.domain.assessment import candidate_lock_job_id
+from eidos.domain.investigator_config import CONTEXT_POLICIES
 from eidos.domain.redaction import redact_text as _redact
 from eidos.domain.turns import CONTROL_TOOLS, EFFECT_TOOLS, FINALIZATION_READ_ROUNDS, MODEL_CONTEXT_CHAR_LIMIT
 from eidos_wire import canonical_json, sha256_bytes
 
-POLICY_ID = "context-policy/3"  # ADR 0023
-POLICY_V4 = "context-policy/4"  # ADR 0049, opt-in
-POLICY_V2 = "context-policy/2"  # ADR 0020
-POLICY_V1 = "context-policy/1"
+POLICY_V1, POLICY_V2, POLICY_ID, POLICY_V4 = CONTEXT_POLICIES
 FINALIZATION_PROJECTION = "finalization-context/1"
 FINALIZATION_CONTEXT_CHARS = 8_000
 MAX_JOBS = 25
@@ -175,6 +173,10 @@ control.claim = {disposition: "candidate"|"confirmed"|"null"|"abstain", claim_id
 def _tool_guide(view: dict[str, Any]) -> str:
     if view.get("finalization"):
         return FINALIZATION_GUIDE
+    settings = (((view.get("investigation") or {}).get("body") or {}).get("investigator") or {}).get("settings") or {}
+    if settings.get("prompt_pack") is not None:
+        from eidos.investigator.prompt_packs import select_prompt_pack
+        return select_prompt_pack(settings, view)[1].tool_guide
     if view.get("_v4"):
         return TOOL_GUIDE_V4
     return TOOL_GUIDE

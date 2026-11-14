@@ -215,7 +215,14 @@ def resolve(treatment_id: str | None = None, *, allow_rejected: bool = False,
         investigator.setdefault("settings", {})["price_per_mtok"] = copy.deepcopy(profile.price_per_mtok)
     for name in ordered:
         investigator = merge_patch(investigator, flags[name]["patch"].get("investigator", {}))
-    investigator = merge_patch(investigator, definition["overrides"])
+    overrides = definition["overrides"]
+    # New definitions may name the investigator section explicitly. Keep historical
+    # direct-investigator patches byte-identical for existing treatment receipts.
+    if "investigator" in overrides:
+        if set(overrides) != {"investigator"} or not isinstance(overrides["investigator"], dict):
+            raise ValueError("investigator override must be the only section and an object")
+        overrides = overrides["investigator"]
+    investigator = merge_patch(investigator, overrides)
     if not isinstance(investigator, dict):
         raise ValueError("resolved investigator must be an object")
     prompt = registry_module.repo_path(

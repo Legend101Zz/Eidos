@@ -1,0 +1,19 @@
+{
+  "schema": "eidos-treatment/1",
+  "id": "autopilot-v2",
+  "summary": "Model-free deterministic v2 investigator; fixture evidence only.",
+  "flags": [
+    "diagnose.steering-fix",
+    "floor.v2-slice",
+    "floor.selection-margin",
+    "toolkit.portfolio"
+  ],
+  "overrides": {
+    "investigator": {
+      "runtime": "fixture",
+      "settings": {
+        "policy": "autopilot-v2"
+      }
+    }
+  }
+}

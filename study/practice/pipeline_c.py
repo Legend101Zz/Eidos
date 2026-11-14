@@ -5,6 +5,7 @@ choices and replay selections are frozen before controller test labels are opene
 Run --stage design first, then --stage holdout; --stage all does both in that order.
 """
 import argparse
+import copy
 import hashlib
 import json
 import math
@@ -33,6 +34,26 @@ from eidos_recipes.util import canonical  # noqa: E402
 
 CONFIG = dict(mode='portfolio', include='auto', scheme='auto', budget=dict(max_seconds=350),
               partition_seed=81723, per_recipe_timeout_seconds=60)
+
+
+def merge_config(overrides):
+    """RFC 7396 merge into CONFIG, before freezing or spawning workers."""
+    if not isinstance(overrides, dict):
+        raise ValueError('config overrides must be a JSON object')
+    def merge(target, patch):
+        target = copy.deepcopy(target) if isinstance(target, dict) else {}
+        for key, value in patch.items():
+            if value is None:
+                target.pop(key, None)
+            else:
+                target[key] = merge(target.get(key), value) if isinstance(value, dict) else copy.deepcopy(value)
+        return target
+    return merge(CONFIG, overrides)
+
+
+def _configure_worker(config):
+    global CONFIG
+    CONFIG = config
 
 
 def candidate_digest():
@@ -427,7 +448,7 @@ def run(data, out, *, stage='all', comparator_root=None, evaluation_id='v2-step2
             for item in items:
                 compute(item, scoring_data, out, Path(comparator_root) if comparator_root else None, receipt)
         else:
-            with ProcessPoolExecutor(max_workers=workers) as pool:
+            with ProcessPoolExecutor(max_workers=workers, initializer=_configure_worker, initargs=(CONFIG,)) as pool:
                 futures = [pool.submit(compute, item, scoring_data, out, Path(comparator_root) if comparator_root else None, receipt) for item in items]
                 for future in futures:
                     future.result()
@@ -456,7 +477,7 @@ def run(data, out, *, stage='all', comparator_root=None, evaluation_id='v2-step2
 
 
 
-def development(data, out, *, comparator_root=None, workers=1):
+def development(data, out, *, comparator_root=None, workers=1, evaluation_id='v2-step2-c-r2-development'):
     """Descriptive frozen-candidate checks on the seven explicitly public cards."""
     from concurrent.futures import ProcessPoolExecutor
     data, out = Path(data).resolve(), Path(out).resolve()
@@ -466,9 +487,9 @@ def development(data, out, *, comparator_root=None, workers=1):
     if {r['card'] for r in index} - {'N01', 'N02', 'N03', 'N04', 'D02', 'D03', 'D04'}:
         raise ValueError('only the seven public development cards are allowed')
     frozen = freeze(out)
-    receipt = register(evaluation_id='v2-step2-c-r2-development', candidate_digest=frozen['candidate_digest'],
+    receipt = register(evaluation_id=evaluation_id, candidate_digest=frozen['candidate_digest'],
         classes=sorted({r['generator'] for r in index}), primary_verdict='public calibration descriptive', kind='construction', data_root=data)
-    with ProcessPoolExecutor(max_workers=workers) as pool:
+    with ProcessPoolExecutor(max_workers=workers, initializer=_configure_worker, initargs=(CONFIG,)) as pool:
         rows = list(pool.map(compute, index, [data] * len(index), [out] * len(index),
                              [Path(comparator_root) if comparator_root else None] * len(index), [receipt] * len(index)))
     result = dict(schema='pipeline-c-public-development/1', cards=rows, model_calls=0, provider_calls=0,
@@ -483,14 +504,18 @@ def main():
     parser.add_argument('--out', required=True, type=Path)
     parser.add_argument('--comparators', type=Path)
     parser.add_argument('--stage', choices=('design', 'holdout', 'all', 'development'), default='all')
-    parser.add_argument('--evaluation-id', default='v2-step2-c-v1')
+    parser.add_argument('--evaluation-id')
     parser.add_argument('--workers', type=int, default=1)
+    parser.add_argument('--config-overrides', type=json.loads, default={})
     args = parser.parse_args()
+    global CONFIG
+    CONFIG = merge_config(args.config_overrides)
+    evaluation_id = args.evaluation_id or ('v2-step2-c-r2-development' if args.stage == 'development' else 'v2-step2-c-v1')
     if args.stage == 'development':
-        result = development(args.data, args.out, comparator_root=args.comparators, workers=args.workers)
+        result = development(args.data, args.out, comparator_root=args.comparators, workers=args.workers, evaluation_id=evaluation_id)
         print(json.dumps(dict(development_cards=len(result['cards']))))
         return
-    result = run(args.data, args.out, stage=args.stage, comparator_root=args.comparators, evaluation_id=args.evaluation_id, workers=args.workers)
+    result = run(args.data, args.out, stage=args.stage, comparator_root=args.comparators, evaluation_id=evaluation_id, workers=args.workers)
     print(json.dumps(dict(all_met=result['all_met'], cards=len(result['cards']))))
 
 

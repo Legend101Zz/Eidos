@@ -254,19 +254,48 @@ def _note(req: DecisionRequest) -> dict[str, Any]:
         "kind": "hypothesis", "text": "fixture hypothesis"}}], "control": {}}
 
 
+RuntimeFactory = Callable[[dict[str, Any]], InvestigatorRuntime]
+RUNTIMES: dict[str, RuntimeFactory] = {}
+
+
+def register_runtime(name: str):
+    """Register a runtime factory without changing the dispatcher."""
+    def deco(factory: RuntimeFactory) -> RuntimeFactory:
+        RUNTIMES[name] = factory
+        return factory
+    return deco
+
+
+@register_runtime("fixture")
+def _fixture_runtime(config: dict[str, Any]) -> InvestigatorRuntime:
+    import importlib
+
+    module = config.get("policy_module")
+    if module is not None and (not isinstance(module, str) or not module.startswith("eidos.investigator.")):
+        raise ValueError("policy_module must start with eidos.investigator.: a policy is code")
+    for mod in ("eidos.investigator.task_policies", "eidos.investigator.fixture_policies",
+                "eidos.investigator.autopilot"):
+        try:
+            importlib.import_module(mod)
+        except ModuleNotFoundError as exc:
+            if exc.name != mod:
+                raise  # a missing dependency is not an absent optional built-in policy
+    if module is not None:
+        importlib.import_module(module)
+    name = config.get("policy", "conclude-immediately")
+    if name not in FIXTURE_POLICIES:
+        raise ValueError(f"unknown fixture policy {name!r}; known policies: {', '.join(sorted(FIXTURE_POLICIES))}")
+    return FixtureRuntime(FIXTURE_POLICIES[name], policy_name=name)
+
+
+@register_runtime("pydantic-ai")
+def _pydantic_ai_runtime(config: dict[str, Any]) -> InvestigatorRuntime:
+    from eidos.investigator.pydantic_ai_runtime import PydanticAIRuntime
+    return PydanticAIRuntime(config)
+
+
 def build_runtime(config: dict[str, Any]) -> InvestigatorRuntime:
     kind = config.get("runtime", "fixture")
-    if kind == "fixture":
-        name = config.get("policy", "conclude-immediately")
-        if name not in FIXTURE_POLICIES:
-            import importlib
-            for mod in ("eidos.investigator.task_policies", "eidos.investigator.fixture_policies"):
-                try:
-                    importlib.import_module(mod)
-                except ModuleNotFoundError:
-                    pass
-        return FixtureRuntime(FIXTURE_POLICIES[name], policy_name=name)
-    if kind == "pydantic-ai":
-        from eidos.investigator.pydantic_ai_runtime import PydanticAIRuntime
-        return PydanticAIRuntime(config)
-    raise ValueError(f"unknown investigator runtime {kind!r}")
+    if kind not in RUNTIMES:
+        raise ValueError(f"unknown investigator runtime {kind!r}; known runtimes: {', '.join(sorted(RUNTIMES))}")
+    return RUNTIMES[kind](config)
