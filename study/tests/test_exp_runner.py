@@ -1095,7 +1095,7 @@ def test_paired_pool_cli_scores_and_describes_each_arm(tmp_path, monkeypatch):
     assert usage['per_variant'] == {v['label']: dict(runs=4, usd=0) for v in manifest['variants']}
 
 
-@pytest.mark.parametrize('refresh', ['stale', 'fresh', 'floor'])
+@pytest.mark.parametrize('refresh', ['stale', 'fresh', 'floor', 'stale-floor'])
 def test_minimax_admission_then_dispatch_fake_clock(tmp_path, monkeypatch, preflight, refresh):
     args, _, _ = preflight
     budget_args, selected, _, _ = live_budget(tmp_path, 'minimax-m3.1-flash')
@@ -1120,6 +1120,7 @@ def test_minimax_admission_then_dispatch_fake_clock(tmp_path, monkeypatch, prefl
     monkeypatch.setattr(run.lab, 'start', lambda *a, **k: None)
     monkeypatch.setattr(run.lab, 'stop', lambda: None)
     calls = []
+    stopped = 'floor' in refresh
     def dispatch(command, **kwargs):
         assert read_json(args.out / 'manifest.json')['status'] == 'started'
         request = read_json(command[-1])
@@ -1131,19 +1132,24 @@ def test_minimax_admission_then_dispatch_fake_clock(tmp_path, monkeypatch, prefl
         clock[0] = now + timedelta(minutes=31)
         if refresh != 'stale':
             write_json(args.quota_file / 'quota-02.json', dict(
-                utc=clock[0].isoformat(), weekly_remaining_fraction=.14 if refresh == 'floor' else .7,
+                utc=(now if refresh == 'stale-floor' else clock[0]).isoformat(),
+                weekly_remaining_fraction=.14 if stopped else .7,
                 interval_remaining_fraction=.8))
         return result
     monkeypatch.setattr(run, 'dispatch_process', dispatch)
     code = run.execute(args)
     manifest = read_json(args.out / 'manifest.json')
     score = read_json(args.out / 'scorecard.json')
-    assert len(score['individual']) == (1 if refresh == 'floor' else 2)
+    assert len(score['individual']) == (1 if stopped else 2)
     assert len(calls) == len(score['individual'])
-    assert code == (1 if refresh == 'floor' else 0)
-    assert manifest['status'] == ('dispatch stopped' if refresh == 'floor' else 'complete')
-    if refresh == 'floor':
+    assert code == (1 if stopped else 0)
+    assert manifest['status'] == ('dispatch stopped' if stopped else 'complete')
+    if stopped:
+        if refresh == 'stale-floor':
+            assert 'stale quota' in (args.out / 'run.log').read_text()
         assert score['incomplete'] is True
+        assert manifest['dispatch_checks'][-1]['quota']['source'].endswith('quota-02.json')
+        assert manifest['dispatch_checks'][-1]['refused'] is True
         assert 'floor' in manifest['dispatch_stop_reason']
     elif refresh == 'stale':
         assert 'stale quota' in (args.out / 'run.log').read_text()

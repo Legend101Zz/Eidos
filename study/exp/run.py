@@ -182,6 +182,13 @@ def quota_stale(quota):
     return not 0 <= age < 600 or time.time() - Path(quota['source']).stat().st_mtime >= 600
 
 
+class QuotaFloorRefused(ValueError):
+    def __init__(self, quota, stale):
+        super().__init__('MiniMax remaining quota is below its floor')
+        self.quota = quota
+        self.stale = stale
+
+
 def budget_check(args, selected, plan, *, admission=True):
     live = [v for v in selected if not v['stub'] and not v['fixture']]
     if not live:
@@ -235,7 +242,7 @@ def budget_check(args, selected, plan, *, admission=True):
             if any(not _number(x) or x > 1 for x in (weekly, interval)):
                 raise ValueError('invalid quota fractions')
             if weekly < max(.15, settings['weekly_floor']) or interval < max(.20, settings['interval_floor']):
-                raise ValueError('MiniMax remaining quota is below its floor')
+                raise QuotaFloorRefused(quota, stale)
             if admission and 1 - weekly >= min(.50, settings['weekly_share']):
                 raise ValueError('MiniMax weekly share exhausted')
         else:
@@ -779,6 +786,11 @@ def execute(args, *, private_root=None):
                                                         private_root=private_root,
                                                         private_out=out.parent if private_root is not None else None)
                             except ValueError as exc:
+                                if isinstance(exc, QuotaFloorRefused):
+                                    manifest['dispatch_checks'].append(dict(variant=v['label'], block=item['block_id'],
+                                                                            quota=exc.quota, refused=True))
+                                    if exc.stale:
+                                        event('Warning: stale quota reading at dispatch; remaining floors checked')
                                 dispatch_stopped.set()
                                 manifest['dispatch_stop_reason'] = str(exc)
                                 event('Dispatch stopped: ' + str(exc))
