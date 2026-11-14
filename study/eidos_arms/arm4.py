@@ -151,7 +151,12 @@ def run(run_dir, meta, *, eval_audit_config=None):
     base_path = Path(__file__).parent / 'investigator.json'
     config_sha = digest(base_path) if treatment.investigator == json.loads(base_path.read_text()) else effective_sha
     setup_started_at, setup_begin = utc(), time.monotonic()
-    lab.start()
+    profile = treatment.provider
+    fixture = treatment.investigator.get("runtime") == "fixture"
+    if profile.id == 'minimax-m3.1-flash' and not fixture:
+        lab.start()
+    else:
+        lab.start(profile=profile, credentials=not fixture)
     c = lab.client()
     inv = None
     bridge = None
@@ -174,16 +179,19 @@ def run(run_dir, meta, *, eval_audit_config=None):
         began_at = utc()
         write_json(run_dir / 'setup.json', {'setup_started_at': setup_started_at,
                    'setup_ended_at': began_at, 'setup_wall_s': round(begin - setup_begin, 3),
-                   'setup_complete': True, 'treatment': treatment.record()})
+                   'setup_complete': True, 'treatment': treatment.record(), 'provider': profile.record()})
         from .provider_bridge import start as start_bridge
         bridge_start_unix = time.time()
-        bridge, bridge_receipt = start_bridge(run_dir, investigator['settings']['base_url'],
-                                              deadline_utc, investigator['settings']['request_timeout'],
-                                              eval_audit_config=eval_audit_config)
+        bridge_receipt = {'upstream': profile.upstream}
+        if not fixture:
+            bridge, bridge_receipt = start_bridge(run_dir, profile.upstream,
+                                                  deadline_utc, investigator['settings']['request_timeout'],
+                                                  eval_audit_config=eval_audit_config,
+                                                  **({'wire': profile.wire} if profile.wire != 'openai-chat' else {}))
+            if eval_audit_config is not None and bridge_receipt.get('eval_provider_audit') is not True:
+                raise RuntimeError('required provider audit did not activate')
+            investigator['settings']['base_url'] = bridge_receipt['base_url']
         bridge_ready_unix = time.time()
-        if eval_audit_config is not None and bridge_receipt.get('eval_provider_audit') is not True:
-            raise RuntimeError('required provider audit did not activate')
-        investigator['settings']['base_url'] = bridge_receipt['base_url']
         # ADR 0020: completion state, the conclusion's reserve and the "conclude now" turn, inside the watchdog's envelope.
         investigator['wall_seconds'] = remaining_wall_seconds(deadline_utc)
         investigator['wall_deadline_unix'] = deadline_utc - WATCHDOG_MARGIN_SECONDS
@@ -194,7 +202,8 @@ def run(run_dir, meta, *, eval_audit_config=None):
             'question': question, 'charter_id': imported['charter_id'], 'environment': 'default',
             'inputs': imported['artifacts'], 'task': imported['task'], 'investigator': investigator,
             'limits': {'model_tokens': token_cap, 'turns': 10000,
-                       'compute_seconds': 100000000, 'trials': 1000000},
+                       'compute_seconds': 100000000, 'trials': 1000000,
+                       **({'model_usd': profile.model_usd_per_run} if profile.model_usd_per_run is not None else {})},
             'notes': f'Study deadline unix={deadline_utc}; wall_seconds={wall}. '
                      'Outer controller cancels the investigation and jobs at this deadline.',
         }, project=project)
@@ -298,14 +307,14 @@ def run(run_dir, meta, *, eval_audit_config=None):
             write_json(run_dir / 'validation_error.json', {'error': str(exc)})
         status, incident = classify(observed or shown, receipts, models, expired.is_set(), valid)
         controller_abstention = (shown.get('body') or {}).get('controller_abstention')
-        return {'status': status, 'treatment': treatment.record(), 'finalization_read_coverage': finalization_read_coverage(receipts),
+        return {'status': status, 'treatment': treatment.record(), 'provider': profile.record(), 'finalization_read_coverage': finalization_read_coverage(receipts),
                 'investigator_abstention_reason': investigator_abstention_reason(shown, status),
                 **({'controller_abstention': controller_abstention} if controller_abstention else {}), 'incident_reason': incident, 'tokens': tokens, 'billed_usd': billed,
                 'started_at': began_at,
                 'model_ids_seen': models, 'agent_claim': agent_claim, 'transcript': 'transcript.jsonl',
                 'project': project, 'investigation_id': inv, 'selected_job': selected,
                 'selection_reason': reason, 'candidate_provenance': provenance, 'checkpoint_basename': checkpoint_basename, 'investigation_wall_s': round(time.monotonic() - begin, 3),
-                'provider_endpoint': bridge_receipt['upstream'], 'provider_outer_kill': True,
+                'provider_endpoint': bridge_receipt['upstream'], 'provider_outer_kill': not fixture,
                 'usage_uncertain': uncertain,
                 'evidence_plan_count': len(records['evidence_plan']),
                 'assessment_count': len(assessments),

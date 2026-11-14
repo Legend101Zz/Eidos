@@ -63,6 +63,7 @@ class DefaultTreatmentGolden(unittest.TestCase):
         data = (ROOT / "study/eidos_arms/investigator.json").read_bytes()
         self.assertEqual(sha(data), INVESTIGATOR_SHA)
         self.assertEqual(resolve().investigator, json.loads(data))
+        self.assertEqual(resolve(provider="minimax-m3.1-flash").investigator, json.loads(data))
 
     def test_main_tool_prompt_and_full_public_and_pilot4_prompts(self):
         self.assertEqual(sha((ROOT / "study/prompts/tools_arm4.md").read_bytes()), TOOLS_SHA)

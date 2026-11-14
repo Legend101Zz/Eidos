@@ -14,9 +14,12 @@ import signal
 import socket
 import subprocess
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(os.environ.get('EIDOS_STUDY_ROOT', '/Volumes/Mrigesh SSD/eidos-v1'))
+SECURITY = '/usr/bin/security'  # Injectable only by tests; production never searches PATH.
+
 DEFAULT_HOME = ROOT / 'pilot-1/lab/fixed'
 DEFAULT_PYTHON = ROOT / 'venvs/pilot-1-lab/bin/python'
 
@@ -37,11 +40,12 @@ def build_record():
     return record
 
 
-def environment():
+def environment(profile=None):
     from study.exp.treatment import resolve
 
+    selected = resolve(provider=profile)
     env = dict(os.environ, EIDOS_HOME=str(home()), OMP_NUM_THREADS='1', MKL_NUM_THREADS='1',
-               EIDOS_STUDY_TREATMENT=resolve().id)
+               EIDOS_STUDY_TREATMENT=selected.id, EIDOS_STUDY_PROVIDER=selected.provider.id)
     if env.get("EIDOS_STUDY_LIVE_DISPATCH") == "1":
         from study.common import PROMPT_OVERRIDES, refuse_live_prompt_overrides
         refuse_live_prompt_overrides(os.environ)
@@ -57,13 +61,14 @@ def environment():
     return env
 
 
-def cli(*args, timeout=300, stdin=None):
+def cli(*args, timeout=300, stdin=None, profile=None):
     exe = str(Path(python()).parent / 'lab')
-    r = subprocess.run([exe, *map(str, args)], env=environment(), input=stdin,
+    r = subprocess.run([exe, *map(str, args)], env=environment(profile), input=stdin,
                        text=True, capture_output=True, timeout=timeout)
     if r.returncode:
         # Never include credential input in exceptions.
-        raise RuntimeError(f'lab {args[0]} exited {r.returncode}: {r.stderr[-2000:]}')
+        detail = 'credential input withheld' if stdin is not None else r.stderr[-2000:]
+        raise RuntimeError(f'lab {args[0]} exited {r.returncode}: {detail}')
     return r.stdout
 
 
@@ -82,7 +87,10 @@ def guard_disk():
         raise ValueError('study lab must be under EIDOS_STUDY_ROOT')
 
 
-def start():
+def start(profile=None, credentials=True):
+    from study.exp.providers import DEFAULT, load
+
+    profile = load(profile)
     guard_disk()
     build_record()
     home().mkdir(parents=True, exist_ok=True)
@@ -112,15 +120,27 @@ def start():
             running = True
         except Exception:
             running = False
+        marker = home() / 'study-provider.json'
+        previous = json.loads(marker.read_text()) if marker.exists() else {}
+        different = previous.get('provider', DEFAULT) != profile.id
+        credential_change = previous.get('credentials', True) != credentials
+        if running and (different or credential_change):
+            stop()
+            running = False
         if not running:
             # Key exists only in memory and lab-start's stdin, never a file or argv.
-            key = subprocess.check_output(['/usr/bin/security', 'find-generic-password',
-                                          '-a', os.environ['USER'], '-s', 'minimax_api_key', '-w'],
-                                         text=True).strip()
-            try:
-                cli('start', '--credentials-stdin', stdin='OPENAI_API_KEY=' + key + '\n', timeout=300)
-            finally:
-                key = None
+            if credentials:
+                key = subprocess.check_output([SECURITY, 'find-generic-password',
+                                              '-a', os.environ['USER'], '-s', profile.keychain_item, '-w'],
+                                             text=True, stderr=subprocess.DEVNULL).strip()
+                try:
+                    cli('start', '--credentials-stdin', stdin=profile.credential_env + '=' + key + '\n', timeout=300, profile=profile)
+                finally:
+                    key = None
+            else:
+                cli('start', timeout=300, profile=profile)
+            marker.write_text(json.dumps({'provider': profile.id, 'started_utc': datetime.now(UTC).isoformat(),
+                                          'credentials': credentials}) + '\n')
         ensure_mcp()
     return {'home': str(home()), 'python': python(), 'mcp_url': mcp_url()}
 

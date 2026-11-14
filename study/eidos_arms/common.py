@@ -121,7 +121,7 @@ def prepare(c, run_dir, arm):
     if card not in ('D01', 'D04', 'D05', 'N02', 'N03') and not is_regression(card):
         from .protocols import prepare as prepare_protocols
         prepare_protocols(c, project, run_dir)
-    write_json(run_dir / 'lab_import.json', {'project': project, 'treatment': treatment.record(), **imported})
+    write_json(run_dir / 'lab_import.json', {'project': project, 'treatment': treatment.record(), 'provider': treatment.provider.record(), **imported})
     return project, imported
 
 
@@ -181,7 +181,8 @@ def ledger(c, project, inv, path):
 def usage(events, transcript=None):
     """Use model.usage receipts once, including failed requests; never double-count decisions.
 
-    Eidos aggregate input_tokens includes cached OpenAI input. Recover its cache breakdown
+    Pydantic-ai normalizes OpenAI and Anthropic input_tokens to include cache input.
+    Raw Anthropic input_tokens excludes cache; do not add it a second time here. Recover the breakdown
     from persisted model-response receipts; failures without a raw response remain uncertain.
     """
     tokens = dict(input=0, cache_read=0, cache_write=0, output=0, total=0)

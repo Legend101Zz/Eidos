@@ -9,16 +9,20 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from study.common import MODEL, agent_env, sandbox_command
+from study.common import agent_env, sandbox_command
 from study.run_arm import stop_process_tree
 
 
 def probe(root):
+    from study.exp.providers import load
+
+    profile = load()
+    settings = profile.cli_settings()
     root = Path(root).resolve()
     root.mkdir(parents=True, exist_ok=True)
     env = agent_env(root)
     env["ANTHROPIC_API_KEY"] = subprocess.check_output(
-        ["security", "find-generic-password", "-a", os.environ["USER"], "-s", "minimax_api_key", "-w"],
+        ["security", "find-generic-password", "-a", os.environ["USER"], "-s", profile.keychain_item, "-w"],
         text=True,
         stderr=subprocess.DEVNULL,
     ).strip()
@@ -28,7 +32,7 @@ def probe(root):
         "-p",
         "Offline startup probe only.",
         "--model",
-        MODEL,
+        settings["model"],
         "--permission-mode",
         "bypassPermissions",
         "--output-format",

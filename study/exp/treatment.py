@@ -11,6 +11,7 @@ from pathlib import Path
 
 from study.exp import flags as registry_module
 from study.exp.artifacts import bundle_sha256, toolkit_manifest_sha256
+from study.exp.providers import Provider, load as load_provider
 
 ROOT = registry_module.ROOT
 DEFAULT = "pilot4-v1"
@@ -68,6 +69,7 @@ class Treatment:
     patch: dict
     definition: dict
     selected_flags: dict
+    provider: Provider
 
     def component_plan(self, card: str) -> list[ComponentInstall]:
         from study.private_card_registry import is_classification
@@ -151,7 +153,8 @@ class Treatment:
         return dict(id=self.id, flags=list(self.flags), sha256=self.sha256)
 
 
-def resolve(treatment_id: str | None = None, *, allow_rejected: bool = False) -> Treatment:
+def resolve(treatment_id: str | None = None, *, allow_rejected: bool = False,
+            provider: str | Provider | None = None) -> Treatment:
     treatment_id = (
         treatment_id if treatment_id is not None else os.environ.get("EIDOS_STUDY_TREATMENT", DEFAULT)
     )
@@ -205,8 +208,11 @@ def resolve(treatment_id: str | None = None, *, allow_rejected: bool = False) ->
 
     for name in selected:
         apply(name)
+    profile = load_provider(provider)
     base = json.loads((ROOT / "study/eidos_arms/investigator.json").read_text())
-    investigator = base
+    investigator = merge_patch(base, profile.investigator)
+    if profile.price_per_mtok is not None:
+        investigator.setdefault("settings", {})["price_per_mtok"] = copy.deepcopy(profile.price_per_mtok)
     for name in ordered:
         investigator = merge_patch(investigator, flags[name]["patch"].get("investigator", {}))
     investigator = merge_patch(investigator, definition["overrides"])
@@ -225,6 +231,7 @@ def resolve(treatment_id: str | None = None, *, allow_rejected: bool = False) ->
         patch,
         definition,
         {name: flags[name] for name in selected},
+        profile,
     )
     treatment.toolkit_plan()
     return treatment
@@ -235,6 +242,11 @@ def for_run(meta: dict) -> Treatment:
     if os.environ.get("EIDOS_STUDY_LIVE_DISPATCH") == "1" and meta.get("treatment") is None:
         raise ValueError("live dispatch requires a prepared treatment record")
     treatment = resolve()
+    if meta.get("provider") is not None and meta["provider"] != treatment.provider.record():
+        raise ValueError("prepared study provider differs from worker provider")
+    if (os.environ.get("EIDOS_STUDY_LIVE_DISPATCH") == "1"
+            and treatment.provider.id != "minimax-m3.1-flash" and meta.get("provider") is None):
+        raise ValueError("live dispatch requires a prepared provider record")
     if meta.get("treatment") is not None and meta["treatment"] != treatment.record():
         raise ValueError("prepared study treatment differs from worker treatment")
     return treatment

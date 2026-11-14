@@ -1,0 +1,28 @@
+{
+  "schema": "eidos-provider/1",
+  "id": "anthropic-haiku-5-5",
+  "summary": "Anthropic Haiku 5.5; list prices for prompts up to 100K tokens",
+  "wire": "anthropic-messages",
+  "keychain_item": "anthropic_api_key",
+  "credential_env": "ANTHROPIC_API_KEY",
+  "upstream": "https://api.anthropic.com",
+  "investigator": {
+    "model": "anthropic:claude-haiku-5-5",
+    "settings": {
+      "output_mode": "tool",
+      "api_key_env": "ANTHROPIC_API_KEY"
+    }
+  },
+  "served_models": [
+    "claude-haiku-5-5*"
+  ],
+  "price_per_mtok": {
+    "input": 0.1,
+    "output": 0.5
+  },
+  "model_usd_per_run": 0.6,
+  "arm2": {
+    "anthropic_base_url": "https://api.anthropic.com",
+    "model": "claude-haiku-5-5"
+  }
+}

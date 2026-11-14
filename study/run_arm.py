@@ -18,7 +18,7 @@ from pathlib import Path
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from study.common import ENVELOPE, MODEL, agent_env, read_json, record_live_delivery, render_prompt, sandbox_command, write_json
+from study.common import ENVELOPE, agent_env, read_json, record_live_delivery, render_prompt, sandbox_command, write_json
 
 TOKEN_KEYS = {
     "input": ("input_tokens", "inputTokens"),
@@ -388,6 +388,7 @@ def run_stream(run_dir, command, env, wall_s=1800, token_limit=8_000_000):
     from study.exp.treatment import for_run
 
     record["treatment"] = for_run(arm).record()
+    record["provider"] = for_run(arm).provider.record()
     record.update(
         status=status,
         incident_reason=reason,
@@ -413,6 +414,8 @@ def run_claude(run_dir, arm, wall_s=None):
     from study.exp.treatment import for_run
 
     treatment = for_run(metadata)
+    profile = treatment.provider
+    cli_settings = profile.cli_settings()
     if arm == 2:
         import shutil
 
@@ -423,7 +426,7 @@ def run_claude(run_dir, arm, wall_s=None):
     env = agent_env(root)
     # The key exists only in this local environment, handed directly to the child.
     env["ANTHROPIC_API_KEY"] = subprocess.check_output(
-        ["security", "find-generic-password", "-a", os.environ["USER"], "-s", "minimax_api_key", "-w"],
+        ["security", "find-generic-password", "-a", os.environ["USER"], "-s", profile.keychain_item, "-w"],
         text=True,
         stderr=subprocess.DEVNULL,
     ).strip()
@@ -434,7 +437,7 @@ def run_claude(run_dir, arm, wall_s=None):
         "-p",
         initial_prompt,
         "--model",
-        MODEL,
+        cli_settings["model"],
         "--permission-mode",
         "bypassPermissions",
         "--output-format",

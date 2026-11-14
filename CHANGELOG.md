@@ -4,6 +4,8 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.4.0
 
+- [ADR 0053](docs/decisions/0053-provider-profiles.md) adds explicit study provider profiles for MiniMax, Anthropic and an unconfigured OpenAI placeholder, with credential-safe supervisor switching, Messages deadline/audit relaying, served-model receipts, per-run USD limits and bounded Anthropic refusals. Default MiniMax configuration and prompt revision stay unchanged.
+
 - Dry-run rejected-flag removal against surviving treatments and shared imports. Preserve step-3 v2 publications and default upload names, bind treatment identity to installed bytes, and record the effective investigator configuration. Live dispatch requires prepared treatment metadata; policy-2 source inclusion remains ignored.
 
 - [ADR 0052](docs/decisions/0052-treatments-and-feature-flags.md) makes v2 dormant behind explicit study treatments and lifecycle flags. The default `pilot4-v1` preserves main's investigator, prompts, installed releases, toolkit tree and policy-2 semantics, verified by public-source goldens. Rejected flags are refused and marked for removal; run and prompt receipts bind the treatment.

@@ -21,11 +21,11 @@ from study.common import (
     ENVELOPE,
     FAMILIES,
     IMPROVEMENT_CARDS,
-    MODEL,
     PROMPT_OVERRIDES,
     ROOT,
     STUDY,
     dev_command,
+    model_name,
     read_json,
     record_prompt,
     refuse_live_prompt_overrides,
@@ -80,7 +80,15 @@ ORDINARY_FAILURES = frozenset({"crash", "timeout", "token_budget", "invalid_outp
 
 def version_guard(records):
     served = [set(record.get("model_ids_seen", [])) - CLIENT_PLACEHOLDER_MODELS for record in records]
-    unexpected = set().union(*served) - {MODEL}
+    from fnmatch import fnmatchcase
+    from study.exp.treatment import resolve
+
+    treatment = resolve()
+    patterns = treatment.provider.served_models
+    fixture = treatment.investigator.get('runtime') == 'fixture'
+    unexpected = {model for models in served for model in models
+                  if not any(fnmatchcase(model, pattern) for pattern in patterns)
+                  and not (fixture and model.startswith('fixture:') and len(model) > len('fixture:'))}
     if unexpected:
         return "block recorded an unexpected returned model id; saw " + repr(sorted(unexpected))
     if any(not models and record.get("status") not in ORDINARY_FAILURES | {"incident"}
@@ -131,7 +139,8 @@ def prepare(row, run_dir):
             card=row["task"],
             run_index=row["run"],
             block_id=row["block_id"],
-            model=MODEL,
+            model=model_name(),
+            provider=treatment.provider.record(),
             envelope=ENVELOPE,
             charter_sha=hashlib.sha256(charter.read_bytes()).hexdigest(),
             charter_amendment_commit=os.environ["EIDOS_PILOT_CHARTER_COMMIT"],
@@ -185,7 +194,8 @@ def run_block(rows, runs_root, stub=False, replace_incident=False, *, eval_audit
     processes, logs = [], []
     from study.exp.treatment import resolve
 
-    worker_env = dict(os.environ, EIDOS_STUDY_TREATMENT=resolve().id)
+    worker_env = dict(os.environ, EIDOS_STUDY_TREATMENT=resolve().id,
+                      EIDOS_STUDY_PROVIDER=resolve().provider.id)
     for name in SEAL_ROOT_ENVS:
         worker_env.pop(name, None)
     worker_env.pop("EIDOS_EVAL_AUDIT_IDENTIFIERS", None)

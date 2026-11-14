@@ -28,19 +28,59 @@ class LoopbackServer(ThreadingHTTPServer):
         self.server_port = self.server_address[1]
 
 
-def serve(upstream, deadline, timeout, state, *, eval_audit_config=None):
+class RequestRejected(ValueError):
+    def __init__(self, status):
+        self.status = status
+        super().__init__('provider request refused')
+
+
+def request_mapping(wire, method, path, headers, length, upstream):
+    """Validate a request and return only the URL and allowed upstream headers."""
+    if wire not in ('openai-chat', 'anthropic-messages'):
+        raise ValueError('unknown provider wire')
+    if method != 'POST':
+        raise RequestRejected(405)
+    incoming = {k.lower(): v for k, v in headers.items()}
+    parsed = urlparse(path)
+    expected = '/v1/messages' if wire == 'anthropic-messages' else '/v1/chat/completions'
+    if (parsed.path != expected or parsed.scheme or parsed.netloc or parsed.fragment
+            or wire == 'openai-chat' and path != expected):
+        raise RequestRejected(404)
+    if length <= 0 or length > 8 * 1024**2:
+        raise RequestRejected(400)
+    if wire == 'openai-chat':
+        auth = incoming.get('authorization', '')
+        if not auth.startswith('Bearer '):
+            raise RequestRejected(400)
+        return upstream.rstrip('/') + '/chat/completions', {
+            'Authorization': auth, 'Content-Type': 'application/json'}
+    if not all(incoming.get(name, '').strip() for name in ('x-api-key', 'anthropic-version')):
+        raise RequestRejected(400)
+    outgoing = {name: incoming[name] for name in ('x-api-key', 'anthropic-version', 'anthropic-beta')
+                if name in incoming}
+    outgoing['Content-Type'] = incoming.get('content-type', 'application/json')
+    return upstream.rstrip('/') + '/v1/messages' + ('?' + parsed.query if parsed.query else ''), outgoing
+
+
+def response_headers(wire, headers):
+    """Return allowed provider response metadata without logging it."""
+    outgoing = {name: headers[name] for name in ('Retry-After', 'Retry-After-Ms')
+                if headers.get(name) is not None}
+    if wire == 'anthropic-messages':
+        outgoing.update({name: value for name, value in headers.items()
+                         if name.lower() == 'request-id' or name.lower().startswith('anthropic-ratelimit-')})
+    return outgoing
+
+
+def make_server(upstream, deadline, timeout, *, wire='openai-chat', audit=None, transport=None):
+    """Create a loopback relay; injected transports let tests avoid provider calls."""
     import httpx
-    from .common import write_json
 
     parsed = urlparse(upstream)
-    if parsed.scheme != 'https' or parsed.username or parsed.password:
+    if parsed.scheme != 'https' or not parsed.hostname or parsed.username is not None or parsed.password is not None:
         raise ValueError('configured upstream must be HTTPS without URL credentials')
-
-    audit = None
-    if eval_audit_config is not None:
-        from study.evals.provider_audit import RequestAudit
-
-        audit = RequestAudit(eval_audit_config, state)
+    if wire not in ('openai-chat', 'anthropic-messages'):
+        raise ValueError('unknown provider wire')
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -50,27 +90,25 @@ def serve(upstream, deadline, timeout, state, *, eval_audit_config=None):
             if time.time() >= deadline:
                 self.send_error(504, 'Investigation wall deadline exhausted')
                 return
-            if self.path != '/v1/chat/completions':
-                self.send_error(404)
-                return
-            length = int(self.headers.get('Content-Length', '0'))
-            auth = self.headers.get('Authorization', '')
-            if length <= 0 or length > 8 * 1024**2 or not auth.startswith('Bearer '):
-                self.send_error(400)
+            try:
+                try:
+                    length = int(self.headers.get('Content-Length', '0'))
+                except ValueError:
+                    raise RequestRejected(400) from None
+                url, headers = request_mapping(wire, self.command, self.path, self.headers, length, upstream)
+            except RequestRejected as exc:
+                self.send_error(exc.status)
                 return
             body = self.rfile.read(length)
             if audit is not None:
                 audit.scan(body)
-            headers = {'Authorization': auth, 'Content-Type': 'application/json'}
             try:
-                with httpx.Client(timeout=min(timeout, max(.01, deadline - time.time()))) as client:
-                    response = client.post(upstream.rstrip('/') + '/chat/completions',
-                                           content=body, headers=headers)
+                with httpx.Client(timeout=min(timeout, max(.01, deadline - time.time())), transport=transport) as client:
+                    response = client.post(url, content=body, headers=headers)
                 self.send_response(response.status_code)
                 self.send_header('Content-Type', response.headers.get('Content-Type', 'application/json'))
-                for name in ('Retry-After', 'Retry-After-Ms'):  # ADR 0023: the provider's backoff hint reaches the runtime
-                    if response.headers.get(name) is not None:
-                        self.send_header(name, response.headers[name])
+                for name, value in response_headers(wire, response.headers).items():
+                    self.send_header(name, value)
                 self.send_header('Content-Length', str(len(response.content)))
                 self.end_headers()
                 self.wfile.write(response.content)
@@ -78,9 +116,20 @@ def serve(upstream, deadline, timeout, state, *, eval_audit_config=None):
                 # No exception/header/body logging: exceptions can carry request context.
                 self.close_connection = True
 
-    server = LoopbackServer(('127.0.0.1', 0), Handler)
+    return LoopbackServer(('127.0.0.1', 0), Handler)
+
+
+def serve(upstream, deadline, timeout, state, *, eval_audit_config=None, wire='openai-chat'):
+    from .common import write_json
+
+    audit = None
+    if eval_audit_config is not None:
+        from study.evals.provider_audit import RequestAudit
+        audit = RequestAudit(eval_audit_config, state)
+    server = make_server(upstream, deadline, timeout, wire=wire, audit=audit)
+    suffix = '/v1' if wire == 'openai-chat' else ''
     write_json(state, {'pid': os.getpid(), 'upstream': upstream, 'deadline_unix': deadline,
-                       'base_url': f'http://127.0.0.1:{server.server_port}/v1',
+                       'base_url': f'http://127.0.0.1:{server.server_port}{suffix}', 'wire': wire,
                        'eval_provider_audit': audit is not None,
                        **({'eval_provider_audit_config_sha256': audit.config_sha256} if audit else {})})
     timer = threading.Timer(max(0, deadline - time.time()), lambda: os._exit(124))
@@ -89,13 +138,15 @@ def serve(upstream, deadline, timeout, state, *, eval_audit_config=None):
     server.serve_forever(poll_interval=.1)
 
 
-def start(run_dir, upstream, deadline, timeout, *, eval_audit_config=None):
+def start(run_dir, upstream, deadline, timeout, *, eval_audit_config=None, wire='openai-chat'):
     from . import lab
     state = run_dir / 'provider_bridge.json'
     if state.exists() or state.is_symlink():
         raise RuntimeError('provider deadline bridge state already exists')
     command = [lab.python(), '-m', 'study.eidos_arms.provider_bridge',
                '--upstream', upstream, '--deadline', str(deadline), '--timeout', str(timeout), '--state', str(state)]
+    if wire != 'openai-chat':  # Preserve the default bridge argv exactly.
+        command.extend(('--wire', wire))
     if eval_audit_config is not None:
         command.extend(('--eval-audit-config', str(eval_audit_config)))
     with (run_dir / 'provider_bridge.log').open('ab') as log:
@@ -122,10 +173,11 @@ def start(run_dir, upstream, deadline, timeout, *, eval_audit_config=None):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--wire', choices=('openai-chat', 'anthropic-messages'), default='openai-chat')
     parser.add_argument('--upstream', required=True)
     parser.add_argument('--deadline', type=float, required=True)
     parser.add_argument('--timeout', type=float, required=True)
     parser.add_argument('--state', type=Path, required=True)
     parser.add_argument('--eval-audit-config', type=Path)
     args = parser.parse_args()
-    serve(args.upstream, args.deadline, args.timeout, args.state, eval_audit_config=args.eval_audit_config)
+    serve(args.upstream, args.deadline, args.timeout, args.state, eval_audit_config=args.eval_audit_config, wire=args.wire)
