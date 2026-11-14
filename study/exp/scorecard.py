@@ -7,6 +7,7 @@ import copy
 import hashlib
 import json
 import math
+import os
 import statistics
 from datetime import UTC, datetime
 from pathlib import Path
@@ -120,7 +121,7 @@ def _run_error(row, grade, ref, gain, verified):
 
 
 def build(run_dir, pool_root=None, references=None, *, treatment, provider, build_record,
-          replicates, generated_utc=None, autopilot=None):
+          replicates, generated_utc=None, autopilot=None, arm=None, catalog_record=None):
     """One individual per (card, arm, replicate), equal card weights in aggregate.
 
     Incident rows retain accounting/claim evidence but have no primary metrics.
@@ -141,6 +142,13 @@ def build(run_dir, pool_root=None, references=None, *, treatment, provider, buil
         raise ValueError("results.json must be a nonempty list of grade rows")
     if type(replicates) is not int or replicates < 1:
         raise ValueError("replicates must be a positive integer")
+    arms = {row.get("arm") for row in rows}
+    if arm is None and len(arms) > 1:
+        raise ValueError("multiple arms require --arm N")
+    if arm is not None:
+        rows = [row for row in rows if row.get("arm") == arm]
+        if not rows:
+            raise ValueError("selected arm has no runs")
     pool = {"id": "legacy-development", "commitment": None}
     if pool_root is not None:
         pool_path = Path(pool_root)
@@ -172,14 +180,35 @@ def build(run_dir, pool_root=None, references=None, *, treatment, provider, buil
                 or ref["err_base"] < 0 or ref["err_ref"] < 0
                 or type(ref.get("null_card")) is not bool):
             raise ValueError(f"invalid reference for {card}")
-    cat = novelty.catalog(Path(__file__).resolve().parents[2])
+    records = {}
+    for card, selected_arm, rep in identities:
+        suffix = f"{card}-r{rep}/arm{selected_arm}"
+        records[(card, selected_arm, rep)] = read(root / "runs" / suffix / "run_record.json",
+                                                f"run/runs/{suffix}/run_record.json")
+    commits = {r.get("eidos_commit_sha") for r in records.values()}
+    if len(commits) != 1 or not all(isinstance(c, str) and c.strip() for c in commits):
+        raise ValueError("run records require one nonempty build commit")
+    commit = next(iter(commits))
+    if build_record.get("commit") != commit:
+        raise ValueError("recorded build commit differs from header")
+    if isinstance(catalog_record, (str, Path)):
+        cat = read(Path(catalog_record), "catalog.json")
+    elif catalog_record is not None:
+        cat = copy.deepcopy(catalog_record)
+    else:
+        cat = novelty.catalog(Path(__file__).resolve().parents[2], commit=commit)
+    if cat.get("commit") != commit:
+        raise ValueError("catalog commit differs from recorded build commit")
+    contents = {k: v for k, v in cat.items() if k != "sha256"}
+    if cat.get("sha256") != sha256(canonical(contents)):
+        raise ValueError("catalog digest mismatch")
     inputs.update({"catalog/" + k: v for k, v in cat["inputs"].items()})
     individuals, envelopes = [], []
     for identity, row in sorted(zip(identities, rows, strict=True), key=lambda pair: pair[0]):
         card, arm, rep = identity
         suffix = f"{card}-r{rep}/arm{arm}"
         run = root / "runs" / suffix
-        record = read(run / "run_record.json", f"run/runs/{suffix}/run_record.json")
+        record = records[identity]
         if (record.get("eidos_commit_sha") is not None and build_record.get("commit") is not None
                 and record["eidos_commit_sha"] != build_record["commit"]):
             raise ValueError(f"{card}: recorded build commit differs from header")
@@ -254,6 +283,9 @@ def build(run_dir, pool_root=None, references=None, *, treatment, provider, buil
             wall_s=record.get("wall_s", row.get("wall_s")),
             unused_wall_s=mechanism["unused_wall_s"],
             mechanism=mechanism, novelty=fp,
+            novelty_win=(row["novelty_win"] and verified and not excluded
+                         and fp["class"] in {"external", "recombination"}
+                         if type(row.get("novelty_win")) is bool else None),
             dead_ends=int(observations["dead_end"]) if observations["dead_end"] is not None else None,
             null_honesty=None if not ref["null_card"] or claims is None else float(not claims),
             evidence_sha256={"grade.json": inputs[f"run/grading/{suffix}/grade.json"],
@@ -278,12 +310,19 @@ def build(run_dir, pool_root=None, references=None, *, treatment, provider, buil
     aggregate = {k: _mean(c[k] for c in primary) for k in METRICS if k != "error_ratio"}
     aggregate.update(
         error_ratio=geomean(c["error_ratio"] for c in primary) if primary else None,
-        capped_share=_mean(float(r["vrg"] == 2.0 or r["mrg"] == 2.0) for r in eligible),
+        capped_share=_mean(float(r["vrg"] == 2.0) for r in eligible),
         false_claims=sum(r["false_claims"] for r in individuals),
         dead_ends=sum(r["dead_end"] is True for r in individuals),
         crashes=sum(r["crash"] for r in individuals), incidents=sum(r["incident"] for r in individuals),
         tokens={"total": _sum_known(r["tokens"] for r in individuals), "median": _median(r["tokens"] for r in individuals)},
         usd=_sum_known(r["usd"] for r in individuals),
+        live_runs=len(individuals), time_seconds=_sum_known(r["wall_s"] for r in individuals),
+        heldout_identifier_matches=(sum(r["held_out_reads"] for r in individuals)
+                                    if all(type(r["held_out_reads"]) is bool for r in individuals) else None),
+        novelty_wins=(sum(r["novelty_win"] for r in individuals)
+                      if all(type(r["novelty_win"]) is bool for r in individuals) else None),
+        novelty_classes={name: sum(r["novelty"]["class"] == name for r in individuals)
+                         for name in ("catalog", "recombination", "external", "baseline", "unknown")},
         wall_s={"median": _median(r["wall_s"] for r in individuals)},
         null_honesty=_mean(nulls) if nulls and all(v is not None for v in nulls) else None,
         n_cards=len(per_card), n_null_cards=sum(c["null_card"] for c in per_card.values()), n_runs=len(individuals),
@@ -292,6 +331,7 @@ def build(run_dir, pool_root=None, references=None, *, treatment, provider, buil
                   purpose="development evidence", treatment=copy.deepcopy(treatment), provider=copy.deepcopy(provider), build=copy.deepcopy(build_record),
                   pool=pool, envelope=envelopes[0] if envelopes else None, replicates=replicates,
                   references_sha256=sha256(canonical(used_references)), inputs=dict(sorted(inputs.items())),
+                  catalog={"commit": cat["commit"], "sha256": cat["sha256"]},
                   individual=individuals, per_card=per_card, aggregate=aggregate, incomplete=bool(incomplete))
     if autopilot is not None:
         if isinstance(autopilot, (str, Path)):
@@ -309,6 +349,16 @@ def build(run_dir, pool_root=None, references=None, *, treatment, provider, buil
                 live["uplift_autopilot"] = live["vrg"] - auto["vrg"]
                 deltas.append(live["uplift_autopilot"])
         aggregate["uplift_autopilot"] = _mean(deltas)
+    if pool["id"] != "D":
+        # Candidate names may identify a sealed source. Hash the entire relative
+        # path, retaining neither basenames nor directory components.
+        for row in individuals:
+            fp = row["novelty"]
+            fp["inputs"] = {sha256(k.encode()): v for k, v in fp["inputs"].items()}
+            for field in ("parse_errors", "changed_templates"):
+                fp[field] = [sha256(k.encode()) for k in fp[field]]
+        result["inputs"] = {("candidate/" + sha256(k.encode()) if "/out/" in k else k): v
+                            for k, v in result["inputs"].items()}
     return result
 
 
@@ -328,6 +378,8 @@ def main(argv=None):
     parser.add_argument("--pool-root", type=Path)
     parser.add_argument("--references", type=Path)
     parser.add_argument("--autopilot", type=Path)
+    parser.add_argument("--arm", type=int)
+    parser.add_argument("--catalog", type=Path)
     parser.add_argument("--out", type=Path, required=True)
     for field in ("treatment", "provider", "build-record"):
         parser.add_argument("--" + field, type=Path, help="JSON metadata; defaults to recorded run metadata")
@@ -336,6 +388,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         rows = json.loads((args.run_dir / "results.json").read_text())
+        if args.arm is not None:
+            rows = [r for r in rows if r.get("arm") == args.arm]
         first = rows[0]
         card = first.get("card_id", first.get("task", first.get("card")))
         rep = first.get("replicate", first.get("run", first.get("seed_index")))
@@ -360,13 +414,18 @@ def main(argv=None):
             raise ValueError("treatment/provider metadata is required in arm.json or explicit JSON files")
         replicates = args.replicates or len({r.get("replicate", r.get("run", r.get("seed_index"))) for r in rows})
         result = build(args.run_dir, args.pool_root, args.references, replicates=replicates,
-                       generated_utc=args.generated_utc, autopilot=args.autopilot, **metadata)
+                       generated_utc=args.generated_utc, autopilot=args.autopilot, arm=args.arm,
+                       catalog_record=args.catalog, **metadata)
         result["inputs"].update(external)
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n")
         args.out.with_suffix(".md").write_text(markdown(result))
-    except (ValueError, OSError, KeyError, TypeError, IndexError) as exc:
-        parser.exit(2, f"{exc}\n")
+    except (ValueError, OSError, KeyError, TypeError, IndexError, AttributeError, RecursionError, OverflowError) as exc:
+        if isinstance(exc, OSError) and exc.filename:
+            message = f"{exc.strerror}: {os.path.relpath(exc.filename, args.run_dir)}"
+        else:
+            message = str(exc).replace(str(args.run_dir.resolve()), ".")
+        parser.exit(2, f"scorecard input error: {message}\n")
     return 0
 
 

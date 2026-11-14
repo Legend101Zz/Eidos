@@ -26,7 +26,7 @@ def test_exp_signflip_symmetry_monotonicity_and_zero_denominator():
     assert signflip_p(abs(data)) <= signflip_p(data)
     assert mean_se([1, 1, 0])[0] == 2 / 3
     assert signflip_p([1, 1, 0]) == signflip_p([1, 1])
-    expected = sum(abs(sum(s * d for s, d in zip(signs, data))) >= abs(data.sum()) - 1e-12
+    expected = sum(abs(sum(s * d for s, d in zip(signs, data, strict=True))) >= abs(data.sum()) - 1e-12
                    for signs in itertools.product([-1, 1], repeat=4)) / 16
     assert signflip_p(data, "two-sided") == expected
     assert signflip_p(data * 1e-20) == signflip_p(data)
@@ -86,3 +86,9 @@ def test_exp_stats_bad_shapes_and_arguments():
         geomean([0, 1])
     with pytest.raises(ValueError):
         signflip_p([1], "bad")
+
+
+def test_exp_signflip_exact_boundary_and_float_ties():
+    assert signflip_p([1] * 20) == 1 / 2**20
+    assert signflip_p([0.1] * 8) == 1 / 256
+    assert signflip_p([0.3, 0.1, 0.2, -0.1]) == 3 / 16

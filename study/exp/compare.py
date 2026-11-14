@@ -3,6 +3,19 @@
 The CLI accepts one pair of scorecards. A scorecard may carry individual rows
 from several tiers/looks; absent required tiers remain pending. External checks
 require explicit evidence and never become true from a favourable numeric score.
+
+README: pass --plan FILE (or --rule-choice with adjacent plan.json) to bind
+identities and complete card/replicate batches. Without a registered plan a keep
+is impossible. --cards N is allowed only for the exact declared card list or a
+plan tier with draw={method: "random", seed: INT, count: N}; that draw samples the
+tier cards with Python Random(seed).sample. Plans never authorize hand picking.
+Review verdicts come only from --review FILE, containing Verdict: ACCEPT/REJECT
+and Commit: HASH lines (optional Kind: code). Self-reported CI/test booleans,
+including tests_green, ci_green and other documented boolean checks, are accepted
+only from explicit --attest FILE JSON (checks, optional tier_checks), recorded
+with its SHA-256 digest. Scorecard review/check fields are ignored.
+Use --previous decision.json ... to count prior extensions. Output is replaced
+atomically; a pre-existing output is removed before reading inputs.
 """
 
 from __future__ import annotations
@@ -12,13 +25,21 @@ import copy
 import json
 import math
 import operator
+import os
+import random
+import re
 import statistics
+import tempfile
 from pathlib import Path
 
 from study.exp.scorecard import METRICS, SCHEMA, canonical, number, sha256
 from study.exp.stats import mean_lower_bound, mean_se, signflip_p
 
 RULES = Path(__file__).resolve().parents[2] / "experiments/rules"
+BOOLEAN_CHECKS = {"tests_green", "ci_green", "default_treatment_golden_unchanged",
+                  "practice_generators_no_harm", "guardrails_clean"}
+CHECKS = BOOLEAN_CHECKS | {"code_review", "heldout_identifier_matches", "new_failure_class",
+                          "cost_ratio", "within_plan_cost_and_time"}
 OPS = {">=": operator.ge, "<=": operator.le, "==": operator.eq}
 
 
@@ -28,6 +49,8 @@ def _identity(row):
 
 def compatible(incumbent, candidate):
     for score in (incumbent, candidate):
+        if not isinstance(score, dict):
+            raise ValueError("scorecard must be an object")
         if score.get("schema") != SCHEMA:
             raise ValueError("expected eidos-exp-scorecard/1")
         for key in ("pool", "provider", "envelope", "references_sha256", "replicates"):
@@ -35,6 +58,11 @@ def compatible(incumbent, candidate):
                 raise ValueError(f"missing comparison identity: {key}")
         if not isinstance(score.get("individual"), list) or not score["individual"]:
             raise ValueError("empty paired rows")
+        if not isinstance(score.get("aggregate"), dict) or not isinstance(score.get("per_card"), dict):
+            raise ValueError("scorecard aggregate/per_card must be objects")
+        if any(not isinstance(r, dict) or not isinstance(r.get("card_id"), str)
+               or type(r.get("replicate")) is not int or r["replicate"] < 1 for r in score["individual"]):
+            raise ValueError("invalid paired row identity")
         ids = [_identity(r) for r in score["individual"]]
         if len(ids) != len(set(ids)):
             raise ValueError("duplicate paired row")
@@ -125,11 +153,14 @@ def _resolve(value, plan):
 
 def _cost(score):
     aggregate = score["aggregate"]
-    return aggregate.get("cost", {}).get("usd", aggregate.get("usd"))
+    cost = aggregate.get("cost", {})
+    if "usd" in cost and "usd" in aggregate and cost["usd"] != aggregate["usd"]:
+        raise ValueError("contradictory cost evidence")
+    return cost.get("usd", aggregate.get("usd"))
 
 
 def _failure_classes(score):
-    statuses = [r.get("run_status") for r in score["individual"]]
+    statuses = [r.get("run_status") for r in score["individual"] if not r.get("incident")]
     if any(not isinstance(s, str) for s in statuses):
         return None
     return set(statuses) - {"ok", "valid", "succeeded", "completed"}
@@ -143,32 +174,119 @@ def _check(name, a, b, plan, choice):
     if name == "heldout_identifier_matches":
         value = agg.get(name)
         reads = [r.get("held_out_reads") for r in b["individual"]]
+        count = sum(reads) if reads and all(type(v) is bool for v in reads) else None
+        if type(value) is bool:
+            return int(value) if value or count is not None else None
         if type(value) is int and value >= 0:
             return max(value, sum(v is True for v in reads))
-        return sum(reads) if all(type(v) is bool for v in reads) else None
+        return count
     if name == "cost_ratio":
         old, new = _cost(a), _cost(b)
         if not number(old) or not number(new) or min(old, new) < 0:
             return None
         return new / old if old else (1.0 if new == 0 else math.inf)
     if name == "within_plan_cost_and_time":
-        if agg.get(name) is False:
-            return False
         budget = plan.get("budget", {})
         if not budget:
-            return agg[name] if type(agg.get(name)) is bool else None
+            return None
         actual = {"usd": _cost(b), "live_runs": agg.get("live_runs"),
                   "quota_weekly_percent": agg.get("quota_weekly_percent"),
                   "time_seconds": agg.get("time_seconds")}
-        if any(k not in actual or not number(actual[k]) or not number(v) for k, v in budget.items()):
+        if any(k not in actual or not number(actual[k]) or not number(v)
+               or actual[k] < 0 or v < 0 for k, v in budget.items()):
             return None
         return all(actual[k] <= limit for k, limit in budget.items())
     if name == "code_review":
-        reviews = choice.get("reviews", b.get("reviews", []))
-        reviews = [r for r in reviews if r.get("kind") == "code" and r.get("commit") == b.get("build", {}).get("commit")]
+        commit = b.get("build", {}).get("commit")
+        reviews = [r for r in choice.get("_reviews", []) if r.get("kind") == "code"
+                   and isinstance(commit, str) and commit.strip()
+                   and isinstance(r.get("commit"), str) and r["commit"].strip()
+                   and r["commit"] == commit]
         return reviews[-1].get("verdict") if reviews else None
-    value = agg.get(name)
+    if name not in CHECKS:
+        raise ValueError(f"unknown check: {name}")
+    attest = choice.get("_attest", {})
+    tiers = {r.get("tier") for r in b["individual"]}
+    checks = attest.get("checks", attest)
+    if len(tiers) == 1:
+        checks = attest.get("tier_checks", {}).get(next(iter(tiers)), checks)
+    value = checks.get(name)
     return value if type(value) is bool else None
+
+
+def _id(value):
+    return value.get("id") if isinstance(value, dict) else value
+
+
+def _bind_plan(a, b, plan, tier, count):
+    if not plan:
+        return {"matched": False, "reason": "no registered plan"}
+    declarations = plan.get("tiers")
+    if not isinstance(declarations, list) or not declarations:
+        raise ValueError("plan requires tier declarations")
+    available = {r.get("tier", tier) for r in b["individual"]}
+    if tier not in available:
+        raise ValueError("requested tier absent from scorecard")
+    checked = []
+    for selected in sorted(available):
+        matching = [d for d in declarations if d.get("tier") == selected]
+        if len(matching) != 1:
+            raise ValueError("plan does not uniquely declare scorecard tier")
+        declared = matching[0]
+        cards = declared.get("cards")
+        if not isinstance(cards, list) or not cards or not all(isinstance(c, str) for c in cards) or len(set(cards)) != len(cards):
+            raise ValueError("plan requires an exact nonempty card set")
+        draw = declared.get("draw")
+        if draw is not None:
+            n = draw.get("count")
+            if (draw.get("method") != "random" or type(draw.get("seed")) is not int
+                    or type(n) is not int or not 0 < n <= len(cards) or (count is not None and n != count)):
+                raise ValueError("invalid plan card draw")
+            cards = random.Random(draw["seed"]).sample(cards, n)
+        elif count is not None and count != len(cards):
+            raise ValueError("--cards disagrees with plan card set")
+        reps = declared.get("replicates")
+        if type(reps) is not int or reps < 1:
+            raise ValueError("invalid plan replicates")
+        for side, score in (("incumbent", a), ("candidate", b)):
+            rows = [r for r in score["individual"] if r.get("tier", tier) == selected]
+            if _id(score["pool"]) != _id(declared.get("pool")):
+                raise ValueError("scorecard pool differs from plan")
+            commitment = declared.get("commitment", declared.get("pool_commitment"))
+            if isinstance(declared.get("pool"), dict):
+                commitment = declared["pool"].get("commitment", commitment)
+            if commitment is not None and score["pool"].get("commitment") != commitment:
+                raise ValueError("scorecard commitment differs from plan")
+            if "provider" not in declared or _id(score["provider"]) != _id(declared["provider"]):
+                raise ValueError("scorecard provider differs from plan")
+            if score["replicates"] != reps:
+                raise ValueError("scorecard replicates differ from plan")
+            if {r["card_id"] for r in rows} != set(cards):
+                raise ValueError("scorecard card set differs from plan")
+            if any(r.get("pool", _id(score["pool"])) != _id(declared.get("pool")) for r in rows):
+                raise ValueError("scorecard row pool differs from plan")
+            expected = plan.get("treatment", {}).get(side)
+            if expected is not None and _id(score.get("treatment")) != expected:
+                raise ValueError("scorecard treatment differs from plan")
+            looks = {r.get("look", "initial") for r in rows}
+            for card in cards:
+                for look in looks:
+                    found = [r for r in rows if r["card_id"] == card and r.get("look", "initial") == look]
+                    if len(found) != reps or {r["replicate"] for r in found} != set(range(1, reps + 1)):
+                        raise ValueError("scorecard pairs differ from plan")
+            if any(r.get("look", "initial") not in {"initial", "extension"} for r in rows):
+                raise ValueError("unknown plan look")
+        checked.append(dict(tier=selected, cards=sorted(cards), replicates=reps, pool=declared["pool"]))
+    return {"matched": True, "tiers": checked, "sha256": sha256(canonical(plan))}
+
+
+def _registered_vetoes(rule, snapshot):
+    supplied = rule.get("vetoes", snapshot)
+    if not isinstance(supplied, dict) or not isinstance(supplied.get("keep_when"), list):
+        raise ValueError("invalid veto snapshot")
+    if any(c not in supplied["keep_when"] for c in snapshot["keep_when"]):
+        raise ValueError("rule vetoes omit registered snapshot clauses")
+    return supplied
 
 
 def _passed(clause, value, threshold):
@@ -203,16 +321,40 @@ def _effective(rule, choice, plan):
     return rule
 
 
-def compare(incumbent, candidate, rule, *, tier="T2", rule_choice=None, aa=False, veto_rule=None):
+def compare(incumbent, candidate, rule, *, tier="T2", rule_choice=None, aa=False, veto_rule=None,
+            reviews=None, attest=None, previous=(), cards=None):
     compatible(incumbent, candidate)
-    choice = rule_choice or {}
-    plan = choice.get("plan", {})
-    rule = _effective(rule, choice, plan)
     if aa and any(incumbent.get(k) != candidate.get(k) or candidate.get(k) is None for k in ("build", "treatment")):
         raise ValueError("A/A requires the same build and treatment")
+    choice = dict(rule_choice or {})
+    choice["_reviews"], choice["_attest"] = reviews or [], attest or {}
+    plan = choice.get("plan", {})
+    binding = _bind_plan(incumbent, candidate, plan, tier, cards)
+    if any(c.get("check") not in CHECKS for c in rule["keep_when"] if "check" in c):
+        raise ValueError("unknown check")
+    if not rule["keep_when"]:
+        raise ValueError("empty keep_when")
+    if sum(p.get("decision") == "extend" for p in previous) > 1:
+        raise ValueError("second extension refused")
+    if (any(p.get("decision") == "extend" for p in previous)
+            and choice.get("extension", rule.get("extension"))
+            and all(r.get("look", "initial") == "initial" for r in candidate["individual"])):
+        raise ValueError("second extension refused")
+    novelty_clauses = any(c.get("metric") == "novelty_wins" for c in rule["keep_when"])
+    if novelty_clauses:
+        digests = [s.get("catalog", {}).get("sha256") for s in (incumbent, candidate)]
+        if not all(digests) or digests[0] != digests[1]:
+            raise ValueError("incompatible novelty catalog digests")
+    rule = _effective(rule, choice, plan)
+    if any(r.get("look") == "extension" for r in candidate["individual"]) and not rule["extension"]:
+        raise ValueError("extension look was not declared")
     pairs = _pairs(incumbent, candidate, tier, default_tier=tier)
     stats = {m: paired_stats(pairs, m) for m in METRICS}
-    veto_rule = veto_rule or rule.get("vetoes") or json.loads((RULES / "VETOES.json").read_text())
+    veto_source = "explicit registered snapshot" if veto_rule is not None else "repository VETOES.json"
+    snapshot = veto_rule if veto_rule is not None else json.loads((RULES / "VETOES.json").read_text())
+    veto_rule = _registered_vetoes(rule, snapshot)
+    if any(c.get("check") not in CHECKS for c in veto_rule["keep_when"] if "check" in c):
+        raise ValueError("unknown veto check")
     vetoes = []
     for clause in veto_rule["keep_when"]:
         threshold = clause.get("equals", clause.get("value"))
@@ -227,6 +369,15 @@ def compare(incumbent, candidate, rule, *, tier="T2", rule_choice=None, aa=False
                 value = max(value or 0, total) if type(total) is int and total > 0 else None
         else:
             value = _check(clause.get("check"), incumbent, candidate, plan, choice)
+        contradiction = False
+        if clause.get("check") == "heldout_identifier_matches":
+            reported = candidate["aggregate"].get("heldout_identifier_matches")
+            reads = [r.get("held_out_reads") for r in candidate["individual"]]
+            if type(reported) is bool and all(type(v) is bool for v in reads):
+                contradiction = reported != any(reads)
+            elif type(reported) is int and all(type(v) is bool for v in reads):
+                contradiction = reported != sum(reads)
+            consistent &= not contradiction
         if clause.get("unless") == "plan_declared":
             exception = plan.get("cost_ratio_exception", {})
             if exception:
@@ -235,7 +386,14 @@ def compare(incumbent, candidate, rule, *, tier="T2", rule_choice=None, aa=False
                 threshold = exception["max_ratio"]
         passed = consistent and _passed(clause, value, threshold)
         vetoes.append(dict(clause=clause, value=value if value != math.inf else "infinity", passed=passed,
-                           fired=value is not None and not passed))
+                           fired=(value is not None and not passed) or contradiction,
+                           reason="contradictory evidence" if contradiction else None))
+    positive_claims = any(type(v) is int and v > 0 for v in
+                          [candidate["aggregate"].get("false_claims"),
+                           *[r.get("false_claims") for r in candidate["individual"]]])
+    positive_claims |= any(r.get("false_positive_claim") is True for r in candidate["individual"])
+    if positive_claims:
+        vetoes.append(dict(clause={"invariant": "false_claims > 0"}, value=True, passed=False, fired=True))
     clauses = []
     available = {r.get("tier", tier) for r in candidate["individual"]}
     for clause in rule["keep_when"]:
@@ -269,7 +427,12 @@ def compare(incumbent, candidate, rule, *, tier="T2", rule_choice=None, aa=False
                         metric = _resolve(clause.get("target_metric", {"plan": "target.metric"}), plan)
                     stat = clause.get("stat")
                     computed = paired_stats(selected_pairs, metric) if isinstance(metric, str) else None
-                    if computed and stat in {"mean_delta", "signflip_p", "mean_lower_bound"}:
+                    if stat == "count" and metric == "novelty_wins":
+                        values = [b.get("novelty_win") for a, b in selected_pairs]
+                        total = candidate["aggregate"].get(metric)
+                        if all(type(v) is bool for v in values) and type(total) is int and sum(values) == total:
+                            value = total
+                    elif computed and stat in {"mean_delta", "signflip_p", "mean_lower_bound"}:
                         if clause.get("method") != "exact_paired" or computed["method"] == "exact_paired":
                             value = computed[stat]
                     elif computed and stat == "improvement" and _get(plan, "target.direction") in {"up", "down"}:
@@ -292,31 +455,52 @@ def compare(incumbent, candidate, rule, *, tier="T2", rule_choice=None, aa=False
                 threshold = _resolve(clause.get("equals", clause.get("value")), plan)
                 item.update(value=value, passed=_passed(clause, value, threshold), status="evaluated")
                 clauses.append(item)
-    failures = any(not v["passed"] for v in vetoes)
+    failures = any(v["fired"] for v in vetoes)
     pending = any(c.get("status") == "pending" for c in clauses)
     failed = any(not c["passed"] and c.get("status") != "pending" for c in clauses)
-    if failures or failed:
+    reasons = []
+    if not plan:
+        reasons.append("no registered plan")
+    if pending:
+        reasons.append("required tiers pending")
+    if incumbent.get("incomplete") or candidate.get("incomplete"):
+        reasons.append("incomplete scorecard")
+    incident_pairs = sum(bool(a.get("incident") or b.get("incident")) for a, b in pairs)
+    if any(r.get("incident") for score in (incumbent, candidate) for r in score["individual"]):
+        reasons.append("incident in paired evidence")
+    if any(c.get("value") is None for c in [*clauses, *vetoes]):
+        reasons.append("missing clause or veto evidence")
+    if failures:
         decision = "revert"
-    elif pending or incumbent.get("incomplete") or candidate.get("incomplete"):
+    elif reasons:
         decision = "incomplete"
+    elif failed:
+        decision = "revert"
     elif clauses and all(c["passed"] for c in clauses):
         decision = "keep"
     else:
-        decision = "revert"
+        decision = "incomplete"
     # Only statistical shortfall at the initial look can trigger a declared
     # extension; a safety veto or a failed non-statistical clause cannot.
     failed_clauses = [c for c in clauses if not c["passed"] and c.get("status") != "pending"]
     primary = "mrg" if rule["id"] == "R-disc" else "vrg"
     first_look = all(r.get("look", "initial") == "initial" for r in candidate["individual"])
     if (rule["extension"] and first_look and not failures and not pending and failed_clauses
-            and all(c["clause"].get("stat") in {"mean_delta", "signflip_p"} and c["clause"].get("tier") == tier for c in failed_clauses)
+            and all(c["clause"].get("metric") == primary and c["clause"].get("stat") in {"mean_delta", "signflip_p"}
+                    and c["clause"].get("tier") == tier for c in failed_clauses)
+            and not reasons and not any(p.get("decision") == "extend" for p in previous)
             and stats[primary] and stats[primary]["mean_delta"] > 0
             and not incumbent.get("incomplete") and not candidate.get("incomplete")):
         decision = "extend"
     result = dict(schema="eidos-exp-decision/1", decision=decision, rule=rule["id"], tier=tier,
-                  clauses=clauses, vetoes=vetoes, stats=stats,
+                  clauses=clauses, vetoes=vetoes, stats=stats, reasons=reasons, plan_binding=binding,
+                  coverage={"paired_runs": len(pairs), "incident_pairs": incident_pairs},
+                  extensions_used=sum(p.get("decision") == "extend" for p in previous),
                   inputs={"incumbent": sha256(canonical(incumbent)), "candidate": sha256(canonical(candidate)),
-                          "rule": sha256(canonical(rule))})
+                          "rule": sha256(canonical(rule)), "vetoes": sha256(canonical(veto_rule)),
+                          "reviews": sha256(canonical(reviews or [])), "attest": sha256(canonical(attest or {})),
+                          "previous": sha256(canonical(previous))},
+                  veto_source=veto_source)
     if aa:
         result["aa"] = dict(paired_spread={
             metric: statistics.stdev(s["per_card"].values()) if s and s["n_cards"] > 1 else None
@@ -330,7 +514,7 @@ def compare(incumbent, candidate, rule, *, tier="T2", rule_choice=None, aa=False
                                        if r["card_id"] == card and not r.get("incident") and not r.get("null_card") and _value(r, metric) is not None]]}
                 for card in score["per_card"]
             }
-        result["aa"]["rule_decision"] = decision
+        result["aa"]["rule_decision"] = "would_keep" if decision == "keep" else decision
         result["decision"] = "incomplete"  # diagnostic evidence can never authorize keep
     return result
 
@@ -346,46 +530,112 @@ def markdown(result):
     return "\n".join(lines)
 
 
+def _review(path):
+    text = path.read_text()
+    verdict = re.search(r"(?im)^\s*(?:\*\*)?verdict\s*:\s*(ACCEPT|REJECT)\b", text)
+    commit = re.search(r"(?im)^\s*(?:\*\*)?commit\s*:\s*`?([a-zA-Z0-9._-]+)", text)
+    kind = re.search(r"(?im)^\s*kind\s*:\s*(code|result)\b", text)
+    if not verdict or not commit:
+        raise ValueError("review requires verdict line and nonempty commit")
+    return dict(verdict=verdict[1], commit=commit[1], kind=kind[1] if kind else "code")
+
+
+def _snapshot(directory):
+    ledger = directory / "ledger.jsonl"
+    if not ledger.is_file():
+        return None
+    for line in ledger.read_text().splitlines():
+        entry = json.loads(line)
+        if entry.get("type") == "register":
+            data = entry["data"]
+            snapshot = data["vetoes_snapshot"]
+            if sha256(canonical(snapshot)) != data["vetoes_sha256"]:
+                raise ValueError("registered veto snapshot digest mismatch")
+            return snapshot
+    raise ValueError("ledger has no registered veto snapshot")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("incumbent", type=Path)
     parser.add_argument("candidate", type=Path)
     parser.add_argument("--rule", type=Path, required=True)
     parser.add_argument("--rule-choice", type=Path)
+    parser.add_argument("--plan", type=Path)
+    parser.add_argument("--cards", type=int)
+    parser.add_argument("--review", type=Path, action="append", default=[])
+    parser.add_argument("--attest", type=Path)
+    parser.add_argument("--previous", type=Path, nargs="+", default=[])
     parser.add_argument("--tier", choices=["T0", "T1", "T2", "T3"], default="T2")
     parser.add_argument("--out", type=Path, default=Path("decision.json"))
     parser.add_argument("--aa", action="store_true")
     args = parser.parse_args(argv)
+    temporary = None
+    plan_path = args.plan or (args.rule_choice or args.rule).with_name("plan.json")
     try:
         paths = {"incumbent": args.incumbent, "candidate": args.candidate, "rule": args.rule}
+        if args.out.resolve() in {p.resolve() for p in [*paths.values(), args.rule_choice, plan_path, plan_path.parent / "ledger.jsonl", args.attest, *args.review, *args.previous] if p}:
+            raise ValueError("output must differ from input files")
+        args.out.unlink(missing_ok=True)
         data = {k: json.loads(p.read_text()) for k, p in paths.items()}
         choice = json.loads(args.rule_choice.read_text()) if args.rule_choice else {}
         if args.rule_choice:
             paths["rule_choice"] = args.rule_choice
-            plan_path = args.rule_choice.with_name("plan.json")
-            if plan_path.is_file():
-                choice["plan"] = json.loads(plan_path.read_text())
-                paths["plan"] = plan_path
+        if plan_path.is_file():
+            choice["plan"] = json.loads(plan_path.read_text())
+            paths["plan"] = plan_path
+        elif args.plan:
+            raise ValueError("plan file missing")
+        snapshot = _snapshot(plan_path.parent)
+        if snapshot is not None:
+            paths["vetoes/ledger"] = plan_path.parent / "ledger.jsonl"
+            veto_source = "registered ledger snapshot"
+        else:
+            paths["vetoes"] = RULES / "VETOES.json"
+            snapshot = json.loads(paths["vetoes"].read_text())
+            veto_source = "repository VETOES.json"
+        reviews = [_review(path) for path in args.review]
+        attest = json.loads(args.attest.read_text()) if args.attest else None
+        previous = [json.loads(p.read_text()) for p in args.previous]
+        for i, path in enumerate(args.review):
+            paths[f"review/{i}"] = path
+        for i, path in enumerate(args.previous):
+            paths[f"previous/{i}"] = path
+        if args.attest:
+            paths["attest"] = args.attest
         result = compare(data["incumbent"], data["candidate"], data["rule"], tier=args.tier,
-                         rule_choice=choice, aa=args.aa)
+                         rule_choice=choice, aa=args.aa, veto_rule=snapshot, reviews=reviews,
+                         attest=attest, previous=previous, cards=args.cards)
+        result["veto_source"] = veto_source
         if args.aa:
             decisions = {}
             for path in sorted(RULES.glob("R-*.json")):
                 rule = json.loads(path.read_text())
                 diagnostic = compare(data["incumbent"], data["candidate"], rule, tier=args.tier,
-                                     rule_choice={"plan": choice.get("plan", {})}, aa=True)
+                                     rule_choice={"plan": choice.get("plan", {})}, aa=True,
+                                     veto_rule=snapshot, reviews=reviews, attest=attest, previous=previous, cards=args.cards)
                 decisions[rule["id"]] = diagnostic["aa"]["rule_decision"]
                 paths["aa/" + path.name] = path
             result["aa"]["rules"] = decisions
-        veto_path = RULES / "VETOES.json"
-        if "vetoes" not in data["rule"]:
-            paths["vetoes"] = veto_path
         result["inputs"] = {k: sha256(p.read_bytes()) for k, p in paths.items()}
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n")
+        with tempfile.NamedTemporaryFile(mode="w", dir=args.out.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(args.out)
         print(markdown(result))
-    except (ValueError, KeyError, TypeError, OSError) as exc:
-        parser.exit(2, f"{exc}\n")
+    except (ValueError, KeyError, TypeError, OSError, AttributeError, RecursionError, IndexError, OverflowError) as exc:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+        if isinstance(exc, OSError) and exc.filename:
+            message = f"{exc.strerror}: {os.path.relpath(exc.filename, args.candidate.parent)}"
+        else:
+            message = str(exc)
+            for path in paths.values():
+                message = message.replace(str(path.resolve()), os.path.relpath(path, args.candidate.parent))
+        parser.exit(2, f"comparison input error: {type(exc).__name__}: {message}\n")
     return 0
 
 
