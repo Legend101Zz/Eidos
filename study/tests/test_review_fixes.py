@@ -237,7 +237,7 @@ def test_rejection_and_actual_removal_preserve_default(tmp_path, rejected):
     plan = json.loads(result.stdout)
     row = plan[0]
     assert row["id"] == rejected
-    assert row["treatments"] == ["v2-portfolio"]
+    assert row["treatments"] == ["autopilot-v2", "v2-portfolio"]
     assert [entry["path"] for entry in row["paths"]] == [
         entry["path"] for entry in registry["flags"][rejected]["code"]
     ]

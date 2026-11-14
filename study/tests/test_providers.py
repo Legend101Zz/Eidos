@@ -613,3 +613,43 @@ def test_openai_claude_arms_refuse_before_credentials(tmp_path, monkeypatch):
         with pytest.raises(ValueError, match='openai-default has no arm2 Claude CLI path'):
             call()
     keychain.assert_not_called()
+
+
+@pytest.mark.parametrize('recovers', [True, False])
+def test_unhealthy_live_supervisor_unchanged_mode_never_restarts(tmp_path, monkeypatch, recovers):
+    isolated_lab(tmp_path, monkeypatch, previous={'provider': providers.DEFAULT, 'credentials': False})
+    health = Mock(side_effect=[False, False, True] if recovers else [False] * 4)
+    monkeypatch.setattr(lab, '_healthy', health)
+    monkeypatch.setattr(lab.time, 'sleep', lambda _: None)
+    calls = []
+    def command(action, *args, **kwargs):
+        calls.append(action)
+        assert action == 'status'
+        return json.dumps({'supervisor_running': True})
+    monkeypatch.setattr(lab, 'cli', command)
+    stop = Mock(side_effect=AssertionError('must not cancel another block'))
+    monkeypatch.setattr(lab, 'stop', stop)
+    if recovers:
+        lab.start(credentials=False)
+    else:
+        with pytest.raises(RuntimeError, match='unchanged credentials'):
+            lab.start(credentials=False)
+        assert health.call_count == 4
+    assert calls == ['status']
+    stop.assert_not_called()
+    lab.subprocess.check_output.assert_not_called()
+
+
+def test_start_confirmation_matches_credential_name_not_just_presence(monkeypatch):
+    profile = providers.load('anthropic-haiku-5-5')
+    command = Mock(return_value=json.dumps({'phase': 'running', 'credentials': {'OPENAI_API_KEY': 'stdin'}}))
+    stop = Mock()
+    monkeypatch.setattr(lab, 'cli', command)
+    monkeypatch.setattr(lab, '_stop_confirmed', stop)
+    with pytest.raises(RuntimeError, match='requested credentials'):
+        lab._start_confirmed(profile, 'unused fake input', credentials=True)
+    assert command.call_count == 2 and stop.call_count == 1
+    command.reset_mock()
+    command.return_value = json.dumps({'phase': 'running', 'credentials': {'ANTHROPIC_API_KEY': 'stdin'}})
+    lab._start_confirmed(profile, 'unused fake input', credentials=True)
+    assert command.call_count == 1

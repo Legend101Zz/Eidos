@@ -153,6 +153,8 @@ def run(run_dir, meta, *, eval_audit_config=None):
     setup_started_at, setup_begin = utc(), time.monotonic()
     profile = treatment.provider
     fixture = treatment.investigator.get("runtime") == "fixture"
+    provider_record = "none (fixture runtime)" if fixture else profile.record()
+    policy_record = {"policy": (treatment.investigator.get("settings") or {}).get("policy")} if fixture else {}
     if fixture and eval_audit_config is not None:
         raise RuntimeError('required provider audit cannot activate for fixture runtime')
     if profile.id == 'minimax-m3.1-flash' and not fixture:
@@ -181,10 +183,10 @@ def run(run_dir, meta, *, eval_audit_config=None):
         began_at = utc()
         write_json(run_dir / 'setup.json', {'setup_started_at': setup_started_at,
                    'setup_ended_at': began_at, 'setup_wall_s': round(begin - setup_begin, 3),
-                   'setup_complete': True, 'treatment': treatment.record(), 'provider': profile.record()})
+                   'setup_complete': True, 'treatment': treatment.record(), 'provider': provider_record, **policy_record})
         from .provider_bridge import start as start_bridge
         bridge_start_unix = time.time()
-        bridge_receipt = {'upstream': profile.upstream}
+        bridge_receipt = {'upstream': 'none (fixture runtime)' if fixture else profile.upstream}
         if not fixture:
             bridge, bridge_receipt = start_bridge(run_dir, profile.upstream,
                                                   deadline_utc, investigator['settings']['request_timeout'],
@@ -309,7 +311,7 @@ def run(run_dir, meta, *, eval_audit_config=None):
             write_json(run_dir / 'validation_error.json', {'error': str(exc)})
         status, incident = classify(observed or shown, receipts, models, expired.is_set(), valid)
         controller_abstention = (shown.get('body') or {}).get('controller_abstention')
-        return {'status': status, 'treatment': treatment.record(), 'provider': profile.record(), 'finalization_read_coverage': finalization_read_coverage(receipts),
+        return {'status': status, 'treatment': treatment.record(), 'provider': provider_record, **policy_record, 'finalization_read_coverage': finalization_read_coverage(receipts),
                 'investigator_abstention_reason': investigator_abstention_reason(shown, status),
                 **({'controller_abstention': controller_abstention} if controller_abstention else {}), 'incident_reason': incident, 'tokens': tokens, 'billed_usd': billed,
                 'started_at': began_at,

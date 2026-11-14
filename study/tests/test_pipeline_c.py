@@ -109,3 +109,35 @@ class PipelineCContracts(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_config_overrides_are_merged_hashed_and_passed_to_workers(monkeypatch):
+    original = dict(pipeline_c.CONFIG)
+    original_digest = pipeline_c.candidate_digest()
+    merged = pipeline_c.merge_config({'budget': {'max_seconds': 12}, 'include': ['linear']})
+    assert merged['scheme'] == original['scheme'] and merged['budget']['max_seconds'] == 12
+    assert pipeline_c.CONFIG == original
+    monkeypatch.setattr(pipeline_c, 'CONFIG', merged)
+    assert pipeline_c.candidate_digest() != original_digest
+    pipeline_c._configure_worker(merged)
+    assert pipeline_c.CONFIG == merged
+
+
+def test_every_cli_stage_passes_evaluation_id_and_config(monkeypatch):
+    import sys
+    from unittest.mock import Mock
+
+    original = pipeline_c.CONFIG
+    for stage in ('development', 'design', 'holdout', 'all'):
+        monkeypatch.setattr(pipeline_c, 'CONFIG', original)
+        run = Mock(return_value=dict(cards=[], all_met=True))
+        development = Mock(return_value=dict(cards=[]))
+        monkeypatch.setattr(pipeline_c, 'run', run)
+        monkeypatch.setattr(pipeline_c, 'development', development)
+        monkeypatch.setattr(sys, 'argv', ['pipeline_c', '--data', '/unused', '--out', '/unused-out', '--stage', stage,
+                                        '--evaluation-id', 'wp5-contract', '--config-overrides', '{"budget":{"max_seconds":12}}'])
+        pipeline_c.main()
+        call = development.call_args if stage == 'development' else run.call_args
+        assert call.kwargs['evaluation_id'] == 'wp5-contract'
+        assert pipeline_c.CONFIG['budget']['max_seconds'] == 12
+    monkeypatch.setattr(pipeline_c, 'CONFIG', original)

@@ -21,7 +21,7 @@ from eidos.domain.errors import Invalid
 from eidos.domain.turns import FINALIZATION_READ_ROUNDS, validate_conclusion_scope
 from eidos.investigator import structured_output as so
 from eidos.investigator.conclude_split import DURABLE_WRITE_MARGIN_SECONDS, ConcludeSplit
-from eidos.investigator.playbook import PLAYBOOK, PLAYBOOK_V3
+from eidos.investigator.prompt_packs import PROMPT_REVISION, SYSTEM, select_prompt_pack
 from eidos.investigator.runtime import (
     ABORT_POLL_SECONDS,
     DecisionAbort,
@@ -57,14 +57,6 @@ FINALIZATION_FALLBACK_NOTE = (
     "JSON decision — conclude or stop — using the evidence already shown. Keep your reasoning brief."
 )
 
-PROMPT_REVISION = "investigator-prompt/5"  # ADR 0042: conclude-only timeout fallback
-SYSTEM = (
-    "You are the internal investigator of a model-research lab. Diagnose failures, propose the most "
-    "informative next experiment, author components when the catalog lacks a needed method, and stop "
-    "with an honest scoped conclusion. Every hypothesis needs a prediction and a falsifier. You may call "
-    "read-only tools to inspect evidence; effects happen only through the calls in your final decision, "
-    "which the lab validates before execution. You cannot change success rules.\n\n" + PLAYBOOK
-)
 
 
 # Free-form objects are encoded as JSON *strings*: providers' strict structured-output modes reject
@@ -724,9 +716,8 @@ class PydanticAIRuntime:
             raise _ProviderRefusal("Anthropic refused the response", retryable=False)
 
     def decide(self, req: DecisionRequest) -> DecisionResult:
-        v3 = ((req.view or {}).get("investigation", {}).get("body", {}).get("investigator", {}).get("exploration") or {}).get("policy") == "exploration-policy/3"
-        self.prompt_revision = "investigator-prompt/6" if v3 else PROMPT_REVISION
-        self.system = SYSTEM.replace(PLAYBOOK, PLAYBOOK_V3) if v3 else SYSTEM
+        self.prompt_revision, prompt_pack = select_prompt_pack({**self.config, **req.settings}, req.view)
+        self.system = prompt_pack.system
         started = req.abort.clock() if req.abort is not None else time.monotonic()
         mode = self.config.get("output_mode", "tool")
         if mode not in OUTPUT_MODES:

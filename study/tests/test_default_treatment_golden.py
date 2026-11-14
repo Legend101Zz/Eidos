@@ -144,7 +144,7 @@ class DefaultTreatmentGolden(unittest.TestCase):
             self.assertEqual(replay.sha256, original_sha)
             removals = flags.removal_list()
             self.assertEqual(removals[0]["id"], "floor.selection-margin")
-            self.assertEqual(removals[0]["treatments"], ["v2-portfolio"])
+            self.assertEqual(removals[0]["treatments"], ["autopilot-v2", "v2-portfolio"])
             output = io.StringIO()
             with redirect_stdout(output):
                 self.assertEqual(flags.main(["removal-list"]), 0)

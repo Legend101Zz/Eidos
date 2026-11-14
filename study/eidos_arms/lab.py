@@ -113,18 +113,23 @@ def start(profile=None, credentials=True):
         config = json.loads((home() / 'config/lab.json').read_text())
         if config.get('lab_python') != python():
             raise RuntimeError('lab config uses a different interpreter; choose a fresh EIDOS_STUDY_HOME')
-        try:
-            c = client()
-            c.health()
-            c.close()
-            running = True
-        except Exception:
-            running = False
+        running = _healthy()
         marker = home() / 'study-provider.json'
         previous = json.loads(marker.read_text()) if marker.exists() else {}
         different = previous.get('provider', DEFAULT) != profile.id
         credential_change = previous.get('credentials', True) != credentials
-        if running and (different or credential_change):
+        supervisor_running = running
+        if not running:
+            supervisor_running = json.loads(cli('status', '--json')).get('supervisor_running') is True
+        if supervisor_running and not (different or credential_change) and not running:
+            for _ in range(3):
+                time.sleep(.2)
+                if _healthy():
+                    running = True
+                    break
+            if not running:
+                raise RuntimeError('live lab supervisor remains unhealthy; unchanged credentials, jobs left running')
+        if supervisor_running and (different or credential_change):
             _stop_confirmed()
             running = False
         if not running:
@@ -143,6 +148,18 @@ def start(profile=None, credentials=True):
                                           'credentials': credentials}) + '\n')
         ensure_mcp()
     return {'home': str(home()), 'python': python(), 'mcp_url': mcp_url()}
+
+
+def _healthy():
+    try:
+        c = client()
+        try:
+            c.health()
+            return True
+        finally:
+            c.close()
+    except Exception:
+        return False
 
 
 def _stop_confirmed():

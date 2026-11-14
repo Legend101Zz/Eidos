@@ -107,6 +107,26 @@
         {
           "path": "tests/components/portfolio_cases.py",
           "kind": "delete"
+        },
+        {
+          "path": "src/eidos/investigator/autopilot.py",
+          "kind": "delete"
+        },
+        {
+          "path": "tests/unit/test_autopilot_policy.py",
+          "kind": "delete"
+        },
+        {
+          "path": "tests/integration/test_autopilot_study_arm4.py",
+          "kind": "delete"
+        },
+        {
+          "path": "study/tests/test_autopilot.py",
+          "kind": "delete"
+        },
+        {
+          "path": "study/exp/smoke_autopilot.sh",
+          "kind": "delete"
         }
       ],
       "state": "experimental",
