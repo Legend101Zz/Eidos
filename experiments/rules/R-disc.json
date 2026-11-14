@@ -54,5 +54,14 @@
       "value": -1,
       "tier": "T3"
     }
+  ],
+  "overridable": {
+    "delta": {
+      "min": 0.05,
+      "max": 0.3
+    }
+  },
+  "inherits": [
+    "VETOES"
   ]
 }

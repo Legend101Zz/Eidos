@@ -30,5 +30,6 @@
       "check": "within_plan_cost_and_time",
       "equals": true
     }
-  ]
+  ],
+  "overridable": {}
 }

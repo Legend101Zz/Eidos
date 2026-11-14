@@ -49,5 +49,9 @@
       "value": -0.25,
       "tier": "T2"
     }
+  ],
+  "overridable": {},
+  "inherits": [
+    "VETOES"
   ]
 }

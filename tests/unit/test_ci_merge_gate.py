@@ -57,7 +57,7 @@ def test_no_workflow_secrets():
 def test_gate_executes_and_prints_results(results, success):
     _, gate, _ = jobs_and_gate()
     # Extract the actual Python heredoc from the workflow to verify its behavior.
-    script = gate.split("python - <<'PYTHON'\n", 1)[1].split('          PYTHON', 1)[0]
+    script = gate.split("python3 - <<'PYTHON'\n", 1)[1].split('          PYTHON', 1)[0]
     script = '\n'.join(line[10:] for line in script.splitlines())
     env = dict(os.environ, JOB_RESULTS=json.dumps({name: {'result': value} for name, value in results.items()}))
     process = subprocess.run([sys.executable, '-c', script], env=env, capture_output=True, text=True)
@@ -96,3 +96,35 @@ def test_kernel_guard_base_selection(ref, before, expected):
                              env=env, text=True, capture_output=True)
     assert process.returncode == 0, process.stderr
     assert process.stdout.strip() == f'run python scripts/ci/kernel_guard.py --base {expected}'
+
+
+def test_ledger_tests_are_in_merge_gate():
+    lint = WORKFLOW.read_text().split('  lint-and-unit:\n', 1)[1].split('\n  integration:', 1)[0]
+    assert 'uv run pytest study/tests/test_exp_ledger.py -q' in lint
+
+
+def test_previous_push_is_verified_when_available():
+    block = WORKFLOW.read_text().split('      - name: Experiment ledger\n', 1)[1].split('      - run:', 1)[0]
+    assert 'EVENT_BEFORE: ${{ github.event.before }}' in block
+    assert 'git cat-file -e "$EVENT_BEFORE^{commit}"' in block
+    assert 'verify --against "$EVENT_BEFORE"' in block
+    assert '${{' not in block.split('        run: |', 1)[1]
+
+
+def test_gate_uses_python3():
+    assert "python3 - <<'PYTHON'" in jobs_and_gate()[1]
+
+
+@pytest.mark.parametrize('before,available,compared', [
+    ('a' * 40, True, True), ('a' * 40, False, False), ('0' * 40, True, False), ('', True, False),
+])
+def test_previous_push_runtime(before, available, compared):
+    block = WORKFLOW.read_text().split('      - name: Experiment ledger\n', 1)[1].split('      - name:', 1)[0]
+    script = block.split('        run: |\n', 1)[1]
+    script = '\n'.join(line[10:] for line in script.splitlines())
+    env = dict(os.environ, GITHUB_REF='refs/heads/task/example', EVENT_BEFORE=before)
+    stubs = 'uv() { printf "%s\\n" "$*"; }\ngit() { return ' + ('0' if available else '1') + '; }\n'
+    process = subprocess.run(['bash', '-e', '-c', stubs + script], cwd=ROOT,
+                             env=env, text=True, capture_output=True)
+    assert process.returncode == 0, process.stderr
+    assert (f'verify --against {before}\n' in process.stdout) == compared

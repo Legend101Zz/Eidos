@@ -22,5 +22,9 @@
     "quota_weekly_percent": 0
   },
   "stop_early": [],
-  "second_provider": null
+  "second_provider": null,
+  "named_cards": [],
+  "model_free_suffices": false,
+  "target": null,
+  "issue": null
 }

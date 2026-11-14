@@ -20,5 +20,9 @@
       "check": "code_review",
       "equals": "ACCEPT"
     }
+  ],
+  "overridable": {},
+  "inherits": [
+    "VETOES"
   ]
 }

@@ -55,15 +55,22 @@ jobs:
           fi
           uv run python scripts/ci/kernel_guard.py --base "$base"
       - name: Experiment ledger
+        env:
+          EVENT_BEFORE: ${{ github.event.before }}
         run: |
           if [ "$GITHUB_REF" = refs/heads/main ]; then
             uv run python -m study.exp.ledger verify
           else
             uv run python -m study.exp.ledger verify --against origin/main
           fi
+          if [[ -n "$EVENT_BEFORE" && ! "$EVENT_BEFORE" =~ ^0+$ ]] && git cat-file -e "$EVENT_BEFORE^{commit}" 2>/dev/null; then
+            uv run python -m study.exp.ledger verify --against "$EVENT_BEFORE"
+          fi
           if [ -f study/exp/flags.py ]; then
             uv run python -m study.exp.flags check
           fi
+      - name: Experiment ledger tests
+        run: uv run pytest study/tests/test_exp_ledger.py -q
       - run: uv run pytest tests/unit -q
       - name: Offline study arm and grader contracts
         run: |
@@ -591,7 +598,7 @@ jobs:
         env:
           JOB_RESULTS: ${{ toJSON(needs) }}
         run: |
-          python - <<'PYTHON'
+          python3 - <<'PYTHON'
           import json
           import os
           import sys

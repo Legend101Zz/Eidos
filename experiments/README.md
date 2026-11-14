@@ -5,8 +5,9 @@ Each attempt owns a directory, a registered plan and a separate hash chain.
 Kept, reverted and abandoned attempts all remain visible.
 The main branch owns `INDEX.jsonl`, appended once when an attempt closes.
 Separate chains let two experiments run on separate branches without a shared log fork.
-Allocate distinct experiment ids before parallel work; `new` uses locally visible ids.
-If branches allocate the same id, resolve the collision before registration.
+Use a distinct GitHub issue for each attempt; `new --issue N` is required.
+The id is the issue number padded to at least three digits (issue 123 → EXP-123).
+Parallel branches use separate issues, so their ids do not collide.
 
 ## The loop
 
@@ -28,7 +29,7 @@ T0 is tests and CI, including a golden check of the default treatment.
 T1 is model-free evaluation: a scripted "autopilot" investigator on real cards,
 generated practice cards, and replays. It is the cheapest mechanism check.
 T2 is a small paired live comparison on four cards, used as a smoke test.
-T3 is paired live confirmation on eight cards with two runs per card.
+T3 is the paired live comparison on eight cards with two runs per card.
 One extension may be pre-declared; it is never chosen after looking at results.
 Pair incumbent and candidate runs and declare the pool, cards, replicates and provider.
 Declare stop rules, budgets and any second provider in the plan.
@@ -88,35 +89,57 @@ Create an attempt, then fill every hypothesis section and the plan/rule choices:
 
 ```sh
 python -m study.exp.ledger new --title 'Test a mechanism' --slug mechanism --kind performance --issue 123
-python -m study.exp.ledger register experiments/EXP-000-mechanism --base origin/main
+python -m study.exp.ledger register experiments/EXP-123-mechanism --trunk origin/main
 ```
 
 Registration refuses unfilled hypotheses, invalid plans/rules and any code changes
 outside this area in the branch or working tree. Commit and push the registration.
-The three registered files are frozen; record later findings as events or decisions.
+The base is the merge-base of HEAD and the named trunk (default origin/main), which must exist.
+The three registered files, rule definition and vetoes are frozen; record later findings as events or decisions.
+`verify --against` also checks that the first committed registration preceded code.
+Use `python -m study.exp.ledger rule DIR` to obtain the effective registered rule;
+live definition changes produce a warning for open experiments and cannot change their rule.
+See [the precise clause grammar](rules/README.md) for fields, checks and fail-closed evaluation.
 
 ```sh
-python -m study.exp.ledger record experiments/EXP-000-mechanism --tier T1 --scorecard scorecard.json --cost '{"usd":0}'
-python -m study.exp.ledger review experiments/EXP-000-mechanism --kind code --verdict ACCEPT --commit HEAD_SHA --file REVIEW.md
-python -m study.exp.ledger review experiments/EXP-000-mechanism --kind result --verdict ACCEPT --commit HEAD_SHA --file RESULT_REVIEW.md
-python -m study.exp.ledger decide experiments/EXP-000-mechanism --decision keep --decision-file experiments/EXP-000-mechanism/DECISION.md
-python -m study.exp.ledger event experiments/EXP-000-mechanism --type exposure --data '{"pool":"practice"}'
-python -m study.exp.ledger close experiments/EXP-000-mechanism --merged-commit MERGED_SHA --issue 123
+python -m study.exp.ledger record experiments/EXP-123-mechanism --tier T1 --scorecard scorecard.json --cost '{"usd":0}'
+python -m study.exp.ledger review experiments/EXP-123-mechanism --kind code --verdict ACCEPT --commit HEAD_SHA --file REVIEW.md
+python -m study.exp.ledger review experiments/EXP-123-mechanism --kind result --verdict ACCEPT --commit HEAD_SHA --file RESULT_REVIEW.md
+python -m study.exp.ledger decide experiments/EXP-123-mechanism --decision keep --decision-file experiments/EXP-123-mechanism/DECISION.md
+python -m study.exp.ledger event experiments/EXP-123-mechanism --type exposure --data '{"pool":"practice"}'
+python -m study.exp.ledger close experiments/EXP-123-mechanism --merged-commit MERGED_SHA --issue 123
 python -m study.exp.ledger verify --against origin/main
 python -m study.exp.ledger status
 ```
 
-`record` accepts repeated `--scorecard` arguments. It hashes each file and copies aggregates.
+`record` accepts repeated `--scorecard` arguments. It copies scorecards into `results/<tier>/`, hashes them and copies aggregates.
+Reviews are copied into `reviews/`; all ledger paths are repository-relative.
+Review commits must exist and be HEAD or an ancestor of HEAD. Verification re-hashes copied evidence.
 Use `incident`, `exposure`, `budget` or `note` events for other evidence.
 Keep requires registration, a result and ACCEPT reviews; infra needs only code review.
 A later FIX-FIRST or REJECT supersedes an earlier ACCEPT of the same review kind.
 Use `revert`, `extend` or `abandon` to record other outcomes, with a decision note.
 An extension follows the registered policy; it does not rewrite the plan.
-`close` needs a decision, refuses duplicate closure, and records `none` for an unmerged attempt.
-Close only in the serialized index update sequence; parallel branches must preserve its prefix.
+`close` needs a final keep, revert or abandon decision; extend keeps the experiment open.
+It rechecks the latest required reviews for keep and binds the latest decision digest.
+It refuses duplicate closure and records `none` for an unmerged attempt.
+Close runs only on the trunk’s local branch (`main` by default); the index is appended at merge time only.
+The hidden `--allow-branch` bypass exists solely for disposable test repositories.
+
+After experiment CI and review pass, merge the experiment branch into local `main`,
+run `close` there, and commit the chain and index append. Push that commit to a
+`task/merge-…` branch for CI, then fast-forward `main` to the passing commit.
+For reverted/abandoned attempts, merge the public record with the code reverted.
+Serialize these merges so each index append starts with the preceding main index.
 Each chain and the index use canonical JSON, SHA-256 links and one-based sequence numbers.
-The actor is the configured Git user name; UTC comes from the system clock.
+The actor is the configured Git user name; UTC comes from the system clock. Actor and time are self-reported;
+verification checks timestamp syntax/order, not real-world identity or clock accuracy.
 `verify` checks current files and links, including the registered file hashes.
-`--against` checks HEAD and the working tree for the reference index and chains as byte-for-byte prefixes,
+`--against` checks HEAD and the working tree against the merge-base with REF for the index and chains as byte-for-byte prefixes,
 and preserves the reference experiment's three registered files.
-CI runs verification and the kernel-change guard; the push merge gate requires every job to pass.
+CI runs pytest ledger tests, verification against origin/main and the available previous push,
+and per-commit Kernel-Change/Measurement-Change body trailer guards.
+Every guarded non-merge commit needs its own nonempty matching trailer.
+The push merge gate requires every job to pass. Repository branch protection must
+require this check; that setting is managed outside this repository. The aggregate
+gate runs on pushes; fork PRs rely on their individual job checks.

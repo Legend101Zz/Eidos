@@ -1,5 +1,5 @@
 name: Experiment
-description: Register a hypothesis before building, then record every outcome.
+description: Use this issue number with new --issue N to register before building and record every outcome.
 title: 'EXP: '
 labels: [experiment]
 body:

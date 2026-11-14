@@ -91,3 +91,41 @@ def test_explicit_head(repo):
     earlier = change(repo, 'README.md', 'ordinary')
     change(repo, 'src/eidos/domain/evidence.py', 'kernel')
     guard(repo, True, earlier)
+
+
+def test_every_guarded_commit_needs_own_trailer(repo):
+    change(repo, 'study/fresh_check.py', 'first\n\nKernel-Change: reason')
+    change(repo, 'study/fresh_check.py', 'second without trailer')
+    guard(repo, False)
+
+
+def test_subject_is_not_body_trailer(repo):
+    change(repo, 'study/fresh_check.py', 'Kernel-Change: subject only')
+    guard(repo, False)
+
+
+@pytest.mark.parametrize('path', [
+    'experiments/rules/R-mech.json', 'study/exp/ledger.py', 'study/exp/compare.py',
+    'study/exp/scorecard.py', 'study/exp/stats.py', 'study/exp/novelty.py', 'study/exp/traces.py',
+    'study/exp/cards/reference.py', 'study/exp/cards/reference_runtime.py',
+    'study/exp/cards/qualify.py', 'study/exp/cards/baseline_project.py',
+    'scripts/ci/kernel_guard.py', 'scripts/ci/guard_grandfathered.txt', '.github/workflows/ci.yml',
+])
+def test_measurement_paths_require_trailer(repo, path):
+    change(repo, path, 'unguarded measurement change')
+    guard(repo, False)
+
+
+def test_measurement_body_trailer(repo):
+    change(repo, 'study/exp/ledger.py', 'change\n\nMeasurement-Change: freeze rules')
+    guard(repo, True)
+
+
+def test_grandfathered_commit(repo):
+    sha = change(repo, 'study/exp/ledger.py', 'old change')
+    file = repo / 'scripts/ci/guard_grandfathered.txt'
+    file.parent.mkdir(parents=True, exist_ok=True)
+    file.write_text(sha + '  # introduces guard\n')
+    git(repo, 'add', '.')
+    git(repo, 'commit', '-m', 'seed exemptions\n\nMeasurement-Change: seed exemptions')
+    guard(repo, True)

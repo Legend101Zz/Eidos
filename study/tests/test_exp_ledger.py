@@ -8,7 +8,14 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
+try:
+    import pytest
+except ImportError:
+    # unittest discovery imports this pytest-only module in minimal environments.
+    # Identity decorators keep import safe; unittest collects zero free functions.
+    from types import SimpleNamespace
+    pytest = SimpleNamespace(fixture=lambda function: function,
+                             mark=SimpleNamespace(parametrize=lambda *a, **k: lambda function: function))
 
 from study.exp import ledger
 
@@ -55,9 +62,14 @@ def cli(root, *args, error=None):
     return result.stdout
 
 
-def new(root, slug='fixture', kind='infra'):
-    directory = cli(root, 'new', '--title', 'A fixture experiment', '--slug', slug, '--kind', kind, '--issue', 10).strip()
-    return root / directory
+def new(root, slug='fixture', kind='infra', issue=10):
+    directory = cli(root, 'new', '--title', 'A fixture experiment', '--slug', slug, '--kind', kind, '--issue', issue).strip()
+    path = root / directory
+    if kind in {'infra', 'measurement'}:
+        choice = json.loads((path / 'rule.json').read_text())
+        choice['rule'] = 'R-infra'
+        (path / 'rule.json').write_text(json.dumps(choice))
+    return path
 
 
 def fill(path):
@@ -89,18 +101,18 @@ def review(root, path, kind='code', verdict='ACCEPT'):
 
 def close(root, path):
     cli(root, 'decide', path, '--decision', 'revert', '--decision-file', path / 'DECISION.md', '--note', 'no gain')
-    cli(root, 'close', path, '--merged-commit', 'none', '--issue', 10)
+    cli(root, 'close', path, '--allow-branch', '--merged-commit', 'none', '--issue', 10)
 
 
 def test_empty_and_new_ids(repo):
     cli(repo, 'verify', '--against', 'origin/main')
     assert cli(repo, 'status') == ''
     first = new(repo)
-    assert first.name == 'EXP-000-fixture'
-    assert json.loads((first / 'plan.json').read_text())['id'] == 'EXP-000'
+    assert first.name == 'EXP-010-fixture'
+    assert json.loads((first / 'plan.json').read_text())['id'] == 'EXP-010'
     assert (first / 'ledger.jsonl').read_bytes() == b''
-    second = new(repo, slug='next')
-    assert second.name == 'EXP-001-next'
+    second = new(repo, slug='next', issue=11)
+    assert second.name == 'EXP-011-next'
     cli(repo, 'status')
 
 
@@ -115,7 +127,7 @@ def test_every_command_and_close_index(repo):
     for kind in ('incident', 'exposure', 'budget', 'note'):
         cli(repo, 'event', path, '--type', kind, '--data', '{"detail":"fixture"}')
     cli(repo, 'decide', path, '--decision', 'keep')
-    cli(repo, 'close', path, '--merged-commit', git(repo, 'rev-parse', 'HEAD'), '--issue', 10)
+    cli(repo, 'close', path, '--allow-branch', '--merged-commit', git(repo, 'rev-parse', 'HEAD'), '--issue', 10)
     chain = ledger.read_chain(path / 'ledger.jsonl')
     index = ledger.read_chain(repo / 'experiments/INDEX.jsonl', index=True)
     assert len(index) == 1
@@ -125,7 +137,7 @@ def test_every_command_and_close_index(repo):
     assert index[0]['decision'] == 'keep'
     cli(repo, 'verify', '--against', 'origin/main')
     assert 'close keep' in cli(repo, 'status')
-    cli(repo, 'close', path, '--merged-commit', 'none', '--issue', 10, error='already closed')
+    cli(repo, 'close', path, '--allow-branch', '--merged-commit', 'none', '--issue', 10, error='already closed')
     cli(repo, 'event', path, '--type', 'note', '--data', '{}', error='already closed')
     assert len(ledger.read_chain(repo / 'experiments/INDEX.jsonl', index=True)) == 1
 
@@ -187,11 +199,11 @@ def test_register_reminder_and_duplicate(repo):
     path = new(repo)
     fill(path)
     output = cli(repo, 'register', path)
-    assert 'git add -- experiments/EXP-000-fixture' in output
-    assert "git commit -m 'Register EXP-000-fixture'" in output
+    assert 'git add -- experiments/EXP-010-fixture' in output
+    assert "git commit -m 'Register EXP-010-fixture'" in output
     assert 'git push -u origin HEAD' in output
     cli(repo, 'register', path, error='empty chain')
-    assert ledger.read_chain(path / 'ledger.jsonl')[0]['data']['base'] == git(repo, 'rev-parse', 'origin/main')
+    assert ledger.read_chain(path / 'ledger.jsonl')[0]['data']['base_commit'] == git(repo, 'rev-parse', 'origin/main')
 
 
 @pytest.mark.parametrize('kind', ['infra', 'performance'])
@@ -292,17 +304,11 @@ def test_against_deleted_experiment(repo):
 
 
 def test_two_branches_merge_and_close_in_sequence(repo):
-    # Reserve two ids before either branch starts; chains can then grow independently.
-    first = new(repo, slug='first')
-    second = new(repo, slug='second')
-    for path in (first, second):
-        fill(path)
-    commit(repo, 'reserve ids')
     git(repo, 'branch', 'second')
-    cli(repo, 'register', first)
+    first = registered(repo, slug='first', issue=10)
     commit(repo, 'first registration')
     git(repo, 'checkout', 'second')
-    cli(repo, 'register', second)
+    second = registered(repo, slug='second', issue=11)
     commit(repo, 'second registration')
     git(repo, 'checkout', 'experiment')
     git(repo, 'merge', '--no-ff', 'second', '-m', 'merge parallel chains')
@@ -313,21 +319,24 @@ def test_two_branches_merge_and_close_in_sequence(repo):
     commit(repo, 'second index append')
     cli(repo, 'verify', '--against', 'reference')
     index = ledger.read_chain(repo / 'experiments/INDEX.jsonl', index=True)
-    assert [entry['id'] for entry in index] == ['EXP-000', 'EXP-001']
+    assert [entry['id'] for entry in index] == ['EXP-010', 'EXP-011']
     assert index[1]['prev'] == index[0]['sha256']
 
 
 def test_clock_injection(repo):
     path = new(repo)
+    fill(path)
+    register_args = ledger.parser().parse_args(['register', str(path)])
+    ledger.run(register_args, repo, clock=lambda: datetime(2026, 1, 2, 3, 3, tzinfo=UTC), actor='Clock fixture')
     args = ledger.parser().parse_args(['event', str(path), '--type', 'note', '--data', '{}'])
     ledger.run(args, repo, clock=lambda: datetime(2026, 1, 2, 3, 4, tzinfo=UTC), actor='Clock fixture')
-    entry = ledger.read_chain(path / 'ledger.jsonl')[0]
+    entry = ledger.read_chain(path / 'ledger.jsonl')[-1]
     assert entry['utc'] == '2026-01-02T03:04:00Z'
     assert entry['actor'] == 'Clock fixture'
 
 
-def test_golden_rules_and_empty_index():
-    assert (ROOT / 'experiments/INDEX.jsonl').read_bytes() == b''
+def test_golden_rules_and_index_verifies():
+    ledger.verify(ROOT)
     files = sorted((ROOT / 'experiments/rules').glob('*.json'))
     assert len(files) == 6
 
@@ -373,12 +382,12 @@ def test_result_without_aggregate_and_multiple_files(repo):
 
 def test_close_requires_registration_and_decision(repo):
     path = new(repo)
-    cli(repo, 'close', path, '--merged-commit', 'none', '--issue', 10, error='requires register')
+    cli(repo, 'close', path, '--allow-branch', '--merged-commit', 'none', '--issue', 10, error='requires register')
     fill(path)
     cli(repo, 'register', path)
-    cli(repo, 'close', path, '--merged-commit', 'none', '--issue', 10, error='requires a decision')
+    cli(repo, 'close', path, '--allow-branch', '--merged-commit', 'none', '--issue', 10, error='requires a decision')
     cli(repo, 'decide', path, '--decision', 'abandon')
-    cli(repo, 'close', path, '--merged-commit', 'not-a-sha', '--issue', 10, error='hex SHA or none')
+    cli(repo, 'close', path, '--allow-branch', '--merged-commit', 'not-a-sha', '--issue', 10, error='hex SHA or none')
     assert not (repo / 'experiments/INDEX.jsonl').read_bytes()
 
 
@@ -405,3 +414,334 @@ def test_against_checks_head_even_if_working_tree_restores_index(repo):
     commit(repo, 'rewrite index')
     index.write_bytes(original)
     cli(repo, 'verify', '--against', 'reference', error='(HEAD)')
+
+
+# Review regressions: these attacks must fail even with a freshly rehashed chain.
+def rewrite_chain(path, entries):
+    # Attack construction deliberately bypasses the production append checks.
+    written = []
+    for entry in entries:
+        value = {k: v for k, v in entry.items() if k not in {'seq', 'prev', 'sha256'}}
+        value.update(seq=len(written) + 1, prev=written[-1]['sha256'] if written else None)
+        value['sha256'] = ledger.digest(ledger.canonical(value))
+        written.append(value)
+    (path / 'ledger.jsonl').write_bytes(b''.join(ledger.canonical(e) + b'\n' for e in written))
+
+
+def test_late_registration_base_head_bypass(repo):
+    path = new(repo)
+    fill(path)
+    (repo / 'code.py').write_text('too early')
+    commit(repo)
+    cli(repo, 'register', path, '--base', 'HEAD', error='unrecognized arguments')
+
+
+def test_registration_commit_cannot_include_code(repo):
+    registered(repo)
+    (repo / 'code.py').write_text('sneaked into registration commit')
+    commit(repo)
+    cli(repo, 'verify', '--against', 'origin/main', error='code.py')
+
+
+def test_rule_snapshot_is_authoritative(repo):
+    path = registered(repo, kind='performance')
+    definition = repo / 'experiments/rules/R-mech.json'
+    before = json.loads(definition.read_text())
+    definition.write_text(json.dumps(dict(before, keep_when=[])))
+    output = cli(repo, 'rule', path)
+    assert json.loads(output)['keep_when'] == before['keep_when']
+    process = subprocess.run([sys.executable, '-m', 'study.exp.ledger', 'verify'], cwd=repo,
+                             env=dict(os.environ, PYTHONPATH=str(ROOT)), capture_output=True, text=True)
+    assert process.returncode == 0 and 'warning' in process.stderr.lower()
+    entry = ledger.read_chain(path / 'ledger.jsonl')[0]['data']
+    assert entry['rule_snapshot'] == before
+    assert entry['rule_sha256'] == ledger.digest(ledger.canonical(before))
+    assert entry['vetoes_sha256'] == ledger.digest(ledger.canonical(entry['vetoes_snapshot']))
+
+
+@pytest.mark.parametrize('attack,message', [
+    ('no_register', 'register must be first'),
+    ('keep_without_evidence', 'requires at least one result'),
+    ('close_without_decision', 'close requires a decision'),
+    ('close_extend', 'extend'),
+    ('after_close', 'entry after close'),
+    ('duplicate_register', 'multiple register'),
+    ('noncanonical', 'canonical'),
+    ('duplicate_key', 'duplicate'),
+    ('bad_utc', 'utc'),
+    ('naive_utc', 'utc'),
+    ('backwards_utc', 'utc'),
+    ('absolute_path', 'absolute'),
+])
+def test_semantic_forgery(repo, attack, message):
+    path = registered(repo)
+    entries = ledger.read_chain(path / 'ledger.jsonl')
+    sample = dict(entries[0], type='note', data={})
+    if attack == 'no_register':
+        entries = [sample]
+    elif attack == 'keep_without_evidence':
+        entries.append(dict(sample, type='decision', data={'decision': 'keep'}))
+    elif attack == 'close_without_decision':
+        entries.append(dict(sample, type='close'))
+    elif attack in {'close_extend', 'after_close'}:
+        entries += [dict(sample, type='decision', data={'decision': 'extend' if attack == 'close_extend' else 'revert'}),
+                    dict(sample, type='close')]
+        if attack == 'after_close':
+            entries.append(sample)
+    elif attack == 'duplicate_register':
+        entries.append(entries[0])
+    elif attack in {'bad_utc', 'naive_utc'}:
+        entries[0]['utc'] = 'yesterday' if attack == 'bad_utc' else '2026-01-01T00:00:00'
+    elif attack == 'backwards_utc':
+        entries.append(dict(sample, utc='2000-01-01T00:00:00Z'))
+    elif attack == 'absolute_path':
+        entries.append(dict(sample, data={'nested': ['/private/local/path']}))
+    rewrite_chain(path, entries)
+    file = path / 'ledger.jsonl'
+    if attack == 'noncanonical':
+        file.write_bytes(b' ' + file.read_bytes())
+    if attack == 'duplicate_key':
+        file.write_bytes(file.read_bytes().replace(b'{"actor":', b'{"actor":"shadow","actor":', 1))
+    cli(repo, 'verify', error=message)
+
+
+def test_new_requires_issue(repo):
+    cli(repo, 'new', '--title', 'title', '--slug', 'slug', error='--issue')
+
+
+def test_verify_branch_behind_trunk(repo):
+    branch = git(repo, 'rev-parse', 'HEAD')
+    path = registered(repo)
+    commit(repo)
+    git(repo, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
+    git(repo, 'checkout', '--detach', branch)
+    cli(repo, 'verify', '--against', 'origin/main')
+    assert not path.exists()
+
+
+def test_close_only_on_main_and_not_extend(repo):
+    path = registered(repo)
+    cli(repo, 'decide', path, '--decision', 'extend')
+    cli(repo, 'close', path, '--merged-commit', 'none', '--issue', 10, error='merge time')
+    git(repo, 'branch', '-m', 'main-fixture')
+    git(repo, 'branch', '-D', 'main')
+    git(repo, 'branch', '-m', 'main')
+    cli(repo, 'close', path, '--merged-commit', 'none', '--issue', 10, error='extend')
+
+
+@pytest.mark.parametrize('rule,kind,overrides,target,message', [
+    ('R-infra', 'performance', {}, None, 'incompatible'),
+    ('R-mech', 'infra', {}, None, 'incompatible'),
+    ('R-behav', 'performance', {'delt': 1}, None, 'override'),
+    ('R-behav', 'performance', {'delta': -5}, None, 'override'),
+    ('R-behav', 'performance', {'delta': .51}, None, 'override'),
+    ('R-disc', 'performance', {'delta': .04}, None, 'override'),
+    ('R-enable', 'enabling', {'ni_margin': .16}, None, 'override'),
+    ('R-enable', 'enabling', {}, None, 'target'),
+    ('R-enable', 'enabling', {}, {'metric': 'tokens', 'direction': 'down', 'amount': 1}, 'target'),
+])
+def test_registration_rule_validation(repo, rule, kind, overrides, target, message):
+    path = new(repo, kind=kind)
+    fill(path)
+    choice = json.loads((path / 'rule.json').read_text())
+    choice.update(rule=rule, overrides=overrides)
+    (path / 'rule.json').write_text(json.dumps(choice))
+    if target:
+        plan = json.loads((path / 'plan.json').read_text())
+        plan['target'] = target
+        (path / 'plan.json').write_text(json.dumps(plan))
+    cli(repo, 'register', path, error=message)
+
+
+def test_enable_vrg_clause_without_flag():
+    rule = json.loads((ROOT / 'experiments/rules/R-enable.json').read_text())
+    assert any(c.get('metric') == 'vrg' and 'when' not in c for c in rule['keep_when'])
+
+
+def test_evidence_is_copied_and_verified(repo):
+    path = registered(repo)
+    source = result(repo, path)
+    review(repo, path)
+    entries = ledger.read_chain(path / 'ledger.jsonl')
+    evidence = entries[1]['data']['scorecards'][0]
+    assert evidence['file'].startswith(str(path.relative_to(repo)) + '/results/T0/')
+    review_data = entries[-1]['data']
+    assert review_data['file'].startswith(str(path.relative_to(repo)) + '/reviews/')
+    source.unlink()
+    cli(repo, 'verify')
+    (repo / evidence['file']).write_text('tampered')
+    cli(repo, 'verify', error='evidence hash mismatch')
+
+
+@pytest.mark.parametrize('commit_ref', ['deadbeef', 'unrelated'])
+def test_review_commit_must_exist_and_be_ancestor(repo, commit_ref):
+    path = registered(repo)
+    file = repo / 'REVIEW.md'
+    file.write_text('review')
+    if commit_ref == 'unrelated':
+        commit(repo, 'registered evidence')
+        head = git(repo, 'rev-parse', 'HEAD')
+        git(repo, 'checkout', '--orphan', 'unrelated')
+        commit_ref = commit(repo)
+        git(repo, 'checkout', '-B', 'experiment', head)
+    cli(repo, 'review', path, '--kind', 'code', '--verdict', 'ACCEPT',
+        '--commit', commit_ref, '--file', file, error='commit')
+
+
+def test_close_rechecks_latest_review(repo):
+    path = registered(repo)
+    result(repo, path)
+    review(repo, path)
+    cli(repo, 'decide', path, '--decision', 'keep')
+    review(repo, path, verdict='REJECT')
+    git(repo, 'branch', '-m', 'main-fixture')
+    git(repo, 'branch', '-D', 'main')
+    git(repo, 'branch', '-m', 'main')
+    cli(repo, 'close', path, '--merged-commit', git(repo, 'rev-parse', 'HEAD'), '--issue', 10,
+        error='code review ACCEPT')
+
+
+def test_crlf_chain_is_not_canonical(repo):
+    path = registered(repo)
+    file = path / 'ledger.jsonl'
+    file.write_bytes(file.read_bytes().replace(b'\n', b'\r\n'))
+    cli(repo, 'verify', error='canonical')
+
+
+def test_rule_snapshot_identity_is_validated(repo):
+    path = registered(repo)
+    entries = ledger.read_chain(path / 'ledger.jsonl')
+    data = entries[0]['data']
+    data['rule_snapshot']['id'] = 'R-behav'
+    data['rule_sha256'] = ledger.digest(ledger.canonical(data['rule_snapshot']))
+    rewrite_chain(path, entries)
+    cli(repo, 'verify', error='rule definition')
+
+
+def test_code_commit_before_forged_registration(repo):
+    path = registered(repo)
+    registration = (path / 'ledger.jsonl').read_bytes()
+    (path / 'ledger.jsonl').write_bytes(b'')
+    (repo / 'feature.py').write_text('built before registration')
+    commit(repo, 'build first')
+    (path / 'ledger.jsonl').write_bytes(registration)
+    commit(repo, 'register too late')
+    cli(repo, 'verify', '--against', 'origin/main', error='feature.py')
+
+
+def test_registered_history_allows_later_code(repo):
+    path = registered(repo)
+    commit(repo, 'register before code')
+    (repo / 'feature.py').write_text('built after registration')
+    commit(repo, 'build later')
+    cli(repo, 'verify', '--against', 'origin/main')
+    data = ledger.read_chain(path / 'ledger.jsonl')[0]['data']
+    assert data['trunk'] == 'origin/main'
+    assert data['base_commit'] == git(repo, 'rev-parse', 'origin/main')
+    assert data['head_commit'] == data['base_commit']
+
+
+def test_register_missing_trunk(repo):
+    path = new(repo)
+    fill(path)
+    cli(repo, 'register', path, '--trunk', 'missing-trunk', error='missing-trunk')
+    assert not (path / 'ledger.jsonl').read_bytes()
+
+
+@pytest.mark.parametrize('rule,key,value,kind', [
+    ('R-behav', 'delta', .10, 'performance'), ('R-behav', 'delta', .50, 'performance'),
+    ('R-disc', 'delta', .05, 'performance'), ('R-disc', 'delta', .30, 'performance'),
+    ('R-enable', 'ni_margin', .02, 'enabling'), ('R-enable', 'ni_margin', .15, 'enabling'),
+])
+def test_override_boundaries_and_effective_rule(repo, rule, key, value, kind):
+    path = new(repo, kind=kind)
+    fill(path)
+    choice = json.loads((path / 'rule.json').read_text())
+    choice.update(rule=rule, overrides={key: value})
+    (path / 'rule.json').write_text(json.dumps(choice))
+    if kind == 'enabling':
+        plan = json.loads((path / 'plan.json').read_text())
+        plan['target'] = dict(metric='tokens', direction='down', amount=1, tier='T1')
+        plan.pop('model_free_suffices')  # Missing flag still requires VRG.
+        (path / 'plan.json').write_text(json.dumps(plan))
+    cli(repo, 'register', path)
+    output = json.loads(cli(repo, 'rule', path))
+    threshold = next(c for c in output['keep_when'] if c.get('override') == key)
+    assert threshold['value'] == (-value if key == 'ni_margin' else value)
+    if key == 'ni_margin':
+        assert 'when' not in threshold
+    assert output['vetoes']['id'] == 'VETOES'
+
+
+def test_latest_decision_is_bound_at_close(repo):
+    path = registered(repo)
+    cli(repo, 'decide', path, '--decision', 'revert')
+    older = ledger.read_chain(path / 'ledger.jsonl')[-1]['sha256']
+    cli(repo, 'decide', path, '--decision', 'abandon')
+    cli(repo, 'close', path, '--allow-branch', '--merged-commit', 'none', '--issue', 10)
+    entries = ledger.read_chain(path / 'ledger.jsonl')
+    assert entries[-1]['data']['decision_sha256'] == entries[-2]['sha256']
+    assert ledger.read_chain(repo / 'experiments/INDEX.jsonl', index=True)[0]['decision'] == 'abandon'
+    entries[-1]['data']['decision_sha256'] = older
+    rewrite_chain(path, entries)
+    cli(repo, 'verify', error='latest decision')
+
+
+def test_snapshot_digest_tampering(repo):
+    path = registered(repo)
+    entries = ledger.read_chain(path / 'ledger.jsonl')
+    entries[0]['data']['vetoes_snapshot']['keep_when'] = []
+    rewrite_chain(path, entries)
+    cli(repo, 'verify', error='snapshot hash mismatch')
+
+
+def test_rule_grammar_golden():
+    checks = {'tests_green', 'ci_green', 'default_treatment_golden_unchanged', 'code_review',
+              'practice_generators_no_harm', 'guardrails_clean', 'heldout_identifier_matches',
+              'new_failure_class', 'cost_ratio', 'within_plan_cost_and_time'}
+    stats = {'mean_delta', 'signflip_p', 'min_card_delta_reference_se', 'success_count_delta', 'count', 'improvement'}
+    for file in (ROOT / 'experiments/rules').glob('*.json'):
+        rule = json.loads(file.read_text())
+        assert rule['id'] == file.stem
+        assert isinstance(rule['overridable'], dict)
+        if file.stem != 'VETOES':
+            assert rule['inherits'] == ['VETOES']
+        for c in rule['keep_when']:
+            assert c.get('check') in checks | {None}
+            assert c.get('stat') in stats | {None}
+            assert c.get('op') in {'>=', '<=', '==', None}
+            assert c.get('method') in {'exact_paired', None}
+            tier = c.get('tier')
+            assert tier == {'plan': 'target.tier'} or tier in {'T0', 'T1', 'T2', 'T3', 'all', 'planned', None}
+
+
+def test_unittest_import_without_pytest():
+    process = subprocess.run([sys.executable, '-S', '-m', 'unittest', 'discover', '-s', 'study/tests',
+                              '-p', 'test_exp_ledger.py'], cwd=ROOT, text=True, capture_output=True)
+    # Newer unittest versions use exit 5 for an empty (successfully imported) suite.
+    assert process.returncode in {0, 5}, process.stderr
+    assert 'Ran 0 tests' in process.stderr
+    assert 'ImportError' not in process.stderr
+
+
+def test_staged_and_unstaged_code_cannot_cancel_at_register(repo):
+    (repo / 'code.py').write_text('base')
+    commit(repo)
+    git(repo, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
+    path = new(repo)
+    fill(path)
+    (repo / 'code.py').write_text('staged change')
+    git(repo, 'add', 'code.py')
+    (repo / 'code.py').write_text('base')
+    cli(repo, 'register', path, error='outside experiments/: code.py')
+
+
+def test_close_uses_local_branch_of_named_trunk(repo):
+    git(repo, 'update-ref', 'refs/remotes/upstream/main', 'HEAD')
+    path = new(repo)
+    fill(path)
+    cli(repo, 'register', path, '--trunk', 'upstream/main')
+    cli(repo, 'decide', path, '--decision', 'abandon')
+    git(repo, 'checkout', 'main')
+    cli(repo, 'close', path, '--merged-commit', 'none', '--issue', 10)
+    cli(repo, 'verify')

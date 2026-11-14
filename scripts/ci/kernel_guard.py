@@ -1,4 +1,4 @@
-"""Require a Kernel-Change message line on a commit that changes the kernel."""
+"""Require a matching body trailer on every commit touching a guarded class."""
 
 from __future__ import annotations
 
@@ -36,25 +36,66 @@ def kernel_files(output: str) -> list[str]:
     return sorted(p for p in output.split('\0') if p and p.startswith(KERNEL_PATHS))
 
 
+MEASUREMENT_PATHS = (
+    'experiments/rules/', 'study/exp/ledger.py', 'study/exp/compare.py',
+    'study/exp/scorecard.py', 'study/exp/stats.py', 'study/exp/novelty.py', 'study/exp/traces.py',
+    'study/exp/cards/reference.py', 'study/exp/cards/reference_runtime.py',
+    'study/exp/cards/qualify.py', 'study/exp/cards/baseline_project.py',
+    'scripts/ci/kernel_guard.py', 'scripts/ci/guard_grandfathered.txt', '.github/workflows/',
+)
+GUARD_CLASSES = {'Kernel-Change': KERNEL_PATHS, 'Measurement-Change': MEASUREMENT_PATHS}
+
+
+def grandfathered(root: Path, base: str) -> set[str]:
+    result = subprocess.run(['git', '-C', str(root), 'show', f'{base}:scripts/ci/guard_grandfathered.txt'],
+                            capture_output=True, text=True)
+    exempt = set()
+    if result.returncode:
+        return exempt
+    for line in result.stdout.splitlines():
+        if not line.strip() or line.lstrip().startswith('#'):
+            continue
+        match = re.fullmatch(r'([0-9a-f]{40})[ \t]+#[ \t]*\S.*', line)
+        if not match:
+            raise ValueError('guard_grandfathered.txt: expected full commit SHA and # reason')
+        exempt.add(match[1])
+    return exempt
+
+
 def check(base: str, head: str = 'HEAD', *, root: Path | None = None) -> bool:
     root = root or Path.cwd()
-    paths = kernel_files(git(root, 'diff', '--no-renames', '--name-only', '-z', f'{base}...{head}'))
-    if not paths:
-        print(f'Kernel guard: no kernel paths changed in {base}...{head}')
-        return True
-    print('Kernel paths changed:\n' + '\n'.join(f'  {p}' for p in paths))
+    exempt = grandfathered(root, head)
     commits = git(root, 'rev-list', '--no-merges', f'{base}..{head}').splitlines()
+    changed = git(root, 'diff', '--no-renames', '--name-only', '-z', f'{base}...{head}').split('\0')
+    covered = {name: set() for name in GUARD_CLASSES}
+    passed = True
+    any_guarded = False
     for commit in commits:
-        touched = kernel_files(git(root, 'diff-tree', '--root', '--no-commit-id', '--no-renames',
-                                   '--name-only', '-z', '-r', commit))
-        if touched:
-            message = git(root, 'show', '-s', '--format=%B', commit)
-            trailer = re.search(r'^Kernel-Change:[ \t]*\S[^\r\n]*', message, re.MULTILINE)
-            if trailer:
-                print(f'Kernel guard: accepted {commit}: {trailer[0]}')
-                return True
-    print('Kernel guard: missing nonempty Kernel-Change: line on a non-merge commit touching a kernel path')
-    return False
+        touched = git(root, 'diff-tree', '--root', '--no-commit-id', '--no-renames',
+                      '--name-only', '-z', '-r', commit).split('\0')
+        body = git(root, 'show', '-s', '--format=%b', commit)
+        for trailer, prefixes in GUARD_CLASSES.items():
+            paths = [p for p in touched if p and p.startswith(prefixes)]
+            if not paths:
+                continue
+            any_guarded = True
+            covered[trailer].update(paths)
+            print(f'{trailer} paths in {commit}:\n' + '\n'.join(f'  {p}' for p in paths))
+            if commit in exempt:
+                print(f'Guard: grandfathered {commit}')
+            elif re.search(rf'^{trailer}:[ \t]*[^\s][^\r\n]*', body, re.MULTILINE):
+                print(f'Guard: accepted {commit}: {trailer}')
+            else:
+                print(f'Guard: missing nonempty {trailer}: line in commit BODY: {commit}')
+                passed = False
+    for trailer, prefixes in GUARD_CLASSES.items():
+        uncovered = [p for p in changed if p and p.startswith(prefixes) and p not in covered[trailer]]
+        if uncovered:
+            print(f'Guard: {trailer} paths changed only by a merge; no non-merge trailer counts: ' + ', '.join(uncovered))
+            passed = False
+    if not any_guarded:
+        print(f'Kernel guard: no kernel paths or measurement paths changed in {base}...{head}')
+    return passed
 
 
 def main(argv=None) -> int:

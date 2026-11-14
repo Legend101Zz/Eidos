@@ -10,20 +10,8 @@
       "op": ">=",
       "value": -0.1,
       "tier": "planned",
-      "when": {
-        "model_free_suffices": false
-      }
-    },
-    {
-      "metric": "vrg",
-      "stat": "mean_delta",
-      "op": ">=",
-      "value": -0.01,
-      "tier": "T1",
-      "mode": "autopilot",
-      "when": {
-        "model_free_suffices": true
-      }
+      "override": "ni_margin",
+      "override_scale": -1
     },
     {
       "metric": "target",
@@ -32,10 +20,21 @@
       "value": {
         "plan": "target.amount"
       },
-      "tier": "planned",
+      "tier": {
+        "plan": "target.tier"
+      },
       "target_metric": {
         "plan": "target.metric"
       }
     }
+  ],
+  "overridable": {
+    "ni_margin": {
+      "min": 0.02,
+      "max": 0.15
+    }
+  },
+  "inherits": [
+    "VETOES"
   ]
 }
