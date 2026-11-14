@@ -89,8 +89,9 @@ Provider selection is independent: `EIDOS_STUDY_PROVIDER` defaults to
 Messages through the same audited deadline relay. Profiles patch the investigator
 before treatment flags/overrides; `resolve(provider="...")` takes precedence over
 the environment. `python -m study.exp.providers check` validates the inventory.
-`openai-default` deliberately refuses execution until the orchestrator replaces
-its model placeholder and fills prices/limit. Claude CLI arms require `arm2`
+`openai-default` runs `gpt-5-nano` (list price USD 0.05 / 0.40 per million
+tokens in / out, USD 0.60 per run limit; see ADR 0053). A profile whose model is
+still a `REPLACE_ME` placeholder refuses execution. Claude CLI arms require `arm2`
 settings and therefore refuse the OpenAI profile. Arm, run and prompt receipts
 bind the provider id, wire and profile file digest. The shared lab restarts on a
 provider change; fixture treatments need neither credentials nor a bridge.
