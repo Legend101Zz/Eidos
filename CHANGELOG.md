@@ -4,6 +4,8 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.4.0
 
+- [ADR 0051](docs/decisions/0051-isolated-inference-output-directory.md) lets isolated local pre-check inference write sidecars inside its own output directory while preserving isolation between inferences.
+
 - Support selected-arm pilot blocks (arms 2 and 4) in study planning, grading and analysis while preserving historical four-arm outputs; no runtime change.
 
 - [ADR 0042](docs/decisions/0042-split-conclude-only-reserve.md) raises the conclude-only reserve to 15% (90–600 s), limits read admission by time, and protects every conclude-only request, including read-capable requests, with one shared decision-only timeout fallback and full uncertain-usage accounting. Timing reports cover admitted requests, refused fallbacks are explicit, and ledger report copies are bounded. The output cap and ordinary reproduction/export holdback stay unchanged.
