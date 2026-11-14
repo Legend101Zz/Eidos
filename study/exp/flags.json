@@ -20,7 +20,11 @@
         }
       },
       "code": [
-        "components/eidos.diagnose.baseline-errors/"
+        {
+          "path": "components/eidos.diagnose.baseline-errors/",
+          "kind": "procedure",
+          "text": "Restore the 1.0.0 content from components/eidos.diagnose.baseline-errors@1.0.0/ as the unpinned release; retain the pinned directory for replay."
+        }
       ],
       "state": "experimental",
       "experiment": null,
@@ -49,24 +53,69 @@
         }
       },
       "code": [
-        "src/eidos/domain/promotion.py",
-        "src/eidos/application/handlers/promotion.py",
-        "components/eidos.search.recipe-portfolio/",
-        "study/prompts/tools_arm4.v2.md",
-        "tests/unit/test_promotion_expand.py",
-        "tests/integration/test_recipe_portfolio_lab.py",
-        "tests/integration/test_prepare_candidate_lab.py",
-        "tests/unit/test_prepared_context.py",
-        "tests/unit/test_step3_rounds_replay.py",
-        "tests/unit/test_no_practice_identifiers.py",
-        "tests/integration/test_step3_fix_round.py",
-        "tests/components/test_recipe_portfolio.py",
-        "tests/components/portfolio_cases.py"
+        {
+          "path": "src/eidos/domain/promotion.py",
+          "kind": "delete"
+        },
+        {
+          "path": "src/eidos/application/handlers/promotion.py",
+          "kind": "delete"
+        },
+        {
+          "path": "components/eidos.search.recipe-portfolio/",
+          "kind": "delete",
+          "shared_with": [
+            "toolkit.portfolio"
+          ]
+        },
+        {
+          "path": "study/prompts/tools_arm4.v2.md",
+          "kind": "delete"
+        },
+        {
+          "path": "tests/unit/test_promotion_expand.py",
+          "kind": "delete"
+        },
+        {
+          "path": "tests/integration/test_recipe_portfolio_lab.py",
+          "kind": "delete"
+        },
+        {
+          "path": "tests/integration/test_prepare_candidate_lab.py",
+          "kind": "delete"
+        },
+        {
+          "path": "tests/unit/test_prepared_context.py",
+          "kind": "delete"
+        },
+        {
+          "path": "tests/unit/test_step3_rounds_replay.py",
+          "kind": "delete"
+        },
+        {
+          "path": "tests/unit/test_no_practice_identifiers.py",
+          "kind": "delete"
+        },
+        {
+          "path": "tests/integration/test_step3_fix_round.py",
+          "kind": "delete"
+        },
+        {
+          "path": "tests/components/test_recipe_portfolio.py",
+          "kind": "delete"
+        },
+        {
+          "path": "tests/components/portfolio_cases.py",
+          "kind": "delete"
+        }
       ],
       "state": "experimental",
       "experiment": null,
       "introduced": "2026-11-14",
-      "removal": null
+      "removal": null,
+      "recommends": [
+        "floor.selection-margin"
+      ]
     },
     "floor.selection-margin": {
       "summary": "Require a one standard error margin when replacing a v2 incumbent.",
@@ -96,7 +145,15 @@
           ]
         }
       },
-      "code": [],
+      "code": [
+        {
+          "path": "components/eidos.search.recipe-portfolio/",
+          "kind": "delete",
+          "shared_with": [
+            "floor.v2-slice"
+          ]
+        }
+      ],
       "state": "experimental",
       "experiment": null,
       "introduced": "2026-11-14",

@@ -708,7 +708,9 @@ class InvestigatorActivities:
                             "error": {"message": "prepare_candidate: measured export or hold-back guard failed"}}
             if tool == "author_source":  # the whole-trainer path: candidate project files, no build
                 source: dict[str, Any] = {"files": dict(args.get("files") or {})}
-                if args.get("include"):
+                if (args.get("include") and
+                        (self.wf.query("get_turn", {"turn_id": turn_id}, project=p)["spec"].get("exploration") or {}).get(
+                            "policy") == "exploration-policy/3"):
                     from pathlib import Path
 
                     from eidos.application.handlers.promotion import collisions, library_files

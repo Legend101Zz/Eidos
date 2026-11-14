@@ -28,7 +28,8 @@ One lab serves all runs, with a fresh project per invocation. The default home i
 and loopback HTTP MCP 28766. Startup is serialized with a filesystem lock. Stop
 only after all arms finish. Overrides: `EIDOS_STUDY_HOME`, `EIDOS_STUDY_PYTHON`,
 `EIDOS_STUDY_MCP_PORT`, and `EIDOS_STUDY_TEMPORAL_SOURCE`. Model/runtime settings
-come exclusively from `investigator.json` and are read anew per arm 4 run.
+come from the immutable `investigator.json` base plus the resolved treatment
+patches and overrides, read anew per arm 4 run.
 
 The existing `minimax_api_key` Keychain item is read into `lab start
 --credentials-stdin` as `OPENAI_API_KEY`; no Keychain item is changed. Claude gets

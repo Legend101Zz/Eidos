@@ -110,11 +110,12 @@ def prepare(c, run_dir, arm):
     imported.update(commit(c, project, imported['task_id'], run_dir))
     card = imported['task_id']
     treatment = for_run(json.loads((run_dir / 'arm.json').read_text()))
-    for directory, bind in treatment.component_plan(card):
+    for installation in treatment.component_plan(card):
+        directory, bind = installation
         if directory == PROJECT_COMMAND_SOURCE:
             install_shared_project_command(c, project, run_dir)
             continue
-        r = install_component(c, project, directory, 'default', bind)
+        r = install_component(c, project, directory, 'default', bind, upload_name=installation.upload_name)
         if 'component_ref' not in r or r.get('validation') == 'failed':
             raise RuntimeError(f'component installation failed: {r}')
     if card not in ('D01', 'D04', 'D05', 'N02', 'N03') and not is_regression(card):

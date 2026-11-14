@@ -7,6 +7,7 @@ import json
 import shutil
 import sys
 import uuid
+from pathlib import Path
 
 import pytest
 from temporalio.testing import ActivityEnvironment
@@ -474,3 +475,22 @@ def test_model_usd_limit_without_prices_is_refused(lab):
         "runtime": "pydantic-ai", "model": "anthropic:claude-sonnet-5-5",
         "settings": {"price_per_mtok": {"input": 2.0, "output": 10.0}}}}, project=pid)["result"]
     assert ok["investigation_id"]
+
+
+@pytest.mark.parametrize('include', [['eidos_recipes'], ['numpy']])
+def test_policy_two_author_source_ignores_include(lab, include):
+    """Main accepted/ignored arbitrary include values; no portfolio is installed."""
+    pid, inv, acts = setup(lab)
+    env = ActivityEnvironment()
+    begun = env.run(acts.begin_turn, dict(investigation_id=inv, project_id=pid, index=1))
+    files = {'project.py': 'print(1)'}
+    accepted = lab.cmd(lab.admin, 'accept_decision', dict(turn_id=begun['turn_id'], slot=0,
+        proposal=dict(calls=[dict(tool='author_source', args=dict(files=files, include=include))], control={})), project=pid)['result']
+    assert accepted['accepted'], accepted
+    executed = env.run(acts.execute_decision, dict(turn_id=begun['turn_id'], project_id=pid,
+                                                 investigation_id=inv, decision_id=accepted['decision_id']))
+    assert executed['summary'][0]['ok'], executed
+    receipts = lab.q(lab.admin, 'get_record', dict(kind='decision_receipts', id=accepted['decision_id']), project=pid)['body']['receipts']
+    artifact_id = receipts[0]['result']['artifact_id']
+    artifact = lab.q(lab.admin, 'get_artifact', dict(artifact_id=artifact_id), project=pid)
+    assert json.loads(Path(lab.store.path_for(artifact['digest'])).read_text()) == {'files': files}

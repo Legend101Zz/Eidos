@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import hashlib
 import json
 import math
 import re
@@ -145,6 +146,10 @@ def run(run_dir, meta, *, eval_audit_config=None):
     from study.exp.treatment import for_run
 
     treatment = for_run(meta)
+    effective_sha = hashlib.sha256(json.dumps(treatment.investigator, sort_keys=True,
+                                           separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+    base_path = Path(__file__).parent / 'investigator.json'
+    config_sha = digest(base_path) if treatment.investigator == json.loads(base_path.read_text()) else effective_sha
     setup_started_at, setup_begin = utc(), time.monotonic()
     lab.start()
     c = lab.client()
@@ -304,7 +309,7 @@ def run(run_dir, meta, *, eval_audit_config=None):
                 'usage_uncertain': uncertain,
                 'evidence_plan_count': len(records['evidence_plan']),
                 'assessment_count': len(assessments),
-                'investigator_config_sha': digest(Path(__file__).parent / 'investigator.json')}
+                'investigator_config_sha': config_sha, 'investigator_effective_sha256': effective_sha}
     finally:
         if bridge is not None and bridge.poll() is None:
             bridge.kill()
@@ -461,7 +466,7 @@ def export_sweep_evidence(c, project, inv, out, reference, task_artifacts, autho
     """Export only the explicitly pinned sweep or portfolio table with verified visible provenance."""
     portfolio = reference.endswith('_portfolio_table')
     component_ref = 'eidos.search.recipe-portfolio@1.0.0' if portfolio else _SWEEP_COMPONENT
-    bundle_sha = 'd02e8c02ef453108338843409ebf03e6b2d4c87f5f1baae48d15875038d13869' if portfolio else _SWEEP_BUNDLE_SHA
+    bundle_sha = 'bd52de8553c1c14302959496c8c333c8cd62706fe7159945711d9d0dbcaf59c5' if portfolio else _SWEEP_BUNDLE_SHA
     schema = 'recipe-portfolio-table/1' if portfolio else _SWEEP_SCHEMA
     slot = 'portfolio_table' if portfolio else _SWEEP_SLOT
     match = re.fullmatch(r'art_([a-f0-9]{16})_portfolio_table', reference) if portfolio else _SWEEP_ARTIFACT.fullmatch(reference)

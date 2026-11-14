@@ -28,14 +28,29 @@ changes only through a kept experiment. A kept patch is folded into the default;
 its `adopted` flag remains one cycle as an empty-patch alias. `rejected` means
 **marked for removal**, with a dated experiment/reason decision. New runs refuse
 rejected flags. Historical replay can explicitly allow them. Removal tooling lists
-exclusive code paths and remaining treatment references; shared inline branches
-require review before deletion. Registry validation checks state, required keys,
-closure/cycles, removal records and referenced code/prompt paths.
+per-path removable/blocked results, restoration procedures, and treatment
+references. It checks shared owners and core imports, then virtually removes
+proposed paths and re-resolves every surviving treatment (including the default),
+building component/toolkit plans and hashing their artifacts. Nonzero exit means
+blockers remain; shared inline branches still require review. Diagnosis rejection
+restores the pinned 1.0.0 content as the unpinned release. Portfolio deletion
+requires rejection of both owners. `--assume-rejected` previews this without any
+registry change. Dependent flags and treatments selecting removed flags must be
+retired before deleting registry entries. Strict inventory checks belong to
+`flags check` and the removal dry run, not runtime resolution. Unknown treatment
+and patch keys are errors. The default accepts no flags or overrides.
 
 Arm metadata, lab setup/import, arm-4 run records and ADR 0041 prompt receipts
 carry id, flags and SHA-256 of the canonical effective treatment. Workers refuse
-selection drift. The hash excludes lifecycle annotations; normal component
-publication digests and toolkit manifests bind the underlying source bytes. Live
+selection drift and missing live-dispatch treatment records. The treatment hash
+covers ordered N01/N02/D03 plans with bundle digests, bindings and upload names,
+and the complete toolkit manifest digest; it excludes lifecycle annotations.
+Arm 4 records `investigator_effective_sha256` from canonical resolved JSON before
+per-run mutations. `investigator_config_sha` keeps the registered base-file hash
+only when the resolved dictionary equals the base, otherwise it is the effective
+hash. Default diagnosis uploads retain main's unpinned artifact name. For every
+installed component, other pinned releases are published unbound; this includes
+diagnosis 1.0.0 under v2 and preserves step 3's catalog. Live
 prompt-override refusals still apply. No registry data contains credentials.
 
 Golden checks in `study/tests/test_default_treatment_golden.py` and
@@ -50,7 +65,16 @@ These values were computed from `git show origin/main:<path>` and a public-sourc
 `git archive origin/main` imported in an isolated subprocess, never sealed data.
 
 Portfolio manifests declare the pinned numpy/scikit-learn/joblib dependencies.
-Validation applies the existing measured run preflight before admitting fixture
-execution, yielding a dependency refusal in a probed environment missing them.
+Dependency preflight runs for every component at validation, before fixture
+execution, and never changes a build lock or release digest. The portfolio pins
+exact numpy/scikit-learn/joblib versions on purpose: a different measured
+environment fails closed with a dependency refusal.
 CI integration and journey project environments provide these packages and run
 the real fixtures. Study tests run on main and all task branches without secrets.
+
+`floor.v2-slice` recommends `floor.selection-margin`; `flags check` warns when
+the slice is selected without the margin advertised by the v2 prompts. Without
+it, lock replacement still requires strict improvement. Permanent consumer tests
+exercise prepare, arm 4, launcher/lab forwarding and their records. Additional
+main-derived differential goldens pin ten context-policy/3 packs and 400
+policy-2 exploration scenarios, and step-3 goldens pin N01/N02/D03 publications.

@@ -194,7 +194,8 @@ class DefaultTreatmentGolden(unittest.TestCase):
             definition.update(id="pilot4-v1", flags=["diagnose.steering-fix"], overrides={})
             (path / "pilot4-v1.json").write_text(json.dumps(definition))
             with patch.object(flags, "TREATMENTS", path), patch.object(flags, "load_registry", return_value=registry):
-                self.assertEqual(resolve().investigator, json.loads((ROOT / "study/eidos_arms/investigator.json").read_text()))
+                with self.assertRaisesRegex(ValueError, "default treatment"):
+                    resolve()
 
     def test_registry_cli_check(self):
         result = subprocess.run([sys.executable, "-m", "study.exp.flags", "check"], cwd=ROOT, capture_output=True, text=True)

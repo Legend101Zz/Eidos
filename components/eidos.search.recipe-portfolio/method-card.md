@@ -61,3 +61,8 @@ completed recipe set. This is a design-calibrated heuristic with limited evidenc
 Five folds, repeated twice below 1,000 training rows, and the shift-aware scheme
 remain. Above 3,000 rows a linear SVM kernel-class scout precedes RBF density,
 so slow RBF fits need not remove that hypothesis class. No halving is performed.
+
+Dependency preflight runs for every component at validation, before its fixtures,
+and never changes a build lock or release digest. This portfolio deliberately
+pins exact numpy, scikit-learn and joblib versions in its manifest. A different
+measured environment fails closed; install the declared versions before validation.
