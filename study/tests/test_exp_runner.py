@@ -593,9 +593,13 @@ def test_minimax_payg_whitespace(tmp_path):
 @pytest.mark.parametrize('scenario', ['start-failure', 'block-failure', 'stop-failure', 'keep'])
 def test_execute_lab_explicit_home_and_finally(tmp_path, monkeypatch, preflight, scenario):
     args, _, _ = preflight
-    args.pair = ['autopilot-v2@HEAD', 'autopilot-v2@HEAD~1']
+    # Two distinct builds without depending on git history (CI checks out a shallow clone without HEAD~1).
+    args.pair = ['autopilot-v2@HEAD', 'autopilot-v2@HEAD']
     args.keep_lab_running = scenario == 'keep'
     selected = run.variants(args)
+    fake = 'b' * 40
+    selected[1].update(commit=fake, label=selected[1]['label'].rsplit('-', 1)[0] + '-' + fake[:12],
+                       lab_root=str(run.EVAL_ROOT / ('ip-' + fake[:12])))
     for variant in selected:
         variant.update(stub=False, fixture=True)
     monkeypatch.setattr(run, 'variants', lambda _: selected)
