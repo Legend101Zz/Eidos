@@ -220,8 +220,9 @@ Only the coarse receipt is printed and written beside the private root in
 `receipts/`: rates and mean delta round to 0.05, with aggregate accounting and
 failure counts. Errors print only their exception type, including argument errors.
 No card id or private path leaves the runner. Novelty wins are null when the
-upstream scorecard does not supply a verified novelty-win observation; absence is
-not counted as zero. The threshold uses unrounded values.
+upstream scorecard does not supply a verified novelty-win observation for an
+external/recombined verified candidate. Unverified and catalog/unknown-class
+submissions have zero novelty credit by definition. The threshold uses unrounded values.
 
 Tests fabricate seals and build receipts under temporary roots. The deliberately
 explicit `EIDOS_EXP_TEST_ROOT` permits test output there and fabricates a lab

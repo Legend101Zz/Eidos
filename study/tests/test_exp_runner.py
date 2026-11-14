@@ -312,6 +312,7 @@ def test_blind_runner_real_stub_pair(tmp_path, monkeypatch, capsys):
     captured = capsys.readouterr()
     record = json.loads(captured.out)
     assert record['pass'] is False and record['tokens'] == [0, 0]
+    assert record['novelty_wins'] == [0, 0]
     assert not captured.err
     for marker in ('R0001', 'R0002', str(private)):
         assert marker not in captured.out
@@ -448,3 +449,10 @@ def test_builder_child_cannot_inherit_seal_locations(tmp_path, monkeypatch):
     child_env = builder.call_args.kwargs['env']
     assert all(name not in child_env for name in run.SEAL_ROOT_ENVS)
     assert 'OPENAI_API_KEY' not in child_env
+
+
+def test_novelty_receipt_counts_known_zero_and_preserves_unknown():
+    assert heldout.novelty_total({'individual': [{'verified': False}]}) == 0
+    assert heldout.novelty_total({'individual': [{'verified': True, 'novelty': {'class': 'catalog'}}]}) == 0
+    assert heldout.novelty_total({'individual': [{'verified': True, 'novelty': {'class': 'external'}}]}) is None
+    assert heldout.novelty_total({'individual': [{'novelty_win': True}, {'novelty_win': False}]}) == 1

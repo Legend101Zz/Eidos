@@ -16,6 +16,21 @@ def rounded(value):
     return round(round(float(value) / .05) * .05, 2) if value is not None else None
 
 
+def novelty_total(score):
+    wins = 0
+    for row in score['individual']:
+        observed = row.get('novelty_win')
+        if type(observed) is bool:
+            wins += int(observed)
+        elif row.get('verified') is False:
+            continue  # A novelty win requires independent verification.
+        elif row.get('novelty', {}).get('class') in {'catalog', 'unknown'}:
+            continue  # These classes receive zero novelty credit by definition.
+        else:
+            return None
+    return wins
+
+
 def receipt(scores, *, utc, note, consultation, threshold):
     from study.exp.stats import signflip_p
 
@@ -37,9 +52,7 @@ def receipt(scores, *, utc, note, consultation, threshold):
                 n_cards=len(a['per_card']), **{'pass': mean >= threshold and signflip_p(deltas) <= .10},
                 mean_delta_vrg=rounded(mean), verified_rate=[rounded(s['verified_rate']) for s in aggregates],
                 false_claims=[s['false_claims'] for s in aggregates], dead_ends=[s['dead_ends'] for s in aggregates],
-                novelty_wins=[sum(bool(row.get('novelty_win')) for row in score['individual'])
-                              if all('novelty_win' in row for row in score['individual']) else None
-                              for score in scores],
+                novelty_wins=[novelty_total(score) for score in scores],
                 tokens=[s['tokens']['total'] for s in aggregates], usd=[s['usd'] for s in aggregates])
 
 

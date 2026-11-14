@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Model-free connectivity qualification; requires a buildable, dedicated ip lab.
+source "/Volumes/Mrigesh SSD/eidos-v1/improvement/env.sh"
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 : "${EIDOS_RESEARCH_PYTHON:?source the programme env.sh first}"
