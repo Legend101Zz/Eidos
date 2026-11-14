@@ -16,7 +16,7 @@ concurrency:
 jobs:
   baseline-stubs:
     runs-on: macos-15
-    timeout-minutes: 20
+    timeout-minutes: 45
     env:
       UV_CACHE_DIR: /tmp/study-evals/cache/uv
       UV_PYTHON_INSTALL_DIR: /tmp/study-evals/cache/python
