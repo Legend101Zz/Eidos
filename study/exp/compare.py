@@ -203,12 +203,12 @@ def _check(name, a, b, plan, choice):
         value = agg.get(name)
         reads = [r.get("held_out_reads") for r in b["individual"]]
         count = sum(reads) if reads and all(type(v) is bool for v in reads) else None
+        known_matches = sum(v is True for v in reads)
         if type(value) is bool:
-            return int(value) if value or count is not None else None
+            return max(int(value), known_matches) if value or known_matches or count is not None else None
         if type(value) is int and value >= 0:
-            known_matches = sum(v is True for v in reads)
             return max(value, known_matches) if value > 0 or known_matches > 0 or count is not None else None
-        return count
+        return known_matches if known_matches else count
     if name == "cost_ratio":
         old, new = _cost(a), _cost(b)
         if not number(old) or not number(new) or min(old, new) < 0:

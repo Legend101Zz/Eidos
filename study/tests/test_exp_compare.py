@@ -620,8 +620,10 @@ def test_exp_compare_r2_mixed_tier_missing_replicate():
         compare(before, after, simple_rule(), tier='T3', rule_choice={'plan': {'tiers': [dict(tier='T2', replicates=1)]}})
 
 
-def test_exp_compare_r2_known_heldout_read_despite_other_unknown_rows():
+@pytest.mark.parametrize("reported", [0, False, None, "x"])
+def test_exp_compare_r2_known_heldout_read_despite_other_unknown_rows(reported):
     after = cards(.2)
+    after["aggregate"]["heldout_identifier_matches"] = reported
     after['individual'][0]['held_out_reads'] = True
     after['individual'][1]['held_out_reads'] = None
     result = compare(cards(), after, simple_rule(), tier='T3')
