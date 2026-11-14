@@ -1,7 +1,8 @@
 """Mechanical novelty, without importing or executing inspected code.
 
 Decision table (ordered): parse failure/incomplete catalog/ambiguous resolution
-=> unknown; byte-identical supplied baseline => baseline (never a win); outside estimator/transform constructor, authored estimator class or
+=> unknown; byte/normalised-AST-identical supplied baseline => baseline (never
+a win); outside estimator/transform constructor, authored estimator class or
 authored fit/predict/transform method => external; known atoms with authored
 glue, changed template code, or non-rule provenance => recombination; an intact
 template/library export with one-se-choice provenance => catalog. Insufficient
@@ -222,7 +223,7 @@ class _Normalise(ast.NodeTransformer):
         for part in parts:
             bindings.visit(part)
         names = [n for n in bindings.names if n not in bindings.globals | bindings.nonlocals]
-        scope = ({n: f"local_{len(self.scopes)}_{i}" for i, n in enumerate(names)}
+        scope = ({n: f"@local:{len(self.scopes)}:{i}" for i, n in enumerate(names)}
                  if kind != "class" else {n: n for n in names})
         scope.update({n: n for n in bindings.globals})
         self.scopes.append((kind, scope))
@@ -320,9 +321,9 @@ def catalog(repo_root, commit=None):
             except subprocess.CalledProcessError as exc:
                 raise ValueError("cannot read catalog build commit") from exc
         commit = git("rev-parse", "--verify", f"{commit}^{{commit}}").decode().strip()
-        paths = git("ls-tree", "-r", "--name-only", commit, "--",
+        paths = git("ls-tree", "-r", "--name-only", "-z", commit, "--",
                     "components/eidos.search.recipe-portfolio", "components/eidos.search.recipe-sweep",
-                    "study/exp/cards/baseline_project.py").decode().splitlines()
+                    "study/exp/cards/baseline_project.py").decode().split("\0")
         for key in paths:
             if key.endswith(".py") or key.endswith("/eidos-component.json"):
                 sources[key] = git("show", f"{commit}:{key}")
@@ -391,6 +392,10 @@ def catalog(repo_root, commit=None):
     baseline_key = "study/exp/cards/baseline_project.py"
     if baseline_key in sources:
         result["baseline_hashes"] = [_sha(sources[baseline_key])]
+        try:
+            result["baseline_module_hashes"] = [normalised_hash(ast.parse(sources[baseline_key]))]
+        except (SyntaxError, ValueError, RecursionError):
+            result["parse_errors"].append(baseline_key)
         result["inputs"][baseline_key] = _sha(sources[baseline_key])
     result["atoms"], result["definition_hashes"] = sorted(atoms), sorted(hashes)
     for field in ("operators", "models", "sweep_families", "sweep_templates"):
@@ -431,7 +436,8 @@ def fingerprint(candidate_dir, catalog):
         except RecursionError:
             result["parse_errors"].append(key)
             continue
-        baseline_files.append(_sha(data) in catalog.get("baseline_hashes", []))
+        baseline_files.append(_sha(data) in catalog.get("baseline_hashes", [])
+                              or module_hash in catalog.get("baseline_module_hashes", []))
         atoms.update(found)
         result["ambiguous"] |= ambiguous
         # The launcher nests sources under out/candidate/source/. Code identity

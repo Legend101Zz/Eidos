@@ -17,9 +17,10 @@ def cards(delta=0, *, replicates=1, tier="T3"):
             for i in range(1, 9) for rep in range(1, replicates + 1)]
     return dict(schema=SCHEMA, pool={"id": "D", "commitment": "digest"}, provider={"id": "offline"},
                 envelope={"wall_s": 100}, references_sha256="refs", replicates=replicates,
-                treatment={"id": "a"}, build={"commit": "abc"}, individual=rows,
+                treatment={"id": "a"}, build={"commit": "a" * 40}, individual=rows,
                 per_card={r["card_id"]: {} for r in rows}, incomplete=False,
                 aggregate=dict(false_claims=0, usd=1, heldout_identifier_matches=0,
+                               live_runs=len(rows), time_seconds=1, quota_weekly_percent=1,
                                within_plan_cost_and_time=True, guardrails_clean=True))
 
 
@@ -41,11 +42,25 @@ def compare(before, after, rule, **kwargs):
     plan.update(custom)
     choice["plan"] = plan
     kwargs.setdefault("attest", {"checks": {"guardrails_clean": True}})
-    return compare_scorecards(before, after, rule, rule_choice=choice, **kwargs)
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from study.tests.test_exp_round2 import register
+    for declaration in plan["tiers"]:
+        if choice.get("extension"):
+            declaration["extension"] = dict(cards=declaration["cards"], replicates=declaration["replicates"])
+    with TemporaryDirectory(prefix="exp-compare-") as temporary:
+        directory = Path(temporary) / "EXP-900-fixture"
+        plan = register(directory, plan, rule, choice={k: choice[k] for k in ("extension", "overrides") if k in choice},
+                        reviews=kwargs.pop("reviews", []))
+        choice["plan"] = plan
+        if kwargs.get("attest") is not None:
+            kwargs["attest"] = dict(kwargs["attest"], experiment=plan["id"], commit=after["build"]["commit"])
+        return compare_scorecards(before, after, rule, rule_choice=choice, experiment=directory, **kwargs)
 
 
 def simple_rule(threshold=0.15):
-    return dict(id="test", version=1, overridable={}, keep_when=[
+    return dict(schema="eidos-exp-rule/1", id="R-behav", version=1, overridable={}, keep_when=[
         dict(metric="vrg", stat="mean_delta", op=">=", value=threshold, tier="T3"),
         dict(metric="vrg", stat="signflip_p", op="<=", value=0.1, tier="T3", method="exact_paired")])
 
@@ -216,7 +231,7 @@ def test_exp_compare_infra_requires_review_evidence():
     before, after = cards(), cards()
     after["aggregate"].update(tests_green=True, ci_green=True, default_treatment_golden_unchanged=True)
     assert compare(before, after, rule, tier="T3")["decision"] == "incomplete"
-    choice = {"reviews": [{"kind": "code", "commit": "abc", "verdict": "ACCEPT"}]}
+    choice = {"reviews": [{"kind": "code", "commit": "a" * 40, "verdict": "ACCEPT"}]}
     assert compare(before, after, rule, tier="T3", reviews=choice["reviews"],
                    attest={"checks": after["aggregate"]})["decision"] == "keep"
 
@@ -227,7 +242,10 @@ def test_exp_compare_cli_digests_exit2_and_aa(tmp_path, capsys):
         path.write_text(json.dumps(value))
     out = tmp_path / "decision.json"
     args = [str(paths[0]), str(paths[1]), "--rule", str(paths[2]), "--tier", "T3", "--out", str(out)]
-    (tmp_path / "plan.json").write_text(json.dumps(registered_plan()))
+    from study.tests.test_exp_round2 import register
+    directory = tmp_path / "EXP-900-fixture"
+    register(directory, registered_plan(), simple_rule())
+    args += ["--experiment", str(directory)]
     assert main(args) == 0
     result = json.loads(out.read_text())
     from hashlib import sha256
@@ -346,7 +364,7 @@ def test_exp_compare_latest_review_nonempty_commits_and_explicit_attestation():
     before, after = cards(), cards()
     rule = json.loads((RULES / "R-infra.json").read_text())
     after["aggregate"].update(tests_green=True, ci_green=True, default_treatment_golden_unchanged=True)
-    reviews = [dict(kind="code", commit="abc", verdict="ACCEPT"), dict(kind="code", commit="abc", verdict="REJECT")]
+    reviews = [dict(kind="code", commit="a" * 40, verdict="ACCEPT"), dict(kind="code", commit="a" * 40, verdict="REJECT")]
     attest = {"checks": after["aggregate"]}
     assert compare(before, after, rule, tier="T3", reviews=reviews, attest=attest)["decision"] == "revert"
     assert compare(before, after, rule, tier="T3", reviews=reviews[:1], attest=attest)["decision"] == "keep"
@@ -355,7 +373,8 @@ def test_exp_compare_latest_review_nonempty_commits_and_explicit_attestation():
     assert compare(before, after, rule, tier="T3", reviews=reviews[:1])["decision"] == "incomplete"
     for commit in (None, "", " "):
         after["build"]["commit"] = commit
-        assert compare(before, after, rule, tier="T3", reviews=[dict(kind="code", commit=commit, verdict="ACCEPT")], attest=attest)["decision"] == "incomplete"
+        with pytest.raises(ValueError, match="attestation"):
+            compare(before, after, rule, tier="T3", reviews=[dict(kind="code", commit=commit, verdict="ACCEPT")], attest=attest)
 
 
 def test_exp_compare_model_free_uses_t1_autopilot():
@@ -396,7 +415,7 @@ def test_exp_compare_plan_treatment_and_declared_random_draw():
     for score in (before, after):
         score["individual"] = [r for r in score["individual"] if r["card_id"] in chosen]
         score["per_card"] = {c: {} for c in chosen}
-    assert compare_scorecards(before, after, simple_rule(), tier="T3", rule_choice={"plan": plan}, cards=4)["decision"] == "keep"
+    assert compare(before, after, simple_rule(), tier="T3", rule_choice={"plan": plan}, cards=4)["decision"] == "keep"
     with pytest.raises(ValueError, match="draw"):
         compare_scorecards(before, after, simple_rule(), tier="T3", rule_choice={"plan": plan}, cards=3)
 
@@ -448,25 +467,26 @@ def test_exp_compare_cli_malformed_removes_stale_output(tmp_path, bad):
 
 
 def test_exp_compare_cli_review_attest_and_registered_snapshot(tmp_path):
+    from study.tests.test_exp_round2 import register
     a, b, rule, attest, review, out = [tmp_path / n for n in ("a.json", "b.json", "R-infra.json", "attest.json", "review.md", "decision.json")]
-    snapshot = json.loads((RULES / "VETOES.json").read_text())
-    snapshot["keep_when"][-2]["value"] = 1.4
-    from study.exp.scorecard import canonical, sha256
-    registration = {"type": "register", "data": {"vetoes_snapshot": snapshot, "vetoes_sha256": sha256(canonical(snapshot))}}
-    (tmp_path / "ledger.jsonl").write_text(json.dumps(registration) + "\n")
-    for path, data in ((a, cards()), (b, cards()), (rule, json.loads((RULES / "R-infra.json").read_text())),
-                       (tmp_path / "plan.json", registered_plan()),
-                       (attest, {"checks": dict(tests_green=True, ci_green=True, default_treatment_golden_unchanged=True)})):
+    definition = json.loads((RULES / "R-infra.json").read_text())
+    directory = tmp_path / "EXP-900-fixture"
+    plan = register(directory, registered_plan(), definition,
+                    reviews=[dict(kind="code", commit="a" * 40, verdict="ACCEPT")])
+    for path, data in ((a, cards()), (b, cards()), (rule, definition),
+                       (attest, {"experiment": plan["id"], "commit": "a" * 40,
+                                 "checks": dict(tests_green=True, ci_green=True, default_treatment_golden_unchanged=True)})):
         path.write_text(json.dumps(data))
-    review.write_text("Verdict: ACCEPT\nCommit: abc\n")
+    review.write_text("VERDICT: ACCEPT — commit aaaaaaa\n")
     assert main([str(a), str(b), "--rule", str(rule), "--tier", "T3", "--out", str(out),
-                 "--attest", str(attest), "--review", str(review)]) == 0
+                 "--attest", str(attest), "--review", str(review), "--experiment", str(directory)]) == 0
     result = json.loads(out.read_text())
+    from study.exp.scorecard import sha256
     assert result["decision"] == "keep"
     assert result["inputs"]["attest"] == sha256(attest.read_bytes())
     assert result["inputs"]["review/0"] == sha256(review.read_bytes())
     assert result["veto_source"] == "registered ledger snapshot"
-    assert result["vetoes"][3]["clause"]["value"] == 1.4
+    assert result["vetoes"][3]["clause"]["value"] == 1.5
 
 
 def test_exp_compare_novelty_requires_identical_catalogs():
@@ -538,3 +558,40 @@ def test_exp_compare_known_budget_breach_fires_even_with_other_missing_budget_ev
     result = compare_scorecards(before, after, simple_rule(), tier="T3", rule_choice={"plan": plan})
     assert result["decision"] == "revert"
     assert result["vetoes"][4]["value"] is False
+
+
+def test_exp_compare_r2_n03_infra_incident_is_the_only_missing_evidence():
+    before, after = cards(), cards()
+    after['individual'][0]['incident'] = True
+    result = compare(before, after, json.loads((RULES / 'R-infra.json').read_text()), tier='T3',
+                     reviews=[dict(kind='code', commit='a' * 40, verdict='ACCEPT')],
+                     attest={'checks': dict(tests_green=True, ci_green=True, default_treatment_golden_unchanged=True)})
+    assert result['decision'] == 'incomplete'
+    assert result['reasons'] == ['incident in paired evidence']
+
+
+def test_exp_compare_r2_n09_wrong_nonempty_review_commit():
+    result = compare(cards(), cards(), json.loads((RULES / 'R-infra.json').read_text()), tier='T3',
+                     reviews=[dict(kind='code', commit='b' * 40, verdict='ACCEPT')],
+                     attest={'checks': dict(tests_green=True, ci_green=True, default_treatment_golden_unchanged=True)})
+    assert result['decision'] == 'incomplete'
+    assert result['clauses'][-1]['value'] is None
+
+
+def test_exp_compare_r2_n10_two_extensions_with_extension_rows():
+    before, after = cards(), cards(.2)
+    for score in [before, after]:
+        for row in score['individual']:
+            row['look'] = 'extension'
+    with pytest.raises(ValueError, match='second extension'):
+        compare(before, after, simple_rule(), tier='T3', rule_choice={'extension': True},
+                previous=[{'decision': 'extend'}, {'decision': 'extend'}])
+
+
+def test_exp_compare_r2_n20_superset_card_set():
+    before, after = cards(), cards(.2)
+    for score in [before, after]:
+        score['individual'].append(dict(score['individual'][0], card_id='R0009'))
+        score['per_card']['R0009'] = {}
+    with pytest.raises(ValueError, match='card set differs from plan'):
+        compare_scorecards(before, after, simple_rule(), tier='T3', rule_choice={'plan': registered_plan()})

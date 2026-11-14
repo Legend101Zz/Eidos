@@ -19,7 +19,7 @@ bindings and closures are renamed along with other locals. Renaming variables do
 |---|---|
 | catalog | Intact template/library export selected by the portfolio's `one-se-choice` rule. |
 | recombination | Known atoms combined with authored glue, changed template code or selection outside the rule. |
-| baseline | Byte-identical supplied baseline project; counted separately and never a novelty win. |
+| baseline | Byte-identical or normalised-AST-identical supplied baseline project; counted separately and never a novelty win. |
 | external | An outside estimator/transform constructor, authored estimator class, or authored fit/predict/transform logic. |
 
 Parse failures, missing catalog components and ambiguous evidence produce

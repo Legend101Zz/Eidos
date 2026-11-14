@@ -1,4 +1,12 @@
-"""Build reproducible development evidence from local graded run exports."""
+"""Build reproducible development evidence from local graded run exports.
+
+build(..., tier=None, pool_role=None, look=None, mode=None) optionally stamps
+all rows with tier, pool (the plan role, not the manifest id), look and mode.
+The CLI exposes --tier/--pool-role/--look/--mode. Existing row tags must agree;
+omitted keywords preserve recorded row tags. Use one scorecard per tier/look
+when pools, providers or replicate counts differ. provider=None supports a
+model-free tier. Header pool.id always records the actual pool manifest id.
+"""
 
 from __future__ import annotations
 
@@ -121,12 +129,21 @@ def _run_error(row, grade, ref, gain, verified):
 
 
 def build(run_dir, pool_root=None, references=None, *, treatment, provider, build_record,
-          replicates, generated_utc=None, autopilot=None, arm=None, catalog_record=None):
+          replicates, generated_utc=None, autopilot=None, arm=None, catalog_record=None,
+          tier=None, pool_role=None, look=None, mode=None):
     """One individual per (card, arm, replicate), equal card weights in aggregate.
 
     Incident rows retain accounting/claim evidence but have no primary metrics.
     Input paths in the output are logical relative labels, never local paths.
+    Optional tier, pool_role, look and mode stamp every row; defaults preserve
+    recorded tags. pool_role is written as row.pool; header.pool is the manifest.
+    Conflicting recorded tags are errors.
     """
+    tags = {"tier": tier, "pool": pool_role, "look": look, "mode": mode}
+    if tier is not None and tier not in {"T0", "T1", "T2", "T3"}:
+        raise ValueError("unknown tier")
+    if look is not None and look not in {"initial", "extension"}:
+        raise ValueError("unknown look")
     root = Path(run_dir)
     inputs = {}
 
@@ -294,6 +311,12 @@ def build(run_dir, pool_root=None, references=None, *, treatment, provider, buil
             **{k: v for k, v in mechanism.items() if k != "unused_wall_s"},
             **{k: row[k] for k in ("tier", "mode", "look", "pool") if k in row},
         ))
+    for individual in individuals:
+        for key, value in tags.items():
+            if value is not None:
+                if key in individual and individual[key] != value:
+                    raise ValueError(f"conflicting row {key} tag")
+                individual[key] = value
     if envelopes and any(e != envelopes[0] for e in envelopes):
         raise ValueError("mixed resource envelopes")
     per_card = {}
@@ -380,6 +403,8 @@ def main(argv=None):
     parser.add_argument("--autopilot", type=Path)
     parser.add_argument("--arm", type=int)
     parser.add_argument("--catalog", type=Path)
+    for tag in ("tier", "pool-role", "look", "mode"):
+        parser.add_argument("--" + tag)
     parser.add_argument("--out", type=Path, required=True)
     for field in ("treatment", "provider", "build-record"):
         parser.add_argument("--" + field, type=Path, help="JSON metadata; defaults to recorded run metadata")
@@ -390,6 +415,8 @@ def main(argv=None):
         rows = json.loads((args.run_dir / "results.json").read_text())
         if args.arm is not None:
             rows = [r for r in rows if r.get("arm") == args.arm]
+        if not rows:
+            raise ValueError("selected arm has no runs")
         first = rows[0]
         card = first.get("card_id", first.get("task", first.get("card")))
         rep = first.get("replicate", first.get("run", first.get("seed_index")))
@@ -410,12 +437,13 @@ def main(argv=None):
         if metadata["build_record"] is None:
             metadata["build_record"] = dict(commit=record.get("eidos_commit_sha"),
                 lab_receipt_hash=sha256(canonical(record["eidos_build"])) if record.get("eidos_build") else None)
-        if metadata["treatment"] is None or metadata["provider"] is None:
+        if metadata["treatment"] is None:
             raise ValueError("treatment/provider metadata is required in arm.json or explicit JSON files")
         replicates = args.replicates or len({r.get("replicate", r.get("run", r.get("seed_index"))) for r in rows})
         result = build(args.run_dir, args.pool_root, args.references, replicates=replicates,
                        generated_utc=args.generated_utc, autopilot=args.autopilot, arm=args.arm,
-                       catalog_record=args.catalog, **metadata)
+                       catalog_record=args.catalog, tier=args.tier, pool_role=args.pool_role,
+                       look=args.look, mode=args.mode, **metadata)
         result["inputs"].update(external)
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n")
