@@ -55,7 +55,7 @@ def byte_proof(test, name, before, after):
 
 
 class Profiles(unittest.TestCase):
-    def test_unpublished_metadata_and_pending_commitment_refuse(self):
+    def test_published_commitments_load_but_unpublished_metadata_refuses(self):
         with patch.dict(os.environ, {}, clear=True):
             for name in ("pilot-5", "pilot-6"):
                 with self.assertRaisesRegex(ValueError, "unknown.*trusted plane"):
@@ -67,8 +67,8 @@ class Profiles(unittest.TestCase):
                         charters.charter(card)
                 with self.assertRaisesRegex(ValueError, "unknown"):
                     launcher.plan(42, profile=name)
-            with self.assertRaisesRegex(ValueError, "pending"):
-                PROFILES["pilot-6"].commitment()
+            public = common.STUDY.joinpath("prospective_commitments.txt").read_text().splitlines()[2].split()[-1]
+            self.assertEqual(PROFILES["pilot-6"].commitment(), public)
             with self.assertRaisesRegex(RuntimeError, "failed verification"):
                 configured_seal(profile="pilot-6")
         published = common.STUDY.joinpath("prospective_commitments.txt").read_text().splitlines()[1].split()[-1]

@@ -9,8 +9,8 @@ retains Pilot 4 and `EIDOS_PRIVATE_SEAL_ROOT`.
 | pilot-6 | N13–N16 | pilot6_commitment.txt | EIDOS_PILOT6_SEAL_ROOT |
 
 Pilot 5's digest is copied from the published Reserve commitment in
-`prospective_commitments.txt`. Pilot 6 is explicitly `pending` and cannot be
-configured until a trusted plane publishes and fills its digest.
+`prospective_commitments.txt`. Pilot 6's digest is copied from the already public Pilot 6 line in the same file.
+Its commitment loads, while configuration still refuses missing public metadata.
 
 N09–N16 metric kinds and per-card relative bar rules are **unknown — to be
 supplied by the trusted plane**. No alternating pattern is assumed. The trusted
@@ -34,3 +34,7 @@ All seal-root variables are stripped before workers run. A new pilot also needs
 its own registered charter and pinned grader revision supplied through the
 existing controller configuration. This plumbing supplies neither registration
 nor evidence of builder blindness.
+
+Scientific treatments are independent of card profiles. `EIDOS_STUDY_TREATMENT`
+defaults to `pilot4-v1`; the v2 portfolio requires explicit `v2-portfolio` selection.
+See [treatment instructions](exp/README.md). No profile selects v2 implicitly.
