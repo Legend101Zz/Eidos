@@ -69,3 +69,16 @@ held-out accounting stays private. Decisions consume registered experiments and
 one or more tier/look scorecards with their complete usage evidence. The current
 comparator's exact final-row count check cannot accept extra attempts from retries
 or omitted arms; the runner preserves these costs and documents the API limit.
+
+
+Second review separates fresh-quota admission from per-dispatch floor and USD
+checks. Quota directories accept timestamped programme readings; stale dispatch
+readings warn, and a floor refusal retains completed evidence with an incomplete
+scorecard and a nonzero exit. Accounting marks incomplete outcomes explicitly,
+uses only fresh newer quota deltas, and isolates uncertain charges by provider
+family. Mixed held-out pairs settle model-free variants at zero. Cleanup ignores
+further signals; the blind wrapper gives its child 60 seconds to clean up.
+A persisted started marker prevents crash refunds after dispatch. Public grading
+summaries hash private paths. Arm-2 controller build assertions use a distinct
+field; scorecards continue to require independently produced run build evidence,
+and scoring refusals do not prevent other arms from being scored.

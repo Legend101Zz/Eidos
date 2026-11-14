@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import fcntl
+import hashlib
 import json
 import math
 import os
@@ -42,6 +43,20 @@ def git(*args):
     return subprocess.check_output(['git', *args], cwd=ROOT, text=True, stderr=subprocess.PIPE).strip()
 
 
+def positive(value):
+    value = int(value)
+    if value < 1:
+        raise argparse.ArgumentTypeError('must be positive')
+    return value
+
+
+def nonnegative(value):
+    value = int(value)
+    if value < 0:
+        raise argparse.ArgumentTypeError('must be nonnegative')
+    return value
+
+
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
     selection = p.add_mutually_exclusive_group(required=True)
@@ -52,23 +67,23 @@ def parser():
     cards = p.add_mutually_exclusive_group(required=True)
     cards.add_argument('--pool')
     cards.add_argument('--cards')
-    p.add_argument('--card-limit', type=int)
-    p.add_argument('--replicates', type=int, default=1)
+    p.add_argument('--card-limit', type=positive)
+    p.add_argument('--replicates', type=positive, default=1)
     p.add_argument('--arms', choices=['4', '2,4'], default='4')
-    p.add_argument('--concurrency', type=int, default=2)
+    p.add_argument('--concurrency', type=positive, default=2)
     p.add_argument('--out', type=Path, required=True)
     for name in ('references', 'autopilot-scorecard', 'budget', 'quota-file'):
         p.add_argument('--' + name, type=Path)
     p.add_argument('--payg-approved')
-    p.add_argument('--retry-incidents', type=int, default=1)
+    p.add_argument('--retry-incidents', type=nonnegative, default=1)
     p.add_argument('--keep-lab-running', action='store_true')
     p.add_argument('--dry-run', action='store_true')
     p.add_argument('--smoke', action='store_true')
-    p.add_argument('--wall-seconds', type=int)
-    p.add_argument('--tier')
-    p.add_argument('--pool-role')
+    p.add_argument('--wall-seconds', type=positive)
+    p.add_argument('--tier', choices=['T0', 'T1', 'T2', 'T3'])
+    p.add_argument('--pool-role', choices=['legacy-development', 'D', 'E1', 'E2', 'E3', 'H', 'evaluation_rotation'])
     p.add_argument('--look', choices=['initial', 'extension'])
-    p.add_argument('--mode')
+    p.add_argument('--mode', choices=['live', 'autopilot', 'stub', 'fixture', 'smoke'])
     return p
 
 
@@ -127,7 +142,47 @@ def provider_family(provider):
     return provider.lower().split('-', 1)[0]
 
 
-def budget_check(args, selected, plan):
+def quota_time(quota):
+    value = datetime.fromisoformat(quota['utc'].replace('Z', '+00:00'))
+    if value.tzinfo is None:
+        raise ValueError('quota UTC must include a timezone')
+    return value
+
+
+def read_quota(path):
+    path = Path(path)
+    if path.is_dir():
+        readings = [read_quota(file) for file in path.glob('quota-*.json')]
+        if not readings:
+            raise ValueError('quota directory has no quota-*.json readings')
+        return max(readings, key=lambda q: (quota_time(q), q['source']))
+    raw = read_json(path)
+    if 'observed_utc' in raw:
+        windows = [w for w in raw['model_windows'] if w['model_name'] == 'general']
+        if len(windows) != 1:
+            raise ValueError('quota requires exactly one general model window')
+        window = windows[0]
+        percentages = [window[k] for k in ('current_weekly_remaining_percent', 'current_interval_remaining_percent')]
+        if any(not _number(v) or v > 100 for v in percentages):
+            raise ValueError('invalid quota percentages')
+        quota = dict(utc=raw['observed_utc'], weekly_remaining_fraction=percentages[0] / 100,
+                     interval_remaining_fraction=percentages[1] / 100)
+    else:
+        quota = dict(raw)
+    quota_time(quota)
+    if any(not _number(quota[k]) or quota[k] > 1
+           for k in ('weekly_remaining_fraction', 'interval_remaining_fraction')):
+        raise ValueError('invalid quota fractions')
+    quota['source'] = str(path.resolve())
+    return quota
+
+
+def quota_stale(quota):
+    age = (datetime.now(UTC) - quota_time(quota)).total_seconds()
+    return not 0 <= age < 600 or time.time() - Path(quota['source']).stat().st_mtime >= 600
+
+
+def budget_check(args, selected, plan, *, admission=True):
     live = [v for v in selected if not v['stub'] and not v['fixture']]
     if not live:
         return dict(estimated_usd=0, live=False)
@@ -146,6 +201,7 @@ def budget_check(args, selected, plan):
            for key in ('weekly_floor', 'interval_floor', 'weekly_share')):
         raise ValueError('invalid MiniMax budget fraction')
     spent = {}
+    live_families = {provider_family(v['provider']['id']) for v in live}
     for line in ledger.read_text().splitlines():
         row = json.loads(line)
         if 'provider' not in row or 'usd' not in row:
@@ -155,7 +211,7 @@ def budget_check(args, selected, plan):
                 raise ValueError('invalid spend ledger USD amount')
             family = provider_family(row['provider'])
             spent[family] = spent.get(family, 0) + row['usd']
-        elif provider_family(row['provider']) != 'minimax':
+        elif provider_family(row['provider']) != 'minimax' and provider_family(row['provider']) in live_families:
             raise ValueError('USD spend ledger has an unknown charge')
     estimates = {}
     quota = None
@@ -169,21 +225,18 @@ def budget_check(args, selected, plan):
                 continue
             if not args.quota_file:
                 raise ValueError('MiniMax requires a fresh --quota-file or --payg-approved')
-            quota = read_json(args.quota_file)
-            reading = datetime.fromisoformat(quota['utc'].replace('Z', '+00:00'))
-            if reading.tzinfo is None:
-                raise ValueError('quota UTC must include a timezone')
-            age = (datetime.now(UTC) - reading).total_seconds()
-            if not 0 <= age < 600 or time.time() - args.quota_file.stat().st_mtime >= 600:
+            quota = read_quota(args.quota_file)
+            stale = quota_stale(quota)
+            if admission and stale:
                 raise ValueError('quota reading must be younger than ten minutes')
             settings = budget['minimax']
             weekly = quota['weekly_remaining_fraction']
             interval = quota['interval_remaining_fraction']
             if any(not _number(x) or x > 1 for x in (weekly, interval)):
                 raise ValueError('invalid quota fractions')
-            if weekly <= max(.15, settings['weekly_floor']) or interval <= max(.20, settings['interval_floor']):
+            if weekly < max(.15, settings['weekly_floor']) or interval < max(.20, settings['interval_floor']):
                 raise ValueError('MiniMax remaining quota is below its floor')
-            if 1 - weekly >= min(.50, settings['weekly_share']):
+            if admission and 1 - weekly >= min(.50, settings['weekly_share']):
                 raise ValueError('MiniMax weekly share exhausted')
         else:
             limit = provider.model_usd_per_run
@@ -199,7 +252,8 @@ def budget_check(args, selected, plan):
         if spent.get(provider, 0) + estimate >= min(20, cap['usd_cap']) * cap['stop_fraction']:
             raise ValueError('provider spend plus worst-case plan reaches the stop cap')
     return dict(live=True, estimated_usd=sum(estimates.values()), estimates=estimates,
-                spent=spent, spend_ledger=str(ledger), quota_before=quota, payg_approved=args.payg_approved)
+                spent=spent, spend_ledger=str(ledger), quota_before=quota,
+                quota_stale=quota_stale(quota) if quota is not None else False, payg_approved=args.payg_approved)
 
 
 def preflight(args, selected, plan, *, private_root=None):
@@ -275,8 +329,14 @@ def ensure_lab(v, *, dry_run=False, private_root=None):
         explicit_lab(home)
         os.environ['EIDOS_STUDY_ROOT'] = str(home.parent)
         if not (home / 'config/lab.json').exists():
-            lab.cli('init', '--home', home, '--api-port', ports['api'], '--pg-port', ports['pg'],
-                    '--temporal-port', ports['temporal'], timeout=600)
+            init_args = ['init', '--home', home, '--api-port', ports['api'], '--pg-port', ports['pg'],
+                         '--temporal-port', ports['temporal']]
+            source = os.environ.get('EIDOS_STUDY_TEMPORAL_SOURCE')
+            if not source and (ROOT / 'a8lab/services/temporal/bin/temporal-server').exists():
+                source = str(ROOT / 'a8lab/services/temporal/bin')
+            if source:
+                init_args += ['--temporal-source', source]
+            lab.cli(*init_args, timeout=600)
         if read_json(home / 'config/lab.json').get('lab_python') != str(python):
             raise ValueError('private lab interpreter differs from verified build')
     return dict(home=str(home), python=str(python), receipt=receipt,
@@ -338,6 +398,26 @@ def descriptive_pair(a, b):
             + '```json\n' + json.dumps(stats, indent=2, allow_nan=False) + '\n```\n')
 
 
+def redact_grading_paths(value, grading):
+    if isinstance(value, dict):
+        return {k: redact_grading_paths(v, grading) for k, v in value.items()}
+    if isinstance(value, list):
+        return [redact_grading_paths(v, grading) for v in value]
+    if isinstance(value, str) and str(grading) in value:
+        return 'private-grading-sha256:' + hashlib.sha256(value.encode()).hexdigest()
+    return value
+
+
+def merge_results(path, grades):
+    with path.with_suffix('.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        rows = read_json(path) if path.exists() else []
+        def identity(row):
+            return tuple(row[k] for k in ('family', 'task', 'run', 'arm'))
+        keys = {identity(row) for row in grades}
+        write_json(path, [r for r in rows if identity(r) not in keys] + grades)
+
+
 def block_worker(request):
     # Separate processes isolate treatment/provider/build environments for concurrent pairs.
     from study.grade_block import grade_block
@@ -352,23 +432,25 @@ def block_worker(request):
     root = Path(request['root'])
     grading = root / 'grading'
     private_grading = request.get('private_grading')
+    if private_grading and not Path(private_grading).is_absolute():
+        private_grading = str(Path(os.environ['EIDOS_IMP_PRIVATE_ROOT']) / private_grading)
     if private_grading:
         grading = Path(private_grading)
     attempts = []
     for attempt in range(args['retry_incidents'] + 1):
         try:
             run_block(rows, root / 'runs', stub=request['stub'], replace_incident=attempt > 0)
-            # Coding-arm producers predate build-bound scorecards. Bind their
-            # receipt to the build verified by this controller before dispatch.
+            # Controller context is distinct from the build evidence produced by a run.
             if 2 in item['arms'] and request.get('build_commit'):
                 path = root / 'runs' / item['block_id'] / 'arm2/run_record.json'
                 record = read_json(path)
-                if 'eidos_commit_sha' not in record:
-                    record['eidos_commit_sha'] = request['build_commit']
-                    write_json(path, record)
+                record['build_commit_asserted_by_controller'] = request['build_commit']
+                write_json(path, record)
             grades = grade_block(root / 'runs' / item['block_id'] / 'block_record.json',
-                                 grading, root / 'results.json')
+                                 grading, (grading / item['block_id'] / 'results.json') if private_grading else root / 'results.json')
             if private_grading:
+                grades = redact_grading_paths(grades, Path(private_grading))
+                merge_results(root / 'results.json', grades)
                 for arm, summary in zip(item['arms'], grades, strict=True):
                     write_json(root / 'grading' / item['block_id'] / f'arm{arm}/grade.json', summary)
             incident = any(row['status'] == 'incident' for row in grades)
@@ -411,6 +493,10 @@ def reserve_spend(args, budget, selected, plan, item, reservations, *, private_r
         if v['stub'] or v['fixture']:
             return
         provider = resolve(v['treatment']['id'], provider=v['provider']['id']).provider
+        reserved_plan = plan if private_root is not None and not reservations else [item]
+        # The existing H reservation already covers this plan's USD exposure.
+        check_plan = [] if private_root is not None and reservations else reserved_plan
+        current = budget_check(args, selected, check_plan, admission=False)
         if private_root is not None and private_out is not None:
             # Per-dispatch reservations and their ordering never enter the shared H ledger.
             destination = Path(private_out) / 'spend.jsonl'
@@ -421,10 +507,7 @@ def reserve_spend(args, budget, selected, plan, item, reservations, *, private_r
                                      usd=len(item['arms']) * (args.retry_incidents + 1) * limit if _number(limit) else None))
             write_ledger(destination, private_rows)
         if private_root is not None and reservations:
-            return  # One aggregate covers the complete H plan before any live dispatch.
-        reserved_plan = plan if private_root is not None else [item]
-        # Recheck under the same lock used by other controllers before adding exposure.
-        current = budget_check(args, selected, reserved_plan)
+            return current  # One aggregate covers the complete H plan before any live dispatch.
         amount = current['estimated_usd']
         key = uuid.uuid4().hex
         row = dict(provider=provider.id, usd=amount if provider_family(provider.id) != 'minimax' else None,
@@ -439,21 +522,27 @@ def reserve_spend(args, budget, selected, plan, item, reservations, *, private_r
         write_ledger(ledger, [*rows, row])
         reservations.append(key)
         if private_root is not None:
-            budget['_heldout_expected'] = sum(len(block['arms']) for block in plan)
+            budget['_heldout_expected'] = sum(len(block['arms']) for block in plan
+                                              if not selected[block['variant']]['stub'] and not selected[block['variant']]['fixture'])
+        return current
 
 
-def account(args, budget, roots, selected, run_id, *, private_root=None, out=None, reservations=()):
+def account(args, budget, roots, selected, run_id, *, private_root=None, out=None, reservations=(), status='complete'):
     destination = Path(out) if out is not None else args.out
     if private_root is not None and not destination.resolve().is_relative_to(Path(private_root).resolve()):
         raise ValueError('held-out usage must remain under the private root')
-    quota_after = read_json(args.quota_file) if args.quota_file and args.quota_file.is_file() else None
+    try:
+        quota_after = read_quota(args.quota_file) if args.quota_file and args.quota_file.exists() else None
+    except (ValueError, KeyError, TypeError, AttributeError, OSError):
+        # An invalid refresh cannot erase already incurred charges or usage.
+        quota_after = None
     quota_before = budget.get('quota_before')
     quota_percent = None
     if quota_before is not None and quota_after is not None:
         before, after = (q['weekly_remaining_fraction'] for q in (quota_before, quota_after))
-        if not all(_number(x) and x <= 1 for x in (before, after)) or after > before:
-            raise ValueError('invalid weekly quota consumption readings')
-        quota_percent = (before - after) * 100
+        if (not quota_stale(quota_after) and quota_time(quota_after) > quota_time(quota_before)
+                and all(_number(x) and x <= 1 for x in (before, after)) and after <= before):
+            quota_percent = (before - after) * 100
     detail = []
     attempts = []
     per_variant = {}
@@ -482,7 +571,7 @@ def account(args, budget, roots, selected, run_id, *, private_root=None, out=Non
         attempts.extend(variant_attempts)
         per_variant[v['label']] = dict(runs=len(variant_attempts), usd=_sum_known(a['usd'] for a in variant_attempts))
     write_json(destination / 'usage.json', dict(
-        schema='eidos-exp-usage/1', runs=len(attempts), usd=_sum_known(a['usd'] for a in attempts),
+        schema='eidos-exp-usage/1', status=status, complete=status == 'complete', runs=len(attempts), usd=_sum_known(a['usd'] for a in attempts),
         quota_weekly_percent=quota_percent, time_seconds=_sum_known(a['wall_s'] for a in attempts),
         per_variant=per_variant))
     if not budget['live']:
@@ -554,6 +643,8 @@ def dispatch_process(command, *, cancel, **kwargs):
 @contextlib.contextmanager
 def termination_handlers(cancel=None):
     def terminate(signum, frame):
+        if cancel is not None and cancel.is_set():
+            return
         if cancel is not None:
             cancel.set()
         raise RunTerminated('termination requested: ' + signal.Signals(signum).name)
@@ -565,6 +656,11 @@ def termination_handlers(cancel=None):
             signal.signal(sig, handler)
 
 
+def ignore_cleanup_signals():
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, signal.SIG_IGN)
+
+
 def execute(args, *, private_root=None):
     started = time.monotonic()
     selected = variants(args)
@@ -574,7 +670,7 @@ def execute(args, *, private_root=None):
     plan = make_plan(cards, args.replicates, arms, selected)
     checked = preflight(args, selected, plan, private_root=private_root)
     if args.quota_file and checked['budget'].get('quota_before') is None:
-        checked['budget']['quota_before'] = read_json(args.quota_file)
+        checked['budget']['quota_before'] = read_quota(args.quota_file)
     if profile is not None and profile.pool != 'D' and not (private_root or os.environ.get('EIDOS_IMP_PRIVATE_ROOT')):
         raise ValueError('non-D grading requires EIDOS_IMP_PRIVATE_ROOT')
     references, reference_digest = load_references(args, profile, cards)
@@ -585,7 +681,7 @@ def execute(args, *, private_root=None):
                     exit_status=1, status='preflight', labs=[],
                     timings=dict(resolve_s=resolved_at - started, preflight_s=time.monotonic() - resolved_at))
     manifest.update(tier=args.tier, pool_role=args.pool_role, look=args.look, mode=args.mode,
-                    scorecards=[], paired={}, usage='../usage.json' if private_root is not None else 'usage.json')
+                    scorecards=[], score_errors=[], paired={}, usage='../usage.json' if private_root is not None else 'usage.json')
     if args.dry_run:
         with environment({}):
             manifest['labs'] = [ensure_lab(v, dry_run=True) for v in selected]
@@ -601,6 +697,9 @@ def execute(args, *, private_root=None):
     reservations = []
     grading_id = uuid.uuid4().hex
     cancel = threading.Event()
+    dispatch_stopped = threading.Event()
+    dispatch_lock = threading.Lock()
+    manifest['dispatch_checks'] = []
     with termination_handlers(cancel), (out / 'run.log').open('w', buffering=1) as log:
         def event(message):
             log.write(utc() + ' ' + message + '\n')
@@ -654,7 +753,7 @@ def execute(args, *, private_root=None):
                         if not private:
                             raise ValueError('non-D grading requires EIDOS_IMP_PRIVATE_ROOT')
                         request['private_grading'] = str((out / 'grading-scratch' if private_root is not None
-                                                          else Path(private) / 'grading' / grading_id) / v['label'])
+                                                           else Path('grading') / grading_id) / v['label'])
                     if private_root is not None:
                         request['pool_profiles'] = json.loads(safe_pools)
                     path = root / 'requests' / (item['block_id'] + '.json')
@@ -670,8 +769,27 @@ def execute(args, *, private_root=None):
                     with locks[v['lab']['home']]:
                         if barrier is not None:
                             barrier.wait(timeout=30)
-                        reserve_spend(args, checked['budget'], selected, plan, item, reservations, private_root=private_root,
-                                      private_out=out.parent if private_root is not None else None)
+                        with dispatch_lock:
+                            if cancel.is_set():
+                                raise RunTerminated('dispatch cancelled')
+                            if dispatch_stopped.is_set():
+                                return 1
+                            try:
+                                current = reserve_spend(args, checked['budget'], selected, plan, item, reservations,
+                                                        private_root=private_root,
+                                                        private_out=out.parent if private_root is not None else None)
+                            except ValueError as exc:
+                                dispatch_stopped.set()
+                                manifest['dispatch_stop_reason'] = str(exc)
+                                event('Dispatch stopped: ' + str(exc))
+                                return 1
+                            if current is not None:
+                                manifest['dispatch_checks'].append(dict(variant=v['label'], block=item['block_id'],
+                                                                        quota=current.get('quota_before')))
+                                if current.get('quota_stale'):
+                                    event('Warning: stale quota reading at dispatch; remaining floors checked')
+                            manifest['status'] = 'started'
+                            write_json(out / 'manifest.json', manifest)
                         event('Run/grade ' + v['label'] + ' ' + item['block_id'])
                         with path.with_suffix('.log').open('w') as block_log:
                             result = dispatch_process([sys.executable, '-m', 'study.exp.run', '--_block', str(path)],
@@ -697,6 +815,7 @@ def execute(args, *, private_root=None):
                     with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
                         exits = list(executor.map(dispatch, plan))
             finally:
+                ignore_cleanup_signals()
                 stop_errors = []
                 if not args.keep_lab_running or cancel.is_set():
                     for v in started_labs.values():
@@ -719,14 +838,24 @@ def execute(args, *, private_root=None):
                 write_json(scoring_pool / 'pool.json', dict(pool_id=profile.pool, commitment=profile.commitment()))
             scores = {arm: [] for arm in arms}
             for v, root in zip(selected, roots, strict=True):
+                if not (root / 'results.json').exists():
+                    continue
                 for arm in arms:
                     event('Score ' + v['label'] + f' arm{arm}')
-                    score = build(root, pool_root=scoring_pool, references=references, treatment=v['treatment'], provider=v['provider'],
-                                  build_record=dict(commit=v['commit']), replicates=args.replicates, arm=arm,
-                                  autopilot=args.autopilot_scorecard, tier=args.tier, pool_role=args.pool_role,
-                                  look=args.look, mode=args.mode)
+                    try:
+                        score = build(root, pool_root=scoring_pool, references=references, treatment=v['treatment'], provider=v['provider'],
+                                      build_record=dict(commit=v['commit']), replicates=args.replicates, arm=arm,
+                                      autopilot=args.autopilot_scorecard, tier=args.tier, pool_role=args.pool_role,
+                                      look=args.look, mode=args.mode)
+                    except ValueError as exc:
+                        manifest['score_errors'].append(dict(variant=v['label'], arm=arm, reason=str(exc)))
+                        event('Score refused ' + v['label'] + f' arm{arm}: ' + str(exc))
+                        continue
                     if profile:
                         score['pool'] = dict(id=profile.pool, commitment=profile.commitment())
+                    if dispatch_stopped.is_set():
+                        score['incomplete'] = True
+                        score['dispatch_stop_reason'] = manifest['dispatch_stop_reason']
                     score['smoke'] = args.smoke
                     if args.smoke:
                         # Existing compare rejects this distinct connectivity-only schema.
@@ -749,17 +878,26 @@ def execute(args, *, private_root=None):
             if len(selected) == 2:
                 descriptions = []
                 for arm, pair in scores.items():
-                    description = descriptive_pair(*pair)
+                    if len(pair) != 2:
+                        continue
+                    description = ('Dispatch stopped; incomplete pair, no comparison.\n'
+                                   if dispatch_stopped.is_set() else descriptive_pair(*pair))
                     target = out / f'arm{arm}/paired.md'
                     target.parent.mkdir(exist_ok=True)
                     target.write_text(description)
                     manifest['paired'][str(arm)] = str(target.relative_to(out))
                     descriptions.append(f'## Arm {arm}\n\n' + description)
                 (out / 'paired.md').write_text('\n'.join(descriptions))
-            grades = [row for root in roots for row in read_json(root / 'results.json')]
+            grades = [row for root in roots if (root / 'results.json').exists() for row in read_json(root / 'results.json')]
             expected = len(plan) * len(arms)
             status = int(any(exits) or len(grades) != expected or any(r['status'] == 'incident' for r in grades))
-            manifest['status'] = 'complete' if status == 0 else 'unresolved incident'
+            if manifest['score_errors']:
+                status = 2
+                manifest['status'] = 'scoring failed'
+            elif dispatch_stopped.is_set():
+                manifest['status'] = 'dispatch stopped'
+            else:
+                manifest['status'] = 'complete' if status == 0 else 'unresolved incident'
             manifest['timings']['score_s'] = time.monotonic() - score_started
         except Exception as exc:
             status = 2
@@ -767,10 +905,12 @@ def execute(args, *, private_root=None):
             event('Failed: ' + type(exc).__name__ + ': ' + str(exc))
             raise
         finally:
+            ignore_cleanup_signals()
             try:
                 account_started = time.monotonic()
                 account(args, checked['budget'], roots, selected, out.name, private_root=private_root,
-                        out=out.parent if private_root is not None else out, reservations=reservations)
+                        out=out.parent if private_root is not None else out, reservations=reservations,
+                        status=manifest['status'])
                 manifest['timings']['account_s'] = time.monotonic() - account_started
                 event('Account complete')
             except Exception as exc:

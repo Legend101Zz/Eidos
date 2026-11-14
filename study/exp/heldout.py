@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import fcntl
 import json
 import math
 import os
+import signal
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -70,6 +72,33 @@ def save_counter(counter, state):
     temporary.replace(counter)
 
 
+def run_controller(command, **kwargs):
+    # Popen avoids subprocess.run's 0.25-second KeyboardInterrupt kill path.
+    with subprocess.Popen(command, **kwargs) as process:
+        interrupted = False
+        def forward(signum, frame):
+            nonlocal interrupted
+            if not interrupted:
+                interrupted = True
+                process.send_signal(signal.SIGTERM)
+        previous = {sig: signal.signal(sig, forward) for sig in (signal.SIGINT, signal.SIGTERM)}
+        try:
+            while not interrupted:
+                try:
+                    return subprocess.CompletedProcess(command, process.wait(timeout=.2))
+                except subprocess.TimeoutExpired:
+                    continue
+            try:
+                code = process.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                code = process.wait()
+            return subprocess.CompletedProcess(command, code or 2)
+        finally:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
+
+
 def consult(args):
     if not args.note.strip() or not math.isfinite(args.threshold) or args.threshold < 0:
         raise ValueError('note and finite nonnegative threshold required')
@@ -111,17 +140,21 @@ def consult(args):
     env['EIDOS_POOLS_ROOT'] = os.pathsep.join(filter(None, [env.get('EIDOS_POOLS_ROOT'), str(private)]))
     # OS-level redirection also captures native CLI/build output and tracebacks.
     with (scratch / 'controller.log').open('w') as stream:
-        process = subprocess.run([sys.executable, '-m', 'study.exp.run', '--_heldout', str(request)],
+        process = run_controller([sys.executable, '-m', 'study.exp.run', '--_heldout', str(request)],
                                  env=env, stdout=stream, stderr=stream)
     if process.returncode:
         run_file = out / 'manifest.json'
         if run_file.exists() and json.loads(run_file.read_text()).get('status') == 'preflight':
-            with (private / '.consultations.lock').open('a') as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX)
-                state = json.loads(counter.read_text())
+            event = dict(utc=stamp, status='refunded', reason='preflight')
+        else:
+            event = dict(utc=stamp, status='interrupted' if process.returncode < 0 else 'failed')
+        with (private / '.consultations.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            state = json.loads(counter.read_text())
+            if event['status'] == 'refunded':
                 state['count'] -= 1
-                state.setdefault('events', []).append(dict(utc=stamp, status='refunded', reason='preflight'))
-                save_counter(counter, state)
+            state.setdefault('events', []).append(event)
+            save_counter(counter, state)
         raise RuntimeError('private run failed')
     run_manifest = json.loads((out / 'manifest.json').read_text())
     scores = [json.loads((out / v['label'] / 'scorecard.json').read_text()) for v in run_manifest['variants']]
@@ -148,10 +181,8 @@ def main(argv=None):
     p.add_argument('--payg-approved')
     # Argument errors may contain caller paths: suppress argparse diagnostics too.
     try:
-        with open(os.devnull, 'w') as null:
-            import contextlib
-            with contextlib.redirect_stderr(null):
-                args = p.parse_args(argv)
+        with open(os.devnull, 'w') as null, contextlib.redirect_stderr(null):
+            args = p.parse_args(argv)
         result = consult(args)
         print(json.dumps(result, allow_nan=False))
         return 0

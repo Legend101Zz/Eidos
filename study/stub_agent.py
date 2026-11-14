@@ -3,6 +3,7 @@
 
 import argparse
 import hashlib
+import os
 import shutil
 import subprocess
 import sys
@@ -124,7 +125,11 @@ def stub(run_dir):
         llm_broker_enabled=False,
         eidos_runtime_used=False,
     )
-    if meta["arm"] in (3, 4):
+    # Runner stubs can report their own configured build receipt for arm 2.
+    # Legacy arm-1 stubs retain their byte-identical evidence and need no lab.
+    configured = os.environ.get("EIDOS_STUDY_PYTHON")
+    if meta["arm"] in (3, 4) or (meta["arm"] == 2 and configured
+                                and (Path(configured).parent.parent / "pilot-build.json").is_file()):
         from study.eidos_arms.lab import build_record
         record["eidos_commit_sha"] = build_record()["eidos_commit_sha"]
     write_json(root / "run_record.json", record)

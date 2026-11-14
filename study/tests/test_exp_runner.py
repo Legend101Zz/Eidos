@@ -251,6 +251,8 @@ def test_stub_two_card_cli_end_to_end(tmp_path, monkeypatch, pool, arms):
     assert usage['time_seconds'] > 0
     assert usage['per_variant'] == {manifest['variants'][0]['label']: dict(runs=usage['runs'], usd=0)}
     if pool:
+        for path in (tmp_path / 'out').rglob('*.json'):
+            assert str(tmp_path / 'private') not in path.read_text(), str(path)
         for path in (tmp_path / 'out/runs').glob('*/arm*/task'):
             assert not (path / 'test_labels.npz').exists()
             assert not (path / 'manifest.json').exists()
@@ -278,7 +280,7 @@ def test_heldout_receipt_and_exception_do_not_leak(tmp_path, monkeypatch, capsys
             write_json(root / label / 'scorecard.json', score)
         return SimpleNamespace(returncode=0)
     monkeypatch.setattr(heldout, 'nonprivate_preflight', lambda *a: None)
-    monkeypatch.setattr(heldout.subprocess, 'run', fake_run)
+    monkeypatch.setattr(heldout, 'run_controller', fake_run)
     for k in range(1, 4):
         record = heldout.consult(args)
         assert record['consultation'] == f'{k} of 3'
@@ -649,12 +651,12 @@ def blind_fake(tmp_path, monkeypatch):
         for label, score in zip(('a', 'b'), fake_scores(), strict=True):
             write_json(root / label / 'scorecard.json', score)
         return SimpleNamespace(returncode=0)
-    monkeypatch.setattr(heldout.subprocess, 'run', child)
+    monkeypatch.setattr(heldout, 'run_controller', child)
     return args
 
 
 def test_heldout_failed_attempts_consume_consultations(tmp_path, monkeypatch, blind_fake):
-    monkeypatch.setattr(heldout.subprocess, 'run', lambda *a, **k: SimpleNamespace(returncode=1))
+    monkeypatch.setattr(heldout, 'run_controller', lambda *a, **k: SimpleNamespace(returncode=1))
     for _ in range(3):
         with pytest.raises(RuntimeError, match='private run failed'):
             heldout.consult(blind_fake)
@@ -685,7 +687,7 @@ def test_heldout_child_preflight_refund_recorded(tmp_path, monkeypatch, blind_fa
         root = Path(request['argv'][request['argv'].index('--out') + 1])
         write_json(root / 'manifest.json', {'status': 'preflight'})
         return SimpleNamespace(returncode=2)
-    monkeypatch.setattr(heldout.subprocess, 'run', child)
+    monkeypatch.setattr(heldout, 'run_controller', child)
     with pytest.raises(RuntimeError):
         heldout.consult(blind_fake)
     state = read_json(tmp_path / 'consultations.json')
@@ -950,6 +952,7 @@ def test_heldout_live_uses_verified_build_and_private_lab_home(tmp_path, monkeyp
     frozen.mkdir(parents=True)
     variant['lab_root'] = str(frozen)
     private = tmp_path / 'private'
+    monkeypatch.setenv('EIDOS_STUDY_TEMPORAL_SOURCE', str(tmp_path / 'temporal'))
     write_json(frozen / 'ports.json', dict(api=40001, pg=40002, temporal=30100, mcp=40003))
     verified = []
     def configure(home, python, stub, commit):
@@ -958,6 +961,7 @@ def test_heldout_live_uses_verified_build_and_private_lab_home(tmp_path, monkeyp
                           EIDOS_STUDY_PYTHON=str(python), EIDOS_STUDY_MCP_PORT='40003')
         return {'verified': True}
     def initialize(*a, **k):
+        assert a[a.index('--temporal-source') + 1] == str(tmp_path / 'temporal')
         home = Path(os.environ['EIDOS_STUDY_HOME'])
         assert home.is_relative_to(private)
         assert os.environ['EIDOS_STUDY_PYTHON'] == str(frozen / 'venv/bin/python')
@@ -1012,8 +1016,8 @@ def test_usage_all_variants_arms_retries_costs_and_quota(tmp_path, unknown):
                        dict(tokens={} if unknown and index else {'input': 10, 'output': 20},
                             billed_usd=None if unknown and index else .1, wall_s=2))
     args.quota_file = tmp_path / 'quota.json'
-    write_json(args.quota_file, dict(weekly_remaining_fraction=.75))
-    budget = dict(live=True, spend_ledger=str(ledger), quota_before=dict(weekly_remaining_fraction=.8))
+    write_json(args.quota_file, dict(utc=datetime.now(UTC).isoformat(), weekly_remaining_fraction=.75, interval_remaining_fraction=.8))
+    budget = dict(live=True, spend_ledger=str(ledger), quota_before=dict(utc=(datetime.now(UTC) - timedelta(minutes=1)).isoformat(), weekly_remaining_fraction=.8, interval_remaining_fraction=.8))
     run.account(args, budget, roots, selected, 'paired')
     usage = read_json(args.out / 'usage.json')
     assert usage['runs'] == 8 and usage['time_seconds'] == 20
@@ -1038,7 +1042,7 @@ def test_usage_model_free_attempts_need_no_spend_ledger(tmp_path, fixture):
         write_json(root / 'runs' / suffix / 'run_record.json', dict(wall_s=2, billed_usd=None))
     run.account(args, dict(live=False), [root], selected, 'model-free')
     usage = read_json(args.out / 'usage.json')
-    assert usage == dict(schema='eidos-exp-usage/1', runs=2, usd=0, quota_weekly_percent=None,
+    assert usage == dict(schema='eidos-exp-usage/1', status='complete', complete=True, runs=2, usd=0, quota_weekly_percent=None,
                          time_seconds=4, per_variant={selected[0]['label']: dict(runs=2, usd=0)})
     assert not (args.out / 'spend.jsonl').exists()
 
@@ -1058,7 +1062,7 @@ def test_usage_without_both_quota_readings_keeps_quota_unknown(tmp_path, reading
     if reading == 'before':
         budget['quota_before'] = dict(weekly_remaining_fraction=.8)
     else:
-        write_json(args.quota_file, dict(weekly_remaining_fraction=.7))
+        write_json(args.quota_file, dict(utc=datetime.now(UTC).isoformat(), weekly_remaining_fraction=.7, interval_remaining_fraction=.8))
     run.account(args, budget, [tmp_path / 'empty'], run.variants(args), 'partial-quota')
     assert read_json(args.out / 'usage.json')['quota_weekly_percent'] is None
 
@@ -1089,3 +1093,365 @@ def test_paired_pool_cli_scores_and_describes_each_arm(tmp_path, monkeypatch):
     usage = read_json(out / 'usage.json')
     assert usage['runs'] == 8 and usage['usd'] == 0
     assert usage['per_variant'] == {v['label']: dict(runs=4, usd=0) for v in manifest['variants']}
+
+
+@pytest.mark.parametrize('refresh', ['stale', 'fresh', 'floor'])
+def test_minimax_admission_then_dispatch_fake_clock(tmp_path, monkeypatch, preflight, refresh):
+    args, _, _ = preflight
+    budget_args, selected, _, _ = live_budget(tmp_path, 'minimax-m3.1-flash')
+    args.budget = budget_args.budget
+    args.concurrency = 1
+    args.quota_file = tmp_path / 'quotas'
+    args.quota_file.mkdir()
+    now = datetime.now(UTC)
+    clock = [now]
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock[0]
+    monkeypatch.setattr(run, 'datetime', Clock)
+    write_json(args.quota_file / 'quota-01.json', dict(utc=now.isoformat(), weekly_remaining_fraction=.8,
+                                                     interval_remaining_fraction=.8))
+    selected[0].update(commit=run.git('rev-parse', 'HEAD'), lab_root='unused')
+    monkeypatch.setattr(run, 'variants', lambda _: selected)
+    monkeypatch.setattr(run, 'controller_record', lambda *a, **k: {'git_sha': 'a' * 40})
+    real_ensure = run.ensure_lab
+    monkeypatch.setattr(run, 'ensure_lab', lambda v: real_ensure({**v, 'stub': True}))
+    monkeypatch.setattr(run.lab, 'start', lambda *a, **k: None)
+    monkeypatch.setattr(run.lab, 'stop', lambda: None)
+    calls = []
+    def dispatch(command, **kwargs):
+        assert read_json(args.out / 'manifest.json')['status'] == 'started'
+        request = read_json(command[-1])
+        request['stub'] = True  # Real model-free block/grade/score pipeline; no provider calls.
+        write_json(command[-1], request)
+        kwargs.pop('cancel')
+        result = subprocess.run(command, **kwargs)
+        calls.append(request['block']['card'])
+        clock[0] = now + timedelta(minutes=31)
+        if refresh != 'stale':
+            write_json(args.quota_file / 'quota-02.json', dict(
+                utc=clock[0].isoformat(), weekly_remaining_fraction=.14 if refresh == 'floor' else .7,
+                interval_remaining_fraction=.8))
+        return result
+    monkeypatch.setattr(run, 'dispatch_process', dispatch)
+    code = run.execute(args)
+    manifest = read_json(args.out / 'manifest.json')
+    score = read_json(args.out / 'scorecard.json')
+    assert len(score['individual']) == (1 if refresh == 'floor' else 2)
+    assert len(calls) == len(score['individual'])
+    assert code == (1 if refresh == 'floor' else 0)
+    assert manifest['status'] == ('dispatch stopped' if refresh == 'floor' else 'complete')
+    if refresh == 'floor':
+        assert score['incomplete'] is True
+        assert 'floor' in manifest['dispatch_stop_reason']
+    elif refresh == 'stale':
+        assert 'stale quota' in (args.out / 'run.log').read_text()
+    else:
+        assert any(row['quota']['source'].endswith('quota-02.json') for row in manifest['dispatch_checks'])
+
+
+def test_programme_quota_schema_and_directory(tmp_path):
+    args, selected, plan, _ = live_budget(tmp_path, 'minimax-m3.1-flash')
+    args.quota_file = tmp_path / 'quotas'
+    args.quota_file.mkdir()
+    # Shape of quota-20261114T193246Z.json; all values here are fabricated.
+    shape = dict(observed_utc=datetime.now(UTC).isoformat(), purpose='read-only quota status',
+                 accounting_note='shared-account observations', http_status=200, base_status_code=0,
+                 model_windows=[dict(model_name='general', current_weekly_remaining_percent=80,
+                                     current_interval_remaining_percent=75, current_interval_status=1),
+                                dict(model_name='video', current_weekly_remaining_percent=0,
+                                     current_interval_remaining_percent=0)])
+    write_json(args.quota_file / 'quota-new.json', shape)
+    budget = run.budget_check(args, selected, plan)
+    assert budget['quota_before']['weekly_remaining_fraction'] == .8
+    assert budget['quota_before']['interval_remaining_fraction'] == .75
+    assert budget['quota_before']['source'].endswith('quota-new.json')
+
+
+@pytest.mark.parametrize('kind', ['unchanged', 'stale', 'reset'])
+def test_quota_usage_unknown_without_new_valid_observation(tmp_path, kind):
+    args = options(tmp_path)
+    args.quota_file = tmp_path / 'quota.json'
+    now = datetime.now(UTC)
+    before = dict(utc=(now - timedelta(minutes=20)).isoformat(), weekly_remaining_fraction=.8,
+                  interval_remaining_fraction=.8)
+    after = dict(before)
+    if kind == 'stale':
+        after.update(utc=(now - timedelta(minutes=11)).isoformat(), weekly_remaining_fraction=.7)
+    if kind == 'reset':
+        after.update(utc=now.isoformat(), weekly_remaining_fraction=.9)
+    write_json(args.quota_file, after)
+    run.account(args, dict(live=False, quota_before=before), [tmp_path / 'empty'], run.variants(args), 'test')
+    assert read_json(args.out / 'usage.json')['quota_weekly_percent'] is None
+
+
+@pytest.mark.parametrize('field,value', [('tier', 'TX'), ('pool-role', 'typo'), ('mode', 'typo'),
+                                         ('look', 'typo'), ('replicates', '0'), ('concurrency', '0'),
+                                         ('retry-incidents', '-1'), ('card-limit', '0')])
+def test_bad_options_rejected_by_parser(tmp_path, field, value):
+    with pytest.raises(SystemExit) as exc:
+        options(tmp_path, '--' + field, value)
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize('existing', ['absent', None, '', 'other-build'])
+def test_arm2_build_assertion_preserves_run_evidence(tmp_path, monkeypatch, existing):
+    from study import grade_block, launcher
+    path = tmp_path / 'runs/N01-r1/arm2/run_record.json'
+    record = {} if existing == 'absent' else dict(eidos_commit_sha=existing)
+    write_json(path, record)
+    monkeypatch.setattr(launcher, 'run_block', lambda *a, **k: None)
+    monkeypatch.setattr(grade_block, 'grade_block', lambda *a: [{'status': 'valid'}])
+    request = dict(block=dict(card='N01', replicate=1, arms=[2], block_id='N01-r1', order=1),
+                   root=str(tmp_path), stub=True, build_commit='verified',
+                   options=dict(wall_seconds=None, retry_incidents=0))
+    assert run.block_worker(request) == 0
+    result = read_json(path)
+    assert result['build_commit_asserted_by_controller'] == 'verified'
+    assert ('eidos_commit_sha' in result) == ('eidos_commit_sha' in record)
+    if existing != 'absent':
+        assert result['eidos_commit_sha'] == existing
+
+
+def test_uncertain_charge_only_blocks_its_provider_family(tmp_path):
+    args, selected, plan, ledger = live_budget(tmp_path, 'openai-default')
+    ledger.write_text(json.dumps(dict(provider='anthropic-haiku-5-5', usd=None, status='uncertain')) + '\n')
+    run.budget_check(args, selected, plan)
+    ledger.write_text(json.dumps(dict(provider='openai-default', usd=None, status='uncertain')) + '\n')
+    with pytest.raises(ValueError, match='unknown charge'):
+        run.budget_check(args, selected, plan)
+
+
+def test_heldout_mixed_pair_known_zero_settlement(tmp_path):
+    args, selected, _, ledger = live_budget(tmp_path, 'openai-default')
+    selected.append({**selected[0], 'index': 1, 'label': 'model-free', 'fixture': True})
+    plan = run.make_plan(['N01'], 1, (4,), selected)
+    budget = run.budget_check(args, selected, plan)
+    private = tmp_path / 'private'
+    out = private / 'runs/utc'
+    roots = [out / v['label'] for v in selected]
+    reservations = []
+    for block, root in zip(plan, roots, strict=True):
+        run.reserve_spend(args, budget, selected, plan, block, reservations, private_root=private)
+        write_json(root / 'runs/N01-r1/arm4/run_record.json', dict(tokens={'input': 1, 'output': 2},
+                                                                billed_usd=.1, wall_s=1))
+    run.account(args, budget, roots, selected, 'test', private_root=private, out=out, reservations=reservations)
+    row = json.loads(ledger.read_text())
+    assert row['status'] == 'settled' and row['usd'] == .1
+    assert read_json(out / 'usage.json')['per_variant']['model-free']['usd'] == 0
+
+
+def test_cleanup_ignores_second_signal(tmp_path, monkeypatch, preflight):
+    import signal
+    args, _, _ = preflight
+    args.cards = 'N01'
+    selected = run.variants(args)
+    selected[0].update(stub=False, fixture=True)
+    monkeypatch.setattr(run, 'variants', lambda _: selected)
+    monkeypatch.setattr(run, 'controller_record', lambda *a, **k: {'git_sha': 'a' * 40})
+    monkeypatch.setattr(run, 'ensure_lab', lambda *a, **k: dict(home=str(tmp_path / 'home'), env={}))
+    monkeypatch.setattr(run.lab, 'start', lambda *a, **k: None)
+    stops = []
+    def stop():
+        signal.raise_signal(signal.SIGTERM)
+        signal.raise_signal(signal.SIGINT)
+        stops.append('finished')
+    monkeypatch.setattr(run.lab, 'stop', stop)
+    monkeypatch.setattr(run, 'dispatch_process', Mock(side_effect=run.RunTerminated('first signal')))
+    with pytest.raises(run.RunTerminated, match='first signal'):
+        run.execute(args)
+    assert stops == ['finished']
+    usage = read_json(args.out / 'usage.json')
+    assert usage['status'] == 'failed' and usage['complete'] is False
+
+
+def test_heldout_controller_roster_only_in_request(tmp_path, monkeypatch, preflight):
+    args, _, _ = preflight
+    args.cards = 'N01'
+    args.out = tmp_path / 'private/runs/pair'
+    selected = run.variants(args)
+    selected[0].update(stub=False, fixture=True)
+    monkeypatch.setattr(run, 'variants', lambda _: selected)
+    monkeypatch.setattr(run, 'controller_record', lambda *a, **k: {'git_sha': 'a' * 40})
+    monkeypatch.setattr(run, 'ensure_lab', lambda *a, **k: dict(home=str(tmp_path / 'home'), env={}))
+    profiles = {}
+    load_pool_manifest(synthetic_manifest('H'), profiles)
+    monkeypatch.setitem(run.PROFILES, 'pool:H', profiles['pool:H'])
+    monkeypatch.setenv('EIDOS_STUDY_POOL_PROFILES', json.dumps(synthetic_manifest('H')))
+    starts, children = [], []
+    def start(*a, **k):
+        assert 'EIDOS_STUDY_POOL_PROFILES' not in os.environ
+        starts.append(True)
+    def dispatch(command, **kwargs):
+        assert 'EIDOS_STUDY_POOL_PROFILES' not in kwargs['env']
+        assert any(p['pool'] == 'H' for p in read_json(command[-1])['pool_profiles'])
+        children.append(True)
+        raise RuntimeError('stop probe')
+    monkeypatch.setattr(run.lab, 'start', start)
+    monkeypatch.setattr(run.lab, 'stop', lambda: None)
+    monkeypatch.setattr(run, 'dispatch_process', dispatch)
+    with pytest.raises(RuntimeError, match='stop probe'):
+        run.execute(args, private_root=tmp_path / 'private')
+    assert starts == children == [True]
+
+
+def test_heldout_wrapper_forwards_signal_and_waits(tmp_path, monkeypatch):
+    import signal
+    events = []
+    class Child:
+        returncode = -signal.SIGTERM
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            pass
+        def send_signal(self, sig):
+            events.append(('signal', sig))
+        def wait(self, timeout=None):
+            events.append(('wait', timeout))
+            if len(events) == 1:
+                signal.raise_signal(signal.SIGINT)
+                raise subprocess.TimeoutExpired('fake-child', timeout)
+            return self.returncode
+        def kill(self):
+            pytest.fail('cleanup was killed prematurely')
+    monkeypatch.setattr(heldout.subprocess, 'Popen', lambda *a, **k: Child())
+    result = heldout.run_controller(['fake-child'])
+    assert result.returncode == -signal.SIGTERM
+    assert ('signal', signal.SIGTERM) in events and ('wait', 60) in events
+
+
+def test_heldout_killed_dispatch_stays_consumed(tmp_path, monkeypatch, blind_fake):
+    def child(command, **kwargs):
+        request = read_json(command[-1])
+        out = Path(request['argv'][request['argv'].index('--out') + 1])
+        write_json(out / 'manifest.json', {'status': 'started'})
+        return SimpleNamespace(returncode=-9)
+    monkeypatch.setattr(heldout, 'run_controller', child)
+    with pytest.raises(RuntimeError, match='private run failed'):
+        heldout.consult(blind_fake)
+    state = read_json(tmp_path / 'consultations.json')
+    assert state['count'] == 1
+    assert [e['status'] for e in state['events']] == ['reserved', 'interrupted']
+
+
+def test_d03_explicit_reference_required_even_if_default_established(tmp_path, monkeypatch):
+    args = options(tmp_path)
+    monkeypatch.setattr(run, 'ROOT', tmp_path)
+    write_json(tmp_path / 'experiments/pools/legacy-references.json', {'D03': reference_block()})
+    with pytest.raises(ValueError, match='D03 requires an explicit'):
+        run.load_references(args, None, ['D03'])
+
+
+def test_unestablished_reference_refused_even_with_scoreable_numbers(tmp_path):
+    args = options(tmp_path)
+    args.references = tmp_path / 'references.json'
+    write_json(args.references, {'N01': {**reference_block(), 'reference_established': False}})
+    with pytest.raises(ValueError, match='reference not established'):
+        run.load_references(args, None, ['N01'])
+
+
+def test_minimax_dispatch_floor_boundaries_and_share_not_readmitted(tmp_path):
+    args, selected, plan, _ = live_budget(tmp_path, 'minimax-m3.1-flash')
+    args.quota_file = tmp_path / 'quota.json'
+    write_json(args.quota_file, dict(utc=datetime.now(UTC).isoformat(), weekly_remaining_fraction=.15,
+                                    interval_remaining_fraction=.20))
+    assert run.budget_check(args, selected, plan, admission=False)['live']
+    with pytest.raises(ValueError, match='share'):
+        run.budget_check(args, selected, plan)
+
+
+
+def test_missing_arm2_build_evidence_keeps_arm4_score(tmp_path, monkeypatch, preflight):
+    args, _, _ = preflight
+    args.cards, args.arms = 'N01', '2,4'
+    original = run.dispatch_process
+    def dispatch(command, **kwargs):
+        result = original(command, **kwargs)
+        path = args.out / 'runs/N01-r1/arm2/run_record.json'
+        record = read_json(path)
+        record.pop('eidos_commit_sha')
+        write_json(path, record)
+        return result
+    monkeypatch.setattr(run, 'dispatch_process', dispatch)
+    assert run.execute(args) == 2
+    manifest = read_json(args.out / 'manifest.json')
+    assert manifest['status'] == 'scoring failed'
+    assert [entry['arm'] for entry in manifest['scorecards']] == [4]
+    assert manifest['score_errors'][0]['arm'] == 2
+    assert (args.out / 'arm4/scorecard.json').is_file()
+    assert not (args.out / 'arm2/scorecard.json').exists()
+    assert read_json(args.out / 'usage.json')['complete'] is False
+
+
+def test_heldout_aggregate_does_not_skip_later_quota_floors(tmp_path):
+    args, selected, plan, ledger = live_budget(tmp_path, 'minimax-m3.1-flash')
+    args.quota_file = tmp_path / 'quota.json'
+    now = datetime.now(UTC)
+    write_json(args.quota_file, dict(utc=now.isoformat(), weekly_remaining_fraction=.8,
+                                    interval_remaining_fraction=.8))
+    budget = run.budget_check(args, selected, plan)
+    reservations = []
+    run.reserve_spend(args, budget, selected, plan, plan[0], reservations, private_root=tmp_path / 'private')
+    write_json(args.quota_file, dict(utc=(now + timedelta(seconds=1)).isoformat(), weekly_remaining_fraction=.8,
+                                    interval_remaining_fraction=.19))
+    with pytest.raises(ValueError, match='floor'):
+        run.reserve_spend(args, budget, selected, plan, plan[1], reservations, private_root=tmp_path / 'private')
+    assert len(reservations) == 1 and json.loads(ledger.read_text())['status'] == 'reserved'
+
+
+def test_weekly_reset_still_settles_paid_run(tmp_path):
+    args, selected, plan, ledger = live_budget(tmp_path, 'openai-default')
+    args.quota_file = tmp_path / 'quota.json'
+    now = datetime.now(UTC)
+    write_json(args.quota_file, dict(utc=(now - timedelta(minutes=1)).isoformat(), weekly_remaining_fraction=.7,
+                                    interval_remaining_fraction=.8))
+    budget = run.budget_check(args, selected, plan)
+    budget['quota_before'] = run.read_quota(args.quota_file)
+    reservations = []
+    run.reserve_spend(args, budget, selected, plan, plan[0], reservations)
+    root = tmp_path / 'variant'
+    for arm in (2, 4):
+        write_json(root / f'runs/N01-r1/arm{arm}/run_record.json', dict(billed_usd=.1, wall_s=1))
+    write_json(args.quota_file, dict(utc=now.isoformat(), weekly_remaining_fraction=.9,
+                                    interval_remaining_fraction=.8))
+    run.account(args, budget, [root], selected, 'reset', reservations=reservations)
+    rows = [json.loads(line) for line in ledger.read_text().splitlines()]
+    assert rows[0]['status'] == 'settled' and sum(row['usd'] for row in rows) == .2
+    assert read_json(args.out / 'usage.json')['quota_weekly_percent'] is None
+
+
+def test_usage_failed_before_any_receipt_is_explicitly_incomplete(tmp_path):
+    args = options(tmp_path)
+    run.account(args, dict(live=False), [tmp_path / 'empty'], run.variants(args), 'aborted', status='failed')
+    usage = read_json(args.out / 'usage.json')
+    assert usage['runs'] == 0 and usage['usd'] == 0
+    assert usage['status'] == 'failed' and usage['complete'] is False
+
+
+def test_heldout_wrapper_escalates_only_after_cleanup_timeout(monkeypatch):
+    import signal
+    calls = []
+    class Child:
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            pass
+        def send_signal(self, sig):
+            calls.append(('signal', sig))
+        def wait(self, timeout=None):
+            calls.append(('wait', timeout))
+            if timeout == .2:
+                signal.raise_signal(signal.SIGTERM)
+                signal.raise_signal(signal.SIGINT)
+                raise subprocess.TimeoutExpired('fake-child', timeout)
+            if timeout == 60:
+                raise subprocess.TimeoutExpired('fake-child', timeout)
+            return -signal.SIGKILL
+        def kill(self):
+            calls.append(('kill',))
+    monkeypatch.setattr(heldout.subprocess, 'Popen', lambda *a, **k: Child())
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+    assert heldout.run_controller(['fake-child']).returncode == -signal.SIGKILL
+    assert calls == [('wait', .2), ('signal', signal.SIGTERM), ('wait', 60), ('kill',), ('wait', None)]
+    assert all(signal.getsignal(sig) == handler for sig, handler in previous.items())

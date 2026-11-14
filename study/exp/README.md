@@ -141,8 +141,12 @@ mean the treatment improved a task. `manifest.json`, `run.log`, per-block logs,
 `usage.json`, and `arm<N>/scorecard.{json,md}` carry the evidence. Pair mode puts
 each variant's scorecards below its variant label. Only single-arm runs also write
 `scorecard.{json,md}` at the variant root for compatibility. The manifest lists
-every scorecard path and its arm. Arm 2 receipts also bind the verified build
-commit before grading. Pair mode writes `arm<N>/paired.md` and a combined
+every scorecard path and its arm. Arm 2 records the verified build context as
+`build_commit_asserted_by_controller`; this never supplies or replaces the run's
+own `eidos_commit_sha`. A run without its own build evidence cannot receive a
+build-bound scorecard. The manifest lists such refusals in `score_errors`, the
+exit is nonzero, and other arms are still scored. Runner stubs report their own
+configured build receipt, including arm 2. Pair mode writes `arm<N>/paired.md` and a combined
 `paired.md` using compare's descriptive statistics, with no keep/reject decision.
 The current `compare(aa=True)` requires identical treatments/builds, so the small
 runner adapter calls its `paired_stats` helper directly for different variants.
@@ -151,18 +155,24 @@ runner adapter calls its `paired_stats` helper directly for different variants.
 stamp every scorecard row and are recorded in the manifest. For evaluation
 rotations use `--pool E1 --pool-role evaluation_rotation`: the scorecard header
 retains the actual manifest id E1, while row selectors see evaluation_rotation.
+Tiers are T0–T3; pool roles are `legacy-development`, D, E1, E2, E3, H,
+or `evaluation_rotation`; modes are `live`, `autopilot`, `stub`, `fixture`, or
+`smoke`. Invalid values and nonpositive counts are rejected by argument parsing.
 Omitted tags preserve the builder's existing behavior. Use a separate runner
 invocation for each declared tier/look, with its exact cards and replicate count.
 
 Accounting writes `eidos-exp-usage/1` JSON with `runs`, `usd`,
-`quota_weekly_percent`, `time_seconds`, and `per_variant`. Runs count executed
+`quota_weekly_percent`, `time_seconds`, `per_variant`, `status`, and `complete`. Runs count executed
 attempts across all variants and arms, including archived incident retries;
 model-free attempts count too and cost zero. Wall time sums attempt `wall_s`,
 rather than elapsed controller time. Costs use billing receipts or known profile
 token prices; any unknown cost makes that variant and the total USD null. Missing
 wall receipts retain null time. MiniMax quota is the before/after decrease in
-weekly remaining fraction times 100 (percentage points), or null without both
-readings. Per-variant keys are the manifest's variant labels. Held-out usage
+weekly remaining fraction times 100 (percentage points). It is null without a
+strictly newer, fresh after reading, or across a weekly reset. An unchanged or
+stale observation never reports measured zero consumption. `status` describes
+the controller outcome; `complete` is false after interruption, dispatch refusal,
+incidents, or scoring failure. These fields do not relax compare's coverage checks. Per-variant keys are the manifest's variant labels. Held-out usage
 stays beside its private spend detail; the run manifest records its relative path.
 
 ## Registered run-to-decision recipe
@@ -311,16 +321,26 @@ Ledger paths are relative to the budget file unless absolute. Provider family
 spend combines all Anthropic/OpenAI profiles. Spend plus worst-case per-run USD
 (including every arm, variant, replicate and permitted incident retry) must remain
 below the stop cap. Caps cannot exceed USD 20 or an 80% stop fraction. Unknown USD
-charges fail closed. Before each live dispatch, a ledger lock protects a worst-case reservation and
-a fresh budget check. Final accounting settles reservations against measured
+charges fail closed for their provider family and do not block another family.
+Before each live dispatch, a ledger lock protects a worst-case reservation and
+rechecks USD caps and MiniMax remaining floors. Final accounting settles reservations against measured
 attempts. Missing receipts retain uncertain exposure. SIGTERM/SIGINT cancel
-children, stop labs and settle the ledger.
+children, stop labs and settle the ledger. Further signals are ignored throughout cleanup.
 
-MiniMax requires `--quota-file` with `utc`, `weekly_remaining_fraction` and
-`interval_remaining_fraction`, each fraction between zero and one. Both the reading
-and file must be younger than ten minutes. Remaining quota must exceed the floors,
-and consumed weekly share must stay below 50%. `--payg-approved 'who, when, scope'`
-bypasses quota admission and is copied verbatim into the scorecard header. No
+MiniMax accepts either `{utc, weekly_remaining_fraction, interval_remaining_fraction}`
+or the programme quota format `{observed_utc, model_windows: [{model_name: "general",
+current_weekly_remaining_percent, current_interval_remaining_percent, ...}]}`.
+`--quota-file` may name a file or a directory; a directory selects the newest
+`quota-*.json` observation by its UTC timestamp, recording its source in the
+manifest and accounting snapshots. Admission requires an observation and file
+younger than ten minutes, with consumed weekly share below 50%. This freshness
+check runs once per plan. Each live dispatch rereads the newest available quota
+and requires at least 15% weekly and 20% interval remaining (or stricter configured
+floors). A stale dispatch reading warns in `run.log` and still supplies the floor
+check. A floor or cap refusal stops new dispatches, preserves completed grades
+and scorecards marked incomplete, records `dispatch_stop_reason`, and exits
+nonzero. `--payg-approved 'who, when, scope'` bypasses quota checks and is copied
+verbatim into the scorecard header. No
 provider availability or quota is queried automatically. Each live run, including
 archived incidents, appends tokens, USD (or null), run id and quota snapshots to
 the ledger. USD can be estimated from profile prices when token counts are known.
@@ -341,7 +361,14 @@ spend and dispatch reservations remain private; the shared ledger holds one
 aggregate reservation and then one aggregate total row for the consultation.
 An atomic counter permits three consultations; a failed dispatch consumes one.
 Variants and non-private preflight are checked before reservation, and a child
-preflight refusal records a refund.
+preflight refusal records a refund. The controller persists `started` before
+dispatch, so a hard kill after dispatch consumes the consultation and records
+`interrupted`. SIGINT/SIGTERM to the wrapper forwards SIGTERM to the controller,
+allowing up to 60 seconds for cleanup before escalation. A complete mixed pair
+settles its model-free variant at known zero cost. Private lab initialisation
+uses the same Temporal source selection as the public lab. Private and shared
+service homes for the same frozen build still use the build's ports and must
+not run concurrently.
 Threshold and rationale are pinned before running. Pass requires mean paired
 card VRG delta at least the threshold and one-sided sign-flip p at most 0.10.
 Only the coarse receipt is printed and written beside the private root in
@@ -361,5 +388,5 @@ cards are refused by `--cards`. D03 requires an explicit `--references` file:
 the committed legacy recipe scored .1 on every seed by predicting one class on
 all shifted test rows, so its reference is marked unestablished. The recipe is
 unchanged pending an owner decision. For non-D pools, configure
-`EIDOS_IMP_PRIVATE_ROOT`: grader scratch stays there, with only grade summaries
+`EIDOS_IMP_PRIVATE_ROOT`: grader scratch stays there, with private grading paths hashed in public grade summaries
 copied into the public grading tree.
