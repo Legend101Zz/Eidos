@@ -1,0 +1,96 @@
+{
+  "card_ids": [
+    "R2432",
+    "R3093",
+    "R3174",
+    "R4120",
+    "R5145",
+    "R2522",
+    "R7598",
+    "R4095"
+  ],
+  "cards": [
+    {
+      "bar_rule": "absolute accuracy gain >= 0.02",
+      "card_id": "R2432",
+      "metric": "accuracy",
+      "min_reference_gain": 0.02,
+      "n_features": 5,
+      "n_train": 3009,
+      "null_card": false,
+      "task_type": "classification"
+    },
+    {
+      "bar_rule": "absolute accuracy gain >= 0.02",
+      "card_id": "R3093",
+      "metric": "accuracy",
+      "min_reference_gain": 0.02,
+      "n_features": 36,
+      "n_train": 1798,
+      "null_card": false,
+      "task_type": "classification"
+    },
+    {
+      "bar_rule": "absolute accuracy gain >= 0.02",
+      "card_id": "R3174",
+      "metric": "accuracy",
+      "min_reference_gain": 0.02,
+      "n_features": 85,
+      "n_train": 4000,
+      "null_card": true,
+      "task_type": "classification"
+    },
+    {
+      "bar_rule": "absolute RMSE reduction >= 0.05 * seed-11 baseline test RMSE",
+      "card_id": "R4120",
+      "metric": "rmse",
+      "min_reference_gain": 0.03317360050637507,
+      "n_features": 9,
+      "n_train": 4000,
+      "null_card": false,
+      "task_type": "regression"
+    },
+    {
+      "bar_rule": "absolute RMSE reduction >= 0.05 * seed-11 baseline test RMSE",
+      "card_id": "R5145",
+      "metric": "rmse",
+      "min_reference_gain": 0.028538178794479854,
+      "n_features": 4,
+      "n_train": 2164,
+      "null_card": false,
+      "task_type": "regression"
+    },
+    {
+      "bar_rule": "absolute RMSE reduction >= 0.05 * seed-11 baseline test RMSE",
+      "card_id": "R2522",
+      "metric": "rmse",
+      "min_reference_gain": 0.039680888472186836,
+      "n_features": 8,
+      "n_train": 4000,
+      "null_card": false,
+      "task_type": "regression"
+    },
+    {
+      "bar_rule": "absolute RMSE reduction >= 0.05 * seed-11 baseline test RMSE",
+      "card_id": "R7598",
+      "metric": "rmse",
+      "min_reference_gain": 0.017491275210248076,
+      "n_features": 9,
+      "n_train": 4000,
+      "null_card": false,
+      "task_type": "regression"
+    },
+    {
+      "bar_rule": "absolute accuracy gain >= 0.02",
+      "card_id": "R4095",
+      "metric": "accuracy",
+      "min_reference_gain": 0.02,
+      "n_features": 27,
+      "n_train": 2086,
+      "null_card": false,
+      "task_type": "classification"
+    }
+  ],
+  "commitment": "401dd86bbbd91068c3ddaaa23ccc74b3226ad190a33ebc846eab2e5ffd68f41f",
+  "pool_id": "D"
+}

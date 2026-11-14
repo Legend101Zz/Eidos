@@ -313,9 +313,11 @@ def test_reserve_stopping_and_shortfall_public_seed_independence(tmp_path):
     from study.exp.cards.pools import assign
     cards = [dict(c, card_id=f"R{i+1:03d}") for i, c in enumerate(read_json(path)["cards"][:7])]
     sizes = dict(D=2, E1=2, E2=2, E3=2, H=2)
+    # Independent private seeds must be able to change the public assignment. Two draws coincide by chance
+    # (same H draw, about 1 in 21 here; study-evals run 43610421736), so require variation across eight seeds.
     first = assign(cards, sizes, 71, tmp_path / "private-a/seed", allow_shortfall=True)
-    second = assign(cards, sizes, 71, tmp_path / "private-b/seed", allow_shortfall=True)
-    assert first != second
+    draws = [first] + [assign(cards, sizes, 71, tmp_path / f"private-{i}/seed", allow_shortfall=True) for i in range(7)]
+    assert len({json.dumps(d, sort_keys=True) for d in draws}) > 1
     assignments = read_json(tmp_path / "private-a/assignments.json")
     assert {p: len(v) for p, v in assignments["pools"].items()} == dict(D=2, E1=2, H=2, E2=1, E3=0)
 
