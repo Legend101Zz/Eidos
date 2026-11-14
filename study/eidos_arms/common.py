@@ -196,6 +196,8 @@ def usage(events, transcript=None):
         tokens['output'] += int(u.get('output_tokens') or 0)
         models.update(u.get('served_models') or [])
         models.update(r['model'] for r in u.get('per_request', []) if r.get('model'))
+        if u.get('fixture') is True and u.get('provider') == 'fixture' and str(u.get('model', '')).startswith('fixture:'):
+            models.add(u['model'])  # the scripted runtime's served id; the launcher accepts it only for fixture treatments
         if u.get('usd') is not None:
             usd.append(u['usd'])
     tokens['total'] = tokens['input'] + tokens['output']
