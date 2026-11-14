@@ -192,3 +192,121 @@ def test_real_provider_clients_disable_transport_retries():
     assert m.client.max_retries == 0
     o = build_model({"model": "openai-compatible:local-model", "base_url": "http://127.0.0.1:9/v1"})
     assert o.client.max_retries == 0 and str(o.client.base_url).startswith("http://127.0.0.1:9/v1")
+
+
+@pytest.mark.parametrize("mode", ["tool", "repair", "json"])
+def test_anthropic_refusal_is_bounded_without_reask(monkeypatch, mode):
+    from pathlib import Path
+
+    import httpx2 as httpx
+    from anthropic import AsyncAnthropic
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    fixture = json.loads((Path(__file__).parents[1] / 'fixtures/providers/anthropic-refusal.json').read_text())
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        return httpx.Response(200, json=fixture)
+
+    client = AsyncAnthropic(api_key='fixture-key', max_retries=0, base_url='http://127.0.0.1:9',
+                            http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)))
+    model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(anthropic_client=client))
+    runtime = PydanticAIRuntime({'model': 'anthropic:claude-haiku-5-5', '_model_object': model,
+                                'output_mode': mode, 'price_per_mtok': {'input': .1, 'output': .5}})
+    result = runtime.decide(req())
+    assert len(calls) == 1
+    assert result.proposal == {} and result.runtime_outcome == 'provider-refused'
+    from eidos.domain.turns import LOCAL_DECISION_BOUNDS
+
+    assert result.runtime_outcome not in LOCAL_DECISION_BOUNDS  # no slot/turn retries of refused output
+    assert result.usage['provider_refusal'] is True
+    body = json.loads(calls[0].content)
+    assert not {'thinking', 'temperature', 'top_p', 'top_k'} & body.keys()
+    assert result.usage['input_tokens'] == 100 and result.usage['output_tokens'] == 12
+    assert result.usage['usd'] == pytest.approx(.000016)
+    assert result.raw_response[-1]['provider_details']['finish_reason'] == 'refusal'
+
+
+def test_anthropic_base_url_and_opt_in_auto_choice(monkeypatch):
+    import asyncio
+
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.tools import ToolDefinition
+
+    from eidos.investigator.pydantic_ai_runtime import build_model
+
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'fixture-key')
+    model = build_model({'model': 'anthropic:claude-3-5-haiku-latest', 'base_url': 'http://127.0.0.1:9',
+                         'tool_choice': 'auto'})
+    try:
+        assert str(model.client.base_url) == 'http://127.0.0.1:9'
+        assert model.client.max_retries == 0
+        params = ModelRequestParameters(output_tools=[ToolDefinition(name='decision')], allow_text_output=False)
+        _, choice = model._prepare_tools_and_tool_choice({}, params)
+        assert choice['type'] == 'auto'
+        default = build_model({'model': 'anthropic:claude-3-5-haiku-latest'})
+        try:
+            _, choice = default._prepare_tools_and_tool_choice({}, params)
+            assert choice['type'] == 'any'
+        finally:
+            asyncio.run(default.client.close())
+    finally:
+        asyncio.run(model.client.close())
+
+
+def test_anthropic_auto_setting_changes_outgoing_tool_choice(monkeypatch):
+    import asyncio
+
+    import httpx2 as httpx
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.tools import ToolDefinition
+
+    from eidos.investigator.pydantic_ai_runtime import build_model
+
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'fixture-key')
+    choices = []
+    async def call(setting):
+        cfg = {'model': 'anthropic:claude-3-5-haiku-latest'}
+        if setting:
+            cfg['tool_choice'] = setting
+        model = build_model(cfg)
+        def respond(request):
+            choices.append(json.loads(request.content)['tool_choice'])
+            return httpx.Response(200, json={
+                'id': 'msg_fixture', 'type': 'message', 'role': 'assistant',
+                'model': 'claude-3-5-haiku-latest', 'content': [{'type': 'text', 'text': 'fixture'}],
+                'stop_reason': 'end_turn', 'usage': {'input_tokens': 1, 'output_tokens': 1}})
+        await model.client._client.aclose()
+        model.client._client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+        try:
+            await model.request([ModelRequest(parts=[UserPromptPart('hi')])], {'max_tokens': 16},
+                ModelRequestParameters(output_mode='tool', output_tools=[ToolDefinition(name='decision')], allow_text_output=False))
+        finally:
+            await model.client.close()
+    asyncio.run(call(None))
+    asyncio.run(call('auto'))
+    assert choices == [{'type': 'any'}, {'type': 'auto'}]
+
+
+def test_anthropic_refusal_after_read_preserves_all_usage():
+    from pydantic_ai.usage import RequestUsage
+
+    calls = []
+
+    def respond(messages, info):
+        calls.append(messages)
+        if len(calls) == 1:
+            return ModelResponse(parts=[ToolCallPart('search_components', {'text': 'fixture'})],
+                                 model_name='claude-haiku-5-5', usage=RequestUsage(input_tokens=10, output_tokens=5))
+        return ModelResponse(parts=[TextPart('Refused')], provider_details={'finish_reason': 'refusal'},
+                             model_name='claude-haiku-5-5', usage=RequestUsage(input_tokens=20, output_tokens=3))
+
+    runtime = PydanticAIRuntime({'model': 'anthropic:claude-haiku-5-5', '_model_object': FunctionModel(respond)})
+    result = runtime.decide(req({'search_components': lambda text='', capability=None: {'components': []}}))
+    assert result.runtime_outcome == 'provider-refused' and result.proposal == {}
+    assert len(calls) == 2 and result.usage['calls'] == 2
+    assert result.usage['input_tokens'] == 30 and result.usage['output_tokens'] == 8
+    assert len(result.raw_response) == 2

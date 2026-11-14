@@ -83,3 +83,14 @@ are refused. `floor.v2-slice` recommends `floor.selection-margin`: the v2 prompt
 advertise a one-SE margin, and `check` warns if a treatment selects the slice
 without that flag. The recommendation is not a dependency; omission still means
 strict improvement with no margin.
+
+Provider selection is independent: `EIDOS_STUDY_PROVIDER` defaults to
+`minimax-m3.1-flash`. `anthropic-haiku-5-5` and `anthropic-sonnet-5-5` select
+Messages through the same audited deadline relay. Profiles patch the investigator
+before treatment flags/overrides; `resolve(provider="...")` takes precedence over
+the environment. `python -m study.exp.providers check` validates the inventory.
+`openai-default` deliberately refuses execution until the orchestrator replaces
+its model placeholder and fills prices/limit. Claude CLI arms require `arm2`
+settings and therefore refuse the OpenAI profile. Arm, run and prompt receipts
+bind the provider id, wire and profile file digest. The shared lab restarts on a
+provider change; fixture treatments need neither credentials nor a bridge.

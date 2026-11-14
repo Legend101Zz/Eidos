@@ -18,13 +18,14 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from study.common import (DEVELOPMENT, ENVELOPE, MODEL, ROOT, STUDY, read_json, refuse_live_prompt_overrides,
+from study.common import (DEVELOPMENT, ENVELOPE, ROOT, STUDY, model_name, read_json, refuse_live_prompt_overrides,
                           research_python, write_json)
 from study.eidos_arms import lab
 from study.evals.policy import POLICY
 from study.evals.provenance import EVAL_ROOT, controller_record, digest, disk_guard, verify_build
 from study.evals.records import REQUIRED_INVARIANTS, inspect_run
 from study.evals.regenerate_references import CARDS
+from study.exp.providers import load as load_provider
 from study.grade_block import grade_block
 from study.launcher import plan, run_block
 
@@ -207,7 +208,8 @@ def scorecard(
         arms=list(arms),
         seed_index=seed_index,
         envelope=ENVELOPE,
-        model=MODEL,
+        model=model_name(),
+        provider=load_provider().record(),
         concurrency=2,
         provenance=dict(
             **controller,

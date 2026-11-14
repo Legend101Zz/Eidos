@@ -30,7 +30,10 @@ def run(run_dir, meta):
 
     from .arm4 import validate
     agent_env, sandbox_command, stream_module = lane_a()
-    lab.start()
+    from study.exp.treatment import for_run
+    provider = for_run(meta).provider
+    cli_settings = provider.cli_settings()
+    lab.start(profile=provider)
     c = lab.client()
     principal = None
     try:
@@ -67,8 +70,8 @@ def run(run_dir, meta):
         env['EIDOS_API_URL'] = context['api_url']
         env['ANTHROPIC_API_KEY'] = subprocess.check_output(
             ['/usr/bin/security', 'find-generic-password', '-a', os.environ['USER'],
-             '-s', 'minimax_api_key', '-w'], text=True, stderr=subprocess.DEVNULL).strip()
-        model = meta.get('model', 'MiniMax-M3.1-Flash').split(':')[-1]
+             '-s', provider.keychain_item, '-w'], text=True, stderr=subprocess.DEVNULL).strip()
+        model = cli_settings['model']
         initial_prompt = prompt(3, run_dir)
         command = ['claude', '--bare', '-p', initial_prompt, '--model', model,
                    '--permission-mode', 'bypassPermissions', '--output-format', 'stream-json', '--verbose',

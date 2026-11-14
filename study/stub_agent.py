@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from study.common import MODEL, dev_command, read_json, render_prompt, research_python, write_json
+from study.common import dev_command, model_name, read_json, render_prompt, research_python, write_json
 from study.run_arm import utc_now
 
 
@@ -108,6 +108,7 @@ def stub(run_dir):
     from study.exp.treatment import for_run
 
     record["treatment"] = for_run(meta).record()
+    record["provider"] = for_run(meta).provider.record()
     record.update(
         status="ok",
         incident_reason=None,
@@ -116,7 +117,7 @@ def stub(run_dir):
         wall_s=time.monotonic() - clock,
         tokens=dict(input=0, cache_read=0, cache_write=0, output=0, total=0),
         billed_usd=None,
-        model_ids_seen=[MODEL],
+        model_ids_seen=[model_name()],
         agent_claim=answer["claim"],
         transcript=str(root / "transcript.jsonl"),
         stub=True,

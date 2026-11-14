@@ -13,7 +13,7 @@ from study.private_card_registry import ALL_PRIVATE_CARDS, card_bars
 ROOT = Path(__file__).resolve().parents[1]
 STUDY = ROOT / "study"
 DEVELOPMENT = ROOT / "research/public/development"
-MODEL = "MiniMax-M3.1-Flash"
+MODEL = "MiniMax-M3.1-Flash"  # Historical fixture API; study execution uses model_name().
 ENVELOPE = {"wall_s": 1800, "tokens": 8_000_000, "threads": 1}
 FAMILIES = {"D01": "iris", "D02": "digits", "D12": "duplicate-input-null", "D03":"digits_shift", "D04":"conditioning", "D05":"forecast", "D06":"order",
             "N01":"breast_cancer", "N02":"diabetes", "N03":"friedman1", "N04":"classification", **{card: card for card in ALL_PRIVATE_CARDS}}
@@ -40,8 +40,16 @@ def research_python():
     return path
 
 
+def model_name():
+    from study.exp.providers import load
+    return load().model
+
+
 def agent_env(run_dir):
     """A clean environment: no inherited lab secrets, repo imports or user configuration."""
+    from study.exp.providers import load
+
+    profile = load()
     root = Path(run_dir).resolve()
     for name in (".claude-cfg", ".home", ".tmp", ".cache"):
         (root / name).mkdir(exist_ok=True)
@@ -72,7 +80,8 @@ def agent_env(run_dir):
             "VECLIB_MAXIMUM_THREADS": "1",
             "PYTHONNOUSERSITE": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
-            "ANTHROPIC_BASE_URL": "https://api.minimax.io/anthropic",
+            "ANTHROPIC_BASE_URL": profile.data.get("arm2", {}).get(
+                "anthropic_base_url", "https://api.minimax.io/anthropic"),
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
             "DISABLE_AUTOUPDATER": "1",
         }
@@ -137,7 +146,7 @@ def record_prompt(run_dir, meta, *, delivered=None, surface=None):
     expected = render_prompt(arm, meta["card"])
     identity = {key: meta[key] for key in ("block_id", "card", "run_index", "arm", "charter_amendment_commit",
                                           "charter_amendment_sha256")}
-    receipt = dict(**identity, treatment=treatment.record(), common_template_sha256=hashlib.sha256((STUDY / "prompts/task.md").read_bytes()).hexdigest(),
+    receipt = dict(**identity, treatment=treatment.record(), provider=treatment.provider.record(), common_template_sha256=hashlib.sha256((STUDY / "prompts/task.md").read_bytes()).hexdigest(),
                    expected_render_sha256=hashlib.sha256(expected.encode()).hexdigest())
     directory = run_dir.parent / "prompt-receipts"
     if run_dir.name != f"arm{arm}" or directory.is_symlink():

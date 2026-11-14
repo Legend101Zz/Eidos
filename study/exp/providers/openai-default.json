@@ -1,0 +1,21 @@
+{
+  "schema": "eidos-provider/1",
+  "id": "openai-default",
+  "summary": "OpenAI profile awaiting orchestrator configuration",
+  "wire": "openai-chat",
+  "keychain_item": "openai_api_key",
+  "credential_env": "OPENAI_API_KEY",
+  "upstream": "https://api.openai.com/v1",
+  "investigator": {
+    "model": "openai:REPLACE_ME",
+    "settings": {
+      "output_mode": "json"
+    }
+  },
+  "served_models": [
+    "REPLACE_ME*"
+  ],
+  "price_per_mtok": null,
+  "model_usd_per_run": null,
+  "todo": "Orchestrator must fill a callable model id, served pattern, prices and USD limit."
+}

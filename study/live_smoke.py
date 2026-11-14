@@ -8,12 +8,14 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from study.common import DEVELOPMENT, ENVELOPE, MODEL, STUDY, dev_command, write_json
+from study.common import DEVELOPMENT, ENVELOPE, STUDY, dev_command, model_name, write_json
 from study.run_arm import run_claude
 
 
 def smoke(root):
     import numpy as np
+
+    from study.exp.providers import load as load_provider
 
     root = Path(root).resolve()
     if root.exists() and any(root.iterdir()):
@@ -58,7 +60,8 @@ def smoke(root):
             card="TOY-REGRESSION",
             run_index=1,
             block_id="toy-smoke",
-            model=MODEL,
+            model=model_name(),
+            provider=load_provider().record(),
             envelope={**ENVELOPE, "wall_s": 300},
             charter_sha=hashlib.sha256((STUDY / "prompts/task.md").read_bytes()).hexdigest(),
         ),

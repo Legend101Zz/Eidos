@@ -338,9 +338,13 @@ def in_flight_estimate(abandoned: dict[str, Any], price: dict[str, float] | None
     return est
 
 
+class _ProviderRefusal(ModelCallFailed):
+    """Internal non-retryable signal; decide records the bounded unusable-output outcome."""
+
+
 def _guarded(model: Any, envelope: TokenEnvelope, abort: DecisionAbort | None = None,
              request_timeout: float = 120.0, *, runtime: PydanticAIRuntime | None = None,
-             terminal: bool = False) -> Any:
+             terminal: bool = False, response_hook: Any = None) -> Any:
     """Admit and account every request, including the one possible finalization fallback."""
     from pydantic_ai.models.wrapper import WrapperModel
 
@@ -392,7 +396,10 @@ def _guarded(model: Any, envelope: TokenEnvelope, abort: DecisionAbort | None = 
             async def send(active_settings: Any, timeout: float, params: Any) -> Any:
                 call = super(EnvelopeModel, self).request(messages, active_settings, params)
                 pending = _abortable(call, abort, envelope.admitted[-1]) if abort is not None else call
-                return await asyncio.wait_for(pending, timeout=timeout)
+                response = await asyncio.wait_for(pending, timeout=timeout)
+                if response_hook is not None:
+                    response_hook(response)
+                return response
 
             sent_at = time.monotonic()
             try:
@@ -565,10 +572,14 @@ def build_model(cfg: dict[str, Any]):
     if provider == "anthropic":
         from anthropic import AsyncAnthropic
         from pydantic_ai.models.anthropic import AnthropicModel
+        from pydantic_ai.profiles import ModelProfile
         from pydantic_ai.providers.anthropic import AnthropicProvider
         anthropic_client = AsyncAnthropic(api_key=os.environ.get(cfg.get("api_key_env", "ANTHROPIC_API_KEY")),
-                                          max_retries=0, timeout=timeout)
-        return AnthropicModel(name, provider=AnthropicProvider(anthropic_client=anthropic_client))
+                                          max_retries=0, timeout=timeout,
+                                          **({"base_url": cfg["base_url"]} if cfg.get("base_url") else {}))
+        return AnthropicModel(name, provider=AnthropicProvider(anthropic_client=anthropic_client),
+                              profile=ModelProfile(supports_forced_tool_choice=False)
+                              if cfg.get("tool_choice") == "auto" else None)
     if provider in ("openai", "openai-compatible"):
         from openai import AsyncOpenAI
         from pydantic_ai.models.openai import OpenAIChatModel
@@ -591,6 +602,7 @@ class PydanticAIRuntime:
         # The decision's structured-output report so far (repairs, re-asks, reads, runaways); kept on an aborted
         # decision too (F5, A3), so a runaway that arrived before a stop or deadline is never discarded.
         self._report: dict[str, Any] | None = None
+        self._responses: list[Any] = []
         self._native_error_response: Any = None
         self._split: ConcludeSplit | None = None
         self._decision_started = 0.0
@@ -599,7 +611,8 @@ class PydanticAIRuntime:
     def _model(self, *, finalization: bool = False, terminal: bool = False) -> Any:
         model = build_model(self.config)
         return _guarded(model, self.envelope, self.abort, float(self.config.get("request_timeout", 120)),
-                        runtime=self if finalization else None, terminal=terminal) \
+                        runtime=self if finalization else None, terminal=terminal,
+                        response_hook=self._observe_response) \
             if self.envelope is not None else model
 
     def _reads_allowed(self) -> bool:
@@ -702,6 +715,14 @@ class PydanticAIRuntime:
     def _terminal_requests(self, remaining: int) -> int:
         return min(remaining, 1 + int(int(self.config.get("output_retries", 1)) > 0))
 
+    def _observe_response(self, response: Any) -> None:
+        self._responses.append(response)
+        if (self._provider() == "anthropic"
+                and (response.provider_details or {}).get("finish_reason") == "refusal"):
+            assert self.envelope is not None
+            self.envelope.record(response)
+            raise _ProviderRefusal("Anthropic refused the response", retryable=False)
+
     def decide(self, req: DecisionRequest) -> DecisionResult:
         v3 = ((req.view or {}).get("investigation", {}).get("body", {}).get("investigator", {}).get("exploration") or {}).get("policy") == "exploration-policy/3"
         self.prompt_revision = "investigator-prompt/6" if v3 else PROMPT_REVISION
@@ -721,12 +742,22 @@ class PydanticAIRuntime:
             self.abort.deadline = min(self.abort.deadline, bound) if self.abort.deadline is not None else bound
         self._report = None
         self._native_error_response = None
+        self._responses = []
         self._extra_terminal_used = False
         self._decision_started = started
         self._split = ConcludeSplit(max(0.0, self.abort.deadline - self._decision_started)) \
             if req.conclude_only and self.abort is not None and self.abort.deadline is not None else None
         try:
             result = self._decide_text(req, mode) if mode != "tool" else self._decide_tool(req)
+        except _ProviderRefusal:
+            self._fallback_outcome("provider-refused")
+            usage = self._usage(self._responses)
+            if self._report is not None:
+                usage["structured_output"] = dict(self._report)
+            usage["limit_reached"] = "Anthropic stop_reason=refusal; no re-ask"
+            usage["provider_refusal"] = True
+            return self._runtime_bound(self._responses, usage, int(self.config.get("max_requests_per_decision", 8)),
+                                       "provider-refused")
         except DecisionAborted as exc:
             self._fallback_outcome("deadline-exhausted" if exc.reason == "decision-deadline" else exc.reason)
             return self._aborted(exc)
