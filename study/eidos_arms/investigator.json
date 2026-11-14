@@ -12,5 +12,11 @@
     "request_timeout": 300,
     "max_requests_per_decision": 8,
     "max_tokens_per_decision": 262144
+  },
+  "context_policy": "context-policy/4",
+  "exploration": {
+    "policy": "exploration-policy/3",
+    "project_command_ref": "eidos.project.command@1.0.9",
+    "selection_margin_multiple": 1.0
   }
 }

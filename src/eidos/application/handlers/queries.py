@@ -466,6 +466,12 @@ def investigation_view(ctx: Ctx, p: dict) -> dict:
                      "error": (j["terminal"] or {}).get("error") if terminal_visible else None,
                      "outputs": [{"slot": o["slot"], "artifact_id": o["artifact_id"], "role": o["role"],
                                   "schema": o["schema"], "media_type": o["media_type"], "size": o["size"]} for o in outputs]})
+    if (inv_body.get("investigator", {}).get("exploration") or {}).get("policy") == "exploration-policy/3":
+        from eidos.application.handlers.promotion import stamps
+        provenance = stamps(ctx, inv.id)
+        for job in jobs:
+            if job["id"] in provenance:
+                job["macro"] = provenance[job["id"]]
     charter = None
     if inv_body.get("charter_ref"):
         ch = ctx.tx.get_record("charter", inv_body["charter_ref"]["id"], inv_body["charter_ref"]["revision"])

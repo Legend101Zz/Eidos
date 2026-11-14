@@ -21,6 +21,7 @@ FINALIZATION_READ_ROUNDS = 2
 
 # Stable effectful tool vocabulary. Installed components are catalog data, never new tools.
 EFFECT_TOOLS = {
+    "prepare_candidate": "prepare_candidate",  # expanded before acceptance, never executed directly
     "run_component": "run_component",
     "plan_trial": "plan_trial",
     "launch_trial": "launch_trial",
@@ -43,6 +44,7 @@ EFFECT_TOOLS = {
 # acceptance, so "schema-valid" also means "executable" (live provider finding: strict-mode JSON
 # schemas can silently drop free-form objects).
 REQUIRED_ARGS = {
+    "prepare_candidate": ("source", "seeds"),
     "run_component": ("component_ref",), "plan_trial": ("component_ref",), "launch_trial": ("trial_id",),
     "plan_branch": ("parent_checkpoint_id", "component_ref", "migration", "stream_policy"),
     "launch_branch": ("trial_id",), "author_component": ("files",), "author_source": ("files",),

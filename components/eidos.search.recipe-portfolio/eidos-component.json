@@ -1,0 +1,163 @@
+{
+  "id": "eidos.search.recipe-portfolio",
+  "release": "1.0.0",
+  "implements": "recipe-search/1",
+  "kind": "artifact-op",
+  "entry": "portfolio:run",
+  "summary": "Diverse train-only CV portfolio with a paired one-SE choice, OOF predictions and a digest-pinned export bundle; shifted data uses train-fit visible-validation scores. Exploratory only. Requires numpy and scikit-learn.",
+  "scientific_effects": [
+    "change-weights"
+  ],
+  "optional_inputs": {
+    "train": "task-array/1",
+    "validation": "task-array/1",
+    "task": "task-manifest/1",
+    "profile": "data-profile/1",
+    "groups": "task-array/1",
+    "predictions": "task-array/1"
+  },
+  "output": {
+    "portfolio_table": "recipe-portfolio-table/1",
+    "promotion_source": "source-bundle/1",
+    "oof": "recipe-oof/1"
+  },
+  "reads": [
+    "declared visible inputs"
+  ],
+  "writes": [
+    "output:portfolio_table",
+    "output:promotion_source",
+    "output:oof"
+  ],
+  "isolation": "private-copy",
+  "card": "method-card.md",
+  "controls": [
+    "fixtures/explicit-export.json",
+    "fixtures/refuses-mode.json",
+    "fixtures/refuses-rescore-purpose.json"
+  ],
+  "receipt": [
+    "metrics",
+    "library_digest",
+    "basis",
+    "exploratory"
+  ],
+  "config_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "mode": {
+        "type": "string",
+        "enum": [
+          "portfolio",
+          "refine",
+          "rescore",
+          "export"
+        ]
+      },
+      "task_type": {
+        "type": "string",
+        "enum": [
+          "classification",
+          "regression"
+        ]
+      },
+      "include": {
+        "anyOf": [
+          {
+            "type": "string",
+            "enum": [
+              "auto"
+            ]
+          },
+          {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "enum": [
+                "linear",
+                "screen",
+                "lowrank",
+                "generative",
+                "neighbors",
+                "kernel",
+                "trees",
+                "neural"
+              ]
+            }
+          }
+        ]
+      },
+      "scheme": {
+        "type": "string",
+        "enum": [
+          "auto",
+          "cv-train",
+          "train-fit-validation-score"
+        ]
+      },
+      "budget": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "max_seconds": {
+            "type": "number",
+            "minimum": 0.001,
+            "maximum": 3600
+          }
+        }
+      },
+      "add": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 400,
+        "items": {
+          "type": "object"
+        }
+      },
+      "parents": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 400,
+        "items": {
+          "type": "object"
+        }
+      },
+      "spec": {
+        "type": "object"
+      },
+      "partition_seed": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "seed": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "cv_folds": {
+        "type": "integer",
+        "minimum": 2,
+        "maximum": 20
+      },
+      "cv_repeats": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 10
+      },
+      "per_recipe_timeout_seconds": {
+        "type": "number",
+        "minimum": 0.001,
+        "maximum": 3600
+      },
+      "purpose": {
+        "type": "string",
+        "enum": [
+          "open-search",
+          "hypothesis-test",
+          "reproduction"
+        ]
+      }
+    }
+  }
+}

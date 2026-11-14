@@ -1,0 +1,394 @@
+{
+  "schema": "practice-manifest/1",
+  "frozen_before": "pipeline C; r5 orchestrator epoch and diagnostic decisions; exposed comparator calibration",
+  "generators": [
+    {
+      "id": "gen-001",
+      "mechanism": "moons-rotated",
+      "role": "design",
+      "task_type": "classification",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 2026121300
+    },
+    {
+      "id": "gen-002",
+      "mechanism": "circles-quantiles",
+      "role": "holdout",
+      "task_type": "classification",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 3026131300,
+      "nuisance_template": "none",
+      "holdout_epoch": 2
+    },
+    {
+      "id": "gen-003",
+      "mechanism": "hastie-radial",
+      "role": "design",
+      "task_type": "classification",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 2026141300
+    },
+    {
+      "id": "gen-004",
+      "mechanism": "friedman-two-three",
+      "role": "design",
+      "task_type": "regression",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 2026151300
+    },
+    {
+      "id": "gen-005",
+      "mechanism": "lowrank-sparse",
+      "role": "holdout",
+      "task_type": "regression",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 3026161300,
+      "nuisance_template": "intrinsic-lowrank-sparse",
+      "holdout_epoch": 2
+    },
+    {
+      "id": "gen-006",
+      "mechanism": "student-curved",
+      "role": "design",
+      "task_type": "classification",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 2026171300
+    },
+    {
+      "id": "gen-007",
+      "mechanism": "periodic-heteroskedastic",
+      "role": "holdout-class",
+      "task_type": "regression",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 3026181300,
+      "holdout_epoch": 2
+    },
+    {
+      "id": "gen-008",
+      "mechanism": "wine-nuisance",
+      "role": "holdout",
+      "task_type": "classification",
+      "sizes": {
+        "train": 106,
+        "validation": 36,
+        "test": 36
+      },
+      "instances": 4,
+      "seed_stream": 3026191300,
+      "nuisance_template": "independent-gaussian",
+      "holdout_epoch": 2
+    },
+    {
+      "id": "gen-009",
+      "mechanism": "digits-rotation",
+      "role": "design",
+      "task_type": "classification",
+      "sizes": {
+        "train": 1000,
+        "validation": 300,
+        "test": 497
+      },
+      "instances": 4,
+      "seed_stream": 2026201300
+    },
+    {
+      "id": "gen-010",
+      "mechanism": "imbalanced-grouped",
+      "role": "holdout-class",
+      "task_type": "classification",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 3026211300,
+      "holdout_epoch": 2
+    },
+    {
+      "id": "gen-011",
+      "mechanism": "large-hastie",
+      "role": "design",
+      "task_type": "classification",
+      "sizes": {
+        "train": 1500,
+        "validation": 500,
+        "test": 1000
+      },
+      "instances": 4,
+      "seed_stream": 2026221300
+    },
+    {
+      "id": "gen-012",
+      "mechanism": "noise-control",
+      "role": "control",
+      "task_type": "classification",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 2026231300
+    },
+    {
+      "id": "gen-013",
+      "mechanism": "weak-control",
+      "role": "control",
+      "task_type": "classification",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 2026241300
+    },
+    {
+      "id": "gen-014",
+      "mechanism": "mixture-reenactment",
+      "role": "calibration-only",
+      "task_type": "classification",
+      "sizes": {
+        "train": 1800,
+        "validation": 600,
+        "test": 600
+      },
+      "instances": 4,
+      "seed_stream": 2026251300
+    },
+    {
+      "id": "gen-015",
+      "mechanism": "offset-reenactment",
+      "role": "calibration-only",
+      "task_type": "classification",
+      "sizes": {
+        "train": 1000,
+        "validation": 300,
+        "test": 497
+      },
+      "instances": 4,
+      "seed_stream": 2026261300
+    },
+    {
+      "id": "gen-016",
+      "mechanism": "checkerboard",
+      "role": "holdout",
+      "task_type": "classification",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 3026271300,
+      "nuisance_template": "none",
+      "holdout_epoch": 2
+    },
+    {
+      "id": "gen-017",
+      "mechanism": "spiral-phase",
+      "role": "holdout",
+      "task_type": "classification",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 3026281300,
+      "nuisance_template": "correlated-gaussian",
+      "holdout_epoch": 2
+    },
+    {
+      "id": "gen-018",
+      "mechanism": "ordinal-threshold",
+      "role": "holdout",
+      "task_type": "classification",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 3026291300,
+      "nuisance_template": "heavy-tailed",
+      "holdout_epoch": 2
+    },
+    {
+      "id": "gen-019",
+      "mechanism": "sawtooth-additive",
+      "role": "holdout",
+      "task_type": "regression",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 3026301300,
+      "nuisance_template": "near-duplicates",
+      "holdout_epoch": 2
+    },
+    {
+      "id": "gen-020",
+      "mechanism": "rational-response",
+      "role": "holdout",
+      "task_type": "regression",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 3026311300,
+      "nuisance_template": "heteroskedastic",
+      "holdout_epoch": 2
+    },
+    {
+      "id": "gen-021",
+      "mechanism": "max-affine",
+      "role": "holdout",
+      "task_type": "regression",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 3026321300,
+      "nuisance_template": "categorical",
+      "holdout_epoch": 2
+    },
+    {
+      "id": "gen-022",
+      "mechanism": "multiplicative-response",
+      "role": "holdout",
+      "task_type": "regression",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 3026331300,
+      "nuisance_template": "periodic",
+      "holdout_epoch": 2
+    },
+    {
+      "id": "gen-023",
+      "mechanism": "absolute-additive",
+      "role": "holdout",
+      "task_type": "regression",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 3026341300,
+      "nuisance_template": "lowrank-uniform",
+      "holdout_epoch": 2
+    },
+    {
+      "id": "gen-024",
+      "mechanism": "interaction-threshold",
+      "role": "holdout",
+      "task_type": "regression",
+      "sizes": {
+        "train": 600,
+        "validation": 200,
+        "test": 400
+      },
+      "instances": 4,
+      "seed_stream": 3026351300,
+      "nuisance_template": "independent-uniform",
+      "holdout_epoch": 2
+    }
+  ],
+  "constants": {
+    "partition_seed": 81723,
+    "folds": 5,
+    "paired_band_multiple": 1.0,
+    "complexity_order": [
+      "linear",
+      "generative",
+      "neighbours",
+      "kernel",
+      "trees",
+      "neural"
+    ],
+    "support_threshold": 0.1,
+    "epsilon_se": 0.5,
+    "null_tolerance": 0.0,
+    "max_primary_verdicts": 8,
+    "max_burns_per_class": 2,
+    "wall_estimate_seconds": 420,
+    "wall_limit_seconds": 840,
+    "calibration": {
+      "N04": {
+        "target": 0.08,
+        "tolerance": 0.03,
+        "units": "raw accuracy gain A3 minus A1"
+      },
+      "N01": {
+        "target": 3,
+        "tolerance": 2,
+        "units": "test examples A3 minus A1"
+      }
+    },
+    "positive_effect_se": 0.9,
+    "primary_alpha": 0.05,
+    "minimum_holdout_generators": 12,
+    "pooled_harm_margin_se": 0.0,
+    "pooled_harm_one_sided_alpha": 0.05,
+    "harness_validation_burns_per_generator": 2,
+    "single_loss_4_se_hard_target": false
+  },
+  "primary_verdict": "harness acceptance only; no pipeline C or class improvement claim",
+  "burns": [],
+  "deferred": [
+    "time-ordered",
+    "missing values",
+    "many-class beyond digits",
+    "d >> n above 80",
+    "large-n cost/checkpoint pressure: 6000-row full comparator run exceeded 840 seconds"
+  ],
+  "revision": "r5",
+  "holdout_epoch": 2
+}

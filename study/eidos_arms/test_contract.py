@@ -120,6 +120,12 @@ class Selection(unittest.TestCase):
         self.records['note'][0]['body']['text'] = '{"job_id":"missing"}'
         self.assertEqual(select_job(self.client, 'p', self.shown, self.records)[0], 'baseline')
 
+    def test_v2_null_conclusion_exports_baseline_despite_a_prior_lock(self):
+        self.shown['body'] = dict(investigator=dict(exploration=dict(policy='exploration-policy/3')),
+                                  conclusion=dict(claim_state=dict(state='null-reported')))
+        self.records['note'] = [dict(id='lock', body=dict(kind='candidate_lock', text='{"job_id":"search"}'))]
+        self.assertEqual(select_job(self.client, 'p', self.shown, self.records)[0], 'baseline')
+
     def test_confirmation_uses_real_eidos_outcome_and_health(self):
         self.records['assessment'] = [{'id': 'assessment1', 'body': {'plan_id': 'plan1',
             'outcome': 'protocol-passed', 'conformance': 'conformant', 'health': 'intact'}}]

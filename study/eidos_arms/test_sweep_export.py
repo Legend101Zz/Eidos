@@ -153,3 +153,56 @@ def test_linked_answer_directory_is_refused_before_any_export(tmp_path):
     with pytest.raises(ValueError, match='unsafe answer export directory'):
         export_answer(SweepClient(), 'p', 'inv', tmp_path, {'card': 'N02'}, None, 'No export', '', [], {}, [])
     assert list(destination.iterdir()) == []
+
+
+@pytest.mark.parametrize('tamper', [None, 'pin', 'slot', 'scheme', 'input', 'task', 'task-mismatch'])
+def test_portfolio_table_has_explicit_pinned_export_policy(tmp_path, tamper):
+    from .arm4 import _SWEEP_BUNDLE_SHA
+    aid = AID.replace('_evidence_table', '_portfolio_table')
+    component = 'eidos.search.recipe-portfolio@1.0.0'
+    schema = 'recipe-portfolio-table/1'
+    pin = '4b02e49fd939d0856c16b2adee42ad51249eca19eb27cad4c3c523202dfdc3a0'
+    client = SweepClient()
+    table = dict(schema=schema, scheme='cv-train', exploratory=True, claim=None, recipes=[])
+    if tamper == 'scheme':
+        table['scheme'] = 'held-out'
+    client.payload = json.dumps(table).encode()
+    sha = hashlib.sha256(client.payload).hexdigest()
+    for row in (client.art, client.job['outputs'][0]):
+        row.update(schema=schema, digest=sha, size=len(client.payload))
+    client.art['id'] = aid
+    client.job['outputs'][0].update(artifact_id=aid, slot='portfolio_table')
+    client.job['lock'].update(config=dict(mode='portfolio'), outputs=dict(portfolio_table=schema))
+    client.job['lock']['component'].update(ref=component, bundle=dict(digest=pin))
+    client.release.update(id=component, body=dict(digest='release-sha', bundle_digest=pin))
+    if tamper == 'pin':
+        client.release['body']['bundle_digest'] = _SWEEP_BUNDLE_SHA
+    if tamper == 'slot':
+        client.job['outputs'][0]['slot'] = 'evidence_table'
+    if tamper == 'input':
+        client.job['lock']['inputs']['validation']['artifact_id'] = 'foreign'
+    if tamper in ('task', 'task-mismatch'):
+        client.job['lock']['inputs']['task'] = dict(artifact_id=INPUTS['task'] if tamper == 'task' else 'foreign', schema='task-manifest/1')
+    client.query = lambda name, params, **kw: {'get_job': client.job, 'get_artifact': client.art, 'describe_component': client.release}[name]
+    client.download = lambda project, reference, path: path.write_bytes(client.payload)
+    if tamper not in (None, 'task'):
+        with pytest.raises(ValueError):
+            export_sweep_evidence(client, 'p', 'inv', tmp_path, aid, INPUTS)
+    else:
+        entry, mapping = export_sweep_evidence(client, 'p', 'inv', tmp_path, aid, INPUTS)
+        assert mapping['component_ref'] == component
+        assert (tmp_path / entry['path']).read_bytes() == client.payload
+
+
+def test_candidate_provenance_uses_accepted_executed_call_stamp():
+    from .arm4 import candidate_provenance
+    stamp = dict(tool='prepare_candidate', proposed_by='dec', basis='explicit-export')
+    decision = dict(id='dec', accepted=True, body=dict(calls=[dict(tool='run_component', macro=stamp)]))
+    record = dict(body=dict(receipts=[dict(index=0, ok=True, result=dict(job_id='selected'))]))
+    class Client:
+        def query(self, name, params, **kwargs):
+            return dict(decisions=[decision]) if name == 'get_turn' else record
+    provenance = candidate_provenance(Client(), 'p', dict(turns=[dict(id='turn')]), 'selected')
+    assert provenance['macro'] == stamp and provenance['basis'] == 'explicit-export'
+    decision['revoked'] = True
+    assert candidate_provenance(Client(), 'p', dict(turns=[dict(id='turn')]), 'selected')['preparation'] == 'baseline-or-direct'

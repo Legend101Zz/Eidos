@@ -4,6 +4,24 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.4.0
 
+- Show prepared lock JSON on its own copyable line, separate from candidate evidence. Refuse candidate locks that identify no job with a correction hint instead of silently recording them.
+
+- Refuse malformed candidate preparations as correctable proposals, reconcile arm-4 lock instructions and restore claim/rule/purpose guidance. Policy-3 round accounting caches ledger evidence and keeps an unlocked margin-clearing preparation pending for its lock decision; legacy policies ignore margin fields. Context-policy/4 supports offline replay and bounded complete portfolio JSON.
+
+- [ADR 0047](docs/decisions/0047-auto-promotion-of-the-selected-recipe.md) adds opt-in candidate preparation as four checked jobs with persisted proposals and provenance; investigators retain the separate lock decision. SE margins and ledger-shaped round accounting make patience noise-aware. [ADR 0049](docs/decisions/0049-playbook-3-context-policy-4-and-prompt-6.md) selects playbook 3, context policy 4 and prompt 6, carrying readiness, paired baseline evidence, reproduction and prepared lock text. Authored source can include the pinned recipe library; study exports accept verified portfolio tables. Baseline diagnosis `next` now survives context truncation.
+
+- Calibrate portfolio selection on design generators, freeze the predeclared seeded one-SE ordering, protect large-n kernel coverage with a linear SVM scout, and bind pipeline C scoring and cached evidence to accepted epoch-2 ledger receipts (ADR 0046).
+
+- Retire practice holdout epoch 1 without resetting burns, bind fresh epoch 2 data and separate frozen-comparator validation budgets, preserve step-2 candidate capacity, and document single-generator detection, large-n coverage and fingerprint-lint limits (ADR 0043, r5).
+
+- Require burn-counted candidate receipts for practice holdout scoring and verdicts, bind indexed bundle/controller bytes, witness ledger heads, strengthen mixed and single-generator loss checks and transformed-recipe lint, and reduce large practice instances under the unchanged 840-second limit (ADR 0043, r4).
+
+- Harden the practice gate with mandatory ledger registration and durable verdict logging, authenticated append-only history at a fixed controller path, pooled loss-risk tests and mixed-harm Monte Carlo, diverse holdout nuisance structures, secret-derived row tokens, and statistical dev-recipe fingerprints (ADR 0043, r3).
+- [ADR 0045](docs/decisions/0045-typed-recipe-specs-and-operator-library.md) and [ADR 0046](docs/decisions/0046-portfolio-sweep-with-cv-one-se-selection.md) add the typed recipe library and `recipe-portfolio@1.0.0`: diverse train-only CV, paired one-SE selection, row-matched shifted validation, OOF evidence, bounded sequential workers and digest-pinned source exports with train/infer/check/compare commands. The standalone toolkit receives the same component. Pipeline C supplies rerunnable offline comparisons, fresh-seed export checks and measured acceptance; lab preparation and lock changes follow in step 3.
+
+- [ADR 0043](docs/decisions/0043-generated-practice-cards-and-leave-one-generator-out-guard.md) adds an offline 96-card practice harness with neutral bundles, controller-only labels and oracle sidecars, cached A0–A3 comparator replay, generator-level no-harm inference, claim audits, exposure tracking and measured noisy positive/negative guard controls. Review rework removes the dev-recipe replica from design, adds independent row tokens, actual pipeline poison audits, attainable references, cold recomputation evidence, powered generator inference and a fixed candidate-evaluation ledger. Pipeline C remains a later build step.
+- [ADR 0044](docs/decisions/0044-profile-first-discovery.md) releases `baseline-errors` 1.1.0: when no transfer shift is detected, unsupported hypotheses no longer steer the search and `next` directs broad model-family discovery. Supported-shift lists and invariance probes stay unchanged; pinned 1.0.0 remains byte-identical and installable.
+
 - Support selected-arm pilot blocks (arms 2 and 4) in study planning, grading and analysis while preserving historical four-arm outputs; no runtime change.
 
 - [ADR 0042](docs/decisions/0042-split-conclude-only-reserve.md) raises the conclude-only reserve to 15% (90–600 s), limits read admission by time, and protects every conclude-only request, including read-capable requests, with one shared decision-only timeout fallback and full uncertain-usage accounting. Timing reports cover admitted requests, refused fallbacks are explicit, and ledger report copies are bounded. The output cap and ordinary reproduction/export holdback stay unchanged.
