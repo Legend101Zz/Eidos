@@ -63,6 +63,18 @@ jobs:
         run: bash scripts/ci/temporal_server.sh
       - name: PostgreSQL binaries for isolated lab initialization
         run: HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install postgresql@16
+      - name: macOS evaluator contract with PostgreSQL
+        run: |
+          uv sync --frozen
+          export PATH="$(brew --prefix postgresql@16)/bin:$PATH"
+          pg_root=$(mktemp -d "$TMPDIR/evaluator-pg.XXXXXX")
+          trap 'pg_ctl -D "$pg_root/data" -m immediate -w stop; rm -rf "$pg_root"' EXIT
+          initdb -D "$pg_root/data" -U postgres --encoding=UTF8 --locale=C --auth=trust
+          pg_port=$("$EIDOS_RESEARCH_PYTHON" -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
+          pg_ctl -D "$pg_root/data" -l "$pg_root/server.log" -o "-h 127.0.0.1 -p $pg_port -k $pg_root" -w start
+          export EIDOS_TEST_PG_ADMIN="postgresql+psycopg://postgres@127.0.0.1:$pg_port/postgres"
+          export EIDOS_NUMPY_PYTHON="$EIDOS_RESEARCH_PYTHON"
+          nice -n 10 uv run pytest tests/integration/test_step3_fix_round.py::test_macro_job_select_export_and_real_evaluator_contract -q -rs
       - name: Frozen build helper and retained two-card stub scorecard
         run: |
           eval_root='/Volumes/Mrigesh SSD/eidos-v1'

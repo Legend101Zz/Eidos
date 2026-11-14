@@ -1,12 +1,11 @@
 """Profile controls use only fabricated seals and explicitly synthetic metadata."""
 
 import io
-import difflib
+import hashlib
 import json
 import os
 import subprocess
 import sys
-import types
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -21,16 +20,13 @@ from study.private_seal import MODEL_FILES, PrivateSeal, configured_seal
 from study.reconcile_seal import verify_profile
 from study.tests.test_private_seal import make_seal
 
-BASE = "d83abaca48c18617e14acd1d540a10cc7532993b"
-
-
-def baseline_module(path, name):
-    source = subprocess.check_output(["git", "show", f"{BASE}:{path}"], cwd=common.ROOT)
-    module = types.ModuleType(name)
-    module.__file__ = str(common.ROOT / path)
-    module.__package__ = name.rpartition(".")[0]
-    exec(compile(source, module.__file__, "exec"), module.__dict__)
-    return module
+# Generated once from d83abaca48c18617e14acd1d540a10cc7532993b via
+# git show BASE:<path> and exec of common, charters, launcher, grade_block and
+# private_seal. SHA-256 of render_prompt(...).encode(), json.dumps(charter(...))
+# and json.dumps(plan(42, ...)); grade_run uses make_seal + stub on N05-N08,
+# a fixed run_record wall_s=0, and replaces the temporary root with "<TMP>" in
+# json.dumps(result). No history or historical code is loaded at test time.
+GOLDENS = json.loads((Path(__file__).parent / "fixtures/card_profile_goldens.json").read_text())
 
 
 def fabricated_bars(profile):
@@ -39,19 +35,15 @@ def fabricated_bars(profile):
             for index, card in enumerate(PROFILES[profile].cards)}
 
 
-def byte_proof(test, name, before, after):
-    """Optionally retain the exact compared bytes and unified diff for review."""
+def byte_proof(test, name, after):
+    """Check every output byte against the committed historical digest."""
     output = os.environ.get("EIDOS_PROFILE_BYTE_PROOF_DIR")
     if output:
         root = Path(output)
         root.mkdir(parents=True, exist_ok=True)
-        (root / f"{name}.before").write_bytes(before)
         (root / f"{name}.after").write_bytes(after)
-        (root / f"{name}.diff").write_text("".join(difflib.unified_diff(
-            before.decode().splitlines(keepends=True), after.decode().splitlines(keepends=True),
-            fromfile=f"{BASE}/{name}", tofile=f"task/card-profiles/{name}",
-        )))
-    test.assertEqual(before, after)
+        (root / f"{name}.expected-sha256").write_text(GOLDENS[name] + "\n")
+    test.assertEqual(hashlib.sha256(after).hexdigest(), GOLDENS[name], name)
 
 
 class Profiles(unittest.TestCase):
@@ -211,32 +203,23 @@ class Profiles(unittest.TestCase):
 
 class Pilot4ByteIdentity(unittest.TestCase):
     def test_prompts_charters_and_plans_match_the_requested_base_bytes(self):
-        old_common = baseline_module("study/common.py", "study._baseline_common")
-        old_charters = baseline_module("study/eidos_arms/charters.py", "study.eidos_arms._baseline_charters")
-        old_launcher = baseline_module("study/launcher.py", "study._baseline_launcher")
         for card in PROFILES["pilot-4"].cards:
             for arm in (1, 2, 3, 4):
-                byte_proof(self, f"prompt-{card}-arm{arm}", old_common.render_prompt(arm, card).encode(),
-                           common.render_prompt(arm, card).encode())
-            byte_proof(self, f"charter-{card}", json.dumps(old_charters.charter(card)).encode(),
-                       json.dumps(charters.charter(card)).encode())
+                byte_proof(self, f"prompt-{card}-arm{arm}", common.render_prompt(arm, card).encode())
+            byte_proof(self, f"charter-{card}", json.dumps(charters.charter(card)).encode())
         for cards in (None, PROFILES["pilot-4"].cards):
             for arms in ((1, 2, 3, 4), (2, 4)):
                 byte_proof(self, f"plan-{'default' if cards is None else 'pilot4'}-{'-'.join(map(str, arms))}",
-                           json.dumps(old_launcher.plan(42, cards, arms=arms)).encode(),
                            json.dumps(launcher.plan(42, cards, arms=arms)).encode())
 
     @unittest.skipUnless(sys.platform == "darwin", "requires macOS Seatbelt")
     def test_grading_matches_base_bytes_on_all_four_pilot4_cards(self):
-        old_grader = baseline_module("study/grade_block.py", "study._baseline_grade_block")
-        old_seal = baseline_module("study/private_seal.py", "study._baseline_private_seal")
         from study.stub_agent import stub
 
         with TemporaryDirectory() as directory:
             root = Path(directory)
             digest = make_seal(root / "seal")
             seal = PrivateSeal(root / "seal", digest)
-            historical_seal = old_seal.PrivateSeal(root / "seal", digest)
             env = {"EIDOS_RESEARCH_PYTHON": sys.executable, "EIDOS_PILOT_CHARTER_COMMIT": "synthetic",
                    "EIDOS_PILOT_CHARTER_PATH": "docs/experiments/pilot-4/CHARTER.md"}
             with patch.dict(os.environ, env), patch("study.private_seal.configured_seal", return_value=seal):
@@ -245,12 +228,14 @@ class Pilot4ByteIdentity(unittest.TestCase):
                     run = root / card / "arm1"
                     launcher.prepare(row, run)
                     stub(run)
+                    record = common.read_json(run / "run_record.json")
+                    record["wall_s"] = 0
+                    common.write_json(run / "run_record.json", record)
                     with patch.object(grade_block, "configured_seal", return_value=seal):
                         current = grade_block.grade_run(run, root / "grade")
-                    with patch.object(old_grader, "configured_seal", return_value=historical_seal):
-                        previous = old_grader.grade_run(run, root / "grade")
                     self.assertEqual(current["status"], "valid", current)
-                    byte_proof(self, f"grade-{card}", json.dumps(previous).encode(), json.dumps(current).encode())
+                    byte_proof(self, f"grade-{card}",
+                               json.dumps(current).encode().replace(str(root).encode(), b"<TMP>"))
 
 
 if __name__ == "__main__":

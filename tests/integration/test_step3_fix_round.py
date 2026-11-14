@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -258,6 +259,8 @@ def test_multi_round_state_preserves_margin_clearing_repreparation_for_lock(scen
     target.write_text(json.dumps(snapshots, default=str, indent=2) + '\n')
 
 
+@pytest.mark.skipif(sys.platform != 'darwin',
+                    reason='requires macOS Seatbelt; runs in study-evals / macOS evaluator contract with PostgreSQL')
 @pytest.mark.parametrize('kind', ['classification', 'regression'])
 def test_macro_job_select_export_and_real_evaluator_contract(scene, tmp_path, study_arm4, kind):
     from study.fresh_check import candidate_command

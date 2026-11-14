@@ -165,7 +165,7 @@ def test_author_source_includes_pinned_library_and_refuses_collisions(scene):
 
 @pytest.mark.temporal
 @pytest.mark.parametrize('kind', ['classification', 'regression'])
-async def test_preparation_fixture_through_temporal_and_postgres(scene, kind):
+async def test_preparation_fixture_through_temporal_and_postgres(scene, kind, tmp_path):
     import asyncio
     import os
     import uuid
@@ -181,7 +181,7 @@ async def test_preparation_fixture_through_temporal_and_postgres(scene, kind):
     if not cli:
         pytest.skip('set EIDOS_TEMPORAL_CLI to a dedicated test Temporal CLI')
     inv, acts, client = setup_scene(scene, kind)
-    database = ROOT / '.pytest_cache/step3' / ('temporal-' + uuid.uuid4().hex + '.db')
+    database = tmp_path / 'temporal.db'
     env = await WorkflowEnvironment.start_local(dev_server_existing_path=cli, dev_server_database_filename=str(database))
     stopped = asyncio.Event()
     async def pump():
@@ -323,7 +323,8 @@ def test_sixty_design_practice_preparations(scene, monkeypatch, tmp_path, case):
     # Perfect-score ceiling may stop the search before a refinement is admitted.
     assert state['stop'] in ('ceiling-no-improvement', 'ceiling-perfect-score')
     evidence = evaluator_contract(scene, view, splits, tmp_path / 'evaluator')
-    record = dict(case=case, generator=entry['id'], instance=case % 10, task_type=generated.task_type,
+    record = dict(evaluator_workspace=str((tmp_path / 'evaluator').resolve()),
+                  case=case, generator=entry['id'], instance=case % 10, task_type=generated.task_type,
                   newly_generated=case % 10 >= 4, wall_seconds=time.perf_counter() - started, model_calls=0,
                   readiness=candidate['readiness'], paired=candidate['paired'], reproduction=candidate['reproduction'],
                   emitted_lock_text=lock_text, recorded_lock_text=lock_note['text'],
@@ -395,7 +396,9 @@ def test_two_unseen_evaluator_seeds_on_each_prepared_practice_card(monkeypatch, 
     generated = generators.generate(dict(entries[case // 10], instances=10), case % 10)
     evidence_path = Path(os.environ['EIDOS_STEP3_ACCEPTANCE']) / f'case-{case:02d}.json'
     record = json.loads(evidence_path.read_text())
-    workspace = ROOT / '.pytest_cache/step3/acceptance-final' / f'test_sixty_design_practice_pre{case}' / 'evaluator'
+    # Reuse the workspace actually prepared by the explicit acceptance run.
+    # Older records without this field must be regenerated.
+    workspace = Path(record['evaluator_workspace'])
     record['fresh_evaluator'] = fresh_seed_contract(workspace, generated.splits)
     record['fresh_seed_contract_sha256'] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     evidence_path.write_text(json.dumps(record, indent=2, default=str) + '\n')
