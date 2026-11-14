@@ -24,7 +24,7 @@ def _public_card(card, pool):
     return result
 
 
-def assign(catalog, sizes=None, seed=20261114, private_seed_file=None):
+def assign(catalog, sizes=None, seed=20261114, private_seed_file=None, *, allow_shortfall=False):
     if private_seed_file is None:
         raise ValueError("private_seed_file is required")
     sizes = dict(DEFAULT_SIZES if sizes is None else sizes)
@@ -49,14 +49,29 @@ def assign(catalog, sizes=None, seed=20261114, private_seed_file=None):
     group_list = [groups[key] for key in sorted(groups)]
     rng.shuffle(group_list)
     assignments = {}
-    # Public allocation depends solely on the public seed; private randomness cannot change D/E.
-    for pool, size in sizes.items():
+    # Reserve capacity for H before lower-priority pools using ONLY the public RNG.
+    # H's actual draw then uses its private seed from the reservation plus unused reserve.
+    # This preserves D/E determinism while giving shortages the D,E1,H,E2,E3 priority.
+    reserved_h = []
+    order = [p for p in ("D", "E1", "H", "E2", "E3") if p in sizes]
+    order.extend(p for p in sizes if p not in order)
+    for pool in order:
         if pool == "H":
+            if allow_shortfall:
+                members, group_list = _draw(group_list, sizes[pool], rng, max_null=null_limit(pool, sizes[pool]),
+                                            allow_shortfall=True)
+                reserved = defaultdict(list)
+                for card in members:
+                    reserved[card.get("family", family(card.get("key", card["card_id"])))].append(card)
+                reserved_h = list(reserved.values())
             continue
-        assignments[pool], group_list = _draw(group_list, size, rng)
+        assignments[pool], group_list = _draw(group_list, sizes[pool], rng, max_null=null_limit(pool, sizes[pool]),
+                                               allow_shortfall=allow_shortfall)
+    group_list += reserved_h
     hidden_rng = random.Random(int.from_bytes(hidden_seed, "big"))
     hidden_rng.shuffle(group_list)
-    assignments["H"], reserve = _draw(group_list, sizes["H"], hidden_rng)
+    assignments["H"], reserve = _draw(group_list, sizes["H"], hidden_rng, max_null=null_limit("H", sizes["H"]),
+                                       allow_shortfall=allow_shortfall)
     public = dict(seed=seed, sizes={p: n for p, n in sizes.items() if p != "H"},
                   pools={p: [_public_card(c, p) for c in assignments[p]] for p in sizes if p != "H"})
     private = dict(pools=assignments, reserve=[c for group in reserve for c in group])
@@ -65,27 +80,32 @@ def assign(catalog, sizes=None, seed=20261114, private_seed_file=None):
     return public
 
 
-def _draw(groups, size, rng):
-    """Subset-sum with cell-balance cost: exact pool sizes without splitting a family."""
-    if sum(map(len, groups)) < size:
-        raise ValueError("not enough cards for requested pool sizes")
-    # For each exact size, retain up to 200 candidate subsets, ranked by six-cell balance.
-    states = {0: [()]}
+def null_limit(pool, size):
+    return min(size, 2 if pool == "H" else max(1, size // 8))
+
+
+def _draw(groups, size, rng, *, max_null=None, allow_shortfall=False):
+    """Subset-sum over size AND null count, preserving whole families."""
+    if max_null is None:
+        max_null = size
+    states = {(0, 0): [()]}
     for i, group in enumerate(groups):
-        for count in sorted(list(states), reverse=True):
-            new_count = count + len(group)
-            if new_count > size:
+        nulls = sum(bool(c.get("null_card", False)) for c in group)
+        for (count, old_nulls), subsets in sorted(list(states.items()), reverse=True):
+            new_count, new_nulls = count + len(group), old_nulls + nulls
+            if new_count > size or new_nulls > max_null:
                 continue
-            additions = [indices + (i,) for indices in states[count]]
-            states.setdefault(new_count, []).extend(additions)
-            if len(states[new_count]) > 200:
-                states[new_count].sort(key=lambda indices: _balance([c for j in indices for c in groups[j]], new_count))
-                states[new_count] = states[new_count][:200]
-    if size not in states:
-        raise ValueError("family sizes cannot fill a pool exactly")
-    candidates = states[size]
+            key = new_count, new_nulls
+            states.setdefault(key, []).extend(indices + (i,) for indices in list(subsets))
+            if len(states[key]) > 200:
+                states[key].sort(key=lambda indices: _balance([c for j in indices for c in groups[j]], new_count))
+                states[key] = states[key][:200]
+    feasible = max(count for count, _ in states)
+    if feasible != size and not allow_shortfall:
+        raise ValueError("not enough cards or family/null constraints cannot fill a pool exactly")
+    candidates = [indices for (count, _), subsets in states.items() if count == feasible for indices in subsets]
     rng.shuffle(candidates)
-    selected = min(candidates, key=lambda indices: _balance([c for j in indices for c in groups[j]], size))
+    selected = min(candidates, key=lambda indices: _balance([c for j in indices for c in groups[j]], feasible))
     return [c for i in selected for c in groups[i]], [group for i, group in enumerate(groups) if i not in selected]
 
 
@@ -110,6 +130,9 @@ def build_pool(pool_id, cards, pool_root):
         prepared.append((card, controller, manifest))
     if len({m["id"] for _, _, m in prepared}) != len(prepared):
         raise ValueError("duplicate card IDs")
+    nulls = sum(bool(read_json(controller / "reference.json")["null_card"]) for _, controller, _ in prepared)
+    if nulls > null_limit(pool_id, len(prepared)):
+        raise ValueError("pool exceeds null-card allowance")
     root.mkdir(parents=True, exist_ok=True)
     (root / "seal").mkdir()
     (root / "controller").mkdir()

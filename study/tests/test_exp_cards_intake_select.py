@@ -129,9 +129,11 @@ def test_selection_exclusions_family_caps_balance_and_determinism():
     assert family("mfeat_fourier") == family("mfeat_factors")
 
 
-def test_missing_minority_statistics_and_infeasible_roster_fail_explicitly():
+def test_missing_minority_statistics_and_infeasible_roster_defer_to_stage_two():
     summary = b"dataset\ttask\tn_instances\tn_features\tn_classes\timbalance\npublictask\tclassification\t2000\t4\t2\t0.1\n"
-    with pytest.raises(ValueError, match="at most 1"):
-        select(summary, 77, 60)
-    with pytest.raises(ValueError, match="lacks minority_class_size"):
-        select(summary, 77, 1)
+    result = select(summary, 77, 60)
+    assert result["eligible_per_task"] == {"classification": 1}
+    assert len(result["cards"]) == 1
+    assert result["cards"][0]["minority_fraction"] is None
+    assert "card_id" not in result["cards"][0]
+    assert result["cards"] == select(summary, 77)["cards"]

@@ -155,3 +155,28 @@ def test_full_qualification_records_fresh_seed_checks(packaged):
         assert reference_check["passed"]
         assert reference_check["checkpoint_bytes"] < 64 * 1024 * 1024
     assert not measured["null_card"] and not result["null_card"]
+
+
+def test_null_qualification_preserves_runtime_and_integrity_rules(packaged, tmp_path, monkeypatch):
+    import shutil
+
+    from study.exp.cards import qualify as qualification
+    from study.exp.cards.common import sha
+
+    card = tmp_path / "seal/R001"
+    controller = tmp_path / "controller/R001"
+    shutil.copytree(packaged[1][0], card)
+    controller.mkdir(parents=True)
+    project = controller / "reference_project.py"
+    project.write_text("# fabricated null reference; execution replaced below\n")
+    write_json(controller / "reference.json", dict(reference_py_sha256=sha(project.read_bytes())))
+    with np.load(card / "baseline_test.npz", allow_pickle=False) as data:
+        predictions, ids = data["predictions"].copy(), data["ids"].copy()
+    monkeypatch.setattr(qualification, "run_cli", lambda *args: (predictions, ids, 1.0, 100))
+    result = qualification.qualify(card, controller)
+    assert result["qualified"] and result["null_card"]
+    assert not result["checks"]["reference_11"]["clears_bar"]
+    assert read_json(card / "manifest.json")["null_card"]
+    assert not qualification.qualify(card, controller, allow_null=False)["qualified"]
+    monkeypatch.setattr(qualification, "run_cli", lambda *args: (predictions, ids, 121.0, 100))
+    assert not qualification.qualify(card, controller)["qualified"]

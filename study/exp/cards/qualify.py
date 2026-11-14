@@ -53,7 +53,7 @@ def leakage_screen(x, y, task_type):
     return dict(passed=not flags, maximum=maximum, flags=flags)
 
 
-def qualify(card_dir, controller_dir):
+def qualify(card_dir, controller_dir, *, allow_null=True):
     card, controller = Path(card_dir), Path(controller_dir)
     checks = {}
     manifest = read_json(card / "manifest.json")
@@ -123,12 +123,13 @@ def qualify(card_dir, controller_dir):
                     passed = passed and (np.array_equal(predictions, baseline) if seed == 11 else change < bar)
                 else:
                     reference_scores.append(measured)
-                    passed = passed and change >= bar
-                checks[name] = dict(passed=bool(passed), score=measured, gain=change,
+                    passed = passed and (allow_null or change >= bar)
+                checks[name] = dict(passed=bool(passed), score=measured, gain=change, clears_bar=change >= bar,
                                     retrain_seconds=elapsed, checkpoint_bytes=size)
             except (subprocess.TimeoutExpired, subprocess.CalledProcessError, ValueError) as error:
                 checks[name] = dict(passed=False, error=str(error))
     null_card = len(reference_scores) != 3 or any(gain(base_score, s, kind) < bar for s in reference_scores)
+    manifest["null_card"] = null_card
     manifest["qualified"] = all(check["passed"] for check in checks.values())
     write_json(card / "manifest.json", manifest)
     result = dict(qualified=manifest["qualified"], null_card=null_card, checks=checks)

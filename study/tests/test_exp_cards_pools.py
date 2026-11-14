@@ -94,3 +94,14 @@ def test_private_seed_length_and_symlink_refusals(tmp_path):
     path.symlink_to(original)
     with pytest.raises(ValueError, match="symlink"):
         verify(root)
+
+
+def test_standalone_build_enforces_null_allowance(tmp_path):
+    cards = [fake_card(tmp_path / "staging", f"R{i+1:03d}") for i in range(3)]
+    for card in cards:
+        write_json(card.parent.parent / "controller" / card.name / "reference.json", {"null_card": True})
+    with pytest.raises(ValueError, match="null-card allowance"):
+        build_pool("D", cards[:2], tmp_path / "D")
+    with pytest.raises(ValueError, match="null-card allowance"):
+        build_pool("H", cards, tmp_path / "H")
+    assert build_pool("H", cards[:2], tmp_path / "allowed-H")["card_ids"] == ["R001", "R002"]
