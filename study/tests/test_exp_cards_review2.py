@@ -207,7 +207,9 @@ def test_real_worker_contains_temporary_files(tmp_path, monkeypatch, kill):
     assert all(str(private / "jobs") not in arg for arg in process.args)
     observed_private_temp = False
     observed_external = False
-    deadline = time.monotonic() + 90
+    # A complete real build (baseline, 20 s search, retrains, qualification) can exceed 90 s on a loaded macOS CI
+    # runner (study-evals run 43604744412). Timing allowance only; no assertion changes.
+    deadline = time.monotonic() + 300
     try:
         while process.poll() is None and time.monotonic() < deadline:
             observed_external |= bool(list(sentinel.iterdir()))
@@ -218,7 +220,7 @@ def test_real_worker_contains_temporary_files(tmp_path, monkeypatch, kill):
         if kill:
             build._stop(process)
         else:
-            process.wait(timeout=5)
+            process.wait(timeout=120)
             assert read_json(response)["ok"], read_json(response)
         assert not observed_external and not list(sentinel.iterdir()), "worker wrote outside private root"
         assert observed_private_temp, "did not observe real baseline temp staging"

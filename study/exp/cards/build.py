@@ -160,16 +160,18 @@ def _launch(action, request, directory):
 
 def _stop(process):
     # Workers own a process group, including their CV/retrain subprocesses.
-    with contextlib.suppress(ProcessLookupError):
+    # macOS answers EPERM (not ESRCH) for a group whose members have all exited but are not yet reaped;
+    # our own exited group is gone either way, so both errors mean "nothing left to signal".
+    with contextlib.suppress(ProcessLookupError, PermissionError):
         os.killpg(process.pid, signal.SIGTERM)
     try:
         process.wait(timeout=2)
     except subprocess.TimeoutExpired:
-        with contextlib.suppress(ProcessLookupError):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(process.pid, signal.SIGKILL)
         process.wait()
     # The worker can exit before a descendant that ignores SIGTERM.
-    with contextlib.suppress(ProcessLookupError):
+    with contextlib.suppress(ProcessLookupError, PermissionError):
         os.killpg(process.pid, signal.SIGKILL)
     temporary = getattr(process, "cards_temp_dir", None)
     if temporary is not None:
