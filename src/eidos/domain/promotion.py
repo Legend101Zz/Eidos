@@ -117,7 +117,8 @@ def suggested_lock(view: dict[str, Any]) -> dict[str, Any] | None:
     rule = existing or rules.parse_rule(dict(metric=metric, split='validation',
         direction='higher_is_better' if metric.endswith('accuracy') else 'lower_is_better', scorer=job['component'],
         data=dict(inputs={k: job['inputs'][k] for k in ('train', 'validation')}),
-        margin=dict(metric=metric + '_se', multiple=(view.get('policy') or {}).get('selection_margin_multiple', 1.)),
+        **({'margin': dict(metric=metric + '_se', multiple=view['policy']['selection_margin_multiple'])}
+           if (view.get('policy') or {}).get('selection_margin_multiple') is not None else {}),
         reproduce_within=max(2 * se, .005)), policy_id='exploration-policy/3')
     def command_metrics(command: str) -> dict[str, Any]:
         found: dict[str, Any] = next((j for j in group if command in (j.get('config') or {}).get('argv', [])), {})

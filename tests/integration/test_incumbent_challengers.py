@@ -371,12 +371,20 @@ def test_a_lock_that_carries_the_rule_records_it_and_the_first_lock_is_accepted(
     ('two candidates', ['job_a', 'job_b']),
 ])
 def test_a_lock_that_names_no_job_is_refused_without_a_note_or_incumbent(scene, text, refs):
-    inv = scene.investigation()
+    inv = scene.investigation(exploration={"policy": "exploration-policy/3"})
     with pytest.raises(Invalid, match='candidate_lock names no job') as caught:
         scene.cmd("record_note", dict(investigation_id=inv, kind="candidate_lock", text=text, evidence_refs=refs))
     assert 'top-level job_id' in caught.value.message
     assert 'observation' in caught.value.next_action
     assert scene.notes(inv) == [] and scene.events(inv, "note.recorded") == []
+    assert scene.locked_job(inv) is None and scene.events(inv, "incumbent.changed") == []
+
+
+def test_policy_two_records_a_nameless_lock_without_an_incumbent_as_on_main(scene):
+    # origin/main:tests/integration/test_incumbent_challengers.py legacy note path.
+    inv = scene.investigation()
+    note = scene.note(inv, "candidate_lock", "No candidate selected yet.")["note_id"]
+    assert [event["subject"] for event in scene.events(inv, "note.recorded")] == [note]
     assert scene.locked_job(inv) is None and scene.events(inv, "incumbent.changed") == []
 
 
@@ -669,7 +677,7 @@ def test_reaffirmation_is_inert_with_both_selection_freeze_and_an_exploration_st
 
 
 def test_candidate_absence_is_an_observation_instead_of_a_nameless_lock(scene):
-    inv = scene.investigation()
+    inv = scene.investigation(exploration={"policy": "exploration-policy/3"})
     with pytest.raises(Invalid, match='candidate_lock names no job'):
         scene.note(inv, "candidate_lock", "No candidate selected yet.")
     note = scene.note(inv, "observation", "No candidate selected yet.")["note_id"]

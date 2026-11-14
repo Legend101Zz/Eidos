@@ -38,7 +38,10 @@ def build_record():
 
 
 def environment():
-    env = dict(os.environ, EIDOS_HOME=str(home()), OMP_NUM_THREADS='1', MKL_NUM_THREADS='1')
+    from study.exp.treatment import resolve
+
+    env = dict(os.environ, EIDOS_HOME=str(home()), OMP_NUM_THREADS='1', MKL_NUM_THREADS='1',
+               EIDOS_STUDY_TREATMENT=resolve().id)
     if env.get("EIDOS_STUDY_LIVE_DISPATCH") == "1":
         from study.common import PROMPT_OVERRIDES, refuse_live_prompt_overrides
         refuse_live_prompt_overrides(os.environ)

@@ -788,10 +788,11 @@ def test_a_missing_validation_port_or_labels_fail_the_job(lab):
 def toolkit(tmp_path_factory):
     sys.path.insert(0, str(ROOT))
     try:
+        from study.exp.treatment import resolve
         from study.toolkit.build_toolkit import build_toolkit
     finally:
         sys.path.remove(str(ROOT))
-    return build_toolkit(tmp_path_factory.mktemp("kit"))
+    return build_toolkit(tmp_path_factory.mktemp("kit"), treatment=resolve("v2-portfolio"))
 
 
 def run_toolkit(toolkit, cwd, *args):

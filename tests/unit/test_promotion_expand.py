@@ -193,3 +193,28 @@ def test_a_valid_margin_is_active_only_for_policy_three_in_recorded_notes():
     assert 'margin' not in legacy and opted_in['margin'] == raw['margin']
     assert clears_margin(dict(value=.81), dict(value=.8), legacy)
     assert not clears_margin(dict(value=.81, se=.02), dict(value=.8, se=.02), opted_in)
+
+
+def test_absent_selection_margin_is_strict_improvement_and_opt_in_adds_margin():
+    from eidos.domain.exploration import clears_margin, policy
+    v = view()
+    # Fully completed preparation with very small improvement and a large SE.
+    base = dict(component=v['policy']['project_command_ref'], status='succeeded', purpose='open-search',
+                inputs=dict(source='s', train='t', validation='v'), config=dict(argv=['python', 'project.py', 'train'], seed=11),
+                receipt=dict(metrics=dict(validation_accuracy=.801, validation_accuracy_se=.02)), outputs=[],
+                macro=dict(tool='prepare_candidate', proposed_by='d', basis='one-se-choice'))
+    v['jobs'] = [dict(base, id='train'),
+                 dict(base, id='check', inputs=dict(model='m'), config=dict(argv=['python', 'project.py', 'check']),
+                      receipt=dict(metrics=dict(readiness_max_abs_diff=0))),
+                 dict(base, id='compare', config=dict(argv=['python', 'project.py', 'compare']),
+                      receipt=dict(metrics=dict(paired_delta=.001, paired_delta_lo=-.01, paired_delta_hi=.02, paired_n=100))),
+                 dict(base, id='reproduce', purpose='reproduction', config=dict(argv=['python', 'project.py', 'train'], seed=23))]
+    v['policy'] = policy(dict(exploration=v['policy']))
+    rule = suggested_lock(v)['lock']['selection']
+    assert 'margin' not in rule
+    assert clears_margin(dict(value=.801, se=.02), dict(value=.8, se=.02), rule)
+    assert not clears_margin(dict(value=.8), dict(value=.8), rule)
+    v['policy']['selection_margin_multiple'] = 1.
+    rule = suggested_lock(v)['lock']['selection']
+    assert rule['margin'] == dict(metric='validation_accuracy_se', multiple=1.)
+    assert not clears_margin(dict(value=.801, se=.02), dict(value=.8, se=.02), rule)

@@ -81,7 +81,8 @@ def evaluate_turn(client: Any, project: str, turn_id: str, runtime: Investigator
                           conclude_only=bool(rec["turn"]["spec"].get("finalization")))
     result = runtime.decide(req)
     try:
-        proposal = validate_decision(result.proposal, max_calls=rec["turn"]["spec"]["limits"]["max_calls"])
+        proposal = validate_decision(result.proposal, max_calls=rec["turn"]["spec"]["limits"]["max_calls"],
+            allow_prepare_candidate="prepare_candidate" in rec["turn"]["spec"].get("tool_vocabulary", []))
         valid = True
     except Exception as exc:  # an invalid proposal is itself an evaluation outcome
         proposal, valid = {"error": str(exc), "raw": result.proposal}, False

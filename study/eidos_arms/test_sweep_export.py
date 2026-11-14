@@ -161,7 +161,7 @@ def test_portfolio_table_has_explicit_pinned_export_policy(tmp_path, tamper):
     aid = AID.replace('_evidence_table', '_portfolio_table')
     component = 'eidos.search.recipe-portfolio@1.0.0'
     schema = 'recipe-portfolio-table/1'
-    pin = '4b02e49fd939d0856c16b2adee42ad51249eca19eb27cad4c3c523202dfdc3a0'
+    pin = 'd02e8c02ef453108338843409ebf03e6b2d4c87f5f1baae48d15875038d13869'
     client = SweepClient()
     table = dict(schema=schema, scheme='cv-train', exploratory=True, claim=None, recipes=[])
     if tamper == 'scheme':

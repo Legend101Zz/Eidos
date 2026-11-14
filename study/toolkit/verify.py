@@ -73,14 +73,15 @@ def verify(run_dir):
                         "budget": {"max_trials": 6}},
              "seed": 11}
     run("eidos.search.recipe-sweep", sweep, "template-sweep")
-    portfolio_spec = {"inputs": {port: dict(diagnosis["inputs"][port]) for port in ("train", "validation")},
-                      "config": {"mode": "portfolio", "task_type": "classification",
-                                 "include": ["linear", "neighbors"], "scheme": "cv-train",
-                                 "cv_folds": 3, "cv_repeats": 1, "budget": {"max_seconds": 60}}, "seed": 11}
-    _, portfolio_manifest = run("eidos.search.recipe-portfolio", portfolio_spec, "recipe-portfolio")
-    assert portfolio_manifest["receipt"]["metrics"]["coverage_complete"] == 1
-    assert portfolio_manifest["receipt"]["metrics"]["export_eligible"] == 1
-    assert {"portfolio_table", "promotion_source", "oof"} <= {o["slot"] for o in portfolio_manifest["outputs"]}
+    if (toolkit / "components/eidos.search.recipe-portfolio").is_dir():
+        portfolio_spec = {"inputs": {port: dict(diagnosis["inputs"][port]) for port in ("train", "validation")},
+                          "config": {"mode": "portfolio", "task_type": "classification",
+                                     "include": ["linear", "neighbors"], "scheme": "cv-train",
+                                     "cv_folds": 3, "cv_repeats": 1, "budget": {"max_seconds": 60}}, "seed": 11}
+        _, portfolio_manifest = run("eidos.search.recipe-portfolio", portfolio_spec, "recipe-portfolio")
+        assert portfolio_manifest["receipt"]["metrics"]["coverage_complete"] == 1
+        assert portfolio_manifest["receipt"]["metrics"]["export_eligible"] == 1
+        assert {"portfolio_table", "promotion_source", "oof"} <= {o["slot"] for o in portfolio_manifest["outputs"]}
     write_json(root / "toolkit-verification.json", receipts)
 
 

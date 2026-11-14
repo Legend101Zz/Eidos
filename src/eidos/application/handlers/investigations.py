@@ -504,6 +504,11 @@ def _finalization_context(ctx: Ctx, inv, state: dict, finalization: dict) -> dic
                 "with source and receipt identifiers and limitations, or honestly abstain if none is eligible."}
 
 
+def tool_vocabulary(config: dict) -> list[str]:
+    v3 = (config.get("exploration") or {}).get("policy") == "exploration-policy/3"
+    return sorted(t for t in turn_rules.EFFECT_TOOLS if t != "prepare_candidate" or v3) + list(turn_rules.CONTROL_TOOLS)
+
+
 @command("begin_turn", "turn")
 def begin_turn(ctx: Ctx, p: dict) -> dict:
     run = str(p.get("run_id") or "")  # the TurnWorkflow run that begins or resumes the turn (F5, ADR 0017 addendum)
@@ -566,7 +571,7 @@ def begin_turn(ctx: Ctx, p: dict) -> dict:
         "configured_decision_seconds": int(cfg.get("turn_deadline_seconds", 600)),
         **({"completion": completion} if completion else {}),
         "budgets": budgets,
-        "tool_vocabulary": sorted(turn_rules.EFFECT_TOOLS) + list(turn_rules.CONTROL_TOOLS),
+        "tool_vocabulary": tool_vocabulary(cfg),
         "exposure_policy": p.get("exposure_policy", "development-feedback-allowed"),
     }
     if completion:
@@ -930,7 +935,8 @@ def accept_decision(ctx: Ctx, p: dict) -> dict:
             if p.get("bounded_outcome") and (p.get("usage") or {}).get("limit_reached"):
                 ctl["bounded_outcome"] = str(p["bounded_outcome"])[:64]
             proposal["control"] = ctl
-        decision = turn_rules.validate_decision(proposal, max_calls=turn["spec"]["limits"]["max_calls"])
+        decision = turn_rules.validate_decision(proposal, max_calls=turn["spec"]["limits"]["max_calls"],
+            allow_prepare_candidate=(inv.body.get("investigator", {}).get("exploration") or {}).get("policy") == "exploration-policy/3")
         for call in decision["calls"]:
             call.pop("macro", None)  # provenance stamps are lab-owned, never proposal arguments
         _check_conclusion_scope(inv, decision["control"])

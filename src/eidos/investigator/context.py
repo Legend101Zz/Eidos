@@ -718,7 +718,7 @@ def _portfolio_line(job: dict[str, Any], cap: int = 600) -> str:
     return render()
 
 
-def _pinned_section(name: str, lines: list[str], char_limit: int, omitted: list[str], *, newest_first: bool = False) -> list[str]:
+def _pinned_section(name: str, lines: list[str], char_limit: int, omitted: list[str], *, newest_first: bool = False, v4: bool = False) -> list[str]:
     """``lines`` within the section's budget. What did not fit is recorded in ``omitted``."""
     total, share, line_cap = PINNED_BUDGETS[name]
     budget = min(total, int(char_limit * share))
@@ -729,9 +729,9 @@ def _pinned_section(name: str, lines: list[str], char_limit: int, omitted: list[
     for i, line in enumerate(ordered):
         if len(line) > line_cap:
             omitted.append(f"{name}: last {len(line) - line_cap + 1} characters of an entry")
-            if line.startswith("- Prepared lock text ("):
+            if v4 and line.startswith("- Prepared lock text ("):
                 continue  # Copyable lock JSON and its label must survive together, in full.
-            if line.startswith("- Portfolio: "):
+            if v4 and line.startswith("- Portfolio: "):
                 fact = json.loads(line[len("- Portfolio: "):])
                 while len(line) > line_cap and fact:
                     fact.pop(next(reversed(fact)))
@@ -817,7 +817,7 @@ def _pack_v2(view: dict[str, Any], catalog: list[dict[str, Any]], *, char_limit:
                            if view.get("environments") else [])
     failure_lines, omitted["known_failures"] = _known_failures(view)
     raw["failures"] = failure_lines
-    pinned = {name: _pinned_section(name, lines, char_limit, omitted["sections"], newest_first=name == "steering")
+    pinned = {name: _pinned_section(name, lines, char_limit, omitted["sections"], newest_first=name == "steering", v4=bool(view.get("_v4")))
               for name, lines in raw.items()}
 
     def assemble_head() -> list[str]:

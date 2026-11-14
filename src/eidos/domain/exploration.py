@@ -37,7 +37,7 @@ PROJECT_COMMAND = "eidos.project.command"
 
 DEFAULT_POLICY: dict[str, Any] = {
     "policy": POLICY_ID,
-    "selection_margin_multiple": 1.0,
+    "selection_margin_multiple": None,
     "project_command_ref": "eidos.project.command@1.0.7",
     "planner": None,
     "patience_rounds": 3,  # stop after this many challenger rounds without a new incumbent
@@ -495,7 +495,7 @@ def state(*, notes: list[dict[str, Any]], jobs: list[dict[str, Any]], round_log:
     first_turn = note_turns.get(str(versions[0]["note_id"])) if versions else None
     change_turn = note_turns.get(str(incumbent["note_id"])) if incumbent else None
     reproductions = reproduction_jobs(jobs, [v["job_id"] for v in versions] + ([baseline_job] if baseline_job else []))
-    if incumbent is not None and rule is not None and incumbent.get('evidence') is None:
+    if pol['policy'] == 'exploration-policy/3' and incumbent is not None and rule is not None and incumbent.get('evidence') is None:
         incumbent['evidence'] = selection_evidence(jobs, incumbent['job_id'], rule, held_out)
     done, since, pending = rounds(round_log, jobs, first_turn, change_turn, reproductions, rule, held_out,
                                   v3=pol.get("policy") == "exploration-policy/3",

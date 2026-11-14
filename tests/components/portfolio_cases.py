@@ -297,8 +297,9 @@ def shift_case(root):
 
 
 def toolkit(root):
+    from study.exp.treatment import resolve
     from study.toolkit.build_toolkit import build_toolkit
-    toolkit_path = build_toolkit(root)
+    toolkit_path = build_toolkit(root, treatment=resolve("v2-portfolio"))
     x, y, _, _ = data(root)
     config = dict(inputs={p: dict(file=str(root / f"{p}.npz"), media_type="application/x-npz") for p in ("train", "validation")},
                   config=dict(task_type="classification", include=["linear"], cv_folds=2, cv_repeats=1, scheme="cv-train"))

@@ -1,0 +1,106 @@
+{
+  "schema": "eidos-flags/1",
+  "flags": {
+    "diagnose.steering-fix": {
+      "summary": "Use baseline diagnosis 1.1.0 with supported steering and broad discovery guidance.",
+      "requires": [],
+      "patch": {
+        "components": {
+          "bind": {
+            "eidos.diagnose.baseline-errors": "1.1.0"
+          }
+        },
+        "toolkit": {
+          "replace": {
+            "eidos.diagnose.baseline-errors": "eidos.diagnose.baseline-errors"
+          },
+          "add": [
+            "eidos.diagnose.baseline-errors@1.0.0"
+          ]
+        }
+      },
+      "code": [
+        "components/eidos.diagnose.baseline-errors/"
+      ],
+      "state": "experimental",
+      "experiment": null,
+      "introduced": "2026-11-14",
+      "removal": null
+    },
+    "floor.v2-slice": {
+      "summary": "Enable the v2 portfolio, preparation macro and investigator policies.",
+      "requires": [],
+      "patch": {
+        "investigator": {
+          "context_policy": "context-policy/4",
+          "exploration": {
+            "policy": "exploration-policy/3",
+            "project_command_ref": "eidos.project.command@1.0.9"
+          }
+        },
+        "prompts": {
+          "tools_arm4": "study/prompts/tools_arm4.v2.md"
+        },
+        "components": {
+          "install": [
+            "eidos.search.recipe-portfolio",
+            "eidos.task.score-regression"
+          ]
+        }
+      },
+      "code": [
+        "src/eidos/domain/promotion.py",
+        "src/eidos/application/handlers/promotion.py",
+        "components/eidos.search.recipe-portfolio/",
+        "study/prompts/tools_arm4.v2.md",
+        "tests/unit/test_promotion_expand.py",
+        "tests/integration/test_recipe_portfolio_lab.py",
+        "tests/integration/test_prepare_candidate_lab.py",
+        "tests/unit/test_prepared_context.py",
+        "tests/unit/test_step3_rounds_replay.py",
+        "tests/unit/test_no_practice_identifiers.py",
+        "tests/integration/test_step3_fix_round.py",
+        "tests/components/test_recipe_portfolio.py",
+        "tests/components/portfolio_cases.py"
+      ],
+      "state": "experimental",
+      "experiment": null,
+      "introduced": "2026-11-14",
+      "removal": null
+    },
+    "floor.selection-margin": {
+      "summary": "Require a one standard error margin when replacing a v2 incumbent.",
+      "requires": [
+        "floor.v2-slice"
+      ],
+      "patch": {
+        "investigator": {
+          "exploration": {
+            "selection_margin_multiple": 1.0
+          }
+        }
+      },
+      "code": [],
+      "state": "experimental",
+      "experiment": null,
+      "introduced": "2026-11-14",
+      "removal": null
+    },
+    "toolkit.portfolio": {
+      "summary": "Offer the recipe portfolio in the standalone arm-2 toolkit.",
+      "requires": [],
+      "patch": {
+        "toolkit": {
+          "add": [
+            "eidos.search.recipe-portfolio"
+          ]
+        }
+      },
+      "code": [],
+      "state": "experimental",
+      "experiment": null,
+      "introduced": "2026-11-14",
+      "removal": null
+    }
+  }
+}

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import json
 import math
 import re
@@ -141,6 +142,9 @@ def investigator_abstention_reason(shown, status):
 
 
 def run(run_dir, meta, *, eval_audit_config=None):
+    from study.exp.treatment import for_run
+
+    treatment = for_run(meta)
     setup_started_at, setup_begin = utc(), time.monotonic()
     lab.start()
     c = lab.client()
@@ -148,7 +152,7 @@ def run(run_dir, meta, *, eval_audit_config=None):
     bridge = None
     try:
         project, imported = prepare(c, run_dir, 4)
-        investigator = json.loads((Path(__file__).parent / 'investigator.json').read_text())
+        investigator = copy.deepcopy(treatment.investigator)
         investigator['conclusion_scope_schema'] = CONCLUSION_SCOPE_SCHEMA
         wall, token_cap = envelope(meta)
         investigator['turn_deadline_seconds'] = wall
@@ -165,7 +169,7 @@ def run(run_dir, meta, *, eval_audit_config=None):
         began_at = utc()
         write_json(run_dir / 'setup.json', {'setup_started_at': setup_started_at,
                    'setup_ended_at': began_at, 'setup_wall_s': round(begin - setup_begin, 3),
-                   'setup_complete': True})
+                   'setup_complete': True, 'treatment': treatment.record()})
         from .provider_bridge import start as start_bridge
         bridge_start_unix = time.time()
         bridge, bridge_receipt = start_bridge(run_dir, investigator['settings']['base_url'],
@@ -289,7 +293,7 @@ def run(run_dir, meta, *, eval_audit_config=None):
             write_json(run_dir / 'validation_error.json', {'error': str(exc)})
         status, incident = classify(observed or shown, receipts, models, expired.is_set(), valid)
         controller_abstention = (shown.get('body') or {}).get('controller_abstention')
-        return {'status': status, 'finalization_read_coverage': finalization_read_coverage(receipts),
+        return {'status': status, 'treatment': treatment.record(), 'finalization_read_coverage': finalization_read_coverage(receipts),
                 'investigator_abstention_reason': investigator_abstention_reason(shown, status),
                 **({'controller_abstention': controller_abstention} if controller_abstention else {}), 'incident_reason': incident, 'tokens': tokens, 'billed_usd': billed,
                 'started_at': began_at,
@@ -457,7 +461,7 @@ def export_sweep_evidence(c, project, inv, out, reference, task_artifacts, autho
     """Export only the explicitly pinned sweep or portfolio table with verified visible provenance."""
     portfolio = reference.endswith('_portfolio_table')
     component_ref = 'eidos.search.recipe-portfolio@1.0.0' if portfolio else _SWEEP_COMPONENT
-    bundle_sha = '4b02e49fd939d0856c16b2adee42ad51249eca19eb27cad4c3c523202dfdc3a0' if portfolio else _SWEEP_BUNDLE_SHA
+    bundle_sha = 'd02e8c02ef453108338843409ebf03e6b2d4c87f5f1baae48d15875038d13869' if portfolio else _SWEEP_BUNDLE_SHA
     schema = 'recipe-portfolio-table/1' if portfolio else _SWEEP_SCHEMA
     slot = 'portfolio_table' if portfolio else _SWEEP_SLOT
     match = re.fullmatch(r'art_([a-f0-9]{16})_portfolio_table', reference) if portfolio else _SWEEP_ARTIFACT.fullmatch(reference)

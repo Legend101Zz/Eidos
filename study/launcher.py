@@ -108,6 +108,9 @@ def archive_block(block_dir, reason):
 
 
 def prepare(row, run_dir):
+    from study.exp.treatment import resolve
+
+    treatment = resolve()
     free = int(subprocess.check_output(["df", "-k", "/"], text=True).splitlines()[1].split()[3])
     if free < int(12.5 * 1024 * 1024):  # pilot-2 addendum 2: owner floor 12 GiB (+0.5 margin)
         raise RuntimeError("STOP: less than 12.5 GiB free")
@@ -124,6 +127,7 @@ def prepare(row, run_dir):
         run_dir / "arm.json",
         dict(
             arm=row["arm"],
+            treatment=treatment.record(),
             card=row["task"],
             run_index=row["run"],
             block_id=row["block_id"],
@@ -179,7 +183,9 @@ def run_block(rows, runs_root, stub=False, replace_incident=False, *, eval_audit
     )
     write_json(record_path, block)
     processes, logs = [], []
-    worker_env = dict(os.environ)
+    from study.exp.treatment import resolve
+
+    worker_env = dict(os.environ, EIDOS_STUDY_TREATMENT=resolve().id)
     for name in SEAL_ROOT_ENVS:
         worker_env.pop(name, None)
     worker_env.pop("EIDOS_EVAL_AUDIT_IDENTIFIERS", None)

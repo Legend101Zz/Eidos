@@ -81,7 +81,7 @@ def test_v4_claim_and_manual_lock_examples_agree_with_live_validators():
     from eidos.investigator.context import TOOL_GUIDE_V4
     from eidos.investigator.playbook import PLAYBOOK_V3
 
-    prompt = (Path(__file__).resolve().parents[2] / 'study/prompts/tools_arm4.md').read_text()
+    prompt = (Path(__file__).resolve().parents[2] / 'study/prompts/tools_arm4.v2.md').read_text()
     assert 'copied from the pinned prepared lock JSON' in prompt and 'both job_id and selection' in prompt
     assert 'text containing exactly a JSON object {"job_id"' not in prompt
     assert 'needs no separate scorer' in prompt

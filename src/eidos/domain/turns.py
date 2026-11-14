@@ -158,7 +158,8 @@ def validate_conclusion_scope(control: dict[str, Any], schema: dict[str, Any] | 
                       details={"problems": problems, "cause": "conclusion-scope-contract"})
 
 
-def validate_decision(proposal: dict[str, Any], *, max_calls: int) -> dict[str, Any]:
+def validate_decision(proposal: dict[str, Any], *, max_calls: int,
+                      allow_prepare_candidate: bool = False) -> dict[str, Any]:
     """Validate a model's proposed decision before it can be accepted.
 
     proposal = {"rationale", "hypotheses": [...], "calls": [{"tool", "args"}], "control": {...}}
@@ -168,10 +169,11 @@ def validate_decision(proposal: dict[str, Any], *, max_calls: int) -> dict[str, 
         raise Invalid("calls must be a list")
     if len(calls) > max_calls:
         raise Invalid(f"decision has {len(calls)} calls; this turn allows {max_calls}")
+    allowed = {t for t in EFFECT_TOOLS if t != "prepare_candidate" or allow_prepare_candidate}
     for i, c in enumerate(calls):
-        if c.get("tool") not in EFFECT_TOOLS:
+        if c.get("tool") not in allowed:
             raise Invalid(f"call {i}: unknown or non-effect tool {c.get('tool')!r}",
-                          details={"allowed": sorted(EFFECT_TOOLS)})
+                          details={"allowed": sorted(allowed)})
         if not isinstance(c.get("args"), dict):
             raise Invalid(f"call {i}: args must be an object")
         missing = [a for a in REQUIRED_ARGS.get(c["tool"], ()) if c["args"].get(a) in (None, "", {}, [])]

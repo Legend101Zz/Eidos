@@ -1,0 +1,27 @@
+{
+  "directories": [
+    "eidos.assessors.paired-ci",
+    "eidos.behavior.suite",
+    "eidos.diagnose.baseline-errors",
+    "eidos.project.command",
+    "eidos.pytorch.behavior-check",
+    "eidos.pytorch.evaluate",
+    "eidos.pytorch.train",
+    "eidos.pytorch.weight-edit",
+    "eidos.qualification-runner",
+    "eidos.search.recipe-sweep",
+    "eidos.search.recipe-sweep@1.0.0",
+    "eidos.synthetic.llm-examples",
+    "eidos.task.paired-classification-report",
+    "eidos.task.score-classification",
+    "eidos.task.score-regression",
+    "eidos.templates.improves-under-budget",
+    "lab.learning.group-balanced-ema",
+    "lab.pairs.by_group",
+    "lab.switch.balanced-data"
+  ],
+  "files": [
+    "build_assessor_fixtures.py",
+    "build_fixtures.py"
+  ]
+}

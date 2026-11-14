@@ -1,0 +1,7 @@
+{
+  "schema": "eidos-treatment/1",
+  "id": "pilot4-v1",
+  "summary": "Immutable Pilot 4 defaults from origin/main 806f939.",
+  "flags": [],
+  "overrides": {}
+}

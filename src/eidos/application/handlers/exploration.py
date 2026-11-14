@@ -385,6 +385,8 @@ def check_note(ctx: Ctx, inv_id: str, body: dict[str, Any]) -> dict[str, Any] | 
             raise Invalid("ordinary finalization fixes candidate identity; a candidate lock must identify the existing job",
                           details={"stop": phase.get("stop")},
                           next_action="Keep the existing candidate lock or report its absence.")
+        if policy_id != "exploration-policy/3":
+            return None  # Main's legacy note path; assessment refuses a lock without a job.
         raise Invalid("candidate_lock names no job: text must contain a top-level job_id or evidence_refs must "
                       "identify exactly one job; a nested lock object is not lock text",
                       details={"kind": kind},

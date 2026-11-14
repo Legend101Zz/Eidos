@@ -130,11 +130,14 @@ def record_prompt(run_dir, meta, *, delivered=None, surface=None):
     """Bind the normal render and, at dispatch, the exact initial payload without retaining text."""
     import hashlib
 
+    from study.exp.treatment import for_run
+
+    treatment = for_run(meta)
     arm = meta["arm"]
     expected = render_prompt(arm, meta["card"])
     identity = {key: meta[key] for key in ("block_id", "card", "run_index", "arm", "charter_amendment_commit",
                                           "charter_amendment_sha256")}
-    receipt = dict(**identity, common_template_sha256=hashlib.sha256((STUDY / "prompts/task.md").read_bytes()).hexdigest(),
+    receipt = dict(**identity, treatment=treatment.record(), common_template_sha256=hashlib.sha256((STUDY / "prompts/task.md").read_bytes()).hexdigest(),
                    expected_render_sha256=hashlib.sha256(expected.encode()).hexdigest())
     directory = run_dir.parent / "prompt-receipts"
     if run_dir.name != f"arm{arm}" or directory.is_symlink():
@@ -182,7 +185,11 @@ EXPORT_READINESS_CONTRACT = (
 
 def render_prompt(arm, card, *, base=None):
     """All four arms use the same card table and substitution, including smoke overrides."""
-    paragraph = (STUDY / f"prompts/tools_arm{arm}.md").read_text().strip()
+    from study.exp.treatment import resolve
+
+    treatment = resolve()
+    tools_path = treatment.tools_arm4_path if arm == 4 else STUDY / f"prompts/tools_arm{arm}.md"
+    paragraph = tools_path.read_text().strip()
     if "PLACEHOLDER" in paragraph:
         raise NotImplementedError(f"arm {arm} tools paragraph not implemented")
     text = Path(base or STUDY / "prompts/task.md").read_text()
