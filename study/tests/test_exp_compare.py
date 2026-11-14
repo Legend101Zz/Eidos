@@ -595,3 +595,35 @@ def test_exp_compare_r2_n20_superset_card_set():
         score['per_card']['R0009'] = {}
     with pytest.raises(ValueError, match='card set differs from plan'):
         compare_scorecards(before, after, simple_rule(), tier='T3', rule_choice={'plan': registered_plan()})
+
+
+def test_exp_compare_r2_registered_incomplete_flag_alone():
+    after = cards(.2)
+    after['incomplete'] = True
+    result = compare(cards(), after, simple_rule(), tier='T3')
+    assert result['decision'] == 'incomplete'
+    assert result['reasons'] == ['incomplete scorecard']
+
+
+def test_exp_compare_r2_exact_card_count_argument():
+    with pytest.raises(ValueError, match='--cards disagrees'):
+        compare(cards(), cards(.2), simple_rule(), tier='T3', cards=7)
+
+
+def test_exp_compare_r2_mixed_tier_missing_replicate():
+    before, after = cards(replicates=2), cards(.2, replicates=2)
+    for score in [before, after]:
+        extra = [dict(r, tier='T2') for r in score['individual'] if r['replicate'] == 1][:4]
+        score['individual'].pop()
+        score['individual'] += extra
+    with pytest.raises(ValueError, match='pairs differ from plan'):
+        compare(before, after, simple_rule(), tier='T3', rule_choice={'plan': {'tiers': [dict(tier='T2', replicates=1)]}})
+
+
+def test_exp_compare_r2_known_heldout_read_despite_other_unknown_rows():
+    after = cards(.2)
+    after['individual'][0]['held_out_reads'] = True
+    after['individual'][1]['held_out_reads'] = None
+    result = compare(cards(), after, simple_rule(), tier='T3')
+    assert result['decision'] == 'revert'
+    assert result['vetoes'][1]['value'] == 1
