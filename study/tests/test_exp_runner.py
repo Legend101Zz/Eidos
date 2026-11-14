@@ -174,10 +174,11 @@ def test_dry_run_stops_before_labs_and_blocks(tmp_path, monkeypatch, preflight, 
     args.dry_run = True
     monkeypatch.setattr(run.lab, 'start', Mock(side_effect=AssertionError('must not start')))
     assert run.execute(args) == 0
-    manifest = read_json(args.out / 'manifest.json')
+    manifest = json.loads(capsys.readouterr().out)
     assert len(manifest['plan']) == 2
     assert manifest['controller_commit']
-    assert 'estimated_usd' in capsys.readouterr().out
+    assert 'estimated_usd' in manifest['preflight']['budget']
+    assert not args.out.exists()
     assert not (args.out / 'runs').exists()
 
 
@@ -203,6 +204,7 @@ def test_stub_two_card_cli_end_to_end(tmp_path, monkeypatch, pool):
     argv = ['--treatment', 'stub', '--out', str(tmp_path / 'out'), '--arms', '2,4']
     if pool:
         source = fabricated_pool(tmp_path)
+        monkeypatch.setenv('EIDOS_IMP_PRIVATE_ROOT', str(tmp_path / 'private'))
         monkeypatch.setenv('EIDOS_EXTRA_POOL_MANIFESTS', str(source / 'pool.json'))
         monkeypatch.setenv('EIDOS_POOLS_ROOT', str(tmp_path))
         argv += ['--pool', 'FAB']
@@ -228,7 +230,8 @@ def test_stub_two_card_cli_end_to_end(tmp_path, monkeypatch, pool):
         for path in (tmp_path / 'out/runs').glob('*/arm*/task'):
             assert not (path / 'test_labels.npz').exists()
             assert not (path / 'manifest.json').exists()
-        assert len(list((tmp_path / 'out/grading').glob('*/arm*/workspace/test-inference/predictions.npz'))) == 4
+        assert not list((tmp_path / 'out/grading').rglob('test_inputs.npz'))
+        assert len(list((tmp_path / 'private/grading').glob('*/**/workspace/test-inference/predictions.npz'))) == 4
 
 
 def fake_scores():
@@ -250,6 +253,7 @@ def test_heldout_receipt_and_exception_do_not_leak(tmp_path, monkeypatch, capsys
         for label, score in zip(('a', 'b'), scores, strict=True):
             write_json(root / label / 'scorecard.json', score)
         return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(heldout, 'nonprivate_preflight', lambda *a: None)
     monkeypatch.setattr(heldout.subprocess, 'run', fake_run)
     for k in range(1, 4):
         record = heldout.consult(args)
@@ -438,7 +442,8 @@ def test_builder_child_cannot_inherit_seal_locations(tmp_path, monkeypatch):
     variant = run.variants(args)[0]
     variant['lab_root'] = str(tmp_path / 'ip-build')
     monkeypatch.delenv('EIDOS_EXP_TEST_ROOT', raising=False)
-    for name in run.SEAL_ROOT_ENVS:
+    controller_names = ('EIDOS_POOLS_ROOT', 'EIDOS_EXTRA_POOL_MANIFESTS', 'EIDOS_IMP_PRIVATE_ROOT')
+    for name in (*run.SEAL_ROOT_ENVS, *controller_names):
         monkeypatch.setenv(name, 'FABRICATED_SEAL_MARKER')
     monkeypatch.setenv('OPENAI_API_KEY', 'FAKE_KEY_MARKER')
     builder = Mock()
@@ -447,7 +452,7 @@ def test_builder_child_cannot_inherit_seal_locations(tmp_path, monkeypatch):
     with run.environment({}):
         run.ensure_lab(variant)
     child_env = builder.call_args.kwargs['env']
-    assert all(name not in child_env for name in run.SEAL_ROOT_ENVS)
+    assert all(name not in child_env for name in (*run.SEAL_ROOT_ENVS, *controller_names))
     assert 'OPENAI_API_KEY' not in child_env
 
 
@@ -456,3 +461,492 @@ def test_novelty_receipt_counts_known_zero_and_preserves_unknown():
     assert heldout.novelty_total({'individual': [{'verified': True, 'novelty': {'class': 'catalog'}}]}) == 0
     assert heldout.novelty_total({'individual': [{'verified': True, 'novelty': {'class': 'external'}}]}) is None
     assert heldout.novelty_total({'individual': [{'novelty_win': True}, {'novelty_win': False}]}) == 1
+
+
+@pytest.mark.parametrize('classes', ['missing', None, 1, True, 2.5, 3])
+def test_task_class_count_base_goldens(tmp_path, monkeypatch, classes):
+    """Hard-coded bdce95a outcomes from fabricated Pilot-5 metadata."""
+    import numpy as np
+    from study.private_seal import PrivateSeal
+    bars = {'N09': ('accuracy', .02)}
+    seal = PrivateSeal(tmp_path / 'seal', make_seal(tmp_path / 'seal', bars), bars)
+    read = seal._read
+    monkeypatch.setattr(seal, '_read', lambda card, name: json.dumps({} if classes == 'missing' else {'nclasses': classes}).encode()
+                        if name == 'bundle/task.json' else read(card, name))
+    prediction = tmp_path / 'prediction.npz'
+    np.savez(prediction, ids=[20, 10], predictions=[2, 0])
+    if classes == 3:
+        assert seal.score('N09', prediction)['candidate'] == .5
+    else:
+        with pytest.raises(RuntimeError, match='private task class count missing or invalid'):
+            seal.score('N09', prediction)
+
+
+def test_d03_reference_is_unestablished_and_loader_refuses(tmp_path):
+    reference = read_json(ROOT / 'experiments/pools/legacy-references.json')['D03']
+    assert reference['reference_established'] is False
+    assert set(reference) == {'card', 'reference_established', 'reason'}
+    assert 'ref_scores [0.1, 0.1, 0.1]' in reference['reason']
+    args = options(tmp_path)
+    with pytest.raises(ValueError, match='explicit --references'):
+        run.load_references(args, None, ['D03'])
+
+
+def test_heldout_account_one_aggregate_and_private_detail(tmp_path):
+    args, selected, _, ledger = live_budget(tmp_path, 'openai-default')
+    private = tmp_path / 'private'
+    out = private / 'runs' / 'utc'
+    for card, tokens in [('R0001', 100), ('R0002', 900)]:
+        write_json(out / 'pair' / 'runs' / card / 'arm4/run_record.json',
+                   dict(tokens={'input': tokens, 'output': 20}, billed_usd=.01))
+    run.account(args, dict(live=True, spend_ledger=str(ledger)), [out / 'pair'], selected, 'utc',
+                private_root=private, out=out)
+    rows = [json.loads(line) for line in ledger.read_text().splitlines()]
+    assert len(rows) == 1
+    assert rows[0]['pool'] == 'held-out' and rows[0]['n_runs'] == 2
+    assert rows[0]['tokens_in'] == 1000 and rows[0]['usd'] == .02
+    assert 'R000' not in ledger.read_text() and str(private) not in ledger.read_text()
+    assert len((out / 'spend.jsonl').read_text().splitlines()) == 2
+
+
+def test_lab_environment_never_exports_roster(monkeypatch):
+    monkeypatch.setenv('EIDOS_STUDY_POOL_PROFILES', json.dumps([synthetic_manifest('H')]))
+    exported = 'EIDOS_STUDY_POOL_PROFILES' in run.lab.environment()
+    assert not exported
+
+
+@pytest.mark.parametrize('name', ['EIDOS_POOLS_ROOT', 'EIDOS_EXTRA_POOL_MANIFESTS', 'EIDOS_IMP_PRIVATE_ROOT'])
+def test_controller_environment_markers_explicit(monkeypatch, name):
+    monkeypatch.setenv(name, 'PRIVATE_CONTROLLER_MARKER')
+    assert name not in run.lab.environment()
+
+
+def test_heldout_rounding_and_signflip_pass_rule():
+    a, b = fake_scores()
+    b['per_card']['R0001']['vrg'] = .123
+    b['aggregate']['verified_rate'] = .123
+    result = heldout.receipt([a, b], utc='now', note='test', consultation=1, threshold=.1)
+    assert result['mean_delta_vrg'] == .1
+    assert result['verified_rate'] == [0, .1]
+    assert result['pass'] is False  # one positive pair has p=.5
+
+
+def test_usd_budget_boundary_and_stop_fraction(tmp_path):
+    args, selected, plan, ledger = live_budget(tmp_path, 'openai-default')
+    ledger.write_text(json.dumps(dict(provider='OpenAI', usd=11.2)) + '\n')
+    with pytest.raises(ValueError, match='stop cap'):
+        run.budget_check(args, selected, plan)
+    ledger.write_text('')
+    budget = read_json(args.budget)
+    budget['providers']['openai-default']['stop_fraction'] = .81
+    write_json(args.budget, budget)
+    with pytest.raises(ValueError, match='cap/stop fraction'):
+        run.budget_check(args, selected, plan)
+
+
+def test_minimax_payg_whitespace(tmp_path):
+    args, selected, plan, _ = live_budget(tmp_path, 'minimax-m3.1-flash')
+    args.payg_approved = '   '
+    with pytest.raises(ValueError, match='payg approval'):
+        run.budget_check(args, selected, plan)
+
+
+@pytest.mark.parametrize('scenario', ['start-failure', 'block-failure', 'stop-failure', 'keep'])
+def test_execute_lab_explicit_home_and_finally(tmp_path, monkeypatch, preflight, scenario):
+    args, _, _ = preflight
+    args.pair = ['autopilot-v2@HEAD', 'autopilot-v2@HEAD~1']
+    args.keep_lab_running = scenario == 'keep'
+    selected = run.variants(args)
+    for variant in selected:
+        variant.update(stub=False, fixture=True)
+    monkeypatch.setattr(run, 'variants', lambda _: selected)
+    monkeypatch.setattr(run, 'controller_record', lambda *a, **k: {'git_sha': 'a' * 40})
+    def ensure(v, **kwargs):
+        home = tmp_path / 'labs' / v['commit'] / 'home'
+        # Deliberately omit HOME: execute must explicitly set it at the start boundary.
+        return dict(home=str(home), python=sys.executable, receipt={}, env={'EIDOS_STUDY_ROOT': str(tmp_path)})
+    monkeypatch.setattr(run, 'ensure_lab', ensure)
+    starts, stops = [], []
+    def start(*a, **k):
+        starts.append(os.environ.get('EIDOS_STUDY_HOME'))
+        assert starts[-1] == selected[len(starts) - 1]['lab']['home']
+        if scenario == 'start-failure':
+            raise RuntimeError('partial startup')
+    def stop():
+        stops.append(os.environ.get('EIDOS_STUDY_HOME'))
+        if scenario == 'stop-failure' and len(stops) == 1:
+            raise RuntimeError('first stop fails')
+    monkeypatch.setattr(run.lab, 'start', start)
+    monkeypatch.setattr(run.lab, 'stop', stop)
+    real_subprocess = run.subprocess.run
+    def child(command, **kwargs):
+        if '--_block' in command:
+            raise RuntimeError('block failed')
+        return real_subprocess(command, **kwargs)
+    monkeypatch.setattr(run, 'dispatch_process', child)
+    old_home = os.environ.get('EIDOS_STUDY_HOME')
+    with pytest.raises(RuntimeError):
+        run.execute(args)
+    assert len(starts) == (1 if scenario == 'start-failure' else 2)
+    assert len(stops) == (0 if scenario == 'keep' else len(starts))
+    assert set(stops) <= {v['lab']['home'] for v in selected}
+    assert os.environ.get('EIDOS_STUDY_HOME') == old_home
+
+
+@pytest.fixture
+def blind_fake(tmp_path, monkeypatch):
+    args = SimpleNamespace(note='prospective test', pair=['stub@HEAD', 'stub@HEAD'], threshold=.1,
+                           private_root=tmp_path, provider=None, budget=None, quota_file=None, payg_approved=None)
+    write_json(tmp_path / 'H/pool.json', synthetic_manifest('H', ('R0001',)))
+    monkeypatch.setattr(heldout, 'nonprivate_preflight', lambda *a: None)
+    def child(command, **kwargs):
+        request = read_json(command[-1])
+        root = Path(request['argv'][request['argv'].index('--out') + 1])
+        write_json(root / 'manifest.json', dict(variants=[{'label': 'a'}, {'label': 'b'}]))
+        for label, score in zip(('a', 'b'), fake_scores(), strict=True):
+            write_json(root / label / 'scorecard.json', score)
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(heldout.subprocess, 'run', child)
+    return args
+
+
+def test_heldout_failed_attempts_consume_consultations(tmp_path, monkeypatch, blind_fake):
+    monkeypatch.setattr(heldout.subprocess, 'run', lambda *a, **k: SimpleNamespace(returncode=1))
+    for _ in range(3):
+        with pytest.raises(RuntimeError, match='private run failed'):
+            heldout.consult(blind_fake)
+    assert read_json(tmp_path / 'consultations.json')['count'] == 3
+    with pytest.raises(ValueError, match='limit'):
+        heldout.consult(blind_fake)
+
+
+@pytest.mark.parametrize('marker', ['R0001', 'private-path'])
+def test_heldout_finished_receipt_privacy_filter(tmp_path, monkeypatch, blind_fake, marker):
+    marker = str(tmp_path) if marker == 'private-path' else marker
+    monkeypatch.setattr(heldout, 'receipt', lambda *a, **k: {'unsafe': marker})
+    with pytest.raises(ValueError, match='unsafe receipt'):
+        heldout.consult(blind_fake)
+
+
+@pytest.mark.parametrize('marker', ['R0001', 'private-path'])
+def test_heldout_note_privacy_filter(tmp_path, blind_fake, marker):
+    blind_fake.note = str(tmp_path) if marker == 'private-path' else marker
+    with pytest.raises(ValueError, match='private identifiers'):
+        heldout.consult(blind_fake)
+    assert not (tmp_path / 'consultations.json').exists()
+
+
+def test_heldout_child_preflight_refund_recorded(tmp_path, monkeypatch, blind_fake):
+    def child(command, **kwargs):
+        request = read_json(command[-1])
+        root = Path(request['argv'][request['argv'].index('--out') + 1])
+        write_json(root / 'manifest.json', {'status': 'preflight'})
+        return SimpleNamespace(returncode=2)
+    monkeypatch.setattr(heldout.subprocess, 'run', child)
+    with pytest.raises(RuntimeError):
+        heldout.consult(blind_fake)
+    state = read_json(tmp_path / 'consultations.json')
+    assert state['count'] == 0
+    assert [event['status'] for event in state['events']] == ['reserved', 'refunded']
+
+
+@pytest.mark.parametrize('pair', [['nonesuch@HEAD', 'stub@HEAD'], ['stub@does-not-exist', 'stub@HEAD']])
+def test_heldout_invalid_variant_does_not_consume(tmp_path, monkeypatch, pair):
+    monkeypatch.setenv('EIDOS_EXP_TEST_ROOT', str(tmp_path))
+    write_json(tmp_path / 'H/pool.json', synthetic_manifest('H', ('R0001',)))
+    args = SimpleNamespace(note='test', pair=pair, threshold=.1, private_root=tmp_path,
+                           provider=None, budget=None, quota_file=None, payg_approved=None)
+    with pytest.raises((ValueError, subprocess.CalledProcessError)):
+        heldout.consult(args)
+    assert not (tmp_path / 'consultations.json').exists()
+
+
+@pytest.mark.parametrize('pool', [False, True])
+def test_smoke_real_cli_schema(tmp_path, monkeypatch, pool):
+    monkeypatch.setenv('EIDOS_EXP_TEST_ROOT', str(tmp_path))
+    argv = ['--treatment', 'stub', '--out', str(tmp_path / 'out'), '--smoke', '--wall-seconds', '10']
+    if pool:
+        source = fabricated_pool(tmp_path)
+        monkeypatch.setenv('EIDOS_EXTRA_POOL_MANIFESTS', str(source / 'pool.json'))
+        monkeypatch.setenv('EIDOS_POOLS_ROOT', str(tmp_path))
+        monkeypatch.setenv('EIDOS_IMP_PRIVATE_ROOT', str(tmp_path / 'private'))
+        argv += ['--pool', 'FAB', '--card-limit', '1']
+    else:
+        refs = tmp_path / 'refs.json'
+        write_json(refs, {'N01': reference_block()})
+        argv += ['--cards', 'N01', '--references', str(refs)]
+    child = subprocess.run([sys.executable, '-m', 'study.exp.run', *argv], capture_output=True, text=True, timeout=180)
+    assert child.returncode == 0, child.stdout + child.stderr
+    score = read_json(tmp_path / 'out/scorecard.json')
+    assert score['schema'] == 'eidos-exp-smoke-scorecard/1' and score['smoke'] is True
+    from study.exp.compare import compatible
+    with pytest.raises(ValueError, match='scorecard'):
+        compatible(score, score)
+
+
+def test_heldout_lab_home_is_under_private_root(tmp_path, monkeypatch):
+    monkeypatch.setenv('EIDOS_EXP_TEST_ROOT', str(tmp_path / 'public'))
+    variant = run.variants(options(tmp_path))[0]
+    private = tmp_path / 'private'
+    with run.environment({}):
+        result = run.ensure_lab(variant, private_root=private)
+    assert Path(result['home']).is_relative_to(private)
+    assert result['env']['EIDOS_STUDY_HOME'] == result['home']
+    assert not (tmp_path / 'public').exists()
+
+
+def test_pilot_cards_refused(tmp_path):
+    args = options(tmp_path)
+    args.cards = 'N05,N16'
+    with pytest.raises(ValueError, match='sealed Pilot'):
+        run.pool_selection(args)
+
+
+def test_extra_manifest_malformed_is_loud(tmp_path):
+    manifest = tmp_path / 'broken.json'
+    write_json(manifest, {'cards': []})
+    with pytest.raises(ValueError, match='identity'):
+        load_pools({}, tmp_path / 'empty', extra=[manifest])
+
+
+@pytest.mark.parametrize('case', ['naive-quota', 'nan-cap', 'missing-ledger-key', 'negative-limit', 'nan-limit'])
+def test_malformed_budget_quota_and_ledger_exit_two(tmp_path, monkeypatch, capsys, case):
+    provider = 'minimax-m3.1-flash' if case == 'naive-quota' else 'openai-default'
+    args, selected, plan, ledger = live_budget(tmp_path, provider)
+    if case == 'naive-quota':
+        args.quota_file = tmp_path / 'quota.json'
+        write_json(args.quota_file, dict(utc=datetime.now().isoformat(), weekly_remaining_fraction=.8,
+                                        interval_remaining_fraction=.8))
+    elif case == 'nan-cap':
+        budget = read_json(args.budget)
+        budget['providers']['openai-other'] = dict(usd_cap=float('nan'), stop_fraction=.8)
+        args.budget.write_text(json.dumps(budget))
+    elif case == 'missing-ledger-key':
+        ledger.write_text('{"usd": 1}\n')
+    else:
+        treatment = run.resolve('pilot4-v1', provider=provider)
+        invalid = SimpleNamespace(id=treatment.provider.id,
+                                  model_usd_per_run=-1 if case == 'negative-limit' else float('nan'))
+        monkeypatch.setattr(run, 'resolve', lambda *a, **k: SimpleNamespace(provider=invalid))
+    monkeypatch.setattr(run, 'execute', lambda _: run.budget_check(args, selected, plan))
+    assert run.main(['--treatment', 'stub', '--cards', 'N01', '--out', str(args.out)]) == 2
+    assert 'experiment runner failed:' in capsys.readouterr().err
+
+
+def test_live_preflight_checks_real_pilot_flag_with_test_root(tmp_path, monkeypatch, preflight):
+    args, selected, plan = preflight
+    programme = tmp_path / 'real-programme'
+    programme.mkdir()
+    (programme / 'PILOT_ACTIVE').touch()
+    monkeypatch.setattr(run, 'PROGRAMME', programme)
+    selected[0].update(stub=False, fixture=False)
+    with pytest.raises(ValueError, match='PILOT_ACTIVE'):
+        run.preflight(args, selected, plan)
+
+
+def test_live_reservations_precede_dispatch_and_settle(tmp_path):
+    args, selected, plan, ledger = live_budget(tmp_path, 'openai-default')
+    budget = run.budget_check(args, selected, plan)
+    reservations = []
+    run.reserve_spend(args, budget, selected, plan, plan[0], reservations)
+    row = json.loads(ledger.read_text())
+    assert row['status'] == 'reserved' and row['usd'] == 2.4
+    root = tmp_path / 'run'
+    for arm in (2, 4):
+        write_json(root / f'runs/N01-r1/arm{arm}/run_record.json',
+                   dict(block_id='N01-r1', tokens={'input': 100, 'output': 20}, billed_usd=.1))
+    run.account(args, budget, [root], selected, 'test', reservations=reservations)
+    rows = [json.loads(line) for line in ledger.read_text().splitlines()]
+    assert rows[0]['status'] == 'settled' and rows[0]['usd'] == 0
+    assert sum(row['usd'] for row in rows) == .2
+
+
+def test_heldout_reservation_is_one_aggregate_and_settles(tmp_path):
+    args, selected, plan, ledger = live_budget(tmp_path, 'openai-default')
+    budget = run.budget_check(args, selected, plan)
+    reservations = []
+    private = tmp_path / 'private'
+    for block in plan:
+        run.reserve_spend(args, budget, selected, plan, block, reservations, private_root=private)
+    row = json.loads(ledger.read_text())
+    assert row['status'] == 'reserved' and row['usd'] == 4.8 and row['pool'] == 'held-out'
+    assert not {'block', 'variant', 'utc'} & row.keys()
+    out = private / 'runs/utc'
+    root = out / 'pair'
+    for block in plan:
+        for arm in block['arms']:
+            write_json(root / f'runs/{block["block_id"]}/arm{arm}/run_record.json',
+                       dict(tokens={'input': 1, 'output': 2}, billed_usd=.1))
+    run.account(args, budget, [root], selected, 'test', private_root=private, out=out, reservations=reservations)
+    row = json.loads(ledger.read_text())
+    assert row['status'] == 'settled' and row['n_runs'] == 4 and row['usd'] == .4
+    assert not {'block', 'variant', 'utc'} & row.keys()
+
+
+def test_termination_handlers_restore_and_raise():
+    import signal
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        previous = signal.getsignal(sig)
+        with pytest.raises(RuntimeError, match='termination requested'):
+            with run.termination_handlers():
+                signal.raise_signal(sig)
+        assert signal.getsignal(sig) == previous
+
+
+@pytest.mark.parametrize('kind,predictions', [('classification', [1, 1, 1]), ('regression', [.5, .5, .5])])
+def test_legacy_constant_reference_is_unestablished(tmp_path, monkeypatch, kind, predictions):
+    import numpy as np
+    from study.exp.cards import reference_legacy as legacy
+    monkeypatch.setattr(legacy, 'dev_command', lambda *a: write_json(tmp_path / 'bundle/task.json', {'project': 'test'}))
+    data = {'train': (np.zeros((3, 1)), np.array([0, 1, 1]), np.arange(3)),
+            'test': (np.zeros((3, 1)), np.array([0, 1, 1]), np.arange(3))}
+    monkeypatch.setattr(legacy, 'prospective_dataset', lambda _: (data, kind, 2))
+    monkeypatch.setattr(legacy, 'select_reference', lambda *a, **k: {})
+    monkeypatch.setattr(legacy, 'run_cli', lambda *a: (np.array([0, 0, 0]), np.arange(3), 0, 0))
+    frozen = tmp_path / 'frozen.json'
+    baseline = 0 if kind == 'regression' else 1 / 3
+    if kind == 'regression':
+        baseline = (2 / 3) ** .5
+    write_json(frozen, {'N01': {'bar': .02, 'baseline': baseline}})
+    monkeypatch.setattr(legacy, 'FROZEN', frozen)
+    def evaluate(*a, **k):
+        target = tmp_path / 'reference'
+        target.mkdir()
+        np.savez(target / 'reference_test.npz', predictions=predictions)
+        return {'ref_scores': [.1, .1, .1]}
+    monkeypatch.setattr(legacy, 'evaluate_spec', evaluate)
+    result = legacy.reference('N01', tmp_path, 0)
+    assert result['reference_established'] is False and result['card'] == 'N01'
+    assert set(result) == {'card', 'reference_established', 'reason'}
+
+
+@pytest.mark.parametrize('classes', [None, 1, True, 2.5])
+def test_manifest_class_count_validation(tmp_path, monkeypatch, classes):
+    import numpy as np
+    from study.private_seal import PrivateSeal
+    bars = {'N09': ('accuracy', .02)}
+    seal = PrivateSeal(tmp_path / 'seal', make_seal(tmp_path / 'seal', bars), bars)
+    manifest = seal.card('N09')
+    monkeypatch.setattr(seal, 'card', lambda _: {**manifest, 'nclasses': classes})
+    prediction = tmp_path / 'prediction.npz'
+    np.savez(prediction, ids=[20, 10], predictions=[0, 0])
+    with pytest.raises(RuntimeError, match='class count invalid'):
+        seal.score('N09', prediction)
+
+
+def test_manifest_and_task_class_counts_must_agree(tmp_path, monkeypatch):
+    import numpy as np
+    from study.private_seal import PrivateSeal
+    bars = {'N09': ('accuracy', .02)}
+    seal = PrivateSeal(tmp_path / 'seal', make_seal(tmp_path / 'seal', bars), bars)
+    manifest = seal.card('N09')
+    monkeypatch.setattr(seal, 'card', lambda _: {**manifest, 'nclasses': 3})
+    prediction = tmp_path / 'prediction.npz'
+    np.savez(prediction, ids=[20, 10], predictions=[2, 0])
+    with pytest.raises(RuntimeError, match='disagrees'):
+        seal.score('N09', prediction)
+
+
+@pytest.mark.parametrize('keep', [False, True])
+def test_termination_stops_fake_lab_and_settles_reservation(tmp_path, monkeypatch, preflight, keep):
+    import signal
+    args, selected, plan = preflight
+    args.cards = 'N01'
+    args.keep_lab_running = keep
+    selected = run.variants(args)
+    selected[0].update(stub=False, fixture=False)
+    monkeypatch.setattr(run, 'variants', lambda _: selected)
+    monkeypatch.setattr(run, 'controller_record', lambda *a, **k: {'git_sha': 'a' * 40})
+    budget_args, live, _, ledger = live_budget(tmp_path, 'openai-default')
+    selected[0].update(provider=live[0]['provider'], treatment=live[0]['treatment'])
+    args.budget = budget_args.budget
+    home = tmp_path / 'lab/home'
+    monkeypatch.setattr(run, 'ensure_lab', lambda *a, **k: dict(home=str(home), python=sys.executable,
+                       receipt={}, env={'EIDOS_STUDY_HOME': str(home)}))
+    monkeypatch.setattr(run.lab, 'start', lambda *a, **k: None)
+    stop = Mock()
+    monkeypatch.setattr(run.lab, 'stop', stop)
+    original_reserve = run.reserve_spend
+    def interrupted(*a, **k):
+        original_reserve(*a, **k)
+        assert json.loads(ledger.read_text())['status'] == 'reserved'
+        signal.raise_signal(signal.SIGTERM)
+    # Raise in the main thread, before a real child can dispatch.
+    monkeypatch.setattr(run, 'reserve_spend', interrupted)
+    class InlineExecutor:
+        def __init__(self, **k):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            pass
+        def map(self, function, items):
+            return map(function, items)
+    monkeypatch.setattr(run, 'ThreadPoolExecutor', InlineExecutor)
+    with pytest.raises(RuntimeError, match='termination requested'):
+        run.execute(args)
+    stop.assert_called_once()
+    row = json.loads(ledger.read_text())
+    assert row['status'] == 'uncertain' and row['usd'] > 0
+    assert read_json(args.out / 'manifest.json')['exit_status'] == 2
+
+
+def test_missing_reference_error_redacts_path(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(run, 'execute', Mock(side_effect=FileNotFoundError(str(tmp_path / 'PRIVATE_REFERENCE'))))
+    assert run.main(['--treatment', 'stub', '--cards', 'N01', '--out', str(tmp_path / 'out')]) == 2
+    output = capsys.readouterr()
+    assert str(tmp_path) not in output.err and 'PRIVATE_REFERENCE' not in output.err
+
+
+def test_heldout_live_uses_verified_build_and_private_lab_home(tmp_path, monkeypatch):
+    variant = run.variants(options(tmp_path))[0]
+    variant['stub'] = False
+    frozen = tmp_path / 'frozen/ip-build'
+    frozen.mkdir(parents=True)
+    variant['lab_root'] = str(frozen)
+    private = tmp_path / 'private'
+    write_json(frozen / 'ports.json', dict(api=40001, pg=40002, temporal=30100, mcp=40003))
+    verified = []
+    def configure(home, python, stub, commit):
+        verified.append((home, python, stub, commit))
+        os.environ.update(EIDOS_STUDY_HOME=str(home), EIDOS_STUDY_ROOT=str(home.parent),
+                          EIDOS_STUDY_PYTHON=str(python), EIDOS_STUDY_MCP_PORT='40003')
+        return {'verified': True}
+    def initialize(*a, **k):
+        home = Path(os.environ['EIDOS_STUDY_HOME'])
+        assert home.is_relative_to(private)
+        assert os.environ['EIDOS_STUDY_PYTHON'] == str(frozen / 'venv/bin/python')
+        write_json(home / 'config/lab.json', {'lab_python': str(frozen / 'venv/bin/python')})
+    monkeypatch.setattr(run, 'configure_lab', configure)
+    monkeypatch.setattr(run.lab, 'cli', initialize)
+    with run.environment({}):
+        result = run.ensure_lab(variant, private_root=private)
+    assert verified == [(frozen / 'home', frozen / 'venv/bin/python', False, variant['commit'])]
+    assert Path(result['home']) == private / 'labs/ip-build/home'
+    assert result['env']['EIDOS_STUDY_ROOT'] == str(private / 'labs/ip-build')
+    assert not (frozen / 'home').exists()
+
+
+def test_archived_receipt_does_not_release_missing_final_reservation(tmp_path):
+    args, selected, plan, ledger = live_budget(tmp_path, 'openai-default')
+    budget = run.budget_check(args, selected, plan)
+    reservations = []
+    run.reserve_spend(args, budget, selected, plan, plan[0], reservations)
+    root = tmp_path / 'run'
+    for arm in (2, 4):
+        write_json(root / f'runs/incidents/N01-r1-old/arm{arm}/run_record.json',
+                   dict(block_id='N01-r1', tokens={'input': 100, 'output': 20}, billed_usd=.1))
+    run.account(args, budget, [root], selected, 'test', reservations=reservations)
+    rows = [json.loads(line) for line in ledger.read_text().splitlines()]
+    assert rows[0]['status'] == 'uncertain'
+    assert sum(row['usd'] for row in rows) == pytest.approx(2.4)
+
+
+def test_heldout_preflight_git_error_does_not_leak(tmp_path, monkeypatch, capfd):
+    monkeypatch.setenv('EIDOS_EXP_TEST_ROOT', str(tmp_path))
+    write_json(tmp_path / 'H/pool.json', synthetic_manifest('H', ('R0001',)))
+    assert heldout.main(['--pair', 'stub@' + str(tmp_path / 'R0001'), 'stub@HEAD', '--threshold', '.1',
+                         '--note', 'test', '--private-root', str(tmp_path)]) == 2
+    captured = capfd.readouterr()
+    assert captured.out == '' and captured.err == 'CalledProcessError\n'
+    assert not (tmp_path / 'consultations.json').exists()

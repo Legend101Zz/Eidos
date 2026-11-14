@@ -56,6 +56,20 @@ def receipt(scores, *, utc, note, consultation, threshold):
                 tokens=[s['tokens']['total'] for s in aggregates], usd=[s['usd'] for s in aggregates])
 
 
+def nonprivate_preflight(argv, private, cards):
+    from study.exp import run
+    args = run.parser().parse_args(argv)
+    selected = run.variants(args)
+    plan = run.make_plan(cards, args.replicates, tuple(map(int, args.arms.split(','))), selected)
+    run.preflight(args, selected, plan, private_root=private)
+
+
+def save_counter(counter, state):
+    temporary = counter.with_suffix('.tmp')
+    temporary.write_text(json.dumps(state) + '\n')
+    temporary.replace(counter)
+
+
 def consult(args):
     if not args.note.strip() or not math.isfinite(args.threshold) or args.threshold < 0:
         raise ValueError('note and finite nonnegative threshold required')
@@ -68,26 +82,27 @@ def consult(args):
     card_ids = [c.get('id', c.get('card_id')) for c in manifest['cards']]
     if str(private) in args.note or any(card in args.note for card in card_ids):
         raise ValueError('note contains private identifiers')
-    counter = private / 'consultations.json'
-    with (private / '.consultations.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        count = json.loads(counter.read_text())['count'] if counter.exists() else 0
-        if type(count) is not int or count < 0 or count >= 3:
-            raise ValueError('consultation limit')
-        count += 1
-        # Reserve a consultation before starting; failed attempts also consume one.
-        temporary = counter.with_suffix('.tmp')
-        temporary.write_text(json.dumps(dict(count=count)) + '\n')
-        temporary.replace(counter)
     stamp = datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')
     scratch = private / 'runs' / stamp
-    scratch.mkdir(parents=True, mode=0o700)
     out = scratch / 'pair'
     argv = ['--pair', *args.pair, '--pool', 'H', '--out', str(out)]
     for name in ('provider', 'budget', 'quota_file', 'payg_approved'):
         value = getattr(args, name)
         if value is not None:
             argv.extend(['--' + name.replace('_', '-'), str(value)])
+    nonprivate_preflight(argv, private, card_ids)
+    counter = private / 'consultations.json'
+    with (private / '.consultations.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        state = json.loads(counter.read_text()) if counter.exists() else dict(count=0, events=[])
+        count = state['count']
+        if type(count) is not int or count < 0 or count >= 3:
+            raise ValueError('consultation limit')
+        count += 1
+        state['count'] = count
+        state.setdefault('events', []).append(dict(utc=stamp, status='reserved', threshold=args.threshold))
+        save_counter(counter, state)
+    scratch.mkdir(parents=True, mode=0o700)
     request = scratch / 'request.json'
     request.write_text(json.dumps(dict(argv=argv, private_root=str(private), threshold=args.threshold, note=args.note)))
     env = dict(os.environ)
@@ -99,6 +114,14 @@ def consult(args):
         process = subprocess.run([sys.executable, '-m', 'study.exp.run', '--_heldout', str(request)],
                                  env=env, stdout=stream, stderr=stream)
     if process.returncode:
+        run_file = out / 'manifest.json'
+        if run_file.exists() and json.loads(run_file.read_text()).get('status') == 'preflight':
+            with (private / '.consultations.lock').open('a') as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                state = json.loads(counter.read_text())
+                state['count'] -= 1
+                state.setdefault('events', []).append(dict(utc=stamp, status='refunded', reason='preflight'))
+                save_counter(counter, state)
         raise RuntimeError('private run failed')
     run_manifest = json.loads((out / 'manifest.json').read_text())
     scores = [json.loads((out / v['label'] / 'scorecard.json').read_text()) for v in run_manifest['variants']]

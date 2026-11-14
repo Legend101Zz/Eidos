@@ -191,8 +191,10 @@ Ledger paths are relative to the budget file unless absolute. Provider family
 spend combines all Anthropic/OpenAI profiles. Spend plus worst-case per-run USD
 (including every arm, variant, replicate and permitted incident retry) must remain
 below the stop cap. Caps cannot exceed USD 20 or an 80% stop fraction. Unknown USD
-charges fail closed. Operators must serialize live budget admissions against a
-shared ledger; this controller does not reserve budget across independent processes.
+charges fail closed. Before each live dispatch, a ledger lock protects a worst-case reservation and
+a fresh budget check. Final accounting settles reservations against measured
+attempts. Missing receipts retain uncertain exposure. SIGTERM/SIGINT cancel
+children, stop labs and settle the ledger.
 
 MiniMax requires `--quota-file` with `utc`, `weekly_remaining_fraction` and
 `interval_remaining_fraction`, each fraction between zero and one. Both the reading
@@ -213,13 +215,19 @@ python -m study.exp.heldout --pair 'pilot4-v1@B0_REF' 'v2-portfolio@HEAD' \
 
 The private root defaults to `EIDOS_IMP_PRIVATE_ROOT`, or accepts `--private-root`.
 All scratch, logs, grading and scorecards remain in `<private-root>/runs/<utc>/`.
-An atomic counter permits three consultations; a failed attempt consumes one.
+Lab service homes live in `<private-root>/labs/ip-<sha12>/home`, with the shared
+frozen build verified before use. No roster is exported to lab services. Detailed
+spend and dispatch reservations remain private; the shared ledger holds one
+aggregate reservation and then one aggregate total row for the consultation.
+An atomic counter permits three consultations; a failed dispatch consumes one.
+Variants and non-private preflight are checked before reservation, and a child
+preflight refusal records a refund.
 Threshold and rationale are pinned before running. Pass requires mean paired
 card VRG delta at least the threshold and one-sided sign-flip p at most 0.10.
 Only the coarse receipt is printed and written beside the private root in
 `receipts/`: rates and mean delta round to 0.05, with aggregate accounting and
 failure counts. Errors print only their exception type, including argument errors.
-No card id or private path leaves the runner. Novelty wins are null when the
+No card id or private path leaves the blind runner. Novelty wins are null when the
 upstream scorecard does not supply a verified novelty-win observation for an
 external/recombined verified candidate. Unverified and catalog/unknown-class
 submissions have zero novelty credit by definition. The threshold uses unrounded values.
@@ -227,3 +235,11 @@ submissions have zero novelty credit by definition. The threshold uses unrounded
 Tests fabricate seals and build receipts under temporary roots. The deliberately
 explicit `EIDOS_EXP_TEST_ROOT` permits test output there and fabricates a lab
 receipt only for the baseline stub; it cannot run a model or fixture lab.
+
+`--dry-run` prints the plan and estimate without writing files. Sealed Pilot
+cards are refused by `--cards`. D03 requires an explicit `--references` file:
+the committed legacy recipe scored .1 on every seed by predicting one class on
+all shifted test rows, so its reference is marked unestablished. The recipe is
+unchanged pending an owner decision. For non-D pools, configure
+`EIDOS_IMP_PRIVATE_ROOT`: grader scratch stays there, with only grade summaries
+copied into the public grading tree.

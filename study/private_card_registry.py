@@ -140,11 +140,12 @@ def load_pool_manifest(data, profiles):
 
 
 def load_pools(profiles, directory, extra=(), worker=()):
-    for path in [*sorted(Path(directory).glob("*.json")), *map(Path, extra)]:
-        data = json.loads(path.read_text())
-        # legacy-references.json is a reference map, not a pool manifest.
-        if "pool" in data or "pool_id" in data:
-            load_pool_manifest(data, profiles)
+    for path in sorted(Path(directory).glob("*.json")):
+        # The one reference map in this directory is not a pool manifest.
+        if path.name != "legacy-references.json":
+            load_pool_manifest(json.loads(path.read_text()), profiles)
+    for path in map(Path, extra):
+        load_pool_manifest(json.loads(path.read_text()), profiles)
     for data in worker:
         name = "pool:" + data["pool"]
         if name in profiles:

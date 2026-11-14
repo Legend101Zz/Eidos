@@ -41,3 +41,4 @@ artifacts/local/
 
 # Disposable runner validation and reference search scratch
 /.wp6b2-scratch/
+/.fix-validation/

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
-from study.common import DEVELOPMENT, ROOT, dev_command
+from study.common import DEVELOPMENT, dev_command
 from study.exp.cards.common import run_cli, write_json
 from study.exp.cards.reference import evaluate_spec, select_reference
 from study.packaging.p3_data import FROZEN
@@ -55,6 +55,12 @@ def reference(card, root, budget_seconds):
     if card.startswith('N') and not math.isclose(base, frozen['baseline'], rel_tol=1e-9, abs_tol=1e-9):
         raise ValueError('legacy baseline differs from frozen grader baseline')
     result = evaluate_spec(spec, bundle, root / 'test_inputs.npz', yt, baseline, base, bar, root / 'reference')
+    with np.load(root / 'reference/reference_test.npz', allow_pickle=False) as measured:
+        predictions = measured['predictions']
+    if predictions.size and np.all(predictions == predictions.flat[0]):
+        return dict(card=card, reference_established=False,
+                    reason=f'constant prediction under the shifted test distribution: ref_scores {result["ref_scores"]}; '
+                           f'all {predictions.size} test rows have one prediction')
     result['project'] = task['project']
     return result
 
@@ -65,14 +71,15 @@ def main(argv=None):
     parser.add_argument('--budget-seconds', type=float, default=480)
     args = parser.parse_args(argv)
     started = time.monotonic()
-    scratch = ROOT / '.wp6b2-scratch'
-    scratch.mkdir(exist_ok=True)
     references = {}
-    with tempfile.TemporaryDirectory(prefix='legacy-', dir=scratch) as temporary:
+    with tempfile.TemporaryDirectory(prefix='legacy-') as temporary:
         for card in CARDS:
             root = Path(temporary) / card
             root.mkdir()
             references[card] = reference(card, root, args.budget_seconds)
+            if references[card].get("reference_established") is False:
+                print(f'{card}: {references[card]["reason"]}', flush=True)
+                continue
             print(f'{card}: baseline={references[card]["base_score"]:.6g} reference={references[card]["ref_score"]:.6g}', flush=True)
     write_json(args.out, references)
     print(f'Wall time: {time.monotonic() - started:.3f} s', flush=True)

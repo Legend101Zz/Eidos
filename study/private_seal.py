@@ -132,9 +132,19 @@ class PrivateSeal:
 
         manifest = self.card(card)
         kind = manifest["task_type"]
-        classes = manifest.get("nclasses", 2) if kind == "classification" else None
-        if kind == "classification" and (type(classes) is not int or classes < 2):
-            raise RuntimeError("private manifest class count invalid")
+        classes = 2 if kind == "classification" else None
+        if kind == "classification":
+            if "nclasses" in manifest:
+                classes = manifest["nclasses"]
+                if type(classes) is not int or classes < 2:
+                    raise RuntimeError("private manifest class count invalid")
+                task = json.loads(self._read(card, "bundle/task.json"))
+                if "nclasses" in task and (type(task["nclasses"]) is not int or task["nclasses"] != classes):
+                    raise RuntimeError("private task/manifest class count disagrees")
+            elif set(self.cards) != set(PRIVATE_CARD_BARS):
+                classes = json.loads(self._read(card, "bundle/task.json")).get("nclasses")
+                if type(classes) is not int or classes < 2:
+                    raise RuntimeError("private task class count missing or invalid")
         try:
             with np.load(io.BytesIO(self._read(card, "test_labels.npz")), allow_pickle=False) as labels:
                 if set(labels.files) != {"y", "ids"}:

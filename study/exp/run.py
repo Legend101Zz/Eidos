@@ -7,10 +7,12 @@ import fcntl
 import json
 import math
 import os
+import signal
 import subprocess
 import sys
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,7 +22,14 @@ from study.eidos_arms import lab
 from study.evals.mini_eval import configure_lab
 from study.evals.provenance import EVAL_ROOT, controller_record, disk_guard
 from study.exp.treatment import resolve
-from study.private_card_registry import PROFILES, SEAL_ROOT_ENVS, PoolProfile
+from study.private_card_registry import (
+    ALL_PRIVATE_CARDS,
+    PROFILES,
+    SEAL_ROOT_ENVS,
+    PoolProfile,
+    load_pool_manifest,
+    profile_for_card,
+)
 
 PROGRAMME = Path('/Volumes/Mrigesh SSD/eidos-v1/improvement')
 
@@ -30,7 +39,7 @@ def utc():
 
 
 def git(*args):
-    return subprocess.check_output(['git', *args], cwd=ROOT, text=True).strip()
+    return subprocess.check_output(['git', *args], cwd=ROOT, text=True, stderr=subprocess.PIPE).strip()
 
 
 def parser():
@@ -109,7 +118,9 @@ def _number(value):
 
 
 def provider_family(provider):
-    return provider.split('-', 1)[0]
+    if not isinstance(provider, str) or not provider.strip():
+        raise ValueError('invalid ledger provider')
+    return provider.lower().split('-', 1)[0]
 
 
 def budget_check(args, selected, plan):
@@ -122,9 +133,19 @@ def budget_check(args, selected, plan):
     ledger = Path(budget['spend_ledger'])
     if not ledger.is_absolute():
         ledger = args.budget.resolve().parent / ledger
+    for cap in budget['providers'].values():
+        if (not _number(cap['usd_cap']) or not _number(cap['stop_fraction'])
+                or not 0 < cap['stop_fraction'] <= .8):
+            raise ValueError('invalid provider cap/stop fraction')
+    settings = budget['minimax']
+    if any(not _number(settings[key]) or not 0 < settings[key] <= 1
+           for key in ('weekly_floor', 'interval_floor', 'weekly_share')):
+        raise ValueError('invalid MiniMax budget fraction')
     spent = {}
     for line in ledger.read_text().splitlines():
         row = json.loads(line)
+        if 'provider' not in row or 'usd' not in row:
+            raise ValueError('spend ledger requires provider and usd')
         if row.get('usd') is not None:
             if not _number(row['usd']):
                 raise ValueError('invalid spend ledger USD amount')
@@ -145,7 +166,10 @@ def budget_check(args, selected, plan):
             if not args.quota_file:
                 raise ValueError('MiniMax requires a fresh --quota-file or --payg-approved')
             quota = read_json(args.quota_file)
-            age = (datetime.now(UTC) - datetime.fromisoformat(quota['utc'].replace('Z', '+00:00'))).total_seconds()
+            reading = datetime.fromisoformat(quota['utc'].replace('Z', '+00:00'))
+            if reading.tzinfo is None:
+                raise ValueError('quota UTC must include a timezone')
+            age = (datetime.now(UTC) - reading).total_seconds()
             if not 0 <= age < 600 or time.time() - args.quota_file.stat().st_mtime >= 600:
                 raise ValueError('quota reading must be younger than ten minutes')
             settings = budget['minimax']
@@ -159,7 +183,7 @@ def budget_check(args, selected, plan):
                 raise ValueError('MiniMax weekly share exhausted')
         else:
             limit = provider.model_usd_per_run
-            if limit is None:
+            if not _number(limit):
                 raise ValueError('USD provider requires a per-run worst-case limit')
             family = provider_family(provider.id)
             estimates[family] = estimates.get(family, 0) + runs * limit
@@ -168,9 +192,6 @@ def budget_check(args, selected, plan):
         if not caps:
             raise ValueError('missing provider cap')
         cap = dict(usd_cap=min(c['usd_cap'] for c in caps), stop_fraction=min(c['stop_fraction'] for c in caps))
-        if (not _number(cap['usd_cap']) or not _number(cap['stop_fraction'])
-                or not 0 < cap['stop_fraction'] <= .8):
-            raise ValueError('invalid provider cap/stop fraction')
         if spent.get(provider, 0) + estimate >= min(20, cap['usd_cap']) * cap['stop_fraction']:
             raise ValueError('provider spend plus worst-case plan reaches the stop cap')
     return dict(live=True, estimated_usd=sum(estimates.values()), estimates=estimates,
@@ -183,7 +204,8 @@ def preflight(args, selected, plan, *, private_root=None):
     active = PROGRAMME / 'PILOT_ACTIVE'
     if os.environ.get('EIDOS_EXP_TEST_ROOT'):
         active = Path(os.environ['EIDOS_EXP_TEST_ROOT']) / 'PILOT_ACTIVE'
-    if active.exists():
+    if active.exists() or (any(not v['stub'] and not v['fixture'] for v in selected)
+                           and (PROGRAMME / 'PILOT_ACTIVE').exists()):
         raise ValueError('PILOT_ACTIVE: programme runs are disabled')
     if len(selected) == 2 and selected[0]['lab_root'] == selected[1]['lab_root'] and args.concurrency < 2:
         raise ValueError('paired blocks sharing a lab require concurrency at least two')
@@ -216,11 +238,11 @@ def environment(updates):
         os.environ.update(old)
 
 
-def ensure_lab(v, *, dry_run=False):
+def ensure_lab(v, *, dry_run=False, private_root=None):
     root = Path(v['lab_root'])
     test_root = os.environ.get('EIDOS_EXP_TEST_ROOT')
     if test_root and v['stub']:
-        root = Path(test_root) / 'labs' / ('ip-' + v['commit'][:12])
+        root = Path(private_root or test_root) / 'labs' / ('ip-' + v['commit'][:12])
         python = root / 'venv/bin/python'
         if not dry_run:
             python.parent.mkdir(parents=True, exist_ok=True)
@@ -233,7 +255,7 @@ def ensure_lab(v, *, dry_run=False):
         if not root.exists():
             if dry_run:
                 return dict(home=str(root / 'home'), python=str(python), build_required=True)
-            build_env = {key: value for key, value in os.environ.items() if key not in SEAL_ROOT_ENVS
+            build_env = {key: value for key, value in os.environ.items() if key not in (*SEAL_ROOT_ENVS, 'EIDOS_STUDY_POOL_PROFILES')
                          and not key.endswith(('_API_KEY', '_AUTH_TOKEN', '_OAUTH_TOKEN'))}
             subprocess.run(['nice', '-n', '10', 'bash', str(ROOT / 'study/evals/build_lab.sh'),
                             v['commit'], root.name], cwd=ROOT, env=build_env, check=True)
@@ -242,6 +264,17 @@ def ensure_lab(v, *, dry_run=False):
         return dict(home=str(home), python=str(python), build_required=True)
     explicit_lab(home)
     receipt = configure_lab(home, python, test_root is not None and v['stub'], v['commit'])
+    if private_root is not None and not (test_root and v['stub']):
+        # Verify the shared immutable build first; service state uses a separate private HOME.
+        ports = read_json(root / 'ports.json')
+        home = Path(private_root) / 'labs' / root.name / 'home'
+        explicit_lab(home)
+        os.environ['EIDOS_STUDY_ROOT'] = str(home.parent)
+        if not (home / 'config/lab.json').exists():
+            lab.cli('init', '--home', home, '--api-port', ports['api'], '--pg-port', ports['pg'],
+                    '--temporal-port', ports['temporal'], timeout=600)
+        if read_json(home / 'config/lab.json').get('lab_python') != str(python):
+            raise ValueError('private lab interpreter differs from verified build')
     return dict(home=str(home), python=str(python), receipt=receipt,
                 env={key: os.environ[key] for key in ('EIDOS_STUDY_HOME', 'EIDOS_STUDY_ROOT', 'EIDOS_STUDY_PYTHON',
                                                      'EIDOS_STUDY_MCP_PORT') if key in os.environ})
@@ -254,6 +287,9 @@ def pool_selection(args):
     cards = list(profile.cards) if profile else args.cards.split(',')
     if args.card_limit:
         cards = cards[:args.card_limit]
+    if not args.pool and any(card in ALL_PRIVATE_CARDS and profile_for_card(card).startswith('pilot-')
+                             for card in cards):
+        raise ValueError('sealed Pilot cards are not programme development cards')
     if any(card not in FAMILIES for card in cards):
         raise ValueError('unknown card')
     return profile, cards
@@ -262,6 +298,8 @@ def pool_selection(args):
 def load_references(args, profile, cards):
     from study.exp.scorecard import canonical, number, sha256
 
+    if not profile and 'D03' in cards and args.references is None:
+        raise ValueError('D03 requires an explicit --references file; reference not established')
     if profile:
         root = profile.pool_root()
         references = {card: read_json(root / 'controller' / card / 'reference.json') for card in cards}
@@ -269,6 +307,8 @@ def load_references(args, profile, cards):
         references = read_json(args.references or ROOT / 'experiments/pools/legacy-references.json')
         references = {card: references[card] for card in cards}
     for ref in references.values():
+        if ref.get('reference_established') is False:
+            raise ValueError('card reference not established; supply an explicit --references file')
         if (not all(number(ref.get(k)) for k in ('headroom', 'err_base', 'err_ref', 'se_paired', 'base_score'))
                 or ref['headroom'] < 0 or (ref['headroom'] == 0 and ref.get('null_card') is not True)
                 or ref['err_base'] < 0 or ref['err_ref'] < 0 or type(ref.get('null_card')) is not bool):
@@ -306,13 +346,22 @@ def block_worker(request):
                  primary_eligible=True, block_id=item['block_id'], block_order=item['order'], randomization_seed=0)
             for arm in item['arms']]
     root = Path(request['root'])
+    grading = root / 'grading'
+    private_grading = request.get('private_grading')
+    if private_grading:
+        grading = Path(private_grading)
     attempts = []
     for attempt in range(args['retry_incidents'] + 1):
         try:
             run_block(rows, root / 'runs', stub=request['stub'], replace_incident=attempt > 0)
             grades = grade_block(root / 'runs' / item['block_id'] / 'block_record.json',
-                                 root / 'grading', root / 'results.json')
+                                 grading, root / 'results.json')
+            if private_grading:
+                for arm, summary in zip(item['arms'], grades, strict=True):
+                    write_json(root / 'grading' / item['block_id'] / f'arm{arm}/grade.json', summary)
             incident = any(row['status'] == 'incident' for row in grades)
+        except RunTerminated:
+            raise
         except Exception as exc:
             incident = True
             print('block attempt failed: ' + type(exc).__name__, flush=True)
@@ -323,34 +372,158 @@ def block_worker(request):
     return int(incident)
 
 
-def account(args, budget, roots, selected, run_id):
-    if not budget['live']:
-        return
+@contextlib.contextmanager
+def spend_lock(budget):
     ledger = Path(budget['spend_ledger'])
     ledger.parent.mkdir(parents=True, exist_ok=True)
-    with ledger.open('a') as stream:
-        fcntl.flock(stream, fcntl.LOCK_EX)
-        # Include every archived incident attempt, not just the final scorecard rows.
-        for v, root in zip(selected, roots, strict=True):
-            if v['stub'] or v['fixture']:
-                continue
-            provider = resolve(v['treatment']['id'], provider=v['provider']['id']).provider
-            for path in sorted((root / 'runs').rglob('run_record.json')):
-                record = read_json(path)
-                tokens = record.get('tokens') or {}
-                usd = record.get('billed_usd')
-                if (usd is None and provider.price_per_mtok is not None
-                        and all(type(tokens.get(k)) is int for k in ('input', 'output'))):
-                    usd = (tokens.get('input', 0) * provider.price_per_mtok['input'] +
-                           tokens.get('output', 0) * provider.price_per_mtok['output']) / 1e6
-                stream.write(json.dumps(dict(utc=utc(), provider=provider.id, model=provider.model,
-                                             purpose='development evidence', run_id=run_id,
-                                             variant=v['label'], tokens_in=tokens.get('input'),
-                                             tokens_out=tokens.get('output'), usd=usd, source='study.exp.run',
-                                             quota_before=budget.get('quota_before'),
-                                             quota_after=read_json(args.quota_file) if args.quota_file else None)) + '\n')
+    with ledger.with_suffix('.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield ledger
+
+
+def write_ledger(ledger, rows):
+    temporary = ledger.with_suffix('.tmp')
+    with temporary.open('w') as stream:
+        for row in rows:
+            stream.write(json.dumps(row, allow_nan=False) + '\n')
         stream.flush()
         os.fsync(stream.fileno())
+    temporary.replace(ledger)
+
+
+def reserve_spend(args, budget, selected, plan, item, reservations, *, private_root=None, private_out=None):
+    if not budget['live']:
+        return
+    with spend_lock(budget) as ledger:
+        v = selected[item['variant']]
+        if v['stub'] or v['fixture']:
+            return
+        provider = resolve(v['treatment']['id'], provider=v['provider']['id']).provider
+        if private_root is not None and private_out is not None:
+            # Per-dispatch reservations and their ordering never enter the shared H ledger.
+            destination = Path(private_out) / 'spend.jsonl'
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            private_rows = [json.loads(line) for line in destination.read_text().splitlines()] if destination.exists() else []
+            limit = provider.model_usd_per_run
+            private_rows.append(dict(status='reserved', provider=provider.id, variant=v['label'], block=item['block_id'],
+                                     usd=len(item['arms']) * (args.retry_incidents + 1) * limit if _number(limit) else None))
+            write_ledger(destination, private_rows)
+        if private_root is not None and reservations:
+            return  # One aggregate covers the complete H plan before any live dispatch.
+        reserved_plan = plan if private_root is not None else [item]
+        # Recheck under the same lock used by other controllers before adding exposure.
+        current = budget_check(args, selected, reserved_plan)
+        amount = current['estimated_usd']
+        key = uuid.uuid4().hex
+        row = dict(provider=provider.id, usd=amount if provider_family(provider.id) != 'minimax' else None,
+                   status='reserved', reservation=key, source='study.exp.run')
+        if private_root is None:
+            row['expected_records'] = sum(len(block['arms']) for block in reserved_plan)
+        if private_root is not None:
+            row['pool'] = 'held-out'
+        else:
+            row.update(utc=utc(), block=item['block_id'], variant=v['label'])
+        rows = [json.loads(line) for line in ledger.read_text().splitlines()]
+        write_ledger(ledger, [*rows, row])
+        reservations.append(key)
+        if private_root is not None:
+            budget['_heldout_expected'] = sum(len(block['arms']) for block in plan)
+
+
+def account(args, budget, roots, selected, run_id, *, private_root=None, out=None, reservations=()):
+    if not budget['live']:
+        return
+    detail = []
+    for v, root in zip(selected, roots, strict=True):
+        if v['stub'] or v['fixture']:
+            continue
+        provider = resolve(v['treatment']['id'], provider=v['provider']['id']).provider
+        for path in sorted((root / 'runs').rglob('run_record.json')):
+            record = read_json(path)
+            tokens = record.get('tokens') or {}
+            usd = record.get('billed_usd')
+            if (usd is None and provider.price_per_mtok is not None
+                    and all(type(tokens.get(k)) is int for k in ('input', 'output'))):
+                usd = (tokens['input'] * provider.price_per_mtok['input'] +
+                       tokens['output'] * provider.price_per_mtok['output']) / 1e6
+            detail.append(dict(utc=utc(), provider=provider.id, model=provider.model,
+                               purpose='development evidence', run_id=run_id, variant=v['label'],
+                               block=record.get('block_id', path.parent.parent.name),
+                               current=path.relative_to(root / 'runs').parts[0] != 'incidents',
+                               tokens_in=tokens.get('input'), tokens_out=tokens.get('output'), usd=usd,
+                               source='study.exp.run', quota_before=budget.get('quota_before'),
+                               quota_after=read_json(args.quota_file) if args.quota_file else None))
+    if private_root is not None:
+        destination = Path(out) / 'spend.jsonl'
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        write_ledger(destination, detail)
+        providers = {row['provider'] for row in detail} or {
+            v['provider']['id'] for v in selected if not v['stub'] and not v['fixture']}
+        if len(providers) != 1:
+            raise ValueError('held-out accounting requires one provider')
+        public = [dict(provider=next(iter(providers)), pool='held-out', n_runs=len(detail),
+                       tokens_in=sum(row['tokens_in'] for row in detail) if all(type(row['tokens_in']) is int for row in detail) else None,
+                       tokens_out=sum(row['tokens_out'] for row in detail) if all(type(row['tokens_out']) is int for row in detail) else None,
+                       usd=sum(row['usd'] for row in detail) if all(row['usd'] is not None for row in detail) else None,
+                       status='settled', source='study.exp.run')]
+    else:
+        public = detail
+    with spend_lock(budget) as ledger:
+        rows = [json.loads(line) for line in ledger.read_text().splitlines()]
+        reserved = [row for row in rows if row.get('reservation') in reservations]
+        if private_root is not None:
+            if reservations and sum(row['current'] for row in detail) < budget.get('_heldout_expected', 1):
+                public[0].update(usd=None, status='uncertain')
+            rows = [row for row in rows if row.get('reservation') not in reservations]
+        else:
+            for row in reserved:
+                observed = [entry for entry in detail if entry['variant'] == row['variant']
+                            and entry['block'] == row['block']]
+                if sum(entry['current'] for entry in observed) >= row['expected_records']:
+                    row.update(usd=0, status='settled')
+                else:
+                    # Keep the unobserved worst case charged; a missing receipt cannot release budget.
+                    charge = sum(entry['usd'] or 0 for entry in observed)
+                    row.update(usd=max(0, row['usd'] - charge) if row['usd'] is not None else None,
+                               status='uncertain')
+        write_ledger(ledger, [*rows, *public])
+
+
+class RunTerminated(RuntimeError):
+    pass
+
+
+def dispatch_process(command, *, cancel, **kwargs):
+    if cancel.is_set():
+        raise RunTerminated('dispatch cancelled')
+    with subprocess.Popen(command, **kwargs) as process:
+        while True:
+            if cancel.is_set():
+                process.terminate()
+                try:
+                    process.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                raise RunTerminated('dispatch terminated')
+            try:
+                return subprocess.CompletedProcess(command, process.wait(timeout=.2))
+            except subprocess.TimeoutExpired:
+                continue
+
+
+@contextlib.contextmanager
+def termination_handlers(cancel=None):
+    def terminate(signum, frame):
+        if cancel is not None:
+            cancel.set()
+        raise RunTerminated('termination requested: ' + signal.Signals(signum).name)
+    previous = {sig: signal.signal(sig, terminate) for sig in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        yield
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
 
 
 def execute(args, *, private_root=None):
@@ -361,6 +534,8 @@ def execute(args, *, private_root=None):
     arms = tuple(map(int, args.arms.split(',')))
     plan = make_plan(cards, args.replicates, arms, selected)
     checked = preflight(args, selected, plan, private_root=private_root)
+    if profile is not None and profile.pool != 'D' and not (private_root or os.environ.get('EIDOS_IMP_PRIVATE_ROOT')):
+        raise ValueError('non-D grading requires EIDOS_IMP_PRIVATE_ROOT')
     references, reference_digest = load_references(args, profile, cards)
     out = Path(checked['output'])
     manifest = dict(schema='eidos-experiment-run/1', started_utc=utc(), plan=plan, variants=selected,
@@ -372,9 +547,6 @@ def execute(args, *, private_root=None):
         with environment({}):
             manifest['labs'] = [ensure_lab(v, dry_run=True) for v in selected]
         manifest.update(status='dry-run', exit_status=0)
-        out.mkdir(parents=True, exist_ok=True)
-        write_json(out / 'manifest.json', manifest)
-        (out / 'run.log').write_text('Resolve; preflight passed; dry-run: no lab or block started.\n')
         print(json.dumps(manifest, indent=2))
         return 0
     out.mkdir(parents=True, exist_ok=True)
@@ -383,7 +555,10 @@ def execute(args, *, private_root=None):
         root.mkdir(exist_ok=True)
     write_json(out / 'manifest.json', manifest)
     status = 1
-    with (out / 'run.log').open('w', buffering=1) as log:
+    reservations = []
+    grading_id = uuid.uuid4().hex
+    cancel = threading.Event()
+    with termination_handlers(cancel), (out / 'run.log').open('w', buffering=1) as log:
         def event(message):
             log.write(utc() + ' ' + message + '\n')
         event('Resolve and preflight passed')
@@ -392,7 +567,7 @@ def execute(args, *, private_root=None):
             with environment({}):
                 for v in selected:
                     event('Resolve lab ' + v['label'])
-                    v['lab'] = ensure_lab(v)
+                    v['lab'] = ensure_lab(v, private_root=private_root) if private_root is not None else ensure_lab(v)
                     manifest['labs'].append(v['lab'])
             charter = 'experiments/CHARTER.md'
             charter_commit = git('log', '-1', '--format=%H', '--', charter)
@@ -414,9 +589,10 @@ def execute(args, *, private_root=None):
                             raise ValueError('cannot mix fixture and credentialled runtime on one lab')
                         continue
                     env = dict(v['lab']['env'], EIDOS_STUDY_TREATMENT=v['treatment']['id'],
-                               EIDOS_STUDY_PROVIDER=v['provider']['id'], EIDOS_STUDY_POOL_PROFILES=safe_pools)
+                               EIDOS_STUDY_PROVIDER=v['provider']['id'])
                     started_labs[key] = v  # stop even when startup partially fails
                     with environment(env):
+                        os.environ.pop('EIDOS_STUDY_POOL_PROFILES', None)
                         explicit_lab(Path(key))
                         lab.start(v['provider']['id'], credentials=not v['fixture'])
                     event('Lab started ' + v['label'])
@@ -429,19 +605,33 @@ def execute(args, *, private_root=None):
                     root = roots[item['variant']]
                     request = dict(block=item, root=str(root), stub=v['stub'],
                                    options=dict(wall_seconds=args.wall_seconds, retry_incidents=args.retry_incidents))
+                    if profile is not None and profile.pool != 'D':
+                        private = private_root or os.environ.get('EIDOS_IMP_PRIVATE_ROOT')
+                        if not private:
+                            raise ValueError('non-D grading requires EIDOS_IMP_PRIVATE_ROOT')
+                        request['private_grading'] = str((out / 'grading-scratch' if private_root is not None
+                                                          else Path(private) / 'grading' / grading_id) / v['label'])
+                    if private_root is not None:
+                        request['pool_profiles'] = json.loads(safe_pools)
                     path = root / 'requests' / (item['block_id'] + '.json')
                     write_json(path, request)
                     env = dict(os.environ, **v['lab']['env'], EIDOS_STUDY_TREATMENT=v['treatment']['id'],
                                EIDOS_STUDY_PROVIDER=v['provider']['id'], EIDOS_PILOT_CHARTER_PATH=charter,
-                               EIDOS_PILOT_CHARTER_COMMIT=charter_commit, EIDOS_STUDY_POOL_PROFILES=safe_pools)
+                               EIDOS_PILOT_CHARTER_COMMIT=charter_commit)
+                    if private_root is None:
+                        env['EIDOS_STUDY_POOL_PROFILES'] = safe_pools
+                    else:
+                        env.pop('EIDOS_STUDY_POOL_PROFILES', None)
                     env.pop('EIDOS_CARD_PROFILE', None)
                     with locks[v['lab']['home']]:
                         if barrier is not None:
                             barrier.wait(timeout=30)
+                        reserve_spend(args, checked['budget'], selected, plan, item, reservations, private_root=private_root,
+                                      private_out=out.parent if private_root is not None else None)
                         event('Run/grade ' + v['label'] + ' ' + item['block_id'])
                         with path.with_suffix('.log').open('w') as block_log:
-                            result = subprocess.run([sys.executable, '-m', 'study.exp.run', '--_block', str(path)],
-                                                    cwd=ROOT, env=env, stdout=block_log, stderr=block_log)
+                            result = dispatch_process([sys.executable, '-m', 'study.exp.run', '--_block', str(path)],
+                                                      cancel=cancel, cwd=ROOT, env=env, stdout=block_log, stderr=block_log)
                         event('Finished ' + v['label'] + ' ' + item['block_id'] + f' exit={result.returncode}')
                     return result.returncode
 
@@ -464,10 +654,11 @@ def execute(args, *, private_root=None):
                         exits = list(executor.map(dispatch, plan))
             finally:
                 stop_errors = []
-                if not args.keep_lab_running:
+                if not args.keep_lab_running or cancel.is_set():
                     for v in started_labs.values():
                         try:
                             with environment(v['lab']['env']):
+                                explicit_lab(Path(v['lab']['home']))
                                 lab.stop()
                             event('Lab stopped ' + v['label'])
                         except Exception as exc:
@@ -514,7 +705,8 @@ def execute(args, *, private_root=None):
         finally:
             try:
                 account_started = time.monotonic()
-                account(args, checked['budget'], roots, selected, out.name)
+                account(args, checked['budget'], roots, selected, out.name, private_root=private_root,
+                        out=out.parent if private_root is not None else out, reservations=reservations)
                 manifest['timings']['account_s'] = time.monotonic() - account_started
                 event('Account complete')
             except Exception as exc:
@@ -532,14 +724,28 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == '--_heldout':
         request = read_json(argv[1])
-        return execute(parser().parse_args(request['argv']), private_root=request['private_root'])
+        args = parser().parse_args(request['argv'])
+        try:
+            return execute(args, private_root=request['private_root'])
+        except Exception:
+            if not (args.out / 'manifest.json').exists():
+                write_json(args.out / 'manifest.json', dict(status='preflight', exit_status=2))
+            raise
     if argv and argv[0] == '--_block':
-        return block_worker(read_json(argv[1]))
+        request = read_json(argv[1])
+        for data in request.get('pool_profiles', []):
+            if 'pool:' + data['pool'] not in PROFILES:
+                load_pool_manifest(data, PROFILES)
+                for item in data['cards']:
+                    FAMILIES[item['id']] = item['id']
+        with termination_handlers():
+            return block_worker(request)
     args = parser().parse_args(argv)
     try:
         return execute(args)
-    except (ValueError, KeyError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
-        print('experiment runner failed: ' + str(exc), file=sys.stderr)
+    except (ValueError, KeyError, TypeError, AttributeError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        detail = 'reference or input file unavailable' if isinstance(exc, FileNotFoundError) else str(exc)
+        print('experiment runner failed: ' + detail, file=sys.stderr)
         return 2
 
 
