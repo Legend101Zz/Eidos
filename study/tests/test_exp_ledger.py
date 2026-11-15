@@ -15,7 +15,8 @@ except ImportError:
     # Identity decorators keep import safe; unittest collects zero free functions.
     from types import SimpleNamespace
     pytest = SimpleNamespace(fixture=lambda function: function,
-                             mark=SimpleNamespace(parametrize=lambda *a, **k: lambda function: function))
+                             mark=SimpleNamespace(parametrize=lambda *a, **k: lambda function: function,
+                                                  skipif=lambda *a, **k: lambda function: function))
 
 from study.exp import ledger
 
@@ -38,6 +39,7 @@ def commit(root, message='fixture'):
 
 # The fixture repository starts from the programme's pristine experiment area only. Real experiment records
 # (EXP-* directories, a non-empty INDEX.jsonl) name commits of the real repository and must never reach it.
+LIVE_EXPERIMENTS = ROOT / 'experiments'
 PRISTINE_FILES = ('README.md', 'CHARTER.md')
 PRISTINE_DIRS = ('rules', 'templates', 'catalog', 'pools')
 
@@ -48,10 +50,10 @@ def pristine_experiments(source, destination):
     destination.mkdir(parents=True)
     for name in PRISTINE_FILES:
         if (source / name).is_file():
-            shutil.copy2(source / name, destination / name)
+            shutil.copy2(source / name, destination / name, follow_symlinks=False)
     for name in PRISTINE_DIRS:
         if (source / name).is_dir():
-            shutil.copytree(source / name, destination / name)
+            shutil.copytree(source / name, destination / name, symlinks=True)
     (destination / 'INDEX.jsonl').write_bytes(b'')
     return destination
 
@@ -63,7 +65,7 @@ def repo(tmp_path):
     git(root, 'init', '-b', 'main')
     git(root, 'config', 'user.name', 'Fixture Actor')
     git(root, 'config', 'user.email', 'fixture@example.invalid')
-    pristine_experiments(ROOT / 'experiments', root / 'experiments')
+    pristine_experiments(LIVE_EXPERIMENTS, root / 'experiments')
     commit(root, 'base templates')
     git(root, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
     git(root, 'checkout', '-b', 'experiment')
@@ -357,8 +359,17 @@ def test_clock_injection(repo):
     assert entry['actor'] == 'Clock fixture'
 
 
-def test_golden_rules_and_index_verifies():
+SHALLOW = subprocess.run(['git', '-C', str(ROOT), 'rev-parse', '--is-shallow-repository'], text=True,
+                         capture_output=True).stdout.strip() == 'true'
+
+
+@pytest.mark.skipif(SHALLOW, reason='verifying real records needs full git history (registration base commits); '
+                                    'ci.yml lint-and-unit runs this file with fetch-depth 0')
+def test_real_index_verifies_against_history():
     ledger.verify(ROOT)
+
+
+def test_golden_rules():
     files = sorted((ROOT / 'experiments/rules').glob('*.json'))
     assert len(files) == 6
 
@@ -994,3 +1005,20 @@ def test_pristine_experiments_excludes_real_records(tmp_path):
     git(root, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
     cli(root, 'verify')
     cli(root, 'verify', '--against', 'origin/main')
+
+
+@pytest.fixture
+def polluted_live_tree(tmp_path, monkeypatch):
+    live = tmp_path / 'live-experiments'
+    shutil.copytree(ROOT / 'experiments', live)
+    (live / 'EXP-999-foreign').mkdir()
+    (live / 'EXP-999-foreign/ledger.jsonl').write_text(json.dumps({'commit': 'f' * 40}) + '\n')
+    (live / 'INDEX.jsonl').write_text(json.dumps({'experiment': 'EXP-999'}) + '\n')
+    monkeypatch.setattr(sys.modules[__name__], 'LIVE_EXPERIMENTS', live)
+    return live
+
+
+def test_repo_fixture_ignores_real_records(polluted_live_tree, repo):
+    assert not list((repo / 'experiments').glob('EXP-*'))
+    assert (repo / 'experiments/INDEX.jsonl').read_bytes() == b''
+    cli(repo, 'verify')
