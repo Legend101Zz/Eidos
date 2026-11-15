@@ -56,6 +56,7 @@ def test_placeholder_profile_refuses_resolution(tmp_path, monkeypatch):
 def test_openai_profile_resolves_and_guards_served_models(monkeypatch):
     resolved = treatment.resolve(provider='openai-default')
     assert resolved.investigator['model'] == 'openai:gpt-5-nano'
+    assert resolved.investigator['settings']['json_schema_top_level_combinators'] is False
     assert resolved.investigator['settings']['price_per_mtok'] == resolved.provider.price_per_mtok == {
         'input': .05, 'output': .40}
     assert resolved.provider.model_usd_per_run == .60
@@ -77,6 +78,14 @@ def test_validation_refuses_invalid_profiles(change):
     data = copy.deepcopy(providers.load().data)
     data.update(change)
     with pytest.raises(ValueError):
+        providers.validate(data)
+
+
+@pytest.mark.parametrize('value', [None, 'false', 0, 1, [], {}])
+def test_schema_capability_requires_boolean(value):
+    data = copy.deepcopy(providers.load('openai-default').data)
+    data['investigator']['settings']['json_schema_top_level_combinators'] = value
+    with pytest.raises(ValueError, match='json_schema_top_level_combinators must be a boolean'):
         providers.validate(data)
 
 
@@ -505,6 +514,9 @@ def test_profile_security_golden(name, item, credential, upstream, wire, served,
         assert treatment.resolve().investigator['settings']['output_mode'] == mode
     else:
         assert profile.investigator['settings']['output_mode'] == mode
+    assert {key: value for key, value in profile.investigator.get('settings', {}).items()
+            if key == 'json_schema_top_level_combinators'} == (
+                {'json_schema_top_level_combinators': False} if name == 'openai-default' else {})
 
 
 def test_default_bridge_argv_main_golden(tmp_path, monkeypatch):

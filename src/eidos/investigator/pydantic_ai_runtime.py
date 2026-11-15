@@ -801,7 +801,9 @@ class PydanticAIRuntime:
     def _json_mode_settings(self, reads: list[str] | tuple[str, ...] = (), *, conclude_only: bool = False) -> dict[str, Any] | None:
         """Constrained decoding where the endpoint supports it: OpenAI-compatible ``response_format``
         (Ollama maps it onto its ``format``). Anthropic has no JSON mode: the repair path alone applies.
-        With read tools available the schema also admits the read-request shape (``read``)."""
+        With read tools available the schema also admits the read-request shape (``read``).
+        ``json_schema_top_level_combinators=False`` supports endpoints such as OpenAI that forbid
+        root combinators; the existing parser still separates reads from decisions and validates finalization."""
         if self._provider() not in ("openai", "openai-compatible"):
             return None
         schema = LENIENT_DECISION_SCHEMA
@@ -820,7 +822,15 @@ class PydanticAIRuntime:
                 "items": {"type": "object", "required": ["tool", "args"], "properties": {
                     "tool": {"type": "string", "enum": list(reads)}, "args": {"type": "object"}}}}}}
         if conclude_only:
-            if reads:
+            if not self.config.get("json_schema_top_level_combinators", True):
+                if reads:
+                    # Cross-property exclusivity is enforced by so.split_read_request in _decide_text.parse;
+                    # calls.maxItems and control.action above still constrain each decision property.
+                    schema = {**schema, "required": ["rationale"]}
+                else:
+                    schema = {**schema, "properties": {**schema["properties"],
+                              "read": {"type": "array", "maxItems": 0}}}
+            elif reads:
                 schema = {**schema, "required": ["rationale"], "oneOf": [
                     {"required": ["read"], "not": {"anyOf": [{"required": ["calls"]}, {"required": ["control"]}]}},
                     {"required": ["control"], "not": {"required": ["read"]}},

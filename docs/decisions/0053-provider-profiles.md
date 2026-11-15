@@ -76,3 +76,18 @@ limit, with no Claude CLI arm. On 14 Nov 2026 the orchestrator listed 96 models
 prices; strict required function calling and JSON-schema response requests both
 returned HTTP 200, with schema-valid JSON and served id `gpt-5-nano-2025-08-07`.
 These are orchestrator measurements; no live checks were repeated here.
+
+On 15 Nov 2026, the orchestrator measured `pilot4-v1` with `openai-default`
+(`openai:gpt-5-nano`, JSON mode) completing search (approximately 424k tokens),
+then crashing without a conclusion when every FINALIZATION request returned
+HTTP 400: `eidos_decision` must have root type `object` and no top-level
+`oneOf`/`anyOf`/`allOf`/`enum`/`const`/`not`, even with `strict: false`.
+`settings.json_schema_top_level_combinators` defaults to `true`, preserving
+MiniMax schema bytes; only `openai-default` sets it to `false`. That path bounds
+terminal `read` with `maxItems: 0`, retains the empty effects and conclude/stop
+property constraints, and lets read-capable requests omit `control`. The existing
+`structured_output.split_read_request` rejects mixed reads and decisions before
+execution; `_decide_text.parse` and `_validate_finalization` retain the bounded
+correction and conclusion checks, including existing empty-read normalization.
+Runaway re-asks use the same schema builder. Verification here uses offline
+fixtures; no live provider check was repeated.
