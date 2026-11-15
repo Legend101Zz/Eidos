@@ -4,6 +4,12 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.4.0
 
+- Fix the runner's second review findings: admission-only quota freshness, programme quota directories, clean dispatch stops with completed evidence, signal-safe cleanup, consumed interrupted consultations, private grading paths, honest arm-2 build assertions, provider-specific uncertain spend, and early option validation.
+
+- Integrate the experiment runner with the final scorecard API: score each arm separately, stamp tier/look/pool-role/mode, record complete usage including retries, and document registered multi-tier comparisons.
+- [ADR 0055](docs/decisions/0055-experiment-runner-and-pools.md) serves programme pools through card profiles, adds manifest-based multiclass scoring with historical task class-count checks preserved, and introduces the one-command treatment/build runner, paired descriptive output, live budget controls, blind held-out receipts and public legacy references.
+- Fix experiment runner review findings: private held-out labs and aggregate spend, live reservations and signal cleanup, write-free dry runs, strict preflight inputs, private pool grading scratch, and an unestablished D03 reference pending an owner recipe decision.
+
 - Configure `openai-default` with the verified cheapest listed text model, `gpt-5-nano`, USD 0.05/0.40 per million input/output tokens and a USD 0.60 run limit; cover resolution, pricing and case-sensitive served-model guards offline.
 - [ADR 0054](docs/decisions/0054-autopilot-and-seams.md) adds registered investigator runtimes and byte-preserving prompt packs, validates new-investigation revision ids, and introduces the explicit model-free `autopilot-v2` fixture treatment. Pipeline C accepts evaluation ids and hashed configuration overrides at every stage. Shared labs retry transient health failures without cancelling other blocks' jobs when provider and credential mode are unchanged.
 

@@ -103,6 +103,16 @@ class SealTests(unittest.TestCase):
         result = seal.score("N05", self.root / "prediction.npz")
         self.assertEqual((result["baseline"], result["candidate"], result["gain"]), (0.5, 1.0, 0.5))
 
+    def test_pilot4_score_class_bounds_remain_binary(self):
+        # bdce95a golden: Pilot 4 accepts class 1 and refuses class 2.
+        seal = PrivateSeal(self.private, self.commitment)
+        prediction = self.root / "prediction.npz"
+        np.savez(prediction, ids=[20, 10], predictions=[1, 0])
+        self.assertEqual(seal.score("N05", prediction)["candidate"], 1.0)
+        np.savez(prediction, ids=[20, 10], predictions=[2, 0])
+        with self.assertRaisesRegex(ValueError, "invalid class"):
+            seal.score("N05", prediction)
+
     def test_wrong_commitment_file_change_and_symlink_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "commitment"):
             PrivateSeal(self.private, "0" * 64)

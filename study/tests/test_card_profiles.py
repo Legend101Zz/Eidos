@@ -156,6 +156,23 @@ class Profiles(unittest.TestCase):
                     else:
                         self.assertEqual(seal.score(card, predictions)["candidate"], .5)
 
+    def test_manifest_class_count_validation_and_disagreement(self):
+        bars = fabricated_bars("pilot-5")
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            seal = PrivateSeal(root / "seal", make_seal(root / "seal", bars), bars)
+            card = PROFILES["pilot-5"].cards[0]
+            manifest = seal.card(card)
+            predictions = root / "predictions.npz"
+            np.savez(predictions, ids=[20, 10], predictions=[0, 0])
+            for invalid in (None, 1, True, 2.5):
+                with patch.object(seal, "card", return_value={**manifest, "nclasses": invalid}):
+                    with self.assertRaisesRegex(RuntimeError, "manifest class count invalid"):
+                        seal.score(card, predictions)
+            with patch.object(seal, "card", return_value={**manifest, "nclasses": 3}):
+                with self.assertRaisesRegex(RuntimeError, "class count disagrees"):
+                    seal.score(card, predictions)
+
     def test_all_profile_roots_are_removed_from_lab_workers(self):
         with patch.dict(os.environ, {name: "synthetic-private-root" for name in SEAL_ROOT_ENVS}):
             self.assertTrue(all(name not in lab.environment() for name in SEAL_ROOT_ENVS))
@@ -180,12 +197,15 @@ class Profiles(unittest.TestCase):
                        "EIDOS_RESEARCH_PYTHON": sys.executable,
                        "EIDOS_PILOT_CHARTER_COMMIT": "synthetic",
                        "EIDOS_PILOT_CHARTER_PATH": "docs/experiments/pilot-4/CHARTER.md"}
+                controller_names = ("EIDOS_POOLS_ROOT", "EIDOS_EXTRA_POOL_MANIFESTS", "EIDOS_IMP_PRIVATE_ROOT")
+                # Do not derive the expected names from the production strip list.
+                env.update({key: "CONTROLLER_ONLY_MARKER" for key in controller_names})
                 popen = subprocess.Popen
                 workers = []
 
                 def check_worker_environment(command, **kwargs):
                     if any(str(part).endswith("/stub_agent.py") for part in command):
-                        self.assertTrue(all(key not in kwargs["env"] for key in SEAL_ROOT_ENVS))
+                        self.assertTrue(all(key not in kwargs["env"] for key in (*SEAL_ROOT_ENVS, *controller_names)))
                         workers.append(command)
                     return popen(command, **kwargs)
 

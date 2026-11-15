@@ -11,7 +11,8 @@ from pathlib import Path
 
 from study.exp import flags as registry_module
 from study.exp.artifacts import bundle_sha256, toolkit_manifest_sha256
-from study.exp.providers import Provider, load as load_provider
+from study.exp.providers import Provider
+from study.exp.providers import load as load_provider
 
 ROOT = registry_module.ROOT
 DEFAULT = "pilot4-v1"

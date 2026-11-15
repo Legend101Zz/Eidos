@@ -1,0 +1,7 @@
+{
+  "schema": "eidos-treatment/1",
+  "id": "stub",
+  "summary": "Runner baseline-only pseudo-treatment: stub_agent.py, zero model calls and tokens.",
+  "flags": [],
+  "overrides": {}
+}

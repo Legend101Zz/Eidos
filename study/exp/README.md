@@ -95,3 +95,298 @@ still a `REPLACE_ME` placeholder refuses execution. Claude CLI arms require `arm
 settings and therefore refuse the OpenAI profile. Arm, run and prompt receipts
 bind the provider id, wire and profile file digest. The shared lab restarts on a
 provider change; fixture treatments need neither credentials nor a bridge.
+
+## One-command development runs
+
+Start a new session with `bash study/exp/smoke.sh`. It runs baseline stubs on two
+public cards, then model-free `autopilot-v2` on N01 and on a configured D card.
+It requires a clean committed controller and a buildable dedicated lab. It never
+selects a model runtime. Its short autopilot runs carry `smoke: true` and the
+separate `eidos-exp-smoke-scorecard/1` schema, which `compare` refuses.
+
+```sh
+python -m study.exp.run --treatment stub --cards N01,N03 --out "$RUNS/baseline"
+python -m study.exp.run --treatment autopilot-v2 --pool D --card-limit 2 --out "$RUNS/autopilot"
+python -m study.exp.run --treatment v2-portfolio --ref HEAD --provider openai-default \
+  --pool E1 --replicates 3 --arms 4 --budget budget.json --out "$RUNS/candidate"
+python -m study.exp.run --pair 'pilot4-v1@BASE_REF' 'v2-portfolio@HEAD' \
+  --pool E1 --budget budget.json --concurrency 2 --out "$RUNS/pair"
+python -m study.exp.run --treatment v2-portfolio --pool D --budget budget.json \
+  --dry-run --out "$RUNS/plan"
+```
+
+Set `RUNS` below `/Volumes/Mrigesh SSD/eidos-v1/improvement/runs`. `--dry-run`
+resolves and verifies prerequisites, writes the plan/estimate and starts no lab or
+block. Absent builds are reported as requiring a build. A normal run builds
+`evals-labs/ip-<sha12>` with the existing builder, or verifies its archive, wheels,
+installed packages, interpreter and service ports. Its explicit home is the
+build's `home/` subdirectory. Build refs must be ancestors of the clean controller;
+both commits and lab receipts are recorded. A standing charter is pinned from
+`experiments/CHARTER.md`; its text/path never enters model prompts.
+
+A variant binds treatment, full build commit and provider. `stub` always invokes
+`study/stub_agent.py` and exports the supplied baseline, with zero model tokens.
+Autopilot uses arm 4 and starts with empty credentials. Other treatments may call
+a provider; this is an operator action. Arm 2 requires a Claude-compatible profile.
+The default envelope remains 1,800 seconds, eight million processed tokens and one
+thread. `--wall-seconds` requires `--smoke`; no shortened run is scientific evidence.
+
+Blocks follow card order, then replicate order. Paired variants for a card and
+replicate are adjacent and start together. The concurrency cap applies separately
+to each lab; a pair sharing one lab needs concurrency at least two. Whole incident
+blocks retry once by default, preserving launcher/grader incident archives. All
+labs are stopped in `finally`, unless `--keep-lab-running` is explicit. Exit 0
+means all requested blocks were graded and none remains an incident; it does not
+mean the treatment improved a task. `manifest.json`, `run.log`, per-block logs,
+`usage.json`, and `arm<N>/scorecard.{json,md}` carry the evidence. Pair mode puts
+each variant's scorecards below its variant label. Only single-arm runs also write
+`scorecard.{json,md}` at the variant root for compatibility. The manifest lists
+every scorecard path and its arm. Arm 2 records the verified build context as
+`build_commit_asserted_by_controller`; this never supplies or replaces the run's
+own `eidos_commit_sha`. A run without its own build evidence cannot receive a
+build-bound scorecard. The manifest lists such refusals in `score_errors`, the
+exit is nonzero, and other arms are still scored. Runner stubs report their own
+configured build receipt, including arm 2. Pair mode writes `arm<N>/paired.md` and a combined
+`paired.md` using compare's descriptive statistics, with no keep/reject decision.
+The current `compare(aa=True)` requires identical treatments/builds, so the small
+runner adapter calls its `paired_stats` helper directly for different variants.
+
+`--tier T`, `--pool-role ROLE`, `--look initial|extension` and `--mode MODE`
+stamp every scorecard row and are recorded in the manifest. For evaluation
+rotations use `--pool E1 --pool-role evaluation_rotation`: the scorecard header
+retains the actual manifest id E1, while row selectors see evaluation_rotation.
+Tiers are T0–T3; pool roles are `legacy-development`, D, E1, E2, E3, H,
+or `evaluation_rotation`; modes are `live`, `autopilot`, `stub`, `fixture`, or
+`smoke`. Invalid values and nonpositive counts are rejected by argument parsing.
+Omitted tags preserve the builder's existing behavior. Use a separate runner
+invocation for each declared tier/look, with its exact cards and replicate count.
+
+Accounting writes `eidos-exp-usage/1` JSON with `runs`, `usd`,
+`quota_weekly_percent`, `time_seconds`, `per_variant`, `status`, and `complete`. Runs count executed
+attempts across all variants and arms, including archived incident retries;
+model-free attempts count too and cost zero. Wall time sums attempt `wall_s`,
+rather than elapsed controller time. Costs use billing receipts or known profile
+token prices; any unknown cost makes that variant and the total USD null. Missing
+wall receipts retain null time. MiniMax quota is the before/after decrease in
+weekly remaining fraction times 100 (percentage points). It is null without a
+strictly newer, fresh after reading, or across a weekly reset. An unchanged or
+stale observation never reports measured zero consumption. `status` describes
+the controller outcome; `complete` is false after interruption, dispatch refusal,
+incidents, or scoring failure. These fields do not relax compare's coverage checks. Per-variant keys are the manifest's variant labels. Held-out usage
+stays beside its private spend detail; the run manifest records its relative path.
+
+## Registered run-to-decision recipe
+
+These are operator commands; live tiers require an approved budget and provider.
+Start from a clean experiment branch before making code changes. Choose an
+unused issue number (123 below), fill all hypothesis sections, and declare the
+exact tier cards, providers, replicates, budgets and stop rules before registering:
+
+```sh
+python -m study.exp.ledger new --title 'Portfolio behavior' --slug portfolio --kind performance --issue 123
+export EXP=experiments/EXP-123-portfolio
+"$EDITOR" "$EXP/HYPOTHESIS.md" "$EXP/plan.json" "$EXP/rule.json"
+python -m study.exp.ledger register "$EXP" --trunk origin/main
+git add "$EXP"
+git commit -m 'Register EXP-123 portfolio comparison'
+```
+
+For this example, choose R-behav version 1, no extension, incumbent `pilot4-v1`
+and candidate `v2-portfolio`. Declare T2 as the first four cards in E1 manifest
+order with one replicate, T3 as all eight E1 cards with two replicates, both with
+pool role `evaluation_rotation` and provider `openai-default`. Publish the
+registration through the programme workflow before implementation. After the
+candidate is committed and the controller is clean, set `B0_REF` to the frozen
+incumbent commit and run each tier. Set `RUNS` to a fresh directory below the
+approved runs root, and `BUDGET` to the operator's budget JSON:
+
+```sh
+export RUNS='/Volumes/Mrigesh SSD/eidos-v1/improvement/runs/EXP-123'
+export B0_REF='<full incumbent commit>'
+export BUDGET='<budget.json>'
+python -m study.exp.run --pair "pilot4-v1@$B0_REF" 'v2-portfolio@HEAD' \
+  --pool E1 --card-limit 4 --replicates 1 --arms 4 --provider openai-default \
+  --tier T2 --pool-role evaluation_rotation --look initial --mode live \
+  --budget "$BUDGET" --out "$RUNS/T2"
+python -m study.exp.run --pair "pilot4-v1@$B0_REF" 'v2-portfolio@HEAD' \
+  --pool E1 --replicates 2 --arms 4 --provider openai-default \
+  --tier T3 --pool-role evaluation_rotation --look initial --mode live \
+  --budget "$BUDGET" --out "$RUNS/T3"
+```
+
+Combine accounting across the supplied tiers, mapping manifest labels to compare's
+recognized incumbent/candidate keys. This preserves null costs/quota and leaves
+each original usage file intact:
+
+```sh
+python - <<'PY'
+import json, os
+from pathlib import Path
+root = Path(os.environ['RUNS'])
+batches = [json.loads((root / tier / 'usage.json').read_text()) for tier in ('T2', 'T3')]
+def total(values):
+    values = list(values)
+    return None if any(v is None for v in values) else sum(values)
+usage = {'schema': 'eidos-exp-usage/1', 'per_variant': {}}
+for key in ('runs', 'usd', 'quota_weekly_percent', 'time_seconds'):
+    usage[key] = total(batch[key] for batch in batches)
+for index, side in enumerate(('incumbent', 'candidate')):
+    entries = []
+    for tier, batch in zip(('T2', 'T3'), batches):
+        manifest = json.loads((root / tier / 'manifest.json').read_text())
+        entries.append(batch['per_variant'][manifest['variants'][index]['label']])
+    usage['per_variant'][side] = {key: total(e[key] for e in entries) for key in ('runs', 'usd')}
+(root / 'usage.json').write_text(json.dumps(usage, indent=2) + '\n')
+PY
+```
+
+Record both scorecards for each tier and obtain the independent reviews. Here
+`CODE_REVIEW.md` and `RESULT_REVIEW.md` are actual review files, and
+`attest.json` contains checks backed by evidence, bound to `experiment: EXP-123`
+and the full candidate `commit`, with `checks` and optional `tier_checks`.
+Then compare the ordered tier lists against the effective registered rule:
+
+```sh
+python -m study.exp.ledger record "$EXP" --tier T2 \
+  --scorecard "$RUNS"/T2/v1-*/arm4/scorecard.json --scorecard "$RUNS"/T2/v2-*/arm4/scorecard.json
+python -m study.exp.ledger record "$EXP" --tier T3 \
+  --scorecard "$RUNS"/T3/v1-*/arm4/scorecard.json --scorecard "$RUNS"/T3/v2-*/arm4/scorecard.json
+python -m study.exp.ledger review "$EXP" --kind code --verdict ACCEPT --commit "$(git rev-parse HEAD)" --file CODE_REVIEW.md
+python -m study.exp.ledger review "$EXP" --kind result --verdict ACCEPT --commit "$(git rev-parse HEAD)" --file RESULT_REVIEW.md
+python -m study.exp.ledger rule "$EXP" > "$RUNS/effective-rule.json"
+python -m study.exp.compare \
+  --incumbent "$RUNS"/T2/v1-*/arm4/scorecard.json --candidate "$RUNS"/T2/v2-*/arm4/scorecard.json \
+  --incumbent "$RUNS"/T3/v1-*/arm4/scorecard.json --candidate "$RUNS"/T3/v2-*/arm4/scorecard.json \
+  --rule "$RUNS/effective-rule.json" --experiment "$EXP" --usage "$RUNS/usage.json" \
+  --attest attest.json --tier T3 --out "$RUNS/decision.json"
+```
+
+Reviews must report their actual verdict; the ACCEPT commands apply after acceptance.
+Unknown evidence can still yield incomplete, and evidence-backed vetoes can revert.
+Only a registered experiment can keep. For a single tier, pass that tier's usage
+file directly; runner label keys are accepted but do not supply compare's cost-ratio
+override, so map them to incumbent/candidate when that evidence is needed.
+The final compare API requires usage run counts to equal the supplied final rows.
+It currently refuses honest accounting containing extra retry attempts or arms
+omitted from the comparison. Preserve the accounting and resolve that API limit
+before a decision; never drop charged attempts to force acceptance.
+An extension needs a frozen `tiers[].extension` declaration and a separate run
+with `--look extension`, using replicate labels starting again at 1.
+
+## Pools and references
+
+The registry accepts both D's `pool_id`/`card_id` manifest and E's `pool`/`id`
+manifest. E3 has two cards. `EIDOS_POOLS_ROOT` is a colon-separated list of roots;
+the first existing `<root>/<POOL>/seal` wins. References come from
+`<pool>/controller/<CARD>/reference.json`. The runner passes a minimal logical
+pool identity to the scorecard builder: no private root, provenance, dimensions
+or source metadata appears in a scorecard. `EIDOS_EXTRA_POOL_MANIFESTS` is a
+controller-only colon-separated list for additional manifests. All seal variables
+and the private-root variable are stripped from workers and labs. A separate
+`EIDOS_STUDY_POOL_PROFILES` value carries only minimal public rosters, metrics,
+bars and commitments, so blind cards still work after location variables are removed.
+
+Legacy references default to the committed `experiments/pools/legacy-references.json`;
+`--references` can select another map. Regenerate the seven public reference blocks
+with the actual grader's public generators, baseline and practical bars:
+
+```sh
+nice -n 10 "$EIDOS_RESEARCH_PYTHON" -m study.exp.cards.reference_legacy \
+  --out experiments/pools/legacy-references.json --budget-seconds 480
+```
+
+Only training data selects the strong reference recipe. The independent evaluation
+uses seeds 11, 23 and 37, and records paired standard error and headroom in the
+same reference format as pools. `--autopilot-scorecard` adds the existing builder's
+uplift comparison; its build, pool, reference digest and roster must match.
+
+## Live budgets
+
+Stub and fixture runtime need no budget, quota file or credentials. Every live
+run requires a JSON budget and an existing JSONL spend ledger, including an empty
+file for a new budget. A minimal budget looks like:
+
+```json
+{
+  "spend_ledger": "spend.jsonl",
+  "providers": {
+    "openai": {"usd_cap": 20, "stop_fraction": 0.8},
+    "anthropic": {"usd_cap": 20, "stop_fraction": 0.8}
+  },
+  "minimax": {"weekly_share": 0.5, "weekly_floor": 0.15, "interval_floor": 0.2}
+}
+```
+
+Ledger paths are relative to the budget file unless absolute. Provider family
+spend combines all Anthropic/OpenAI profiles. Spend plus worst-case per-run USD
+(including every arm, variant, replicate and permitted incident retry) must remain
+below the stop cap. Caps cannot exceed USD 20 or an 80% stop fraction. Unknown USD
+charges fail closed for their provider family and do not block another family.
+Before each live dispatch, a ledger lock protects a worst-case reservation and
+rechecks USD caps and MiniMax remaining floors. Final accounting settles reservations against measured
+attempts. Missing receipts retain uncertain exposure. SIGTERM/SIGINT cancel
+children, stop labs and settle the ledger. Further signals are ignored throughout cleanup.
+
+MiniMax accepts either `{utc, weekly_remaining_fraction, interval_remaining_fraction}`
+or the programme quota format `{observed_utc, model_windows: [{model_name: "general",
+current_weekly_remaining_percent, current_interval_remaining_percent, ...}]}`.
+`--quota-file` may name a file or a directory; a directory selects the newest
+`quota-*.json` observation by its UTC timestamp, recording its source in the
+manifest and accounting snapshots. Admission requires an observation and file
+younger than ten minutes, with consumed weekly share below 50%. This freshness
+check runs once per plan. Each live dispatch rereads the newest available quota
+and requires at least 15% weekly and 20% interval remaining (or stricter configured
+floors). A stale dispatch reading warns in `run.log` and still supplies the floor
+check. A floor or cap refusal stops new dispatches, preserves completed grades
+and scorecards marked incomplete, records `dispatch_stop_reason`, and exits
+nonzero. `--payg-approved 'who, when, scope'` bypasses quota checks and is copied
+verbatim into the scorecard header. No
+provider availability or quota is queried automatically. Each live run, including
+archived incidents, appends tokens, USD (or null), run id and quota snapshots to
+the ledger. USD can be estimated from profile prices when token counts are known.
+
+## Blind H consultations
+
+```sh
+python -m study.exp.heldout --pair 'pilot4-v1@B0_REF' 'v2-portfolio@HEAD' \
+  --provider openai-default --threshold 0.10 --note 'Prospective consultation rationale' \
+  --budget budget.json
+```
+
+The private root defaults to `EIDOS_IMP_PRIVATE_ROOT`, or accepts `--private-root`.
+All scratch, logs, grading and scorecards remain in `<private-root>/runs/<utc>/`.
+Lab service homes live in `<private-root>/labs/ip-<sha12>/home`, with the shared
+frozen build verified before use. No roster is exported to lab services. Detailed
+spend and dispatch reservations remain private; the shared ledger holds one
+aggregate reservation and then one aggregate total row for the consultation.
+An atomic counter permits three consultations; a failed dispatch consumes one.
+Variants and non-private preflight are checked before reservation, and a child
+preflight refusal records a refund. The controller persists `started` before
+dispatch, so a hard kill after dispatch consumes the consultation and records
+`interrupted`. SIGINT/SIGTERM to the wrapper forwards SIGTERM to the controller,
+allowing up to 60 seconds for cleanup before escalation. A complete mixed pair
+settles its model-free variant at known zero cost. Private lab initialisation
+uses the same Temporal source selection as the public lab. Private and shared
+service homes for the same frozen build still use the build's ports and must
+not run concurrently.
+Threshold and rationale are pinned before running. Pass requires mean paired
+card VRG delta at least the threshold and one-sided sign-flip p at most 0.10.
+Only the coarse receipt is printed and written beside the private root in
+`receipts/`: rates and mean delta round to 0.05, with aggregate accounting and
+failure counts. Errors print only their exception type, including argument errors.
+No card id or private path leaves the blind runner. Novelty wins are null when the
+upstream scorecard does not supply a verified novelty-win observation for an
+external/recombined verified candidate. Unverified and catalog/unknown-class
+submissions have zero novelty credit by definition. The threshold uses unrounded values.
+
+Tests fabricate seals and build receipts under temporary roots. The deliberately
+explicit `EIDOS_EXP_TEST_ROOT` permits test output there and fabricates a lab
+receipt only for the baseline stub; it cannot run a model or fixture lab.
+
+`--dry-run` prints the plan and estimate without writing files. Sealed Pilot
+cards are refused by `--cards`. D03 requires an explicit `--references` file:
+the committed legacy recipe scored .1 on every seed by predicting one class on
+all shifted test rows, so its reference is marked unestablished. The recipe is
+unchanged pending an owner decision. For non-D pools, configure
+`EIDOS_IMP_PRIVATE_ROOT`: grader scratch stays there, with private grading paths hashed in public grade summaries
+copied into the public grading tree.
