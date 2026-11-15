@@ -1,0 +1,39 @@
+{
+  "schema": "eidos-exp-plan/1",
+  "id": "EXP-042",
+  "kind": "infra",
+  "treatment": {
+    "incumbent": "pilot4-v1",
+    "candidate": "pilot4-v1"
+  },
+  "tiers": [
+    {
+      "tier": "T1",
+      "pool": "D",
+      "cards": ["R2432", "R3093", "R3174", "R4120", "R5145", "R2522", "R7598", "R4095"],
+      "replicates": 1,
+      "provider": null,
+      "what": "0a: stub and autopilot-v2 on all eight D cards (model-free)"
+    },
+    {
+      "tier": "T2",
+      "pool": "D",
+      "cards": ["R2432", "R3093", "R3174", "R4120"],
+      "replicates": 1,
+      "provider": "anthropic-haiku-5-5",
+      "what": "0d one run per provider on R2432 (anthropic-haiku-5-5, openai-default, minimax-m3.1-flash); 0e main-vs-main paired on four D cards, on anthropic-haiku-5-5 and minimax-m3.1-flash"
+    }
+  ],
+  "budget": {
+    "live_runs": 19,
+    "usd": 6,
+    "quota_weekly_percent": 5
+  },
+  "stop_early": ["any false claim confirmed by the grader stops all live work"],
+  "second_provider": "minimax-m3.1-flash",
+  "named_cards": [],
+  "model_free_suffices": false,
+  "target": null,
+  "issue": 42,
+  "title": "Iteration 0: the loop works (retrospective)"
+}
