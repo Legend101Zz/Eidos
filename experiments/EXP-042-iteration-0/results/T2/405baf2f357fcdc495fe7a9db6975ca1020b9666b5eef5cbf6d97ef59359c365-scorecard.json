@@ -1,0 +1,251 @@
+{
+  "schema": "eidos-exp-scorecard/1",
+  "generated_utc": "2026-11-15T05:41:05.951409+00:00",
+  "purpose": "development evidence",
+  "treatment": {
+    "id": "pilot4-v1",
+    "flags": [],
+    "sha256": "f3ef8fb8a4f1aa118c79401a55e9a12b177c5aea322ff3160092f41c4c0b04ec"
+  },
+  "provider": {
+    "id": "anthropic-haiku-5-5",
+    "wire": "anthropic-messages",
+    "sha256": "d897ee164226268156c4dafd4ad86c7e238bb0efa28f0b552d1d0b61654832d4"
+  },
+  "build": {
+    "commit": "aeffe6010409dfb8b41d2a6b26763433c3724793"
+  },
+  "pool": {
+    "id": "D",
+    "commitment": "401dd86bbbd91068c3ddaaa23ccc74b3226ad190a33ebc846eab2e5ffd68f41f"
+  },
+  "envelope": {
+    "wall_s": 1800,
+    "tokens": 8000000,
+    "threads": 1
+  },
+  "replicates": 1,
+  "references_sha256": "f8cee461bebcae145cddf387f301fd1419e84d3bd71cf3ab0e159319d82c5a58",
+  "inputs": {
+    "catalog/components/eidos.search.recipe-portfolio/eidos-component.json": "f46942f4658612c7ea302261c808498e533a5b08bcd6f4551dd10dcf9a76d23d",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/__init__.py": "7a07d9c7d9d6033e8792127788e0608608f1d23730bac07c03d419cc98df523e",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/cv.py": "65a3a3424dbef1baba28304a07f2e0457a4f40dcdb17d2b0414be1b2786d384f",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/export.py": "6d2e317ad9b09282aa347d6a851e96910cbffa8fbb6b69a01a7125424fb6217c",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/models.py": "2f629c0f86761e13ffbb04a3bd2fb85f70d5a2946a0f25bc630d4fbc607d7760",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/ops.py": "cf44275c13b5cc645fb489c282e9c3e7e3349005cb0e2a78abe5a072c4a27969",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/registry.py": "1b308e82494fc71c8fd1720799ec93fb6da839dc2c140ef72aadc3b3b1d4e6d1",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/select.py": "8e48e831a24e519330bb373d00663938033c1636fa3e9b499b6aa20651a94425",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/shift.py": "c5549027662f0bfd0b0b37848769522980d9960447abc9ade68737b58d5263ce",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/spec.py": "2f828dcd65369e52d43105c88d592a55bac16b6019dcbd0e63abea975249d4ec",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/templates.py": "d7c52d79500897b76dfc2ad3a0a3319bb424dfaca17b9943f310d4111d777a09",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/util.py": "a164d8e65a5260a281b94871136cd1cf383d89bc1ac8d0fcbb575ae7384c7253",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/worker.py": "9d25b7595f6655c4f517ce5a18e4ee788c8389c0aa8f3921d476eb9f454e30a7",
+    "catalog/components/eidos.search.recipe-portfolio/portfolio.py": "0410453207069490b6829b6a9404027f9491758273ee8efe575dc88974b7708a",
+    "catalog/components/eidos.search.recipe-portfolio/templates/project.py": "9e1663b2f4f4a8b4d8b49d8ca3c063de2574743d2418d7b9de9562024c6dabb5",
+    "catalog/components/eidos.search.recipe-sweep/eidos-component.json": "0027f0a078be43e0f7bd88af311d2a078dc8f7758b87f84074a41c5210925a07",
+    "catalog/components/eidos.search.recipe-sweep/recipe_sweep.py": "09a3bc04ba6286db0e8014a3d5e901b348cb519d7c1b14fcfa0ef29c7fdb096e",
+    "catalog/components/eidos.search.recipe-sweep/templates/fit_recipe.py": "55e77b1b7b0033dd8c6ff8a405757b7cb78463ee285a92b6c406148e9bf1e086",
+    "catalog/study/exp/cards/baseline_project.py": "0f679deabad530fab3517c813a42fd0a77b5159bcbbf1a18685dccc7a9c2a73c",
+    "pool/pool.json": "c0ed87603dc2ee7a92330c11f4bdbab415de2c6005008b6fa2baf09ffa90bf30",
+    "run/grading/R2432-r1/arm4/grade.json": "e4b4923143280b77e33811853319602ebbf0e009706dcc55ebd1b5453ec0e9af",
+    "run/results.json": "ed4bad75310e7715a9453eabe3f926f3bbedb6232b7f7a0e622f179e2d525f26",
+    "run/runs/R2432-r1/arm4/arm.json": "07c32f7ff81d7ea8cef57efde83a55eb778e3e566bc3b92403d5c9ab1d04bf4d",
+    "run/runs/R2432-r1/arm4/candidate_provenance.json": "2069372d1f4fc76a68a193e8b88c66eb7a1dc826e23e613128556e67273847b0",
+    "run/runs/R2432-r1/arm4/out/answer.json": "17832af574ac344822902fd1298235e9cf723a1abe53d04251e69d0be93f1d54",
+    "run/runs/R2432-r1/arm4/out/candidate/source/project.py": "f045aefb0ea9274c9859c3d776cb2297f35b3e95745b76aefebdc949db60ea0a",
+    "run/runs/R2432-r1/arm4/out/reproduce.py": "1baa74f7423c2dcf903ff14bf0e1435bd7944e417b3e32cf72b75aed2a2fcec1",
+    "run/runs/R2432-r1/arm4/run_record.json": "84f5dc5cab63503facdfe0dd98132b23b995151d4f0ca03ddb3aa3856aae811b",
+    "run/runs/R2432-r1/arm4/transcript.jsonl": "acbf58e2c3e523274d60fc603b0b2ba26ba53a06e763f9e493f6933476bb9ce0"
+  },
+  "catalog": {
+    "commit": "aeffe6010409dfb8b41d2a6b26763433c3724793",
+    "sha256": "66b42095ffc1ae53ce5f0295dde551be24b1f9b96b1b051b31a05483b0235bf3"
+  },
+  "individual": [
+    {
+      "card_id": "R2432",
+      "card": "R2432",
+      "arm": 4,
+      "replicate": 1,
+      "seed_index": 1,
+      "null_card": false,
+      "incident": false,
+      "test_gain": 0.09723261032161556,
+      "gain": 0.09723261032161556,
+      "headroom": 0.12764896534530035,
+      "reference_se": 0.011479547649344087,
+      "verified": true,
+      "verified_success": true,
+      "verified_rate": 1.0,
+      "vrg": 0.7617187500000006,
+      "mrg": 0.7617187500000006,
+      "err_run": 0.1353777112939416,
+      "error_ratio": 0.7907770403525926,
+      "run_status": "ok",
+      "grade_status": "valid",
+      "false_positive_claim": false,
+      "false_claims": 0,
+      "crash": false,
+      "tokens": 761088,
+      "usd": 0.10214240000000001,
+      "wall_s": 335.986,
+      "unused_wall_s": null,
+      "mechanism": {
+        "decisions": 11,
+        "requests": 23,
+        "time_to_first_lock_s": 195.52929306030273,
+        "locks": 2,
+        "authoring_calls": 5,
+        "prepare_candidate_calls": 0,
+        "portfolio_jobs": 0,
+        "jobs": 36,
+        "job_seconds": 52.11232566833496,
+        "refused_decisions": 1,
+        "unused_wall_s": null
+      },
+      "novelty": {
+        "atoms": [
+          "numpy.load",
+          "numpy.savez",
+          "torch.load",
+          "torch.manual_seed",
+          "torch.nn.Linear",
+          "torch.nn.Sequential",
+          "torch.nn.Tanh",
+          "torch.nn.functional.cross_entropy",
+          "torch.no_grad",
+          "torch.ones",
+          "torch.optim.Adam",
+          "torch.save",
+          "torch.set_num_threads",
+          "torch.tensor",
+          "torch.zeros"
+        ],
+        "authored": [
+          "18f700a6f91ca33886a4a17abbdbd7dcf0c143b6a2651e57dea21a7c450c76bb",
+          "6aaadd25063e0b12e9386537238ba6f3d24d7f6059b1eac08a892c287c5ee31c",
+          "6e6f4282561c85b1b36fd2663b8276d6ed0a81caf79c4d6b517aefb0b80a71a2",
+          "a6faf506f68e40156ee84234fff777889b782da4677ad588cb47cea051c66222",
+          "b899d9ae857aa120bae60ee791e70556c35ea8a610359ceee8bf0707085507e7",
+          "eca941578c249dd41ea42199efb89ccba7da428d7ff7bd1ed992831c9282bb5e"
+        ],
+        "atoms_outside_catalog": [
+          "torch.load",
+          "torch.manual_seed",
+          "torch.nn.Linear",
+          "torch.nn.Sequential",
+          "torch.nn.Tanh",
+          "torch.nn.functional.cross_entropy",
+          "torch.no_grad",
+          "torch.ones",
+          "torch.optim.Adam",
+          "torch.save",
+          "torch.set_num_threads",
+          "torch.tensor",
+          "torch.zeros"
+        ],
+        "authored_outside_catalog": [
+          "18f700a6f91ca33886a4a17abbdbd7dcf0c143b6a2651e57dea21a7c450c76bb",
+          "6aaadd25063e0b12e9386537238ba6f3d24d7f6059b1eac08a892c287c5ee31c",
+          "6e6f4282561c85b1b36fd2663b8276d6ed0a81caf79c4d6b517aefb0b80a71a2",
+          "a6faf506f68e40156ee84234fff777889b782da4677ad588cb47cea051c66222",
+          "b899d9ae857aa120bae60ee791e70556c35ea8a610359ceee8bf0707085507e7",
+          "eca941578c249dd41ea42199efb89ccba7da428d7ff7bd1ed992831c9282bb5e"
+        ],
+        "defines_estimator": false,
+        "authored_fit_predict": false,
+        "parse_errors": [],
+        "ambiguous": false,
+        "template_identical": false,
+        "baseline_identical": false,
+        "changed_templates": [
+          "candidate/source/project.py",
+          "reproduce.py"
+        ],
+        "provenance": {
+          "basis": null,
+          "preparation": "authored",
+          "job_id": "job_fdbb9103c1644c77",
+          "decision_id": "dec_9cf4ad29fe7b4b14"
+        },
+        "inputs": {
+          "candidate/source/project.py": "f045aefb0ea9274c9859c3d776cb2297f35b3e95745b76aefebdc949db60ea0a",
+          "reproduce.py": "1baa74f7423c2dcf903ff14bf0e1435bd7944e417b3e32cf72b75aed2a2fcec1"
+        },
+        "catalog_sha256": "66b42095ffc1ae53ce5f0295dde551be24b1f9b96b1b051b31a05483b0235bf3",
+        "catalog_incomplete": false,
+        "provenance_sha256": "2069372d1f4fc76a68a193e8b88c66eb7a1dc826e23e613128556e67273847b0",
+        "class": "external"
+      },
+      "novelty_win": null,
+      "dead_ends": 0,
+      "null_honesty": null,
+      "evidence_sha256": {
+        "grade.json": "e4b4923143280b77e33811853319602ebbf0e009706dcc55ebd1b5453ec0e9af",
+        "run_record.json": "84f5dc5cab63503facdfe0dd98132b23b995151d4f0ca03ddb3aa3856aae811b"
+      },
+      "concluded": true,
+      "disposition": "investigator_conclusion",
+      "dead_end": false,
+      "held_out_reads": null,
+      "decisions": 11,
+      "requests": 23,
+      "time_to_first_lock_s": 195.52929306030273,
+      "locks": 2,
+      "authoring_calls": 5,
+      "prepare_candidate_calls": 0,
+      "portfolio_jobs": 0,
+      "jobs": 36,
+      "job_seconds": 52.11232566833496,
+      "refused_decisions": 1,
+      "tier": "T2",
+      "mode": "live"
+    }
+  ],
+  "per_card": {
+    "R2432": {
+      "null_card": false,
+      "n_runs": 1,
+      "vrg": 0.7617187500000006,
+      "mrg": 0.7617187500000006,
+      "verified_rate": 1.0,
+      "error_ratio": 0.7907770403525926
+    }
+  },
+  "aggregate": {
+    "vrg": 0.7617187500000006,
+    "mrg": 0.7617187500000006,
+    "verified_rate": 1.0,
+    "error_ratio": 0.7907770403525926,
+    "capped_share": 0.0,
+    "false_claims": 0,
+    "dead_ends": 0,
+    "crashes": 0,
+    "incidents": 0,
+    "tokens": {
+      "total": 761088,
+      "median": 761088
+    },
+    "usd": 0.10214240000000001,
+    "live_runs": 1,
+    "time_seconds": 335.986,
+    "heldout_identifier_matches": null,
+    "novelty_wins": null,
+    "novelty_classes": {
+      "catalog": 0,
+      "recombination": 0,
+      "external": 1,
+      "baseline": 0,
+      "unknown": 0
+    },
+    "wall_s": {
+      "median": 335.986
+    },
+    "null_honesty": null,
+    "n_cards": 1,
+    "n_null_cards": 0,
+    "n_runs": 1
+  },
+  "incomplete": false,
+  "smoke": false
+}
