@@ -1,0 +1,270 @@
+{
+  "schema": "eidos-exp-scorecard/1",
+  "generated_utc": "2026-11-15T06:07:32.508442+00:00",
+  "purpose": "development evidence",
+  "treatment": {
+    "id": "pilot4-v1",
+    "flags": [],
+    "sha256": "4c73d34c115f780e5c20baa7d9a3ab151d03753dbf3e382ff901f764925700e4"
+  },
+  "provider": {
+    "id": "openai-default",
+    "wire": "openai-chat",
+    "sha256": "2bdcc41406c50b89d6e756325acb5903c799f3b448d167e099e20271394c0f02"
+  },
+  "build": {
+    "commit": "aeffe6010409dfb8b41d2a6b26763433c3724793"
+  },
+  "pool": {
+    "id": "D",
+    "commitment": "401dd86bbbd91068c3ddaaa23ccc74b3226ad190a33ebc846eab2e5ffd68f41f"
+  },
+  "envelope": {
+    "wall_s": 1800,
+    "tokens": 8000000,
+    "threads": 1
+  },
+  "replicates": 1,
+  "references_sha256": "f8cee461bebcae145cddf387f301fd1419e84d3bd71cf3ab0e159319d82c5a58",
+  "inputs": {
+    "catalog/components/eidos.search.recipe-portfolio/eidos-component.json": "f46942f4658612c7ea302261c808498e533a5b08bcd6f4551dd10dcf9a76d23d",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/__init__.py": "7a07d9c7d9d6033e8792127788e0608608f1d23730bac07c03d419cc98df523e",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/cv.py": "65a3a3424dbef1baba28304a07f2e0457a4f40dcdb17d2b0414be1b2786d384f",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/export.py": "6d2e317ad9b09282aa347d6a851e96910cbffa8fbb6b69a01a7125424fb6217c",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/models.py": "2f629c0f86761e13ffbb04a3bd2fb85f70d5a2946a0f25bc630d4fbc607d7760",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/ops.py": "cf44275c13b5cc645fb489c282e9c3e7e3349005cb0e2a78abe5a072c4a27969",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/registry.py": "1b308e82494fc71c8fd1720799ec93fb6da839dc2c140ef72aadc3b3b1d4e6d1",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/select.py": "8e48e831a24e519330bb373d00663938033c1636fa3e9b499b6aa20651a94425",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/shift.py": "c5549027662f0bfd0b0b37848769522980d9960447abc9ade68737b58d5263ce",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/spec.py": "2f828dcd65369e52d43105c88d592a55bac16b6019dcbd0e63abea975249d4ec",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/templates.py": "d7c52d79500897b76dfc2ad3a0a3319bb424dfaca17b9943f310d4111d777a09",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/util.py": "a164d8e65a5260a281b94871136cd1cf383d89bc1ac8d0fcbb575ae7384c7253",
+    "catalog/components/eidos.search.recipe-portfolio/eidos_recipes/worker.py": "9d25b7595f6655c4f517ce5a18e4ee788c8389c0aa8f3921d476eb9f454e30a7",
+    "catalog/components/eidos.search.recipe-portfolio/portfolio.py": "0410453207069490b6829b6a9404027f9491758273ee8efe575dc88974b7708a",
+    "catalog/components/eidos.search.recipe-portfolio/templates/project.py": "9e1663b2f4f4a8b4d8b49d8ca3c063de2574743d2418d7b9de9562024c6dabb5",
+    "catalog/components/eidos.search.recipe-sweep/eidos-component.json": "0027f0a078be43e0f7bd88af311d2a078dc8f7758b87f84074a41c5210925a07",
+    "catalog/components/eidos.search.recipe-sweep/recipe_sweep.py": "09a3bc04ba6286db0e8014a3d5e901b348cb519d7c1b14fcfa0ef29c7fdb096e",
+    "catalog/components/eidos.search.recipe-sweep/templates/fit_recipe.py": "55e77b1b7b0033dd8c6ff8a405757b7cb78463ee285a92b6c406148e9bf1e086",
+    "catalog/study/exp/cards/baseline_project.py": "0f679deabad530fab3517c813a42fd0a77b5159bcbbf1a18685dccc7a9c2a73c",
+    "pool/pool.json": "c0ed87603dc2ee7a92330c11f4bdbab415de2c6005008b6fa2baf09ffa90bf30",
+    "run/grading/R2432-r1/arm4/grade.json": "64440b2b94b7f9875bd6a1d603f8289ee3c64e86ae5065960dcb85307ee9d6f6",
+    "run/results.json": "b8623fbe62960f326f16009a1b5ebde4aad44e2bf4bcdf1202f1b8e20bc9289d",
+    "run/runs/R2432-r1/arm4/arm.json": "ef5144bb30738bcff5846ef721014322704e7cc0aff0c17c72b1c7ebbed1b30f",
+    "run/runs/R2432-r1/arm4/candidate_provenance.json": "348a325ced2431c783e5c18849163579ea0bfbf9bab229cb33460809cfea0daf",
+    "run/runs/R2432-r1/arm4/out/answer.json": "bef8ea40f4bd80f7257cd56d0149259945b9a0c79879966787eaae707a95c926",
+    "run/runs/R2432-r1/arm4/out/candidate/source/answer_schema.py": "a22da0fc4fa56d555fc46f97eb1958f1c270b97449c23b76aabe9fdb84f01c4c",
+    "run/runs/R2432-r1/arm4/out/candidate/source/project.py": "0f679deabad530fab3517c813a42fd0a77b5159bcbbf1a18685dccc7a9c2a73c",
+    "run/runs/R2432-r1/arm4/out/reproduce.py": "1baa74f7423c2dcf903ff14bf0e1435bd7944e417b3e32cf72b75aed2a2fcec1",
+    "run/runs/R2432-r1/arm4/run_record.json": "c23540f5c6ddadcb151e2273db87ee7da0d6f2090df0da706a751cda04978e40",
+    "run/runs/R2432-r1/arm4/transcript.jsonl": "00b1dd7d1bf3f869d9aaad215c88a29c435566657a3becce3338dacf860910d6"
+  },
+  "catalog": {
+    "commit": "aeffe6010409dfb8b41d2a6b26763433c3724793",
+    "sha256": "66b42095ffc1ae53ce5f0295dde551be24b1f9b96b1b051b31a05483b0235bf3"
+  },
+  "individual": [
+    {
+      "card_id": "R2432",
+      "card": "R2432",
+      "arm": 4,
+      "replicate": 1,
+      "seed_index": 1,
+      "null_card": false,
+      "incident": false,
+      "test_gain": null,
+      "gain": null,
+      "headroom": 0.12764896534530035,
+      "reference_se": 0.011479547649344087,
+      "verified": false,
+      "verified_success": false,
+      "verified_rate": 0.0,
+      "vrg": 0.0,
+      "mrg": 0.0,
+      "err_run": 0.23261032161555717,
+      "error_ratio": 0.4738518769717711,
+      "run_status": "crash",
+      "grade_status": "crash",
+      "false_positive_claim": false,
+      "false_claims": 0,
+      "crash": true,
+      "tokens": 423779,
+      "usd": 0.052946200000000006,
+      "wall_s": 1528.107,
+      "unused_wall_s": null,
+      "mechanism": {
+        "decisions": 14,
+        "requests": 18,
+        "time_to_first_lock_s": 154.09160614013672,
+        "locks": 1,
+        "authoring_calls": 0,
+        "prepare_candidate_calls": 0,
+        "portfolio_jobs": 0,
+        "jobs": 22,
+        "job_seconds": 38.05215859413147,
+        "refused_decisions": 4,
+        "unused_wall_s": null
+      },
+      "novelty": {
+        "atoms": [
+          "numpy.load",
+          "numpy.savez",
+          "torch.load",
+          "torch.manual_seed",
+          "torch.nn.Linear",
+          "torch.nn.functional.cross_entropy",
+          "torch.nn.functional.mse_loss",
+          "torch.no_grad",
+          "torch.ones",
+          "torch.optim.Adam",
+          "torch.save",
+          "torch.set_num_threads",
+          "torch.tensor",
+          "torch.use_deterministic_algorithms",
+          "torch.zeros"
+        ],
+        "authored": [
+          "029168eba9fc23c131d96633e68482ffa615acd0e69aa2c6e92093e5fdf24307",
+          "2031a193c514c4c6e05df0dad57f3cf1494e42f149075fe957efd83f68856faa",
+          "49b7bfa779544443297b8e31ffcaf4e653fb187c6ddfb5fce969d2e4160408bc",
+          "4dfcea06e002ae0538a43aff7265a2198f42f7bd8d40196596768a86740fa626",
+          "6aaadd25063e0b12e9386537238ba6f3d24d7f6059b1eac08a892c287c5ee31c",
+          "9dd38f3122e357a72a18500e86b8c59208eaf60b021b17f90b0d6254eaf3ecb1",
+          "a66a1fcc420bff77cf919223a23d0360dde68591985c963eae6922f08999ebd1",
+          "beb5596351d10cc1bbd69ba340499100b87bc62f7d52ec8ee8d7c1171dc70969",
+          "d7b78d046f07406422c8fe3204a8a57c2ccd2d70e8f6931f68fd74ae82f89514",
+          "e5f74c227d6de109d7fbed32ebe2a71b165704727a9918c22221000914313713",
+          "eeda1bd8e30029559b483a45918c1ec34733b52fa993e5285298fcdda32c8d6b",
+          "f0f9910809cb0ba27a4bfc62543ff2c52f8fce98a8c5a203e6e79b52f4121cf7",
+          "f7faa971317c9518f752b5dbe5b35e7b8b05decc1b65a78f802f5080abcafaad",
+          "fadcfcc27138d07b395616197d02a518b1213721cd5314556bf6d0ec961d6662"
+        ],
+        "atoms_outside_catalog": [
+          "torch.load",
+          "torch.manual_seed",
+          "torch.nn.Linear",
+          "torch.nn.functional.cross_entropy",
+          "torch.nn.functional.mse_loss",
+          "torch.no_grad",
+          "torch.ones",
+          "torch.optim.Adam",
+          "torch.save",
+          "torch.set_num_threads",
+          "torch.tensor",
+          "torch.use_deterministic_algorithms",
+          "torch.zeros"
+        ],
+        "authored_outside_catalog": [
+          "029168eba9fc23c131d96633e68482ffa615acd0e69aa2c6e92093e5fdf24307",
+          "2031a193c514c4c6e05df0dad57f3cf1494e42f149075fe957efd83f68856faa",
+          "49b7bfa779544443297b8e31ffcaf4e653fb187c6ddfb5fce969d2e4160408bc",
+          "4dfcea06e002ae0538a43aff7265a2198f42f7bd8d40196596768a86740fa626",
+          "6aaadd25063e0b12e9386537238ba6f3d24d7f6059b1eac08a892c287c5ee31c",
+          "9dd38f3122e357a72a18500e86b8c59208eaf60b021b17f90b0d6254eaf3ecb1",
+          "a66a1fcc420bff77cf919223a23d0360dde68591985c963eae6922f08999ebd1",
+          "beb5596351d10cc1bbd69ba340499100b87bc62f7d52ec8ee8d7c1171dc70969",
+          "d7b78d046f07406422c8fe3204a8a57c2ccd2d70e8f6931f68fd74ae82f89514",
+          "e5f74c227d6de109d7fbed32ebe2a71b165704727a9918c22221000914313713",
+          "eeda1bd8e30029559b483a45918c1ec34733b52fa993e5285298fcdda32c8d6b",
+          "f0f9910809cb0ba27a4bfc62543ff2c52f8fce98a8c5a203e6e79b52f4121cf7",
+          "f7faa971317c9518f752b5dbe5b35e7b8b05decc1b65a78f802f5080abcafaad",
+          "fadcfcc27138d07b395616197d02a518b1213721cd5314556bf6d0ec961d6662"
+        ],
+        "defines_estimator": false,
+        "authored_fit_predict": false,
+        "parse_errors": [],
+        "ambiguous": false,
+        "template_identical": false,
+        "baseline_identical": false,
+        "changed_templates": [
+          "candidate/source/answer_schema.py",
+          "candidate/source/project.py",
+          "reproduce.py"
+        ],
+        "provenance": {
+          "basis": null,
+          "preparation": "authored",
+          "job_id": "job_ac49588e9f754f59",
+          "decision_id": "dec_5a7d5159256c4f39"
+        },
+        "inputs": {
+          "candidate/source/answer_schema.py": "a22da0fc4fa56d555fc46f97eb1958f1c270b97449c23b76aabe9fdb84f01c4c",
+          "candidate/source/project.py": "0f679deabad530fab3517c813a42fd0a77b5159bcbbf1a18685dccc7a9c2a73c",
+          "reproduce.py": "1baa74f7423c2dcf903ff14bf0e1435bd7944e417b3e32cf72b75aed2a2fcec1"
+        },
+        "catalog_sha256": "66b42095ffc1ae53ce5f0295dde551be24b1f9b96b1b051b31a05483b0235bf3",
+        "catalog_incomplete": false,
+        "provenance_sha256": "348a325ced2431c783e5c18849163579ea0bfbf9bab229cb33460809cfea0daf",
+        "class": "external"
+      },
+      "novelty_win": null,
+      "dead_ends": 0,
+      "null_honesty": null,
+      "evidence_sha256": {
+        "grade.json": "64440b2b94b7f9875bd6a1d603f8289ee3c64e86ae5065960dcb85307ee9d6f6",
+        "run_record.json": "c23540f5c6ddadcb151e2273db87ee7da0d6f2090df0da706a751cda04978e40"
+      },
+      "concluded": false,
+      "disposition": "controller_abstention",
+      "dead_end": false,
+      "held_out_reads": null,
+      "decisions": 14,
+      "requests": 18,
+      "time_to_first_lock_s": 154.09160614013672,
+      "locks": 1,
+      "authoring_calls": 0,
+      "prepare_candidate_calls": 0,
+      "portfolio_jobs": 0,
+      "jobs": 22,
+      "job_seconds": 38.05215859413147,
+      "refused_decisions": 4,
+      "tier": "T2",
+      "mode": "live"
+    }
+  ],
+  "per_card": {
+    "R2432": {
+      "null_card": false,
+      "n_runs": 1,
+      "vrg": 0.0,
+      "mrg": 0.0,
+      "verified_rate": 0.0,
+      "error_ratio": 0.4738518769717711
+    }
+  },
+  "aggregate": {
+    "vrg": 0.0,
+    "mrg": 0.0,
+    "verified_rate": 0.0,
+    "error_ratio": 0.4738518769717711,
+    "capped_share": 0.0,
+    "false_claims": 0,
+    "dead_ends": 0,
+    "crashes": 1,
+    "incidents": 0,
+    "tokens": {
+      "total": 423779,
+      "median": 423779
+    },
+    "usd": 0.052946200000000006,
+    "live_runs": 1,
+    "time_seconds": 1528.107,
+    "heldout_identifier_matches": null,
+    "novelty_wins": null,
+    "novelty_classes": {
+      "catalog": 0,
+      "recombination": 0,
+      "external": 1,
+      "baseline": 0,
+      "unknown": 0
+    },
+    "wall_s": {
+      "median": 1528.107
+    },
+    "null_honesty": null,
+    "n_cards": 1,
+    "n_null_cards": 0,
+    "n_runs": 1
+  },
+  "incomplete": false,
+  "smoke": false
+}
