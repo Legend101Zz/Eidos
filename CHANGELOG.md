@@ -4,6 +4,8 @@ All notable changes to Eidos. Tags are annotated, created only on CI-green commi
 
 ## Unreleased: 1.4.0
 
+- Fix OpenAI conclude-only and runaway JSON schemas with an explicit provider capability for endpoints that forbid top-level combinators; preserve default MiniMax request bytes and bounded decision validation.
+
 - Fix the runner's second review findings: admission-only quota freshness, programme quota directories, clean dispatch stops with completed evidence, signal-safe cleanup, consumed interrupted consultations, private grading paths, honest arm-2 build assertions, provider-specific uncertain spend, and early option validation.
 
 - Integrate the experiment runner with the final scorecard API: score each arm separately, stamp tier/look/pool-role/mode, record complete usage including retries, and document registered multi-tier comparisons.

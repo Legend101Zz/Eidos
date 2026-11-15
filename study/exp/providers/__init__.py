@@ -38,8 +38,12 @@ def validate(data: dict) -> None:
     if 'model' in patch and (not isinstance(patch['model'], str) or not patch['model']):
         raise ValueError('invalid investigator model')
     settings = patch.get('settings', {})
-    if not isinstance(settings, dict) or settings.keys() - {'output_mode', 'api_key_env', 'tool_choice'}:
+    if not isinstance(settings, dict) or settings.keys() - {
+            'output_mode', 'api_key_env', 'tool_choice', 'json_schema_top_level_combinators'}:
         raise ValueError('unknown provider settings keys')
+    if ('json_schema_top_level_combinators' in settings
+            and type(settings['json_schema_top_level_combinators']) is not bool):
+        raise ValueError('json_schema_top_level_combinators must be a boolean')
     if 'output_mode' in settings and settings['output_mode'] not in ('json', 'tool', 'repair'):
         raise ValueError('unknown output_mode')
     if 'api_key_env' in settings and settings['api_key_env'] != data['credential_env']:
